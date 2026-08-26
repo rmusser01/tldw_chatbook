@@ -10,6 +10,9 @@ from typing import Any, Optional, Callable
 from loguru import logger
 
 # Global flags for optional dependency availability
+# This is feature availability, not a credential.
+_TOKEN_CHUNKING_AVAILABILITY = {"token_chunking": False}  # nosec B105
+
 DEPENDENCIES_AVAILABLE = {
     "torch": False,
     "transformers": False,
@@ -24,7 +27,7 @@ DEPENDENCIES_AVAILABLE = {
     "chunker": False,
     "chinese_chunking": False,
     "japanese_chunking": False,
-    "token_chunking": False,
+    **_TOKEN_CHUNKING_AVAILABILITY,
     "cohere": False,
     # Audio/Video processing
     "audio_processing": False,
@@ -85,9 +88,6 @@ DEPENDENCIES_AVAILABLE = {
     "pillow": False,
     "textual_image": False,
     "rich_pixels": False,
-    # Mindmap
-    "mindmap": False,
-    "anytree": False,
     # Subscriptions
     "subscriptions": False,
     "markdown": False,
@@ -203,7 +203,14 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "all-tools",
         "All optional tools",
         AREA_ALL,
-        ("grep_ast", "chromadb", "vllm", "playwright", "faster-whisper", "mcp[cli]"),
+        (
+            "grep_ast",
+            "chromadb",
+            "vllm",
+            "playwright",
+            "faster-whisper",
+            "mcp-unified",
+        ),
         "Release packaging",
         "All optional capabilities",
         OWNER_RELEASE,
@@ -289,6 +296,15 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Search/RAG queries",
         OWNER_LIBRARY_RAG,
     ),
+    "frontmatter": _feature(
+        "frontmatter",
+        "Markdown front matter",
+        AREA_VISUALIZATION,
+        ("mdit-py-plugins",),
+        "Library > Notes",
+        "Markdown front matter parsing",
+        OWNER_LIBRARY,
+    ),
     "higgs_tts": _feature(
         "higgs_tts",
         "Higgs Audio TTS",
@@ -362,7 +378,7 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "mcp",
         "MCP server and client support",
         AREA_MCP,
-        ("mcp[cli]",),
+        ("mcp-unified",),
         "MCP",
         "MCP server/client tools",
         OWNER_MCP,
@@ -375,15 +391,6 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Library > Import/Export",
         "Media processing",
         OWNER_LIBRARY_MEDIA,
-    ),
-    "mindmap": _feature(
-        "mindmap",
-        "Mind map visualization",
-        AREA_VISUALIZATION,
-        ("anytree",),
-        "Library",
-        "Mind map visualization",
-        OWNER_LIBRARY,
     ),
     "mlx_whisper": _feature(
         "mlx_whisper",
@@ -506,9 +513,9 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
     ),
     "transcription_parakeet": _feature(
         "transcription_parakeet",
-        "Parakeet MLX transcription",
+        "Parakeet ONNX transcription",
         AREA_MEDIA,
-        ("parakeet-mlx",),
+        ("onnx-asr[cpu]",),
         "Library > Import/Export",
         "Parakeet transcription",
         OWNER_LIBRARY_MEDIA,
@@ -1305,7 +1312,7 @@ def check_image_processing_deps() -> bool:
 
 def check_mcp_deps() -> bool:
     """Check dependencies needed for MCP functionality."""
-    mcp_available = check_dependency("mcp")
+    mcp_available = check_dependency("mcp_unified", "mcp")
     DEPENDENCIES_AVAILABLE["mcp"] = mcp_available
 
     if mcp_available:
@@ -1314,24 +1321,6 @@ def check_mcp_deps() -> bool:
         logger.warning("⚠️ MCP dependencies missing.")
 
     return mcp_available
-
-
-def check_mindmap_available() -> bool:
-    """Check if mindmap dependencies are available.
-
-    Since anytree is in base dependencies, mindmap is always available.
-    This function exists for consistency with other optional features.
-    """
-    # anytree is in base dependencies, so always available
-    anytree_available = check_dependency("anytree", "mindmap")
-    DEPENDENCIES_AVAILABLE["mindmap"] = anytree_available
-
-    if anytree_available:
-        logger.info("✅ Mindmap dependencies found.")
-    else:
-        logger.warning("⚠️ Mindmap dependencies missing.")
-
-    return anytree_available
 
 
 def check_subscriptions_deps() -> bool:
@@ -1460,7 +1449,6 @@ def initialize_dependency_checks():
     check_stt_deps()
     check_image_processing_deps()
     check_mcp_deps()
-    check_mindmap_available()
     check_subscriptions_deps()
     check_web_server_deps()
 

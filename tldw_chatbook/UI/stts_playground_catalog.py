@@ -167,6 +167,11 @@ def controls_from_catalog(
         and selected_model_id is not None
         and selected_model_id not in model_ids
     )
+    missing_openai_model = bool(
+        catalog.provider_id == "openai"
+        and selected_model_id is not None
+        and selected_model_id not in model_ids
+    )
     if missing_audio_cpp_model:
         assert selected_model_id is not None
         model_options = (
@@ -177,6 +182,22 @@ def controls_from_catalog(
             ),
         )
         model = None
+        resolved_model_id = selected_model_id
+        selection_changed = False
+    elif missing_openai_model:
+        # Custom OpenAI-compatible endpoints (TASK-2260) define their own
+        # model names; there is no catalog to verify them against, so the
+        # saved selection is pinned honestly instead of being silently
+        # replaced with the first official entry (TASK-15421). The official
+        # reference model supplies the format/speed shape the axes need --
+        # a custom endpoint's real capabilities are unknowable here and are
+        # validated the same way as everywhere else: at generation time.
+        assert selected_model_id is not None
+        model_options = (
+            *model_options,
+            pinned_no_catalog_check_option(selected_model_id),
+        )
+        model = catalog.models[0] if catalog.models else None
         resolved_model_id = selected_model_id
         selection_changed = False
     else:
@@ -213,6 +234,7 @@ def controls_from_catalog(
             () if model is None else model.voices,
             discovered_voices,
             selected_voice_id,
+            pin_missing=catalog.provider_id == "openai",
         )
         format_options = () if model is None else model.formats
         resolved_format = _retain_or_first(selected_format, format_options)
@@ -421,15 +443,41 @@ def _pinned_audio_cpp_option(
     return (f"{identifier} ({suffix})", identifier)
 
 
+def pinned_no_catalog_check_option(identifier: str) -> SelectOption:
+    """Label a saved custom OpenAI id the catalog cannot verify.
+
+    "(no catalog check)" is the established honest state for legacy
+    providers' exact values (profiles show the same wording): it means
+    "there is nothing to check this against", not "something is wrong".
+
+    Args:
+        identifier: Exact custom model or voice id to pin.
+
+    Returns:
+        A ``(label, value)`` select option carrying the id unmodified.
+    """
+    return (f"{identifier} (no catalog check)", identifier)
+
+
 def _legacy_voices(
     catalog_voices: tuple[str, ...],
     discovered_voices: tuple[str, ...] | None,
     selected_voice_id: SelectValue | None,
+    *,
+    pin_missing: bool = False,
 ) -> tuple[tuple[SelectOption, ...], str | None, bool]:
     voices = catalog_voices if discovered_voices is None else discovered_voices
     options = tuple((voice, voice) for voice in voices)
     resolved = _retain_or_first(selected_voice_id, voices)
     changed = selected_voice_id is not None and selected_voice_id != resolved
+    if (
+        pin_missing
+        and changed
+        and isinstance(selected_voice_id, str)
+        and selected_voice_id
+    ):
+        options = (*options, pinned_no_catalog_check_option(selected_voice_id))
+        return options, selected_voice_id, False
     return options, resolved, changed
 
 

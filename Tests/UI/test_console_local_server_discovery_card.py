@@ -2,6 +2,10 @@
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -38,7 +42,7 @@ _DETECTED_SERVER = DiscoveredLocalServer(
 )
 
 
-class SetupModalHarness(App[None]):
+class SetupModalHarness(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.workbench_actions: list[str] = []
@@ -114,7 +118,7 @@ async def test_setup_modal_hides_detected_action_once_card_unblocks() -> None:
         assert not _is_displayed(detected)
 
 
-class ConsoleHarness(App[None]):
+class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance) -> None:
         super().__init__()
         self.app_instance = app_instance

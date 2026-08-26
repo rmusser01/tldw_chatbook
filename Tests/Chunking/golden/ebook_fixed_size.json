@@ -1,0 +1,39 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "9dfdb1aa7bca29b66171a4642f7b09e7",
+        "chunk_index": 1,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.5,
+        "total_chunks": 2
+      },
+      "text": "# Chapter 1\n\nFirst chapter text.\n\n# Chapter 2\n\nSec"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "804627bfdcaafa523f973222b49e4d74",
+        "chunk_index": 2,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 2
+      },
+      "text": "ter 2\n\nSecond chapter text.\n"
+    }
+  ],
+  "outcome": "ok"
+}

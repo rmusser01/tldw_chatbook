@@ -839,7 +839,26 @@ def main(argv: list[str] | None = None) -> int:
             f"{problem.expression}: {problem.reason}",
             file=sys.stderr,
         )
-    return 1 if problems else 0
+    if problems:
+        # TASK-19572: the rows above name the offending file, but nothing said
+        # what to do with them; every burn-down task had to re-derive that.
+        print(
+            f"\n{len(problems)} profile-owned-path problem(s). Each row is "
+            "path:line:context:expression:reason. Fix the code, or -- if the "
+            "occurrence is legitimate -- add an ExceptionRule with an explicit "
+            "reason to APPROVED_EXCEPTIONS in "
+            "scripts/check_profile_owned_path_inventory.py (see ADR-040). Run "
+            "`python scripts/check_profile_owned_path_inventory.py "
+            "--print-occurrences` for the full census.",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"profile-owned path census verified: {len(occurrences)} executable "
+        f"occurrence(s) across {len({o.relative_path for o in occurrences})} "
+        f"file(s), all matched by {len(APPROVED_EXCEPTIONS)} approved exceptions."
+    )
+    return 0
 
 
 if __name__ == "__main__":

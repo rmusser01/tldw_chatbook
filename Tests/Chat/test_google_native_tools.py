@@ -13,12 +13,18 @@ and inspect the JSON payload actually sent.
 """
 
 import json
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import _google_tools_payload
 
 
 def _gemini_text_response(text="ok"):
@@ -70,6 +76,21 @@ def _call_google(mock_post, messages, **extra):
     return mock_post.call_args[1]["json"]
 
 
+def _todo_tool(name):
+    provider = LocalToolProvider(
+        workspace_root=Path("."), todo_store=SessionTodoStore()
+    )
+    schema = provider.load_schema(f"local:{name}")
+    return {
+        "type": "function",
+        "function": {
+            "name": schema.name,
+            "description": schema.description,
+            "parameters": schema.parameters,
+        },
+    }
+
+
 @patch("requests.Session.post")
 def test_openai_tools_wrap_as_function_declarations(mock_post):
     sent = _call_google(
@@ -83,7 +104,7 @@ def test_openai_tools_wrap_as_function_declarations(mock_post):
                 {
                     "name": "calculator",
                     "description": "Evaluate math.",
-                    "parameters": OPENAI_TOOLS[0]["function"]["parameters"],
+                    "parametersJsonSchema": OPENAI_TOOLS[0]["function"]["parameters"],
                 }
             ]
         }
@@ -117,11 +138,49 @@ def test_blank_name_openai_tool_dropped_locally(mock_post):
                 {
                     "name": "calculator",
                     "description": "Evaluate math.",
-                    "parameters": OPENAI_TOOLS[0]["function"]["parameters"],
+                    "parametersJsonSchema": OPENAI_TOOLS[0]["function"]["parameters"],
                 }
             ]
         }
     ]
+
+
+def test_strict_todo_schemas_use_full_json_schema_field_without_aliasing():
+    tools = [_todo_tool("todo_create"), _todo_tool("todo_update")]
+    original = deepcopy(tools)
+
+    converted = _google_tools_payload(tools)
+    declarations = converted[0]["functionDeclarations"]
+
+    for declaration, source, source_before in zip(
+        declarations, tools, original, strict=True
+    ):
+        assert "parameters" not in declaration
+        assert (
+            declaration["parametersJsonSchema"]
+            == source_before["function"]["parameters"]
+        )
+        assert (
+            declaration["parametersJsonSchema"] is not source["function"]["parameters"]
+        )
+    assert tools == original
+
+    declarations[1]["parametersJsonSchema"]["properties"]["id"]["pattern"] = "changed"
+    assert tools == original
+
+
+def test_openai_tool_without_parameters_uses_full_json_object_schema():
+    converted = _google_tools_payload(
+        [{"type": "function", "function": {"name": "no_args"}}]
+    )
+    declaration = converted[0]["functionDeclarations"][0]
+
+    assert declaration == {
+        "name": "no_args",
+        "description": "",
+        "parametersJsonSchema": {"type": "object", "properties": {}},
+    }
+    assert "parameters" not in declaration
 
 
 @patch("requests.Session.post")
@@ -169,6 +228,65 @@ def test_openai_tool_history_converts_to_gemini_parts(mock_post):
         {"functionResponse": {"name": "calculator", "response": {"result": "6"}}},
     ]
     assert len(contents) == 3
+
+
+@patch("requests.Session.post")
+def test_project_context_follows_gemini_function_responses_as_separate_turn(mock_post):
+    messages = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_A",
+                    "type": "function",
+                    "function": {"name": "calculator", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_A", "content": "4"},
+        {
+            "role": "user",
+            "content": "[Project instructions] scoped text",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+    ]
+    contents = _call_google(mock_post, messages)["contents"]
+    assert "functionResponse" in contents[-2]["parts"][0]
+    assert contents[-1] == {
+        "role": "user",
+        "parts": [{"text": "[Project instructions] scoped text"}],
+    }
+
+
+@patch("requests.Session.post")
+def test_nested_context_follows_all_parallel_gemini_results_in_distinct_turn(mock_post):
+    messages = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "one", "arguments": "{}"}},
+                {"id": "b", "type": "function", "function": {"name": "two", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "a", "content": "deferred-a"},
+        {"role": "tool", "tool_call_id": "b", "content": "deferred-b"},
+        {
+            "role": "user",
+            "content": "NESTED_CONTEXT",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+    ]
+
+    contents = _call_google(mock_post, messages)["contents"]
+
+    assert len(contents[-2]["parts"]) == 2
+    assert all("functionResponse" in part for part in contents[-2]["parts"])
+    assert contents[-1] == {"role": "user", "parts": [{"text": "NESTED_CONTEXT"}]}
+    assert "NESTED_CONTEXT" not in str(contents[-2])
 
 
 @patch("requests.Session.post")
@@ -1017,8 +1135,7 @@ def test_google_api_key_comes_from_the_api_settings_google_table(mock_post):
         )
 
     assert (
-        mock_post.call_args[1]["headers"]["x-goog-api-key"]
-        == "google-config-table-key"
+        mock_post.call_args[1]["headers"]["x-goog-api-key"] == "google-config-table-key"
     )
 
 

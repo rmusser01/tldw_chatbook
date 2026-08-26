@@ -27,6 +27,12 @@ def test_request_llm_analysis_calls_chat_api_call_and_extracts_content():
     assert captured["messages_payload"] == [
         {"role": "user", "content": "analyze this code"}
     ]
+    # TASK-19048: the analysis model must be currently served. The former
+    # hardcoded claude-3-haiku-20240307 is RETIRED on the wire (404
+    # not_found_error, probe req_011CeEDXZ8iS29MZCgyySwQa); claude-haiku-4-5
+    # is its served successor in the same cheap-fast lineage (TASK-19020
+    # precedent), preserving the site's "fast model for quick analysis" intent.
+    assert captured["model"] == "claude-haiku-4-5"
     assert captured["streaming"] is False
     assert "timeout" not in captured  # dropped — chat_api_call has no timeout param
 

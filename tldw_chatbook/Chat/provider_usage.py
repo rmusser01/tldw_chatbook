@@ -254,6 +254,10 @@ class ProviderUsage:
                 **common,
             )
         # OpenAI chat-completions shape: prompt_tokens INCLUDES cached tokens.
+        # `cache_creation_tokens` is our own extension (TASK-18607): the
+        # Console gateway's normalization preserves Anthropic's write bucket
+        # under this key -- also folded into prompt_tokens -- so the budget
+        # can price writes at their real rate through the normalized path.
         if "prompt_tokens" in payload:
             total_input = _as_count(payload.get("prompt_tokens"))
             details = payload.get("prompt_tokens_details")
@@ -262,9 +266,15 @@ class ProviderUsage:
                 if isinstance(details, Mapping)
                 else 0
             )
+            cache_write = (
+                _as_count(details.get("cache_creation_tokens"))
+                if isinstance(details, Mapping)
+                else 0
+            )
             return cls(
-                uncached_input=max(total_input - cached, 0),
+                uncached_input=max(total_input - cached - cache_write, 0),
                 cache_read=cached,
+                cache_write=cache_write,
                 output=_as_count(payload.get("completion_tokens")),
                 **common,
             )

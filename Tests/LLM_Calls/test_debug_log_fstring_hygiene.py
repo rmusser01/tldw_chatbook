@@ -31,9 +31,9 @@ from __future__ import annotations
 import ast
 import pathlib
 
-import pytest
-
-LLM_CALLS_ROOT = pathlib.Path(__file__).resolve().parents[2] / "tldw_chatbook" / "LLM_Calls"
+LLM_CALLS_ROOT = (
+    pathlib.Path(__file__).resolve().parents[2] / "tldw_chatbook" / "LLM_Calls"
+)
 
 _LOG_METHODS = {"debug", "info", "warning", "error", "critical", "trace", "success"}
 
@@ -76,9 +76,28 @@ def _brace_placeholder_hits(path: pathlib.Path) -> list[tuple[int, str]]:
             and isinstance(first.value, str)
             and "{" in first.value
             and "}" in first.value
+            and len(node.args) == 1
+            and not node.keywords
         ):
             hits.append((node.lineno, first.value[:120]))
     return hits
+
+
+def test_brace_placeholder_guard_distinguishes_loguru_format_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    broken = tmp_path / "broken.py"
+    broken.write_text('logger.error("status={status}")\n', encoding="utf-8")
+    positional = tmp_path / "positional.py"
+    positional.write_text('logger.error("status={}", status)\n', encoding="utf-8")
+    keyword = tmp_path / "keyword.py"
+    keyword.write_text(
+        'logger.error("status={status}", status=status)\n', encoding="utf-8"
+    )
+
+    assert _brace_placeholder_hits(broken) == [(1, "status={status}")]
+    assert _brace_placeholder_hits(positional) == []
+    assert _brace_placeholder_hits(keyword) == []
 
 
 def test_no_logging_call_has_an_unevaluated_brace_placeholder():
@@ -124,7 +143,16 @@ def test_anthropic_debug_log_interpolates_payload_values(monkeypatch):
         def mount(self, *_args, **_kwargs):
             return None
 
-        def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        def post(
+            self,
+            url,
+            *,
+            headers=None,
+            json=None,
+            stream=False,
+            timeout=None,
+            allow_redirects=None,
+        ):
             return _FakeResponse()
 
     class _FakeResponse:
@@ -143,7 +171,9 @@ def test_anthropic_debug_log_interpolates_payload_values(monkeypatch):
                 "usage": {"input_tokens": 4, "output_tokens": 5},
             }
 
-    monkeypatch.setattr(LLM_API_Calls.requests, "Session", lambda: _CapturedSession())
+    monkeypatch.setattr(
+        LLM_API_Calls, "create_default_session", lambda: _CapturedSession()
+    )
 
     secret_user_text = "MY-VERY-PRIVATE-MESSAGE-CONTENT"
     LLM_API_Calls.chat_with_anthropic(

@@ -44,6 +44,25 @@ class WatchlistsBackendController:
     def _normalize_backend(runtime_backend: Any) -> str:
         return str(runtime_backend or "local").strip().lower() or "local"
 
+    def create_form_source_types(
+        self, *, runtime_backend: str | None = None
+    ) -> tuple[str, ...]:
+        """Return the selected backend's ordered create-form source types.
+
+        Args:
+            runtime_backend: Backend contract to inspect. ``None`` defaults
+                to the local backend during controller normalization.
+
+        Returns:
+            Ordered source-type identifiers supported by that backend's
+            create form.
+
+        Raises:
+            ValueError: If the backend is invalid or unavailable.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        return self.scope_service.create_form_source_types(runtime_backend=backend)
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
@@ -161,6 +180,37 @@ class WatchlistsBackendController:
         )
         return dict(result)
 
+    async def check_all(self, *, runtime_backend: str | None = None, source_ids: list[Any]) -> dict[str, Any]:
+        """Check each given source in turn (TASK-3791 plan task 5).
+
+        The refresh-half of `r`: the screen supplies the ELIGIBLE ids (it
+        owns the active/paused call), and this iterates them sequentially --
+        the local executor serializes runs already, so concurrency is not
+        this method's risk to take. A source whose check raises never stops
+        the batch; its id lands in `failed` and the rest proceed.
+
+        Args:
+            runtime_backend: Target backend, or `None` for the default.
+            source_ids: The sources to check, in check order.
+
+        Returns:
+            ``{"checked": <int>, "failed": [<source_id>, ...]}`` -- the
+            aggregate the screen's single end-of-batch toast reads from.
+        """
+        checked = 0
+        failed: list[Any] = []
+        for source_id in source_ids:
+            try:
+                await self.check_now(runtime_backend=runtime_backend, source_id=source_id)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    f"Refresh-all: check failed for source {source_id}."
+                )
+                failed.append(source_id)
+            else:
+                checked += 1
+        return {"checked": checked, "failed": failed}
+
     async def import_opml(self, *, runtime_backend: str | None = None, xml_text: str) -> dict[str, Any]:
         """Import watchlist sources from an OPML document.
 
@@ -270,6 +320,45 @@ class WatchlistsBackendController:
         )
         return str(result)
 
+    async def get_item_content(
+        self,
+        *,
+        runtime_backend: str | None = None,
+        item_id: Any,
+    ) -> str | None:
+        """Read one content item's full body text from the active backend.
+
+        TASK-15464 counterpart to `get_item_status` above -- same shape,
+        except the return is `Optional[str]` rather than coerced to `str`:
+        `None` is a real, non-exceptional answer here (see
+        `SubscriptionsDB.get_item_content`'s docstring), not an absence to
+        paper over.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            item_id: Item identifier, namespaced or bare.
+
+        Returns:
+            The stored content, or `None` if no row has this id or its
+            content is itself NULL.
+
+        Raises:
+            ValueError: If no scope service is configured.
+            NotImplementedError: If the active backend exposes no
+                single-item content read.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        method = getattr(self.scope_service, "get_item_content", None)
+        if not callable(method):
+            raise NotImplementedError(
+                "Item content reads are not supported by the current backend."
+            )
+        return await self._maybe_await(
+            method(runtime_backend=backend, item_id=item_id)
+        )
+
     async def update_item_status(
         self,
         *,
@@ -313,6 +402,27 @@ class WatchlistsBackendController:
             self.scope_service.restore_items_new(runtime_backend=backend, item_ids=item_ids)
         )
         return int(result)
+
+    async def set_item_flagged(self, *, runtime_backend: str | None = None, item_id: Any, flagged: bool) -> None:
+        """Star or unstar one item (TASK-3072 plan task 7).
+
+        The write behind the reader's `s` key and Star button; the id
+        forwards untouched (the scope service denamespaces it, exactly as
+        `update_item_status`'s does).
+
+        Args:
+            runtime_backend: Target backend, or `None` for the configured
+                default; normalized by `_normalize_backend`.
+            item_id: Item identifier, namespaced
+                (``local:watchlist_item:7``) or bare.
+            flagged: `True` to star the item, `False` to unstar it.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        await self._maybe_await(
+            self.scope_service.set_item_flagged(
+                runtime_backend=backend, item_id=item_id, flagged=bool(flagged)
+            )
+        )
 
     async def _safe_list(self, method_name: str, **kwargs: Any) -> list[dict[str, Any]]:
         """Call a scope-service list method if it exists, otherwise return []."""

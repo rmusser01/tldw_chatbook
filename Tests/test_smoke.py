@@ -240,17 +240,17 @@ class TestSecurity:
 class TestRAGFunctionality:
     """Smoke tests for RAG functionality."""
 
-    def test_rag_service_initialization(self, tmp_path):
+    def test_rag_service_initialization(self):
         """Test that RAG service can be initialized."""
         try:
             from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
-            from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+            from tldw_chatbook.RAG_Search.simplified.config import (
+                create_config_for_testing,
+            )
 
-            # Create service with config (will skip if dependencies missing).
-            # The vector store defaults to persistent chroma when embeddings
-            # deps are installed; redirect persistence to keep the test hermetic.
-            config = RAGConfig()
-            config.vector_store.persist_directory = tmp_path / "chromadb"
+            # Use the supported deterministic backend: a smoke test must not
+            # download the production model merely because extras are installed.
+            config = create_config_for_testing()
             with RAGService(config) as service:
                 assert service is not None
 

@@ -81,6 +81,84 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _disable_model_catalog_refresh(monkeypatch):
+    """Keep UI full-app boots off the ADR-020 catalog network seam (task-16198).
+
+    Incident: the knowledge_entry suite went red on pristine dev with the
+    egress guard's teardown error naming ``104.18.3.115:443`` and
+    ``104.18.2.115:443`` — openrouter.ai's two A records. The one keyless
+    path to that host is the startup catalog refresh:
+    ``TldwCli._refresh_model_catalogs`` →
+    ``LocalLLMProviderCatalogService.refresh_stale_configured_providers``,
+    which exempts OpenRouter from the no-credentials skip ("OpenRouter's
+    catalog is public") and issues a real
+    ``GET https://openrouter.ai/api/v1/models``. The refresh is consent-gated
+    and the per-test sandbox config defaults consent off, so a green run is
+    the norm — but any leak of consented settings into the process (a shared
+    ``TLDW_TEST_CONFIG_ROOT`` between concurrent sessions, config-cache
+    pollution) turns every full-app UI boot into live egress, timed by the
+    refresh worker racing test teardown. Tests/ProductionApp/conftest.py and
+    Tests/RuntimePolicy/test_runtime_policy_full_app.py already pin this same
+    seam shut; this fixture closes the remaining full-app surface (Tests/UI)
+    so no settings content can re-open it.
+
+    Only ``TldwCli._refresh_model_catalogs`` is patched: stub hosts that bind
+    their own ``_refresh_model_catalogs`` instance attribute (e.g. the
+    phase1 first-run schedule tests) and direct service-level tests are
+    unaffected. A test that needs the real seam monkeypatches the method
+    back within its own scope.
+    """
+
+    async def _offline_refresh(_app) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "tldw_chatbook.app.TldwCli._refresh_model_catalogs",
+        _offline_refresh,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_tiktoken_bpe_download(monkeypatch):
+    """Keep UI token counting off tiktoken's BPE download seam (TASK-21590).
+
+    Incident: repairing the Console send harness let 16 mounted send tests
+    reach `ConsoleProviderGateway.prepare_chat_request` for the first time —
+    `prepare_provider_request` → `_account_categories` → `_count_wire` →
+    `count_console_messages_tokens` → `token_counter.estimate_tokens` →
+    `count_tokens_tiktoken` → `get_tiktoken_encoding`. On a cold cache
+    `tiktoken.get_encoding` fetches its BPE blobs from
+    ``openaipublic.blob.core.windows.net`` over HTTPS, so the egress guard
+    recorded six blocked connects per test and failed each one at teardown.
+    The tests themselves passed; only the guard saw it. The old, broken
+    harness never got past the durable-acceptance gate, so it never reached
+    this seam at all — which is why the failure is invisible on dev.
+
+    ``get_tiktoken_encoding`` is the single chokepoint: every tiktoken use in
+    the Console send path funnels through it (`console_cost_tracker` and
+    `console_session_settings` only reach tiktoken via
+    ``count_tokens_messages``), and it resolves as a module global at call
+    time, so patching it here covers callers that imported
+    ``count_tokens_tiktoken``/``estimate_tokens`` by name.
+
+    Returning ``None`` drives the already-tested no-tokenizer branch
+    (`count_tokens_tiktoken`'s character estimate) — which is what a default
+    install actually does, since tiktoken is not a base dependency
+    (task-2526). No test's LOGICAL coverage changes, only its network access,
+    and the result stops depending on whether this machine happens to have a
+    warm ``$TMPDIR/data-gym-cache`` (which the HOME sandbox does not
+    redirect). A test that needs the real encoding monkeypatches it back
+    within its own scope, exactly as with `_disable_model_catalog_refresh`
+    above.
+    """
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.token_counter.get_tiktoken_encoding",
+        lambda _model: None,
+    )
+
+
 @pytest_asyncio.fixture
 async def mock_app_config():
     """Provide a standard mock app configuration for tests."""

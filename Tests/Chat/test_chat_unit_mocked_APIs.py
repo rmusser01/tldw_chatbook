@@ -310,7 +310,7 @@ class TestMockedChatAPIs:
 class TestMockedChatUnit:
     """Unit tests with mocked external services to verify error handling"""
 
-    @patch("requests.post")
+    @patch("requests.Session.post")
     def test_local_service_connection_handling(self, mock_post):
         """Test handling of local service connection errors"""
         # Mock connection refused error
@@ -440,6 +440,54 @@ class TestTemperatureForwarding:
         finally:
             API_CALL_HANDLERS[endpoint] = original
         assert handler.call_args.kwargs.get("temp") == 0.42
+
+
+def test_moonshot_reasoning_effort_reaches_public_handler() -> None:
+    handler = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    handler.__name__ = "chat_with_moonshot"
+    original = API_CALL_HANDLERS["moonshot"]
+    API_CALL_HANDLERS["moonshot"] = handler
+    try:
+        chat_api_call(
+            api_endpoint="moonshot",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="test_key",
+            model="kimi-k3",
+            reasoning_effort="high",
+            streaming=False,
+        )
+    finally:
+        API_CALL_HANDLERS["moonshot"] = original
+
+    assert handler.call_args.kwargs["reasoning_effort"] == "high"
+
+
+def test_zai_provider_specific_fields_reach_public_handler() -> None:
+    handler = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    handler.__name__ = "chat_with_zai"
+    original = API_CALL_HANDLERS["zai"]
+    API_CALL_HANDLERS["zai"] = handler
+    try:
+        chat_api_call(
+            api_endpoint="zai",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="test_key",
+            model="glm-5.2",
+            reasoning_effort="xhigh",
+            tool_choice="auto",
+            stop=["done"],
+            response_format={"type": "json_object"},
+            user_identifier="user-1",
+            streaming=False,
+        )
+    finally:
+        API_CALL_HANDLERS["zai"] = original
+
+    assert handler.call_args.kwargs["reasoning_effort"] == "xhigh"
+    assert handler.call_args.kwargs["tool_choice"] == "auto"
+    assert handler.call_args.kwargs["stop"] == ["done"]
+    assert handler.call_args.kwargs["response_format"] == {"type": "json_object"}
+    assert handler.call_args.kwargs["user"] == "user-1"
 
 
 def test_provider_param_map_has_no_dead_generic_keys() -> None:

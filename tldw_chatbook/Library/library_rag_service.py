@@ -320,11 +320,22 @@ def scope_empty_recovery_state(cause: str | None) -> DestinationRecoveryState:
     )
 
 
+#: TASK-406: the one phrase this module uses for "the retrieval attempt
+#: itself did not work". Promoted to a public constant because the Console's
+#: auto-retrieve-on-send notice (``chat_screen.CONSOLE_AUTO_RAG_FAILED_
+#: NOTICE``) must say the same thing the recovery state says -- two
+#: hand-written copies of the same sentence drift, and the Console notice is
+#: often the ONLY place a user sees this outcome (the auto path never renders
+#: a recovery card, by design: a zero-evidence RAG launch would block the
+#: next send).
+RETRIEVAL_FAILED_WHY = "Library Search/RAG retrieval failed"
+
+
 def _retrieval_failed_recovery_state() -> DestinationRecoveryState:
     return DestinationRecoveryState(
         status_label="Retrieval failed",
         unavailable_what="Library Search/RAG retrieval",
-        why="Library Search/RAG retrieval failed",
+        why=RETRIEVAL_FAILED_WHY,
         next_action="Retry the query or check Library indexing",
         recovery_action="Retry",
         authority_owner="Library retrieval",

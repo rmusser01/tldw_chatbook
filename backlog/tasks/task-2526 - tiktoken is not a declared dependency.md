@@ -1,5 +1,5 @@
 ---
-id: task-2526
+id: TASK-2526
 title: tiktoken is not a declared dependency
 status: To Do
 assignee: []

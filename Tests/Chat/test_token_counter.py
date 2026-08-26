@@ -277,3 +277,70 @@ def test_unknown_provider_and_model_falls_back_to_16k_window():
     from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
     assert get_model_token_limit("some-unknown-model", "some-unknown-provider") == 16384
+
+
+# TASK-17610: list-shaped (vision/attachment) message content must never
+# crash the estimator. Found live during TASK-16800's delivery tests: a
+# user message whose content is the multimodal part-list shape reached
+# `_chars_estimate`, which iterated the LIST and called ord() on dict
+# items. The fix normalizes content at the `estimate_tokens` boundary:
+# text parts are counted normally; each non-text part contributes the
+# documented fixed estimate.
+
+
+def test_estimate_tokens_handles_vision_shaped_list_content():
+    """A text + image part list returns a sane count instead of raising."""
+    from tldw_chatbook.Utils.token_counter import (
+        NON_TEXT_PART_TOKEN_ESTIMATE,
+        estimate_tokens,
+    )
+
+    parts = [
+        {"type": "text", "text": "please look at this screenshot"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+    ]
+    text_only = estimate_tokens("please look at this screenshot", provider="openai")
+    combined = estimate_tokens(parts, provider="openai")
+    assert combined == text_only + NON_TEXT_PART_TOKEN_ESTIMATE
+    assert combined > 0
+
+
+def test_estimate_tokens_list_of_only_non_text_parts():
+    """An image-only message still yields the fixed per-part contribution."""
+    from tldw_chatbook.Utils.token_counter import (
+        NON_TEXT_PART_TOKEN_ESTIMATE,
+        estimate_tokens,
+    )
+
+    parts = [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,BBBB"}},
+    ]
+    assert estimate_tokens(parts) == 2 * NON_TEXT_PART_TOKEN_ESTIMATE
+
+
+def test_count_tokens_messages_survives_list_content_message():
+    """The message-level counter accepts a vision-shaped message end to end."""
+    from tldw_chatbook.Utils.token_counter import count_tokens_messages
+
+    messages = [
+        {"role": "system", "content": "be helpful"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
+            ],
+        },
+    ]
+    assert count_tokens_messages(messages) > 0
+
+
+def test_non_text_part_estimate_matches_the_budget_per_image_charge():
+    """Qodo PR #1783: the generic estimator and budget enforcement must
+    charge images identically — a lower estimator figure would let
+    image-heavy no-usage turns slip past max_total_tokens."""
+    from tldw_chatbook.Chat.console_history_budget import DEFAULT_PER_IMAGE_TOKENS
+    from tldw_chatbook.Utils.token_counter import NON_TEXT_PART_TOKEN_ESTIMATE
+
+    assert DEFAULT_PER_IMAGE_TOKENS == NON_TEXT_PART_TOKEN_ESTIMATE

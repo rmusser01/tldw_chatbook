@@ -70,7 +70,7 @@ Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `
 - **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes); the current schema version is the `_CURRENT_SCHEMA_VERSION` constant in this file — bump it and add a migration when changing schema
 - **`Client_Media_DB_v2.py`** - Media storage with chunking
 - **`RAG_Indexing_DB.py`** - Vector storage (when enabled)
-- Other DBs: `Evals_DB.py`, `Prompts_DB.py`, `Subscriptions_DB.py`, `AgentRuns_DB.py`, `Workspace_DB.py`, `Library_Collections_DB.py`, `Library_Ingest_Jobs_DB.py`, `Research_DB.py`, `Writing_DB.py`, `Mindmap_DB.py`, `search_history_db.py`, `Sync_Client.py`
+- Other DBs: `Evals_DB.py`, `Prompts_DB.py`, `Subscriptions_DB.py`, `AgentRuns_DB.py`, `Workspace_DB.py`, `Library_Collections_DB.py`, `Library_Ingest_Jobs_DB.py`, `VisualIdentity_DB.py`
 - Patterns: soft deletion, optimistic locking, FTS5 triggers, parameterized queries only
 
 ### Agents Runtime (`Agents/`)
@@ -130,7 +130,13 @@ def _heavy_task(self):
 1. Subclass `Tool` (ABC) in `Tools/tool_executor.py`
 2. Implement the `name`, `description`, `parameters` properties and the async `execute(**kwargs)` method
 3. Add a `GateableTool` row to `_GATEABLE_BUILTINS` in `Agents/tool_catalog.py` (gate key, module, class, tool name)
-4. Pick a `[tools] <name>_enabled` gate key -- it defaults to OFF, and the Settings ▸ Tools screen derives its switches from that same table. Caveat: a config-gated `LocalToolSpec` tool that isn't a `_GATEABLE_BUILTINS` entry (e.g. `web_deep_search`, `Agents/local_tool_provider.py`) doesn't get a switch for free -- it needs a manual row hand-added to `UI/Tools_Settings_Window.py`'s `_compose_tool_settings`/save/reset (see `WEB_DEEP_SEARCH_GATE_KEY`). Also: the gate-SWITCH surface (`ToolsSettingsWindow`, `DEPRECATED (TASK-1346)`; its route resolves to the MCP screen) is nav-unreachable -- but do not confuse it with the MCP screen's live Tools/Permissions modes, which browse the catalog and set per-tool Allow/Ask/Off; those manage the PERMISSION layer, not these `[tools]` registration gates, and a gate-off tool is absent from that surface entirely. Tracked as task-3240.
+4. Pick a `[tools] <name>_enabled` gate key -- it defaults to OFF. Two
+   non-obvious extra stops (cost TASK-16174's Task 2 a debugging round):
+   add a `_TOOL_COPY` entry in `UI/Wizards/FirstRunSetupWizard.py` (that
+   step renders one row per gateable builtin -- without copy, first-run
+   setup ships a blank row), and know that the old hard-coded
+   catalog-arity literals in tests now derive from
+   `len(_GATEABLE_BUILTINS)` (they used to break on every new row). A `_GATEABLE_BUILTINS` row surfaces automatically as a switch in the MCP hub (Servers mode ▸ built-in-source detail ▸ "Tool gates" group), via the single enumerator `all_tool_gates()` in `Agents/builtin_tool_gate.py` (task-3240) -- no manual UI wiring needed. Caveat: a config-gated `LocalToolSpec` tool that isn't a `_GATEABLE_BUILTINS` entry (e.g. `web_deep_search`, `Agents/local_tool_provider.py`) doesn't get a switch for free either way -- it needs one hand-added entry in `all_tool_gates()`'s own hand-list (see the `web_deep_search`/`WEB_DEEP_SEARCH_GATE_KEY` precedent there). Do not confuse this REGISTRATION-gate surface with the MCP screen's Tools/Permissions modes, which browse the catalog and set per-tool Allow/Ask/Off; those manage the PERMISSION layer, and a gate-off tool is absent from that surface entirely. The older `ToolsSettingsWindow` (`DEPRECATED (TASK-1346)`; its route resolves to the MCP screen) stays nav-unreachable and untouched -- it is not this enumerator's consumer.
 5. Override `risk_tags` if the tool mutates or reads user data; a tagged tool is floored to `ask` and raises an approval card per call
 
 **UI changes:** PRs that change a screen's UI should update the matching
@@ -219,7 +225,24 @@ Key sections:
 
 ## Project-Specific Gotchas
 
-1. **Schema migrations** - Always increment version, add to migrations/
+1. **Schema migrations** - Always increment version, add to migrations/. Read
+   `tldw_chatbook/DB/migrations/README.md` first: a `CREATE TABLE` also
+   requires a `VALID_TABLES['chachanotes']` entry in `DB/sql_validation.py`
+   and a `CREATE INDEX` also requires an `EXPECTED_CHACHANOTES_INDEXES` entry,
+   both in the same commit. `./scripts/preflight.sh` checks the first and
+   prints the lines to paste (TASK-20971: that allowlist went stale, was
+   repaired, and went stale again 14.5 hours later).
+   **Any `CREATE INDEX` also needs a query plan captured with `sqlite_stat1`
+   ABSENT.** No DB module here runs `ANALYZE`, so no user's database has
+   statistics and the planner ignores indexes that look perfect on paper:
+   TASK-21126's textbook covering index measured 118.8 ms without it and
+   120.2 ms with it, and had to be re-shaped to lead with a redundant
+   equality column before it was ever chosen (then 23.4 ms). Assert the
+   **plan**, not the index's existence — `sqlite_master` is green for a dead
+   index. `scripts/check_index_plan_pins.py` (in `preflight.sh` and the
+   required CI job) fails until the new index has a row in
+   `scripts/index_plan_pin_census.tsv`; `Tests/DB/test_media_db_schema_v9.py`
+   is the worked example, negative control included.
 2. **Optional deps** - Check with `optional_deps.py` before importing
 3. **Thread safety** - Use transaction() context manager
 4. **Tab constants** - Must match IDs in compose()
@@ -423,17 +446,25 @@ A task is **Done** only when **ALL** of the following are complete:
 2. **Implementation plan** was followed or deviations were documented in Implementation Notes.
 3. **Automated tests** (unit + integration) cover new logic.
 4. **Static analysis**: linter & formatter succeed.
-5. **Documentation**:
+5. **Derived artifacts**: run `./scripts/preflight.sh` before opening a PR -- it
+   runs the same four checks as the required `Derived artifacts reproduce from
+   their sources` CI job (CSS bundle sync, profile-owned-path census, production
+   diagnostic inventory, duplicate backlog task ids), and reports every failure
+   rather than stopping at the first. It takes ~35s and installs nothing. If the
+   diagnostic inventory reports drift, read the rows it names before
+   regenerating -- `--write` without reading is the failure that artifact exists
+   to prevent.
+6. **Documentation**:
     - All relevant docs updated (any relevant README file, backlog/docs, backlog/decisions, etc.).
     - Task file **MUST** have an `## Implementation Notes` section added summarising:
         - Approach taken
         - Features implemented or modified
         - Technical decisions and trade-offs
         - Modified or added files
-6. **Review**: self review code.
-7. **Task hygiene**: status set to **Done** via CLI (`backlog task edit <id> -s Done`).
-8. **No regressions**: performance, security and licence checks green.
-9. **Lessons learned**: if the task surfaced knowledge that generalises beyond it — a
+7. **Review**: self review code.
+8. **Task hygiene**: status set to **Done** via CLI (`backlog task edit <id> -s Done`).
+9. **No regressions**: performance, security and licence checks green.
+10. **Lessons learned**: if the task surfaced knowledge that generalises beyond it — a
    trap, a wrong assumption that cost time, a verification that only worked one way —
    add or update an entry in `backlog/docs/lessons-*.md`. **State the incident, not
    just the rule**: a lesson without the evidence that produced it decays into folklore

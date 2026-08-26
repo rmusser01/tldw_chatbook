@@ -17,9 +17,22 @@ from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from .config import RAGConfig, _normalized_type_setting, validate_chroma_persist_directory
-from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
+# task-21160: config_profiles imported at use-sites (and TYPE_CHECKING for the
+# annotation) -- the module-level import was one edge of the
+# config_profiles<->simplified circular-import cycle (see
+# enhanced_rag_service_v2.py for the full account).
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..config_profiles import ProfileConfig
 from ..ingestion_indexing import reset_shared_rag_service
 from ..reranker import RerankingConfig
+# TASK-21731: the mode vocabulary + its normalizer live in the stdlib-only
+# `RAG_Search/search_modes.py` so `Library/library_local_rag_search_service`
+# (on the app's import path) can read them without executing this module's
+# service tree. Re-imported here so both names stay single-sourced.
+from ..search_modes import RAG_SEARCH_MODES as _RAG_SEARCH_MODES
+from ..search_modes import normalize_rag_search_mode
 
 DEFAULT_PROFILE = "hybrid_basic"
 _IMPORTED_ID = "imported_settings"
@@ -38,6 +51,8 @@ _LEGACY_PROCESSOR_KEYS = ("enable_reranking", "reranker_model", "reranker_top_k"
 
 
 def _manager():
+    from ..config_profiles import get_profile_manager
+
     return get_profile_manager()
 
 
@@ -111,6 +126,96 @@ def _mark_first_run_import_done() -> None:
         logger.debug(f"Could not persist first_run_import_done marker: {e}")
 
 
+def _resolved_active_profile() -> Optional[ProfileConfig]:
+    """The profile the active pointer names, falling back to the builtin default.
+
+    Shared by ``resolve_active_rag_config`` and ``resolve_active_rag_top_k``
+    so the "pointer names a profile that no longer exists" ladder has exactly
+    one definition -- the two resolutions must agree on WHICH profile they are
+    reading before agreeing on what it says.
+
+    Returns:
+        The resolved ``ProfileConfig``, or `None` when neither the pointer nor
+        ``DEFAULT_PROFILE`` resolves.
+    """
+    mgr = _manager()
+    return mgr.get_profile(_active_profile_id()) or mgr.get_profile(DEFAULT_PROFILE)
+
+
+def _env_top_k(profile_top_k: int) -> int:
+    """Apply the ``RAG_TOP_K`` env override to a profile's search depth.
+
+    The ONE definition of that rule (TASK-15020/B3): both the full config
+    resolution (``_apply_env_overrides`` above) and the depth-only read
+    (``resolve_active_rag_top_k`` below) call this, so a surface that reads
+    only the number can never disagree with a surface that builds the whole
+    config. Unset/blank leaves the profile's own value alone; a non-numeric
+    value raises exactly as it did inline, so callers that must not fail keep
+    owning that decision (both current ones degrade to their own fallback).
+
+    Args:
+        profile_top_k: The active profile's stored ``search.default_top_k``.
+
+    Returns:
+        The env override when set, else `profile_top_k` unchanged.
+    """
+    override = os.getenv("RAG_TOP_K")
+    return int(override) if override else profile_top_k
+
+
+def resolve_active_rag_top_k() -> int:
+    """Return ONLY the active profile's search depth, without building a config.
+
+    Why this exists rather than ``resolve_active_rag_config().search.
+    default_top_k`` (TASK-15020/B3): the full resolution's env layer probes
+    the embedding device, and ``device == "auto"`` (the shipped default)
+    **imports torch** -- measured at ~0.9s on the first call inside an
+    already-warm app process. The Library Search/RAG panel rebuilds its
+    display state on every render and is documented as a path that never
+    imports an optional Search/RAG dependency (see ``library_screen.
+    _library_rag_panel_state``), so it needs the number without the object
+    graph. Profile lookup + ``_env_top_k`` is all the number depends on, and
+    ``Tests/RAG/test_active_config_resolution.py`` pins BOTH that the two
+    resolutions agree and that this one stays torch-free.
+
+    Returns:
+        The active profile's ``search.default_top_k`` with the ``RAG_TOP_K``
+        env override applied, coerced to ``int``. The coercion is the one
+        deliberate difference from the full resolution, which leaves a
+        profile's stored value whatever type it was stored as: this one's
+        callers put the number straight into a query, so a profile that
+        somehow holds ``"15"`` must not hand a string to a ``LIMIT``.
+
+    Raises:
+        Exception: Whatever profile resolution or ``int(RAG_TOP_K)`` raises --
+        UI callers wrap this (``library_rag_state.library_rag_profile_top_k``)
+        because a broken profile must degrade to a default, not raise inside
+        a render.
+    """
+    profile = _resolved_active_profile()
+    base = (
+        profile.rag_config.search.default_top_k
+        if profile
+        else RAGConfig().search.default_top_k
+    )
+    return _env_top_k(int(base))
+
+
+def resolve_active_rag_search_mode() -> str:
+    """Resolve the active profile's search mode without building a full config.
+
+    Returns:
+        The normalized active search mode after applying ``RAG_SEARCH_MODE``.
+    """
+    profile = _resolved_active_profile()
+    base = (
+        profile.rag_config.search.default_search_mode
+        if profile
+        else RAGConfig().search.default_search_mode
+    )
+    return normalize_rag_search_mode(os.getenv("RAG_SEARCH_MODE") or base)
+
+
 def _apply_env_overrides(config: RAGConfig,
                          override_embedding_model: Optional[str] = None,
                          override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
@@ -177,10 +282,10 @@ def _apply_env_overrides(config: RAGConfig,
         config.chunking.chunk_overlap = int(chunk_overlap)
 
     # Search overrides
-    top_k = os.getenv("RAG_TOP_K")
-    if top_k:
-        config.search.default_top_k = int(top_k)
-    config.search.default_search_mode = os.getenv("RAG_SEARCH_MODE") or config.search.default_search_mode
+    config.search.default_top_k = _env_top_k(config.search.default_top_k)
+    config.search.default_search_mode = normalize_rag_search_mode(
+        os.getenv("RAG_SEARCH_MODE") or config.search.default_search_mode
+    )
 
     # Pipeline overrides
     config.pipeline.default_pipeline = os.getenv("RAG_DEFAULT_PIPELINE") or config.pipeline.default_pipeline
@@ -211,9 +316,7 @@ def resolve_active_rag_config(override_embedding_model: Optional[str] = None,
         A fresh ``RAGConfig`` (safe to mutate -- never the profile's own
         stored object) with all applicable env overrides applied.
     """
-    active = _active_profile_id()
-    mgr = _manager()
-    profile = mgr.get_profile(active) or mgr.get_profile(DEFAULT_PROFILE)
+    profile = _resolved_active_profile()
     base = copy.deepcopy(profile.rag_config) if profile else RAGConfig()
     return _apply_env_overrides(base, override_embedding_model, override_persist_dir)
 
@@ -250,6 +353,8 @@ def set_active_profile(profile_id: str) -> None:
             safe slug (e.g. empty, ``None``, or containing path-traversal /
             non-slug characters like ``"../x"``).
     """
+    from ..config_profiles import _slugify
+
     if not isinstance(profile_id, str) or not profile_id or profile_id != _slugify(profile_id):
         raise ValueError(
             f"set_active_profile: invalid profile_id {profile_id!r}; must be a "
@@ -514,6 +619,8 @@ def ensure_imported_profile() -> Optional[str]:
         # query-time legacy keys instead of silently discarding them --
         # never affects the fingerprint (see _LEGACY_SEARCH_KEYS docstring).
         legacy = _merge_legacy_query_time_keys(snapshot)
+        from ..config_profiles import ProfileConfig
+
         profile = ProfileConfig(id=_IMPORTED_ID, name="Imported settings",
                                 description="Snapshot of your active RAG profile (plus any RAG_* env "
                                             "overrides) captured on first run; edit freely.",

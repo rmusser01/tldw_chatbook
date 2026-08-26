@@ -4,16 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
+from textual.app import ComposeResult
+from textual.widgets import Button, Static
+
+from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSED
+from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_RAIL_CONTEXT_LABEL,
+    CONSOLE_RAIL_INSPECTOR_LABEL,
+)
 from tldw_chatbook.Widgets.destination_rail import DestinationRailHandle
 
 
 class ConsoleRailHandle(DestinationRailHandle):
-    """Rail handle carrying Console's fixed tooltips and badge abbreviations.
+    """Rail handle carrying Console's tooltips and compact vocabulary."""
 
-    The abbreviations exist because the collapsed inspector is eleven
-    columns wide. They are Console's vocabulary, not the shared base's.
-    """
+    VERTICAL_WIDTH = 3
+    VERTICAL_CONTENT_WIDTH = 1
 
     def __init__(
         self,
@@ -23,27 +29,18 @@ class ConsoleRailHandle(DestinationRailHandle):
         button_id: str,
         badge_id: str,
         side: str,
+        vertical: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Create Console's rail handle.
-
-        Forwards the base's keywords by name so a call site can only ever
-        supply them once. ``open_tooltip`` is deliberately not accepted here:
-        Console's tooltips are fixed strings derived from ``side``, not
-        caller-supplied.
+        """Create a Console rail handle.
 
         Args:
-            label: Rail name shown on the handle button. On the right side an
-                inspector label is abbreviated for display; see
-                ``_display_label``.
-            badge: Optional secondary line under the button. On the right side
-                approval and artifact copy is abbreviated to fit eleven
-                columns; see ``_display_badge``.
+            label: Rail name shown on the handle button.
+            badge: Optional secondary line under the button.
             button_id: DOM id for the open button.
             badge_id: DOM id for the badge static.
-            side: ``"left"`` for the Context rail, ``"right"`` for the
-                Inspector rail. Selects the fixed tooltip and both
-                abbreviation paths.
+            side: ``"left"`` for Context or ``"right"`` for Inspector.
+            vertical: Whether to stack the compact handle text top-to-bottom.
             kwargs: Forwarded to ``DestinationRailHandle``.
         """
         super().__init__(
@@ -57,33 +54,82 @@ class ConsoleRailHandle(DestinationRailHandle):
             ),
             **kwargs,
         )
+        self.vertical = vertical
+        if side == "right":
+            self.add_class("console-inspector-rail-handle")
+        if self.vertical:
+            self.add_class("console-rail-handle-vertical")
+            self.styles.width = self.VERTICAL_WIDTH
+            self.styles.min_width = self.VERTICAL_WIDTH
+            self.styles.max_width = self.VERTICAL_WIDTH
+
+    def compose(self) -> ComposeResult:
+        """Render the Inspector fill or opt-in vertical child geometry.
+
+        Returns:
+            Child widgets with Console-specific handle geometry.
+        """
+        for child in super().compose():
+            if self.vertical and isinstance(child, Button):
+                child.add_class("console-rail-handle-button-vertical")
+                child.styles.width = self.VERTICAL_CONTENT_WIDTH
+                child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
+                child.styles.height = "1fr"
+                child.styles.clear_rule("min_height")
+                child.styles.clear_rule("max_height")
+                child.styles.line_pad = 0
+            elif self.vertical and isinstance(child, Static):
+                child.add_class("console-rail-handle-badge-vertical")
+                child.styles.width = self.VERTICAL_CONTENT_WIDTH
+                child.styles.min_width = 0
+                child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
+            elif self.side == "right" and isinstance(child, Button):
+                child.styles.width = "100%"
+                child.styles.max_width = "100%"
+                child.styles.height = "1fr"
+                child.styles.min_height = 0
+                child.styles.max_height = "100%"
+                child.styles.line_pad = 0
+            yield child
 
     def _display_label(self) -> str:
-        """Return the compact visible label; full text stays in the tooltip.
-
-        Returns:
-            ``"Inspector"`` when the right-side label is the inspector's
-            canonical name, otherwise the label unchanged.
-        """
-        if self.side != "right":
-            return self.label
-        return "Inspector" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
+        """Return compact visible text while preserving full tooltips."""
+        if self.vertical:
+            return self._stack_vertical_label(self.label)
+        if self.side == "left":
+            return (
+                "Context->" if self.label == CONSOLE_RAIL_CONTEXT_LABEL else self.label
+            )
+        return "<-Inspect" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
 
     def _display_badge(self) -> str:
-        """Return badge copy that fits the collapsed inspector affordance.
+        """Return badge copy that fits the collapsed inspector affordance."""
+        display_badge = self.badge
+        if self.side == "right":
+            if self.badge == "1 approval":
+                display_badge = "1 appr"
+            elif self.badge.endswith(" approvals"):
+                count = self.badge.split(maxsplit=1)[0]
+                display_badge = f"{count} appr"
+            elif self.badge == "artifact":
+                display_badge = "art"
+        if self.vertical:
+            return self._stack_vertical_text(display_badge)
+        return display_badge
 
-        Returns:
-            On the right side, approval counts shortened to ``"<n> appr"`` and
-            ``"artifact"`` to ``"art"``; any other badge, and every left-side
-            badge, unchanged.
-        """
-        if self.side != "right":
-            return self.badge
-        if self.badge == "1 approval":
-            return "1 appr"
-        if self.badge.endswith(" approvals"):
-            count = self.badge.split(maxsplit=1)[0]
-            return f"{count} appr"
-        if self.badge == "artifact":
-            return "art"
-        return self.badge
+    @staticmethod
+    def _stack_vertical_label(label: str) -> str:
+        """Normalize known rail labels before rendering them one cell per row."""
+        normalized_label = " ".join(label.split())
+        if normalized_label == " ".join(CONSOLE_RAIL_CONTEXT_LABEL.split()):
+            normalized_label = normalized_label.removesuffix(GLYPH_COLLAPSED).rstrip()
+        elif normalized_label == " ".join(CONSOLE_RAIL_INSPECTOR_LABEL.split()):
+            normalized_label = normalized_label.removeprefix(
+                GLYPH_COLLAPSE_LEFT
+            ).lstrip()
+        return ConsoleRailHandle._stack_vertical_text(normalized_label)
+
+    @staticmethod
+    def _stack_vertical_text(text: str) -> str:
+        """Normalize whitespace and render each remaining character on its own row."""
+        return "\n".join(" ".join(text.split()))

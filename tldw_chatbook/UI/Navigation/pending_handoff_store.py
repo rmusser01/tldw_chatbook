@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import copy
 from dataclasses import dataclass, field
 from enum import StrEnum
+import math
 import re
 import threading
-from typing import Any, Generic, TypeVar
+import time
+from typing import Any, Generic, Literal, TypeAlias, TypeVar
 
 from ...ACP_Interop.runtime_session import ACP_SESSION_RECORD_PREFIX
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chat.console_chat_models import ConsoleFleetCompletionTarget
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.provider_readiness import provider_config_key
+from ...Prompt_Management.prompt_variables import PromptVariableApplication
+from .audio_cpp_model_handoff import (
+    AudioCppModelLibraryRequest,
+    AudioCppModelLibraryResult,
+)
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
+    STUDY_ORIGINS,
     StudyScopeContext,
 )
 
@@ -41,6 +50,43 @@ class ConsoleProviderIntent:
         object.__setattr__(self, "provider", normalized)
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleFirstChatIntent:
+    """Secret-free request to activate one exact first-run Console session."""
+
+    session_id: str
+    provider: str
+    model: str
+    config_revision: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.session_id) is not str
+            or not self.session_id
+            or self.session_id != self.session_id.strip()
+            or len(self.session_id) > 256
+        ):
+            raise ValueError("Console first-chat session is invalid")
+        if type(self.provider) is not str:
+            raise TypeError("Console first-chat provider must be text")
+        normalized_provider = provider_config_key(self.provider)
+        if (
+            not normalized_provider
+            or _PROVIDER_IDENTIFIER_PATTERN.fullmatch(normalized_provider) is None
+        ):
+            raise ValueError("Console first-chat provider is invalid")
+        if (
+            type(self.model) is not str
+            or not self.model
+            or self.model != self.model.strip()
+            or len(self.model) > 512
+        ):
+            raise ValueError("Console first-chat model is invalid")
+        if type(self.config_revision) is not int or self.config_revision < 1:
+            raise ValueError("Console first-chat config revision is invalid")
+        object.__setattr__(self, "provider", normalized_provider)
+
+
 class HandoffChannel(StrEnum):
     """Typed single-slot channels owned by the application."""
 
@@ -48,10 +94,20 @@ class HandoffChannel(StrEnum):
     CONSOLE_LIVE_WORK = "console_live_work"
     CONSOLE_PROMPT_INSERT = "console_prompt_insert"
     CONSOLE_PROVIDER = "console_provider"
+    #: PR3a-2 Task 4: a background sub-agent completion's deep link --
+    #: staged by the fleet drain consumer while Console is not the active
+    #: screen; the next Console mount claims it and switches to the
+    #: settled conversation's session (and Task 5's mount-claim reads the
+    #: same channel for wake delivery).
+    CONSOLE_FLEET_COMPLETION = "console_fleet_completion"
+    CONSOLE_FIRST_CHAT = "console_first_chat"
     STUDY_SCOPE = "study_scope"
     STUDY_INITIAL_SECTION = "study_initial_section"
+    STUDY_ORIGIN = "study_origin"
     ARTIFACT_CHATBOOK_TARGET = "artifact_chatbook_target"
     ACP_SESSION_TARGET = "acp_session_target"
+    AUDIO_CPP_MODEL_LIBRARY_REQUEST = "audio_cpp_model_library_request"
+    AUDIO_CPP_MODEL_LIBRARY_RESULT = "audio_cpp_model_library_result"
 
 
 class HandoffValueError(ValueError):
@@ -59,6 +115,7 @@ class HandoffValueError(ValueError):
 
 
 T = TypeVar("T")
+HandoffClaimStatus: TypeAlias = Literal["ready", "expired"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +125,11 @@ class HandoffClaim(Generic[T]):
     channel: HandoffChannel
     revision: int
     value: T = field(repr=False, compare=False)
+    status: HandoffClaimStatus = "ready"
+
+    def __post_init__(self) -> None:
+        if self.status not in ("ready", "expired"):
+            raise ValueError("handoff claim status is invalid")
 
 
 @dataclass(slots=True)
@@ -81,78 +143,259 @@ class _Slot:
     revision: int = 0
     pending: tuple[int, Any] | None = None
     in_flight: _InFlight | None = None
+    reserved_revisions: set[int] = field(default_factory=set)
 
 
 class PendingHandoffStore:
     """Own one latest pending value and one claim per typed channel."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        monotonic_clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if not callable(monotonic_clock):
+            raise TypeError("pending handoff clock must be callable")
         self._owner_thread_id = threading.get_ident()
+        self._monotonic_clock = monotonic_clock
+        self._lock = threading.RLock()
         self._slots = {channel: _Slot() for channel in HandoffChannel}
 
     def stage(self, channel: HandoffChannel, value: Any) -> int:
         """Normalize and replace the latest pending value for a channel."""
+        return self._stage(channel, value, reserves_new_session=False)
+
+    def stage_reserved_console_first_chat(
+        self,
+        intent: ConsoleFirstChatIntent,
+    ) -> int:
+        """Stage a first-chat intent whose absent exact target may be created."""
+
+        return self._stage(
+            HandoffChannel.CONSOLE_FIRST_CHAT,
+            intent,
+            reserves_new_session=True,
+        )
+
+    def _stage(
+        self,
+        channel: HandoffChannel,
+        value: Any,
+        *,
+        reserves_new_session: bool,
+    ) -> int:
         self._assert_owner_thread()
-        slot = self._slot_for(channel)
         normalized = self._detached_value(channel, value)
-        slot.revision += 1
-        slot.pending = (slot.revision, normalized)
-        return slot.revision
+        with self._lock:
+            slot = self._slot_for(channel)
+            if slot.pending is not None:
+                slot.reserved_revisions.discard(slot.pending[0])
+            slot.revision += 1
+            slot.pending = (slot.revision, normalized)
+            if reserves_new_session:
+                slot.reserved_revisions.add(slot.revision)
+            return slot.revision
 
     def clear_pending(self, channel: HandoffChannel) -> int:
         """Advance a channel and remove its latest unclaimed value."""
         self._assert_owner_thread()
+        with self._lock:
+            slot = self._slot_for(channel)
+            if slot.pending is not None:
+                slot.reserved_revisions.discard(slot.pending[0])
+            slot.revision += 1
+            slot.pending = None
+            return slot.revision
+
+    def discard_pending_exact(
+        self,
+        channel: HandoffChannel,
+        revision: int,
+        value: Any,
+    ) -> bool:
+        """Discard only one exact pending slot, even while another claim is active."""
+
+        self._assert_owner_thread()
+        if type(revision) is not int or revision < 1:
+            raise ValueError("handoff revision must be a positive exact integer")
         slot = self._slot_for(channel)
-        slot.revision += 1
+        normalized = self._detached_value(channel, value)
+        if slot.pending != (revision, normalized):
+            return False
         slot.pending = None
-        return slot.revision
+        return True
 
     def claim(self, channel: HandoffChannel) -> HandoffClaim[Any] | None:
         """Claim the pending value when no other consumer is in flight."""
         self._assert_owner_thread()
-        slot = self._slot_for(channel)
-        if slot.in_flight is not None or slot.pending is None:
-            return None
-        revision, retained_value = slot.pending
-        delivered_value = self._detached_value(channel, retained_value)
-        claim = HandoffClaim(
-            channel=channel,
-            revision=revision,
-            value=delivered_value,
-        )
-        slot.pending = None
-        slot.in_flight = _InFlight(
-            claim=claim,
-            retained_value=retained_value,
-        )
-        return claim
+        with self._lock:
+            slot = self._slot_for(channel)
+            if slot.in_flight is not None or slot.pending is None:
+                return None
+            revision, retained_value = slot.pending
+            status: HandoffClaimStatus = "ready"
+            if channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
+                now = self._monotonic_now()
+                if retained_value.is_expired(now_monotonic=now):
+                    status = "expired"
+            delivered_value = self._detached_value(channel, retained_value)
+            claim = HandoffClaim(
+                channel=channel,
+                revision=revision,
+                value=delivered_value,
+                status=status,
+            )
+            slot.pending = None
+            slot.in_flight = _InFlight(
+                claim=claim,
+                retained_value=retained_value,
+            )
+            return claim
 
     def has_pending(self, channel: HandoffChannel) -> bool:
         """Return whether a channel has an unclaimed value without exposing it."""
         self._assert_owner_thread()
-        return self._slot_for(channel).pending is not None
+        with self._lock:
+            return self._slot_for(channel).pending is not None
+
+    def is_current_claim(self, claim: HandoffClaim[Any]) -> bool:
+        """Return whether a claim still owns the channel's latest revision."""
+
+        self._assert_owner_thread()
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            return (
+                current is not None
+                and current.claim is claim
+                and slot.revision == claim.revision
+            )
 
     def acknowledge(self, claim: HandoffClaim[Any]) -> bool:
         """Settle only the exact claim currently in flight."""
         self._assert_owner_thread()
-        slot = self._slot_for_claim(claim)
-        current = slot.in_flight
-        if current is None or current.claim is not claim:
-            return False
-        slot.in_flight = None
-        return True
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            if current is None or current.claim is not claim:
+                return False
+            slot.in_flight = None
+            slot.reserved_revisions.discard(claim.revision)
+            return True
+
+    def acknowledge_current(self, claim: HandoffClaim[Any]) -> bool:
+        """Settle a claim only while it still owns the latest revision."""
+
+        self._assert_owner_thread()
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            if (
+                current is None
+                or current.claim is not claim
+                or slot.revision != claim.revision
+            ):
+                return False
+            slot.in_flight = None
+            slot.reserved_revisions.discard(claim.revision)
+            return True
+
+    def claim_reserves_new_console_session(
+        self,
+        claim: HandoffClaim[ConsoleFirstChatIntent],
+    ) -> bool:
+        """Return reservation metadata only for the exact in-flight claim."""
+
+        self._assert_owner_thread()
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            if claim.channel is not HandoffChannel.CONSOLE_FIRST_CHAT:
+                raise ValueError("reservation metadata requires a first-chat claim")
+            current = slot.in_flight
+            return (
+                current is not None
+                and current.claim is claim
+                and claim.revision in slot.reserved_revisions
+            )
 
     def release(self, claim: HandoffClaim[Any]) -> bool:
         """Release an exact claim without overwriting a newer revision."""
+        released, _prompt_status = self._release_claim(claim)
+        return released
+
+    def release_prompt_claim(
+        self,
+        claim: HandoffClaim[PromptVariableApplication],
+    ) -> HandoffClaimStatus | None:
+        """Atomically retry or expire one exact Prompt claim.
+
+        Args:
+            claim: The Prompt claim being released after a transient failure.
+
+        Returns:
+            ``"ready"`` when the exact claim was requeued, ``"expired"``
+            when it was terminally settled by the injected clock, or ``None``
+            when the claim was not exact or a newer revision superseded it.
+
+        Raises:
+            RuntimeError: If called outside the owning thread.
+            TypeError: If ``claim`` is not a :class:`HandoffClaim`.
+            ValueError: If ``claim`` does not belong to the Prompt channel.
+        """
         self._assert_owner_thread()
-        slot = self._slot_for_claim(claim)
-        current = slot.in_flight
-        if current is None or current.claim is not claim:
+        self._slot_for_claim(claim)
+        if claim.channel is not HandoffChannel.CONSOLE_PROMPT_INSERT:
+            raise ValueError("release_prompt_claim requires a Prompt claim")
+        _released, prompt_status = self._release_claim(claim)
+        return prompt_status
+
+    def _release_claim(
+        self,
+        claim: HandoffClaim[Any],
+    ) -> tuple[bool, HandoffClaimStatus | None]:
+        """Settle one exact claim and report a Prompt retry outcome."""
+        self._assert_owner_thread()
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            if current is None or current.claim is not claim:
+                return False, None
+            slot.in_flight = None
+            should_requeue = slot.revision == claim.revision
+            prompt_status: HandoffClaimStatus | None = None
+            if should_requeue and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
+                should_requeue = claim.status == "ready" and self._prompt_is_unexpired(
+                    current.retained_value
+                )
+                prompt_status = "ready" if should_requeue else "expired"
+            if should_requeue:
+                slot.pending = (claim.revision, current.retained_value)
+            else:
+                slot.reserved_revisions.discard(claim.revision)
+            return True, prompt_status
+
+    def _prompt_is_unexpired(self, value: PromptVariableApplication) -> bool:
+        try:
+            now = self._monotonic_now()
+        except HandoffValueError:
             return False
-        slot.in_flight = None
-        if slot.revision == claim.revision:
-            slot.pending = (claim.revision, current.retained_value)
-        return True
+        return not value.is_expired(now_monotonic=now)
+
+    def _monotonic_now(self) -> float:
+        try:
+            value = self._monotonic_clock()
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError
+            normalized = float(value)
+            if not math.isfinite(normalized):
+                raise ValueError
+        except MemoryError:
+            raise
+        except Exception:
+            raise HandoffValueError(
+                "handoff clock must return a finite number"
+            ) from None
+        return normalized
 
     def _assert_owner_thread(self) -> None:
         if threading.get_ident() != self._owner_thread_id:
@@ -192,15 +435,39 @@ class PendingHandoffStore:
                 raise ValueError("invalid Console launch")
             return copied
         if channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
-            if not isinstance(value, str):
-                raise TypeError("Console prompt must be text")
-            if not value.strip():
-                raise ValueError("Console prompt must be non-empty text")
-            return value
+            if not isinstance(value, PromptVariableApplication):
+                raise TypeError("Console prompt handoff must be typed")
+            return PromptVariableApplication(
+                system_text=value.system_text,
+                user_text=value.user_text,
+                apply_system=value.apply_system,
+                apply_user=value.apply_user,
+                destination=value.destination,
+                target_session_id=value.target_session_id,
+                composer_fingerprint=value.composer_fingerprint,
+                system_fingerprint=value.system_fingerprint,
+                created_monotonic=value.created_monotonic,
+            )
         if channel is HandoffChannel.CONSOLE_PROVIDER:
             if not isinstance(value, ConsoleProviderIntent):
                 raise TypeError("Console provider handoff must be typed")
             return ConsoleProviderIntent(provider=value.provider)
+        if channel is HandoffChannel.CONSOLE_FLEET_COMPLETION:
+            if not isinstance(value, ConsoleFleetCompletionTarget):
+                raise TypeError("Console fleet completion handoff must be typed")
+            return ConsoleFleetCompletionTarget(
+                conversation_id=value.conversation_id,
+                session_id=value.session_id,
+            )
+        if channel is HandoffChannel.CONSOLE_FIRST_CHAT:
+            if not isinstance(value, ConsoleFirstChatIntent):
+                raise TypeError("Console first-chat handoff must be typed")
+            return ConsoleFirstChatIntent(
+                session_id=value.session_id,
+                provider=value.provider,
+                model=value.model,
+                config_revision=value.config_revision,
+            )
         if channel is HandoffChannel.STUDY_SCOPE:
             if not isinstance(value, StudyScopeContext):
                 raise TypeError("Study scope must be a StudyScopeContext")
@@ -212,6 +479,13 @@ class PendingHandoffStore:
             if normalized not in STUDY_INITIAL_SECTIONS:
                 raise ValueError("invalid Study section")
             return normalized
+        if channel is HandoffChannel.STUDY_ORIGIN:
+            if not isinstance(value, str):
+                raise TypeError("Study origin must be text")
+            normalized = value.strip()
+            if normalized not in STUDY_ORIGINS:
+                raise ValueError("invalid Study origin")
+            return normalized
         if channel is HandoffChannel.ARTIFACT_CHATBOOK_TARGET:
             return PendingHandoffStore._canonical_target(
                 value,
@@ -221,6 +495,24 @@ class PendingHandoffStore:
             return PendingHandoffStore._canonical_target(
                 value,
                 prefix=ACP_SESSION_RECORD_PREFIX,
+            )
+        if channel is HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST:
+            if type(value) is not AudioCppModelLibraryRequest:
+                raise TypeError("audio.cpp Model Library request must be exact")
+            return AudioCppModelLibraryRequest(
+                token=value.token,
+                draft_revision=value.draft_revision,
+            )
+        if channel is HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT:
+            if type(value) is not AudioCppModelLibraryResult:
+                raise TypeError("audio.cpp Model Library result must be exact")
+            return AudioCppModelLibraryResult(
+                token=value.token,
+                draft_revision=value.draft_revision,
+                artifact_id=value.artifact_id,
+                revision=value.revision,
+                variant=value.variant,
+                canonical_root=value.canonical_root,
             )
         raise ValueError("unsupported handoff channel")
 

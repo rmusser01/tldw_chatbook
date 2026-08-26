@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from rich.console import Console as RichConsole
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.screen import Screen
 from textual.widgets import Button, ListItem, ListView, Static
 
@@ -64,7 +68,11 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
-from Tests.UI.console_controller_stubs import stub_message_controller
+from Tests.UI.console_controller_stubs import (
+    stub_fleet_controller,
+    stub_image_controller,
+    stub_message_controller,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -154,9 +162,7 @@ def _trace(
         attempt_ordinal=1,
         kind=AnswerAttemptKind.PIPELINE_RERUN,
         prompt_evidence_set_id=prompt_set.prompt_set_id,
-        occurrences=(
-            _occurrence(6, 3, 3, StructuralValidationState.VALID),
-        ),
+        occurrences=(_occurrence(6, 3, 3, StructuralValidationState.VALID),),
         created_at=NOW,
     )
     selected_attempt = AnswerAttempt(
@@ -469,8 +475,18 @@ def _bare_screen(
     app_db: object | None = None,
 ) -> ChatScreen:
     screen = ChatScreen.__new__(ChatScreen)
+    # Precedes the `_console_chat_store` assignment on purpose: that setter
+    # reaches `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` while building the chat
+    # controller's kwargs (TASK-21381).
+    stub_fleet_controller(screen, context="_bare_screen")
     screen._console_chat_store = _FakeStore(messages)
     screen._console_citation_counts = {}
+    screen._console_annotation_previews = {}
+    screen._console_annotation_loaded_conversation = None
+    # Dev's turn-activity line (task-17652 era): the sync path reads
+    # self._agent.console_turn_activity() every tick.
+    screen._agent = SimpleNamespace(console_turn_activity=lambda: "")
     screen._console_citation_resolved_signatures = {}
     screen._console_citation_input_signature = None
     screen._console_citation_repository_token = None
@@ -483,11 +499,18 @@ def _bare_screen(
     screen._sync_native_console_transcript_to_legacy_surface = _async_noop
     screen._sync_native_console_chat_ui = _async_noop
     _attach_message_controller(screen)
+    stub_image_controller(
+        screen,
+        context="test_console_citation_sources._bare_screen",
+    )
+    screen._video = SimpleNamespace(_build_video_card_specs=lambda _messages: {})
     return screen
 
 
 @pytest.mark.asyncio
-async def test_discovery_queries_only_complete_persisted_assistants_with_two_args() -> None:
+async def test_discovery_queries_only_complete_persisted_assistants_with_two_args() -> (
+    None
+):
     eligible = _message("assistant-ok", persisted_message_id="persisted-ok")
     messages = [
         eligible,
@@ -581,8 +604,7 @@ def test_citation_count_read_hides_verified_active_revoked_trace(tmp_path) -> No
 
         assert active.state is ActiveCitationTraceState.ACTIVE
         assert (
-            active.availability_warning
-            is CitationAvailabilityWarning.EVIDENCE_REVOKED
+            active.availability_warning is CitationAvailabilityWarning.EVIDENCE_REVOKED
         )
         assert repository.verify_active_trace_result(active) is True
 
@@ -684,7 +706,9 @@ def test_stable_repository_and_identical_signature_dispatch_only_one_worker() ->
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stale_change", ["body", "persisted-id", "session", "generation"])
+@pytest.mark.parametrize(
+    "stale_change", ["body", "persisted-id", "session", "generation"]
+)
 async def test_late_discovery_is_discarded_after_signature_or_generation_change(
     stale_change: str,
 ) -> None:
@@ -779,9 +803,7 @@ async def test_repository_error_isolated_to_message_and_other_count_still_resolv
             "persisted-bad": bad_result,
             "persisted-good": good_result,
         },
-        lookup_error_id=(
-            "persisted-bad" if raising_boundary == "lookup" else None
-        ),
+        lookup_error_id=("persisted-bad" if raising_boundary == "lookup" else None),
         verify_error_result=bad_result if raising_boundary == "verify" else None,
     )
     messages = [
@@ -826,7 +848,9 @@ async def _dispatch_and_run(
 
 
 @pytest.mark.asyncio
-async def test_new_eligible_message_queries_only_new_entry_after_history_resolves() -> None:
+async def test_new_eligible_message_queries_only_new_entry_after_history_resolves() -> (
+    None
+):
     repository = _FakeRepository(_active_result(_trace()))
     messages = [
         _message("assistant-1", persisted_message_id="persisted-1"),
@@ -974,14 +998,15 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         None,
     )
     screen._current_console_run_status_value = lambda: "idle"
-    screen._build_console_image_specs = lambda _messages: {}
-    screen._build_generation_card_specs = lambda _messages: {}
+    screen._console_presentation_context = lambda: None
+    screen._image._build_console_image_specs = lambda _messages: {}
+    screen._image._build_generation_card_specs = lambda _messages: {}
     screen._ensure_console_image_view = lambda: (
         None,
         SimpleNamespace(pending_ids=lambda _message_ids: ()),
     )
     screen._recent_console_image_messages = lambda _messages: ()
-    screen._pending_console_generation_card_images = (
+    screen._image._pending_console_generation_card_images = (
         lambda _messages, _card_specs: ()
     )
     screen._console_image_preparing = set()
@@ -990,16 +1015,22 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
 
     transcript = SimpleNamespace(
         pending_selection_id=None,
+        set_presentation_context=Mock(),
+        set_change_review_provider_factory=Mock(),
         set_messages=Mock(),
         set_citation_counts=Mock(),
+        set_annotation_previews=Mock(),
+        apply_turn_activity=Mock(return_value=""),
         set_original_attempt_previews=Mock(),
         set_summary_boundary=Mock(),
         sync_jump_indicator=Mock(),
         set_image_specs=Mock(),
         set_generation_card_specs=Mock(),
+        set_video_card_specs=Mock(),
         refresh_messages=AsyncMock(),
     )
     screen.query_one = Mock(return_value=transcript)
+    screen._console_transcript_region_or_none = lambda: None
 
     await screen._sync_native_console_transcript()
     screen._console_citation_counts = {"assistant-uncited": 0}
@@ -1030,13 +1061,15 @@ async def test_replacement_worker_includes_unchanged_entry_still_unresolved() ->
     ]
 
 
-class _MountedTranscriptHarness(App):
+class _MountedTranscriptHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
 
 
 @pytest.mark.asyncio
-async def test_existing_focused_sources_row_stays_mounted_for_unrelated_new_entry() -> None:
+async def test_existing_focused_sources_row_stays_mounted_for_unrelated_new_entry() -> (
+    None
+):
     historical = _message("assistant-1", persisted_message_id="persisted-1")
     messages = [historical]
     screen = _bare_screen(messages, _FakeRepository(_active_result(_trace())))
@@ -1050,9 +1083,7 @@ async def test_existing_focused_sources_row_stays_mounted_for_unrelated_new_entr
         transcript.set_messages(messages)
         transcript.set_citation_counts(screen._console_citation_counts)
         await transcript.refresh_messages()
-        existing_button = transcript.query_one(
-            "#console-citation-sources-assistant-1"
-        )
+        existing_button = transcript.query_one("#console-citation-sources-assistant-1")
         existing_button.focus()
         await pilot.pause()
         assert existing_button.has_focus
@@ -1064,9 +1095,7 @@ async def test_existing_focused_sources_row_stays_mounted_for_unrelated_new_entr
         await transcript.refresh_messages()
         await pilot.pause()
 
-        matching = list(
-            transcript.query("#console-citation-sources-assistant-1")
-        )
+        matching = list(transcript.query("#console-citation-sources-assistant-1"))
         assert matching == [existing_button]
         assert existing_button.has_focus
 
@@ -1120,7 +1149,9 @@ async def test_inflight_result_is_discarded_after_repository_identity_change(
 
 
 @pytest.mark.asyncio
-async def test_same_transcript_discovers_when_missing_repository_later_appears() -> None:
+async def test_same_transcript_discovers_when_missing_repository_later_appears() -> (
+    None
+):
     app_db = object()
     messages = [_message("assistant", persisted_message_id="persisted")]
     screen = _bare_screen(messages, None, app_db=app_db)
@@ -1141,7 +1172,9 @@ async def test_same_transcript_discovers_when_missing_repository_later_appears()
 
 
 @pytest.mark.asyncio
-async def test_valid_repository_replacement_invalidates_and_requeries_same_transcript() -> None:
+async def test_valid_repository_replacement_invalidates_and_requeries_same_transcript() -> (
+    None
+):
     app_db = object()
     first_repository = _FakeRepository(_active_result(_trace()), db=app_db)
     messages = [_message("assistant", persisted_message_id="persisted")]
@@ -1220,7 +1253,7 @@ class _HydrationRepository:
         return self.hydration
 
 
-class _CitationHarnessApp(App):
+class _CitationHarnessApp(ConsolidatedCSSApp):
     def __init__(
         self,
         screen: ChatScreen,
@@ -1282,6 +1315,11 @@ def _citation_harness(
     )
     screen = ChatScreen.__new__(ChatScreen)
     Screen.__init__(screen)
+    # Precedes the `_console_chat_store` assignment on purpose: that setter
+    # reaches `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` while building the chat
+    # controller's kwargs (TASK-21381).
+    stub_fleet_controller(screen, context="citation harness screen")
     screen._console_chat_store = _FakeStore([message])
     screen._console_citation_counts = {"assistant-1": 2}
     screen._console_citation_request_generation = 1
@@ -1355,10 +1393,7 @@ async def test_modal_authorization_and_revalidation_are_exact_and_ordered() -> N
 
 @pytest.mark.asyncio
 async def test_modal_render_output_neutralizes_terminal_controls_only() -> None:
-    raw_title = (
-        "[cyan]\x1b]8;;https://example.invalid\x07Source"
-        "\x1b]8;;\x07[/cyan]\r"
-    )
+    raw_title = "[cyan]\x1b]8;;https://example.invalid\x07Source\x1b]8;;\x07[/cyan]\r"
     raw_chunk = (
         "[link](https://example.invalid) [bold red]literal[/bold red] Ω\n"
         "\tCSI=\x1b[31mred\x1b[0m OSC=\x1b]8;;https://example.invalid\x07link"
@@ -1530,7 +1565,10 @@ async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
             if isinstance(widget, Static) and widget.renderable == "Sources unavailable"
         ]
         assert len(states) == 1
-        assert len(modal.query_one("#console-citation-source-list", ListView).children) == 0
+        assert (
+            len(modal.query_one("#console-citation-source-list", ListView).children)
+            == 0
+        )
 
 
 @pytest.mark.asyncio
@@ -1610,9 +1648,12 @@ async def test_message_or_database_change_discards_late_hydration(
             await pilot.pause(0.1)
 
             assert modal.display_rows == ()
-            assert modal.query_one(
-                "#console-citation-source-chunk", Static
-            ).renderable.plain == ""
+            assert (
+                modal.query_one(
+                    "#console-citation-source-chunk", Static
+                ).renderable.plain
+                == ""
+            )
     finally:
         release.set()
 
@@ -1678,11 +1719,15 @@ async def test_message_change_during_real_list_extend_discards_mounted_rows(
 
 
 @pytest.mark.asyncio
-async def test_screen_and_transcript_do_not_cache_governed_payloads_or_chunk_body() -> None:
+async def test_screen_and_transcript_do_not_cache_governed_payloads_or_chunk_body() -> (
+    None
+):
     app, screen, _repository, _message = _citation_harness()
-    exact_chunk = _hydration_result().governed_payloads.evidence_snapshot_payloads[
-        1
-    ].snapshot_text
+    exact_chunk = (
+        _hydration_result()
+        .governed_payloads.evidence_snapshot_payloads[1]
+        .snapshot_text
+    )
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1693,9 +1738,7 @@ async def test_screen_and_transcript_do_not_cache_governed_payloads_or_chunk_bod
             value for value in vars(screen).values() if isinstance(value, str)
         }
         assert exact_chunk not in {
-            value
-            for value in vars(app.transcript).values()
-            if isinstance(value, str)
+            value for value in vars(app.transcript).values() if isinstance(value, str)
         }
         assert not any(
             isinstance(value, (CitationHydrationResult, GovernedCitationPayloads))

@@ -1,29 +1,31 @@
-"""Watchlists workbench: two collapsible rails around a stacked centre.
-
-The shared ``DestinationWorkbench`` cannot express this layout — it is a
-fixed ``Horizontal`` of equal-width panes composed once from a frozen tuple,
-with no collapse, resize, or vertical stacking. If the collapse behaviour
-here proves useful to a second screen, it graduates into the shared widget
-then; generalising ahead of a second consumer is not worth it.
-"""
+"""Watchlists workbench with a permanent horizontal centre canvas."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
-from .region_layout import CENTRE_REGIONS, Region, RegionLayout
+from .pane_grip import RegionToggled, WatchlistsPaneGrip
+from .region_layout import Region, RegionLayout
 
+__all__ = [
+    "REGION_TITLES",
+    "RegionLayoutApplied",
+    "RegionLayoutApplyFailed",
+    "RegionToggled",
+    "WatchlistsWorkbench",
+]
 
-#: Human-readable titles, used for both expanded bodies and collapsed headers.
 REGION_TITLES: dict[Region, str] = {
     Region.LEFT_RAIL: "Watchlists",
     Region.ITEMS: "Items",
@@ -31,322 +33,559 @@ REGION_TITLES: dict[Region, str] = {
     Region.RIGHT_RAIL: "Inspector",
 }
 
-#: Regions whose supplied pane draws its own heading, so adding the generic
-#: region title from `REGION_TITLES` would produce a *second* heading.
-#:
-#: This is deliberately NOT the same signal as "a content factory was
-#: supplied for this region". The two diverge at LEFT_RAIL: it supplies
-#: content too, but that content (`WatchlistTree`) composes only navigation
-#: `Button`s and no heading widget at all (see `watchlist_tree.py::compose`),
-#: so keying suppression on factory-presence -- as this module did before --
-#: rendered the expanded left rail as an unlabelled bordered box while its
-#: *collapsed* header still read "▸ Watchlists". Membership here means
-#: "the pane supplies its own heading", which is the actual rule.
-#:
-#: Task 4 wired `ContentPane` into CONTENT (`watchlists_collections_screen.py`
-#: `_build_content_pane`) and deliberately did NOT add `Region.CONTENT` here:
-#: `ContentPane.compose()` yields only a bare `Static` (the placeholder or the
-#: rendered item), no heading widget of its own -- the same shape as
-#: LEFT_RAIL's `WatchlistTree` above, which is excluded for the identical
-#: reason. CONTENT gets the generic "Content" title like LEFT_RAIL gets
-#: "Watchlists".
 SELF_HEADED_REGIONS: frozenset[Region] = frozenset(
     {Region.ITEMS, Region.RIGHT_RAIL}
 )
 
+_READ_GRIP_REGIONS: tuple[Region, ...] = (
+    Region.LEFT_RAIL,
+    Region.ITEMS,
+    Region.RIGHT_RAIL,
+)
+_MANAGEMENT_GRIP_REGIONS: tuple[Region, ...] = (
+    Region.LEFT_RAIL,
+    Region.RIGHT_RAIL,
+)
+_EXPANDED_SIDE_PANE_CLASS = "watchlists-has-expanded-side-pane"
 
-class RegionToggled(Message):
-    """A collapsed region's header or rail handle was activated."""
 
-    def __init__(self, region: Region) -> None:
+class RegionLayoutApplyFailed(Message):
+    """Report a rejected layout so the screen can roll back its preference."""
+
+    def __init__(
+        self,
+        *,
+        token: int,
+        attempted: RegionLayout,
+        fallback: RegionLayout,
+    ) -> None:
         super().__init__()
-        self.region = region
+        self.token = token
+        self.attempted = attempted
+        self.fallback = fallback
 
 
-class WatchlistsWorkbench(Horizontal):
-    """Renders a :class:`RegionLayout` as rails plus a stacked centre.
+class RegionLayoutApplied(Message):
+    """Acknowledge a successful effective-layout transition."""
 
-    The reactive is named ``region_layout``, not ``layout``: ``Widget.layout``
-    is an existing, unsettable Textual property (``textual/widget.py``) that
-    the compositor reads on every arrange pass (``widget.layout.arrange(...)``
-    in ``textual/_arrange.py``). A same-named reactive here shadows it, so
-    Textual ends up calling ``.arrange()`` on our ``RegionLayout`` domain
-    object instead of the real layout strategy and crashes with
-    ``AttributeError: 'RegionLayout' object has no attribute 'arrange'`` on
-    first render. Verified with a minimal repro using an unrelated reactive
-    also named ``layout``, so this is a general Widget-subclass constraint,
-    not specific to this dataclass.
+    def __init__(
+        self, *, token: int, previous: RegionLayout, layout: RegionLayout
+    ) -> None:
+        super().__init__()
+        self.token = token
+        self.previous = previous
+        self.layout = layout
 
-    Attributes:
-        region_layout: The current collapse/solo state. Setting it
-            (`recompose=True`) unmounts and rebuilds every region, not just
-            the one that changed — see `__init__`'s note on `content` for
-            why that requires factories rather than widget instances.
+
+class WatchlistsWorkbench(Vertical):
+    """Render optional chrome above a permanent horizontal centre.
+
+    Read permanently anchors :class:`Region.CONTENT`; Navigation, Feed Items,
+    and Inspector are independently collapsible side panes. Management tabs
+    permanently anchor :class:`Region.ITEMS` and omit the Feed Items grip and
+    Reader.
     """
 
-    region_layout: reactive[RegionLayout] = reactive(RegionLayout(), recompose=True)
+    effective_layout_request: reactive[tuple[int, RegionLayout]] = reactive(
+        (0, RegionLayout())
+    )
 
     def __init__(
         self,
         layout: RegionLayout,
         content: Mapping[Region, Callable[[], Widget]] | None = None,
-        hidden: frozenset[Region] = frozenset(),
         header: Callable[[], Widget] | None = None,
-        collapsed_suffixes: Mapping[Region, str] | None = None,
+        *,
+        read_mode: bool,
         **kwargs: Any,
     ) -> None:
-        """Build the workbench, seeding `region_layout` without triggering a recompose.
+        """Build the workbench from reusable region factories.
 
         Args:
-            layout: Initial collapse/solo state.
-            content: Per-region **factories**, not widget instances —
-                ``region_layout`` is ``recompose=True``, so *any* collapse/
-                solo/rail toggle fully unmounts and rebuilds every region,
-                not just the one that changed (that blast radius is
-                inherited from the reactive design, not introduced here).
-                Passing already-constructed instances was tried first and
-                verified broken empirically: a container widget's
-                constructor-supplied children (e.g. ``Vertical(Static(...),
-                Static(...))``) are consumed on that widget's *first* mount
-                only. Once such an instance has been unmounted (as part of
-                a recompose) and the *same* instance is handed back to
-                `compose()` again, it remounts with zero children — its
-                grandchildren do not come back. A leaf widget with no
-                children of its own (e.g. a bare ``Label``) happens to
-                survive remounting, and a widget with an *overridden*
-                ``compose()`` (which regenerates its children from scratch
-                every call) also survives — which is exactly why this was
-                easy to miss with a single-recompose test. A factory
-                sidesteps the whole class of bug by handing back a brand
-                new instance on every region rebuild, matching how
-                ``WatchlistsTabStrip`` (an overridden-``compose()``
-                widget) already behaves.
-            hidden: Centre regions to omit from `compose()` entirely — no
-                collapsed header, no body (TASK-1344 AC#4: gated regions
-                UNMOUNT rather than keep a one-row header). The caller
-                (`WatchlistsCollectionsScreen._hidden_centre_regions`)
-                decides which regions this is, keyed on `active_section`;
-                the workbench itself has no opinion about tabs. Constructor-
-                only, not a reactive: the caller fully reconstructs this
-                widget (via `compose_content`'s own recompose) whenever
-                `active_section` changes, so nothing here needs to react to
-                that change directly. A plain toggle/solo (`_apply_layout`
-                pushing a new `region_layout` onto the ALREADY-mounted
-                instance) never changes which tab is active, so a stale
-                `hidden` is never observable.
-            header: An optional factory for a widget rendered as the FIRST
-                child of the centre stack, unconditionally — regardless of
-                `hidden`. TASK-1344: the section tab strip and the
-                snapshot's own loading/error/empty markers are cross-
-                cutting chrome, not region content, so they must survive
-                CONTENT being hidden on every non-Read tab. Since
-                task-2513 removed the FEEDS region (whose own inline copy
-                used to carry that chrome on Read), the screen wires this
-                on EVERY tab — Read included; `None` is for callers (and
-                tests) that genuinely have no header to show. This class
-                stays a generic building block with no opinion about tabs,
-                and any two factories that both mount an id must never be
-                combined by a caller, same as ever.
+            layout: Effective side-pane collapse state.
+            content: Per-region factories. A remounted pane always receives a
+                fresh widget instance.
+            header: Optional factory for the chrome above the horizontal body.
+            read_mode: Whether the permanent Reader view is active.
         """
         super().__init__(**kwargs)
         self.add_class("watchlists-workbench")
         self._content: dict[Region, Callable[[], Widget]] = dict(content or {})
-        self._hidden = frozenset(hidden)
         self._header = header
-        # Extra text appended to a collapsed region's header (task-2513 Task
-        # 9): "▸ Watchlists  12 unread". Mutable via `set_collapsed_suffixes`
-        # because counts change while the region stays collapsed.
-        self._collapsed_suffixes: dict[Region, str] = dict(collapsed_suffixes or {})
-        self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+        self.read_mode = read_mode
+        self._rendered_layout = layout
+        self._layout_apply_lock = asyncio.Lock()
+        self.set_class(self.read_mode, "watchlists-read-mode")
+        self.set_reactive(
+            WatchlistsWorkbench.effective_layout_request, (0, layout)
+        )
+        self._sync_expanded_side_pane_class(layout=layout)
+
+    @property
+    def region_layout(self) -> RegionLayout:
+        """The effective layout currently represented by the mounted DOM."""
+        return self._rendered_layout
+
+    def request_region_layout(self, layout: RegionLayout, *, token: int) -> None:
+        """Request one correlated effective-layout transition."""
+        if layout == self._rendered_layout and not self._layout_apply_lock.locked():
+            self.set_reactive(
+                WatchlistsWorkbench.effective_layout_request, (token, layout)
+            )
+            self.post_message(
+                RegionLayoutApplied(
+                    token=token, previous=self._rendered_layout, layout=layout
+                )
+            )
+            return
+        self.effective_layout_request = (token, layout)
 
     def compose(self) -> ComposeResult:
-        """Render the left rail, the stacked centre, and the right rail.
+        """Mount the header first and the horizontal workbench body second."""
+        if self._header is not None:
+            yield self._header()
+        with Horizontal(id="wl-workbench-body"):
+            for node in self._desired_body_nodes():
+                yield node
 
-        Re-runs in full on every `region_layout` change (`recompose=True`),
-        rebuilding all four regions from `self.region_layout` and
-        `self._content` regardless of which single region actually changed.
+    def _desired_body_nodes(self) -> list[Widget]:
+        """Construct the currently desired body children in display order."""
+        nodes: list[Widget] = []
+        if not self.region_layout.is_collapsed(Region.LEFT_RAIL):
+            nodes.append(self._region_body(Region.LEFT_RAIL))
+        nodes.append(self._grip(Region.LEFT_RAIL))
 
-        Returns:
-            The left-rail region, the centre `Vertical` (an optional header,
-            then ITEMS/CONTENT minus anything in `self._hidden`), and
-            the right-rail region, in that order.
-        """
-        yield self._region_widget(Region.LEFT_RAIL)
+        if self.read_mode:
+            if not self.region_layout.is_collapsed(Region.ITEMS):
+                nodes.append(self._region_body(Region.ITEMS))
+            nodes.append(self._grip(Region.ITEMS))
+            nodes.append(self._region_body(Region.CONTENT))
+        else:
+            nodes.append(self._region_body(Region.ITEMS))
 
-        with Vertical(id="wl-centre", classes="watchlists-centre"):
-            if self._header is not None:
-                yield self._header()
-            for region in CENTRE_REGIONS:
-                if region in self._hidden:
-                    continue
-                yield self._region_widget(region)
+        nodes.append(self._grip(Region.RIGHT_RAIL))
+        if not self.region_layout.is_collapsed(Region.RIGHT_RAIL):
+            nodes.append(self._region_body(Region.RIGHT_RAIL))
+        return nodes
 
-        yield self._region_widget(Region.RIGHT_RAIL)
-
-    def _region_widget(self, region: Region) -> Widget:
-        """Build one region: a titled body, or a focusable one-line header.
-
-        Returns a constructed widget rather than yielding, so `compose` stays
-        the single place that mounts anything. Building children positionally
-        avoids the `with container: ... ; yield container` shape, which
-        double-mounts — Textual's `with` already adds the container.
-
-        Args:
-            region: The region to build, per `self.region_layout`'s current
-                collapse state.
-
-        Returns:
-            A focusable `Button` header when `region` is collapsed,
-            otherwise a focusable `Vertical` body holding the region's
-            title and its supplied content (or the placeholder stub).
-        """
-        if self.region_layout.is_collapsed(region):
-            # A Button, not a Static: a collapsed region must stay focusable
-            # and clickable, or collapsing it is one-way.
-            suffix = self._collapsed_suffixes.get(region, "")
-            header = Button(
-                f"▸ {REGION_TITLES[region]}" + (f"  {suffix}" if suffix else ""),
-                id=f"wl-header-{region.value}",
-                compact=True,
-            )
-            header.add_class("watchlists-region-header")
-            header.tooltip = f"Expand {REGION_TITLES[region]}"
-            return header
-
-        factory = self._content.get(region)
+    def _region_body(
+        self,
+        region: Region,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+    ) -> Vertical:
+        """Build one expanded body around its current factory output."""
+        factory = (self._content if content is None else content).get(region)
         supplied = factory() if factory is not None else None
-        # Two independent questions, deliberately kept apart:
-        #
-        #   1. Does this region draw the generic `REGION_TITLES` heading?
-        #      Only when its pane does NOT supply one — `SELF_HEADED_REGIONS`
-        #      (see that constant for why this is not the factory check).
-        #   2. Does this region render the placeholder stub, or real content?
-        #      That IS the factory check.
-        #
-        # They looked identical while ITEMS/RIGHT_RAIL were the only wired
-        # self-headed regions, which is how LEFT_RAIL — wired, but with a
-        # heading-less `WatchlistTree` inside — ended up as an unlabelled box.
         children: list[Widget] = []
         if region not in SELF_HEADED_REGIONS:
             children.append(
                 Static(REGION_TITLES[region], classes="watchlists-region-title")
             )
-        # Whole-branch review (Minor): there used to be a `REGION_PLACEHOLDERS`
-        # branch here ("Reader arrives in the next slice.") for a region with
-        # no factory. Task 4 wired the last unwired region, so every region the
-        # screen builds supplies content; the branch could only ever be reached
-        # by a test that constructed a workbench with no content at all, which
-        # made a "coming soon" string look like live product copy to a grep.
         if supplied is not None:
             children.append(supplied)
-        classes = ["watchlists-region", f"watchlists-region-{region.value}"]
-        if self._is_sole_expanded_centre_region(region):
-            # A CSS hook for the solo case. `.watchlists-region-content`
-            # carries a `max-height` cap so a long article cannot crowd
-            # ITEMS out of the centre stack — but when ITEMS is collapsed
-            # to its one-line header there is nothing left to crowd, and
-            # the cap turns solo-CONTENT into a short scrolling window with
-            # blank rows under it. Nothing in the DOM distinguished that
-            # state before this class: `RegionLayout.solo` only collapses
-            # the *siblings*, so the soloed region itself is
-            # indistinguishable from an ordinarily-expanded one.
-            #
-            # Keyed on "sole expanded centre region" rather than on
-            # `solo_region` because the two produce the same DOM and want the
-            # same layout: `Z` on CONTENT and manually collapsing ITEMS
-            # with `z` both leave CONTENT alone in the centre.
-            classes.append("watchlists-region-sole-centre")
         body = Vertical(
             *children,
             id=f"wl-region-{region.value}",
-            classes=" ".join(classes),
+            classes=f"watchlists-region watchlists-region-{region.value}",
         )
-        # Regions must be keyboard-reachable, or `z` cannot target them.
         body.can_focus = True
         return body
 
-    def _is_sole_expanded_centre_region(self, region: Region) -> bool:
-        """Whether ``region`` is the only centre region still expanded.
+    def _grip(self, region: Region) -> WatchlistsPaneGrip:
+        """Build a side-pane grip with its effective state."""
+        return WatchlistsPaneGrip(
+            region,
+            expanded=not self.region_layout.is_collapsed(region),
+            id=f"wl-grip-{region.value}",
+        )
 
-        True exactly when the centre stack shows one real pane and, for
-        every OTHER centre region that is not hidden outright, a one-line
-        header — the state `RegionLayout.solo` produces, and the state a
-        user reaches by collapsing the other one by hand. A region in
-        `self._hidden` (TASK-1344: CONTENT off the Read tab) is never
-        rendered at all, not even as a header, so it is excluded from
-        "expanded" the same way a rail is — without this, ITEMS would never
-        read as sole-expanded on a non-Read tab (CONTENT's real
-        `region_layout.collapsed` membership is whatever the user left it
-        at on Read, not "hidden", so counting it unfiltered would make
-        `expanded` include a region that in fact never mounted).
+    async def watch_effective_layout_request(
+        self,
+        _previous_request: tuple[int, RegionLayout],
+        request: tuple[int, RegionLayout],
+    ) -> None:
+        """Mount or remove only side bodies whose collapse state changed."""
+        async with self._layout_apply_lock:
+            await self._apply_effective_layout_request(request)
 
-        Args:
-            region: The region to test. Rails always answer `False`; solo
-                applies to the centre stack only (`RegionLayout.solo`).
-
-        Returns:
-            `True` if `region` is a centre region and every other
-            non-hidden centre region is collapsed, `False` otherwise.
-        """
-        if region not in CENTRE_REGIONS:
-            return False
-        expanded = [
-            r
-            for r in CENTRE_REGIONS
-            if r not in self._hidden and not self.region_layout.is_collapsed(r)
+    async def _apply_effective_layout_request(
+        self, request: tuple[int, RegionLayout]
+    ) -> None:
+        """Apply one request without racing a section-view reconciliation."""
+        token, layout = request
+        previous = self._rendered_layout
+        if request != self.effective_layout_request:
+            return
+        if not self.is_mounted:
+            self._rendered_layout = layout
+            return
+        body = self._body()
+        if body is None:
+            self._rendered_layout = layout
+            return
+        changed = [
+            region
+            for region in self._grip_regions
+            if previous.is_collapsed(region) != layout.is_collapsed(region)
         ]
-        return expanded == [region]
+        prepared: dict[Region, Widget] = {}
+        try:
+            for region in changed:
+                if (
+                    not layout.is_collapsed(region)
+                    and self._mounted_region_body(region) is None
+                ):
+                    prepared[region] = self._region_body(region)
+        except Exception:
+            self._sync_expanded_side_pane_class(layout=previous)
+            logger.bind(
+                token=token,
+                read_mode=self.read_mode,
+                regions=tuple(region.value for region in changed),
+            ).exception("Watchlists pane expansion factory failed")
+            self.post_message(
+                RegionLayoutApplyFailed(
+                    token=token, attempted=layout, fallback=previous
+                )
+            )
+            return
+
+        restore_focus = {
+            region
+            for region in prepared
+            if self.query_one(
+                f"#wl-grip-{region.value}", WatchlistsPaneGrip
+            ).has_focus
+        }
+        try:
+            for region, node in prepared.items():
+                grip = self.query_one(
+                    f"#wl-grip-{region.value}", WatchlistsPaneGrip
+                )
+                if region is Region.RIGHT_RAIL:
+                    await body.mount(node, after=grip)
+                else:
+                    await body.mount(node, before=grip)
+        except Exception:
+            for node in prepared.values():
+                if node.is_mounted:
+                    await node.remove()
+            self._sync_expanded_side_pane_class(layout=previous)
+            logger.bind(
+                token=token,
+                read_mode=self.read_mode,
+                regions=tuple(region.value for region in prepared),
+            ).exception("Watchlists pane expansion mount failed")
+            self.post_message(
+                RegionLayoutApplyFailed(
+                    token=token, attempted=layout, fallback=previous
+                )
+            )
+            return
+
+        for region in changed:
+            expanded = not layout.is_collapsed(region)
+            if not expanded:
+                mounted = self._mounted_region_body(region)
+                if mounted is not None:
+                    grip = self.query_one(
+                        f"#wl-grip-{region.value}", WatchlistsPaneGrip
+                    )
+                    if self._contains_focus(mounted):
+                        grip.focus()
+                    await mounted.remove()
+            grip = self.query_one(
+                f"#wl-grip-{region.value}", WatchlistsPaneGrip
+            )
+            grip.expanded = expanded
+        for region in restore_focus:
+            mounted = self._mounted_region_body(region)
+            if mounted is not None:
+                mounted.focus()
+        self._rendered_layout = layout
+        self._sync_expanded_side_pane_class(layout=layout)
+        self.post_message(
+            RegionLayoutApplied(token=token, previous=previous, layout=layout)
+        )
+
+    @property
+    def _grip_regions(self) -> tuple[Region, ...]:
+        return _READ_GRIP_REGIONS if self.read_mode else _MANAGEMENT_GRIP_REGIONS
+
+    def _sync_expanded_side_pane_class(
+        self,
+        *,
+        read_mode: bool | None = None,
+        layout: RegionLayout | None = None,
+    ) -> None:
+        """Expose whether the effective mode has an expanded side body."""
+        read_mode = self.read_mode if read_mode is None else read_mode
+        layout = self.region_layout if layout is None else layout
+        side_regions = (
+            _READ_GRIP_REGIONS if read_mode else _MANAGEMENT_GRIP_REGIONS
+        )
+        self.set_class(
+            any(not layout.is_collapsed(region) for region in side_regions),
+            _EXPANDED_SIDE_PANE_CLASS,
+        )
+
+    def _body(self) -> Horizontal | None:
+        try:
+            return self.query_one("#wl-workbench-body", Horizontal)
+        except NoMatches:
+            return None
+
+    def _mounted_region_body(self, region: Region) -> Widget | None:
+        try:
+            return self.query_one(f"#wl-region-{region.value}")
+        except NoMatches:
+            return None
+
+    async def apply_section_view(
+        self,
+        *,
+        layout: RegionLayout,
+        read_mode: bool,
+        token: int,
+        rebuild_regions: tuple[Region, ...] = (),
+        rebuild_header: bool = False,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+        header: Callable[[], Widget] | None = None,
+    ) -> bool:
+        """Incrementally apply a Read/management section view."""
+        async with self._layout_apply_lock:
+            return await self._apply_section_view(
+                layout=layout,
+                read_mode=read_mode,
+                token=token,
+                rebuild_regions=rebuild_regions,
+                rebuild_header=rebuild_header,
+                content=content,
+                header=header,
+            )
+
+    async def _apply_section_view(
+        self,
+        *,
+        layout: RegionLayout,
+        read_mode: bool,
+        token: int,
+        rebuild_regions: tuple[Region, ...] = (),
+        rebuild_header: bool = False,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+        header: Callable[[], Widget] | None = None,
+    ) -> bool:
+        """Reconcile one section view while holding the layout lock."""
+        next_read_mode = read_mode
+        previous_read_mode = self.read_mode
+        previous = self._rendered_layout
+        self.set_reactive(
+            WatchlistsWorkbench.effective_layout_request, (token, previous)
+        )
+        if not self.is_mounted:
+            self.read_mode = next_read_mode
+            self.set_class(self.read_mode, "watchlists-read-mode")
+            self._rendered_layout = layout
+            self.set_reactive(
+                WatchlistsWorkbench.effective_layout_request, (token, layout)
+            )
+            self._sync_expanded_side_pane_class(
+                read_mode=next_read_mode, layout=layout
+            )
+            self.post_message(
+                RegionLayoutApplied(token=token, previous=previous, layout=layout)
+            )
+            return True
+
+        try:
+            self.read_mode = next_read_mode
+            self.set_class(self.read_mode, "watchlists-read-mode")
+            replacement_header = (
+                (self._header if header is None else header)()
+                if rebuild_header
+                and (self._header if header is None else header) is not None
+                else None
+            )
+            with self.app.batch_update():
+                await self._reconcile_body(
+                    read_mode=next_read_mode,
+                    layout=layout,
+                    rebuild_regions=rebuild_regions,
+                    content=content,
+                )
+                if replacement_header is not None:
+                    await self._replace_header(replacement_header)
+                self._rendered_layout = layout
+                self.set_reactive(
+                    WatchlistsWorkbench.effective_layout_request, (token, layout)
+                )
+                self._sync_expanded_side_pane_class(
+                    read_mode=next_read_mode, layout=layout
+                )
+        except Exception:
+            self.read_mode = previous_read_mode
+            self.set_class(self.read_mode, "watchlists-read-mode")
+            logger.bind(
+                token=token,
+                read_mode=next_read_mode,
+                regions=tuple(region.value for region in rebuild_regions),
+            ).exception("Watchlists section-view factory failed")
+            self.post_message(
+                RegionLayoutApplyFailed(
+                    token=token, attempted=layout, fallback=previous
+                )
+            )
+            return False
+        self.post_message(
+            RegionLayoutApplied(token=token, previous=previous, layout=layout)
+        )
+        return True
+
+    async def _reconcile_body(
+        self,
+        *,
+        read_mode: bool,
+        layout: RegionLayout,
+        rebuild_regions: tuple[Region, ...],
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+    ) -> None:
+        """Prepare factories, then atomically reconcile direct children."""
+        body = self._body()
+        if body is None:
+            return
+        desired_ids = self._desired_body_ids(
+            read_mode=read_mode,
+            layout=layout,
+        )
+        mounted_ids = {child.id for child in body.children}
+        prepared_nodes: dict[str, Widget] = {}
+        created: set[Region] = set()
+        for node_id in desired_ids:
+            if node_id in mounted_ids:
+                continue
+            prepared_nodes[node_id] = self._node_for_id(
+                node_id, layout=layout, content=content
+            )
+            region = self._region_from_body_id(node_id)
+            if region is not None:
+                created.add(region)
+
+        prepared_content: dict[Region, Widget] = {}
+        for region in rebuild_regions:
+            if region in created or f"wl-region-{region.value}" not in desired_ids:
+                continue
+            factory = (self._content if content is None else content).get(region)
+            if factory is not None:
+                prepared_content[region] = factory()
+
+        restore_focus_ids = {
+            node_id
+            for node_id in prepared_nodes
+            if node_id.startswith("wl-region-")
+            and self._grip_has_focus(
+                Region(node_id.removeprefix("wl-region-"))
+            )
+        }
+        for child in list(body.children):
+            if child.id not in desired_ids:
+                region = self._region_from_body_id(child.id or "")
+                if region is not None and self._contains_focus(child):
+                    grip_id = f"wl-grip-{region.value}"
+                    if grip_id not in desired_ids:
+                        grip_id = next(
+                            node_id
+                            for node_id in desired_ids
+                            if node_id.startswith("wl-grip-")
+                        )
+                    self.query_one(f"#{grip_id}").focus()
+                await child.remove()
+
+        for index, node_id in enumerate(desired_ids):
+            node = prepared_nodes.get(node_id)
+            if node is not None:
+                if index >= len(body.children):
+                    await body.mount(node)
+                else:
+                    await body.mount(node, before=index)
+
+        for node_id in restore_focus_ids:
+            mounted = self.query_one(f"#{node_id}")
+            mounted.focus()
+
+        for region, replacement in prepared_content.items():
+            container = self._mounted_region_body(region)
+            if container is not None:
+                await self._replace_region_content(container, replacement)
+
+        grip_regions = (
+            _READ_GRIP_REGIONS if read_mode else _MANAGEMENT_GRIP_REGIONS
+        )
+        for region in grip_regions:
+            grip = self.query_one(f"#wl-grip-{region.value}", WatchlistsPaneGrip)
+            grip.expanded = not layout.is_collapsed(region)
+
+    def _desired_body_ids(
+        self,
+        *,
+        read_mode: bool | None = None,
+        layout: RegionLayout | None = None,
+    ) -> list[str]:
+        read_mode = self.read_mode if read_mode is None else read_mode
+        layout = self.region_layout if layout is None else layout
+        ids: list[str] = []
+        if not layout.is_collapsed(Region.LEFT_RAIL):
+            ids.append("wl-region-left_rail")
+        ids.append("wl-grip-left_rail")
+        if read_mode:
+            if not layout.is_collapsed(Region.ITEMS):
+                ids.append("wl-region-items")
+            ids.extend(("wl-grip-items", "wl-region-content"))
+        else:
+            ids.append("wl-region-items")
+        ids.append("wl-grip-right_rail")
+        if not layout.is_collapsed(Region.RIGHT_RAIL):
+            ids.append("wl-region-right_rail")
+        return ids
+
+    def _node_for_id(
+        self,
+        node_id: str,
+        *,
+        layout: RegionLayout,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+    ) -> Widget:
+        if node_id.startswith("wl-region-"):
+            return self._region_body(
+                Region(node_id.removeprefix("wl-region-")), content
+            )
+        region = Region(node_id.removeprefix("wl-grip-"))
+        return WatchlistsPaneGrip(
+            region,
+            expanded=not layout.is_collapsed(region),
+            id=node_id,
+        )
+
+    @staticmethod
+    def _region_from_body_id(node_id: str) -> Region | None:
+        if not node_id.startswith("wl-region-"):
+            return None
+        return Region(node_id.removeprefix("wl-region-"))
 
     async def refresh_region_content(self, region: Region) -> None:
-        """Rebuild one expanded region's supplied content in place.
-
-        Task 7: a region's content can go stale without `region_layout`
-        itself changing (the tree scope moving under the rail, a background
-        load landing), so nothing would otherwise call its factory again.
-        Setting `region_layout` (`recompose=True`) would work too, but at
-        the cost of tearing down and remounting *every* region, including
-        ones whose whole design point is staying the same instance across
-        an unrelated change -- the Inspector is pushed new
-        `scope`/`selected_entity` values in place for exactly that reason
-        (see `WatchlistsCollectionsScreen.watch_selected_scope`), and a
-        full recompose would silently replace it with a fresh instance
-        instead, breaking any caller holding a reference to the old one.
-
-        A no-op when `region` is collapsed (nothing mounted to replace) or
-        was not given a content factory (nothing to refresh either).
-
-        Replaces only the *supplied content*, never the generic
-        `REGION_TITLES` heading `_region_widget` prepends for regions
-        outside `SELF_HEADED_REGIONS` (fix round 1, Finding 3). The first
-        version removed every child, so refreshing LEFT_RAIL -- which
-        supplies content but is not self-headed -- stripped its
-        "Watchlists" heading and left an unlabelled bordered rail until the
-        next region toggle rebuilt it. That is the same defect
-        `SELF_HEADED_REGIONS`' own comment records having shipped once.
-
-        Args:
-            region: The region whose supplied content should be rebuilt.
-        """
-        if self.region_layout.is_collapsed(region):
-            return
+        """Replace only one mounted body's factory output, failure-safely."""
         factory = self._content.get(region)
         if factory is None:
             return
-        try:
-            container = self.query_one(f"#wl-region-{region.value}")
-        except NoMatches:
+        container = self._mounted_region_body(region)
+        if container is None:
             return
-        # Build the replacement BEFORE detaching anything: a factory that
-        # raises (or a worker cancelled while it runs) then leaves the
-        # mounted pane standing rather than a bordered empty box. The
-        # remove-then-mount pair below still has one await boundary --
-        # Textual's `NodeList._ensure_unique_id` rejects mounting the new
-        # pane while the old one (same id, e.g. `watchlists-items-pane`) is
-        # still attached, so there is no single-await atomic swap available
-        # without changing that guarded id.
         replacement = factory()
-        # The heading, when present, is `_region_widget`'s first child and
-        # is not ours to replace.
+        await self._replace_region_content(container, replacement)
+
+    async def _replace_region_content(
+        self, container: Widget, replacement: Widget
+    ) -> None:
+        """Commit one already-built factory replacement."""
         stale = [
             child
             for child in container.children
@@ -357,75 +596,33 @@ class WatchlistsWorkbench(Horizontal):
         await container.mount(replacement)
 
     async def refresh_header_content(self) -> None:
-        """Rebuild the header in place from a fresh call to its factory.
-
-        The header's twin of `refresh_region_content` above (task-1344 fix
-        wave, Qodo correctness): `region_layout` is `recompose=True`, so
-        picking up a header-only change (the tree scope moving -- see
-        `WatchlistsCollectionsScreen.watch_tree_scope`) by pushing a new
-        layout would tear down and remount every region, including the
-        Inspector, which `watch_tree_scope` deliberately avoids (see its
-        own docstring). The header is the only surface that carries the
-        tab strip and the snapshot's scoped markers (since task-2513, on
-        every tab), so a header-only refresh path is the one that keeps
-        that readout current between recomposes.
-
-        A no-op when this workbench was built with no `header` factory:
-        nothing to refresh, and no `#wl-centre-status` to query for either.
-        """
+        """Replace only header factory output, leaving the body untouched."""
         if self._header is None:
             return
-        try:
-            centre = self.query_one("#wl-centre")
-        except NoMatches:
-            return
+        replacement = self._header()
+        await self._replace_header(replacement)
+
+    async def _replace_header(self, replacement: Widget) -> None:
+        """Commit one already-built header replacement."""
         try:
             stale = self.query_one("#wl-centre-status")
         except NoMatches:
             stale = None
-        # Build the replacement before detaching the old header, for the
-        # identical reason `refresh_region_content` does: a factory that
-        # raises must leave the previously mounted header standing rather
-        # than removing it and never replacing it.
-        replacement = self._header()
         if stale is not None:
             await stale.remove()
-        await centre.mount(replacement, before=0)
+        await self.mount(replacement, before=0)
 
-    def set_collapsed_suffixes(self, suffixes: Mapping[Region, str]) -> None:
-        """Update collapsed-header suffixes in place (no recompose).
+    def _contains_focus(self, widget: Widget) -> bool:
+        """Whether the current focus lives at or below ``widget``."""
+        focused = getattr(self.screen, "focused", None)
+        while focused is not None:
+            if focused is widget:
+                return True
+            focused = focused.parent
+        return False
 
-        Counts refresh while the rail stays collapsed; tearing the workbench
-        down for a number is exactly what `refresh_region_content` exists to
-        avoid for bodies. A no-op for regions not currently collapsed — they
-        have no header mounted to repaint.
-
-        Args:
-            suffixes: The new suffix per region, replacing the current map.
-        """
-        self._collapsed_suffixes = dict(suffixes)
-        for region, suffix in self._collapsed_suffixes.items():
-            if not self.region_layout.is_collapsed(region):
-                continue
-            try:
-                header = self.query_one(f"#wl-header-{region.value}", Button)
-            except NoMatches:
-                continue
-            header.label = f"▸ {REGION_TITLES[region]}" + (f"  {suffix}" if suffix else "")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Turn a collapsed-region header click into a `RegionToggled` message.
-
-        Ignores presses from any other button (e.g. content the caller
-        supplied via `content=`) by checking the `wl-header-` id prefix.
-
-        Args:
-            event: The button-press event to inspect and, if it targets a
-                region header, stop from bubbling further.
-        """
-        button_id = event.button.id or ""
-        prefix = "wl-header-"
-        if not button_id.startswith(prefix):
-            return
-        event.stop()
-        self.post_message(RegionToggled(Region(button_id[len(prefix):])))
+    def _grip_has_focus(self, region: Region) -> bool:
+        try:
+            return self.query_one(f"#wl-grip-{region.value}").has_focus
+        except NoMatches:
+            return False

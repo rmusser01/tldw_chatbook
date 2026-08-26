@@ -1,0 +1,1036 @@
+"""Continuous Library Media traversal and authoritative filtering contracts."""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+from types import MethodType, SimpleNamespace
+
+import pytest
+from textual.widgets import Button, Input, Static
+
+from Tests.UI.test_library_media_side_by_side import (
+    WIDE_SIZE,
+    _build_media_test_app,
+    _many_media_items,
+    _open_media_list,
+)
+from Tests.UI.test_library_shell import (
+    LibraryProductionCSSHarness,
+    StaticLibraryMediaScopeService,
+    _seed_conversations,
+    _two_conversations,
+    _wait_for_condition,
+    _wait_for_selector,
+)
+from tldw_chatbook.Library.library_media_state import (
+    MediaBrowseScope,
+    build_library_media_browse_state,
+    build_media_browse_result,
+)
+from tldw_chatbook.Library.library_media_reader_state import (
+    LibraryMediaReaderSessionState,
+    begin_selection,
+    set_mode,
+)
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+
+class ControlledDetailMediaService(StaticLibraryMediaScopeService):
+    """Gate each detail response independently without time-based sleeps."""
+
+    def __init__(self, media_items):
+        super().__init__(media_items)
+        self.detail_entered: dict[int, threading.Event] = {}
+        self.detail_release: dict[int, threading.Event] = {}
+        self.detail_outcomes: dict[int, object] = {}
+        self.progress_calls: list[dict[str, object]] = []
+        self.progress_outcomes: dict[int, object] = {}
+
+    def get_media_item(self, *, media_id, **kwargs):
+        self.detail_calls.append({"media_id": media_id, **kwargs})
+        entered = self.detail_entered.setdefault(media_id, threading.Event())
+        release = self.detail_release.setdefault(media_id, threading.Event())
+        entered.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError(f"Timed out waiting to release detail {media_id}.")
+        outcome = self.detail_outcomes.get(media_id)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if outcome is not None:
+            return outcome
+        for index, item in enumerate(self.media_items):
+            if self._backing_id(item, index) == media_id:
+                return dict(item)
+        return None
+
+    def release(self, media_id: int, outcome: object | None = None) -> None:
+        if outcome is not None:
+            self.detail_outcomes[media_id] = outcome
+        self.detail_release.setdefault(media_id, threading.Event()).set()
+
+    def get_reading_progress(self, *, media_id, **kwargs):
+        self.progress_calls.append({"media_id": media_id, **kwargs})
+        return self.progress_outcomes.get(media_id)
+
+
+def _flow_app(count: int = 65):
+    app = _build_media_test_app()
+    items = _many_media_items(count)
+    _seed_conversations(app, _two_conversations(), media=items)
+    service = ControlledDetailMediaService(items)
+    app.media_reading_scope_service = service
+    return app, service
+
+
+def _row_identity(row: Button) -> tuple[str, int, str]:
+    canonical_id = str(row.media_id)
+    backing_id = int(canonical_id.rsplit(":", 1)[-1])
+    title = str(row._library_media_title)
+    return canonical_id, backing_id, title
+
+
+async def _wait_for_detail_call(
+    service: ControlledDetailMediaService, backing_id: int
+) -> None:
+    try:
+        started = await asyncio.to_thread(
+            service.detail_entered.setdefault(backing_id, threading.Event()).wait,
+            2,
+        )
+        if not started:
+            raise TimeoutError
+    except TimeoutError:
+        pytest.fail(f"Detail call for backing id {backing_id} did not start.")
+
+
+@pytest.mark.asyncio
+async def test_arrow_traversal_updates_selection_immediately_but_loads_only_settled_row():
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        first = screen.query_one("#library-media-row-0", Button)
+        first_id, first_backing_id, _ = _row_identity(first)
+        first.press()
+        await _wait_for_detail_call(service, first_backing_id)
+        service.release(first_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == first_id,
+            message="Initial settled row did not load.",
+        )
+        service.detail_calls.clear()
+        row_1 = _row_identity(screen.query_one("#library-media-row-1", Button))
+        row_2 = _row_identity(screen.query_one("#library-media-row-2", Button))
+        screen._select_library_media_reader_row(row_1[0], row_1[2], immediate=False)
+        screen._select_library_media_reader_row(row_2[0], row_2[2], immediate=False)
+
+        selected, expected_backing_id, _ = row_2
+        assert screen._selected_media_id == selected
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(service.detail_calls),
+            message="Settled traversal never dispatched detail.",
+        )
+        assert [call["media_id"] for call in service.detail_calls] == [
+            expected_backing_id
+        ]
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_enter_bypasses_selection_settle_window():
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-1", Button)
+        _, expected_backing_id, _ = _row_identity(row)
+        row.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(service.detail_calls),
+            message="Enter did not dispatch detail immediately.",
+        )
+        assert service.detail_calls[0]["media_id"] == expected_backing_id
+        service.release(expected_backing_id)
+
+
+@pytest.mark.asyncio
+async def test_reader_defaults_to_read_and_keeps_mode_across_local_items():
+    """Reader mode is session state, not a per-detail display default."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        first = screen.query_one("#library-media-row-0", Button)
+        first_id, first_backing_id, _ = _row_identity(first)
+        assert screen._library_media_reader_session.mode == "read"
+
+        first.press()
+        await _wait_for_detail_call(service, first_backing_id)
+        service.release(first_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == first_id,
+            message="First local item never loaded.",
+        )
+        screen._library_media_reader_session = set_mode(
+            screen._library_media_reader_session, "analysis"
+        )
+        screen._sync_library_media_viewer_or_recompose()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-reader-mode-analysis")),
+            message="Analysis mode did not compose.",
+        )
+
+        second = screen.query_one("#library-media-row-1", Button)
+        second_id, second_backing_id, _ = _row_identity(second)
+        second.press()
+        await _wait_for_detail_call(service, second_backing_id)
+        service.release(second_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == second_id,
+            message="Second local item never loaded.",
+        )
+        assert screen._library_media_reader_session.mode == "analysis"
+        assert screen.query("#library-media-reader-mode-analysis")
+        assert not screen.query("#library-media-reader-mode-read")
+
+
+@pytest.mark.asyncio
+async def test_edit_metadata_from_read_routes_to_info_form_actions():
+    """More's local metadata action must reveal its editable Info surface."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        canonical_id, backing_id, _ = _row_identity(row)
+        row.press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+            message="Local detail never loaded for metadata editing.",
+        )
+        assert screen._library_media_reader_session.mode == "read"
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        edit = await _wait_for_selector(screen, pilot, "#library-media-edit")
+        edit.press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-form")
+
+        assert screen._library_media_reader_session.mode == "info"
+        for selector in (
+            "#library-media-edit-title",
+            "#library-media-edit-author",
+            "#library-media-edit-url",
+            "#library-media-edit-keywords",
+            "#library-media-edit-save",
+            "#library-media-edit-cancel",
+        ):
+            assert screen.query(selector)
+
+
+@pytest.mark.asyncio
+async def test_external_detail_without_original_exposes_no_empty_more_menu():
+    """A server-only detail exposes only actions that it can actually perform."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await screen._open_library_external_media_detail("7")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-reader-identity")),
+            message=lambda: (
+                "External server detail never mounted: "
+                f"view={screen._library_media_view!r}, "
+                f"row={screen._library_selected_row_id!r}, "
+                f"session={screen._library_media_reader_session!r}, "
+                f"detail={screen._library_media_detail!r}, "
+                f"viewer={bool(screen.query('#library-media-viewer'))!r}."
+            ),
+        )
+
+        assert screen.query_one("#library-media-reader-identity", Static).renderable == (
+            "Server item · not in local Media list"
+        )
+        assert screen.app_instance.media_reading_scope_service.detail_calls[-1] == {
+            "media_id": 7,
+            "mode": "server",
+            "include_content": True,
+            "include_versions": True,
+        }
+        assert not any(
+            row.loading or row.loaded
+            for row in screen._build_library_media_state().rows
+        )
+        assert screen.query("#library-media-reader-find")
+        assert screen.query("#library-media-use-in-chat")
+        assert not screen.query("#library-media-reader-more")
+        assert not screen.query("#library-media-read-later")
+        assert not screen.query("#library-media-reader-mode-toolbar")
+        assert not screen.query("#library-media-highlight-add")
+        assert not screen.query("#library-media-edit")
+        assert not screen.query("#library-media-delete")
+
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_media_reader_session.external_detail,
+            message="Back did not clear the external-detail session.",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_outcome", [None, RuntimeError("late failure")])
+async def test_late_external_a_cannot_replace_b_or_show_error(late_outcome):
+    """A stale server detail cannot repaint a newer external Reader session."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        opening_a = asyncio.create_task(screen._open_library_external_media_detail("7"))
+        await _wait_for_detail_call(service, 7)
+        opening_b = asyncio.create_task(screen._open_library_external_media_detail("8"))
+        await _wait_for_detail_call(service, 8)
+        service.release(8)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_detail is not None
+            and screen._library_media_reader_session.loaded_id == "server:media:8",
+            message="External B did not load.",
+        )
+
+        service.release(7, late_outcome)
+        await asyncio.gather(opening_a, opening_b)
+        await pilot.pause()
+
+        assert screen._library_media_reader_session.loaded_id == "server:media:8"
+        assert screen._library_media_reader_session.error is None
+        assert screen._library_media_detail["id"] == "media-8"
+
+
+@pytest.mark.asyncio
+async def test_info_describes_the_same_stored_text_representation_sent_to_console():
+    """Info and Console share the authoritative handoff decision."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        _, backing_id, _ = _row_identity(row)
+        source = next(
+            item for item in service.media_items if item["id"] == f"media-{backing_id}"
+        )
+        source["type"] = "markdown"
+        source["content"] = "# Stored Markdown\n\n**Exact source text**"
+        row.press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_backing_id == backing_id,
+            message="Local detail never loaded for the Console handoff check.",
+        )
+
+        screen.query_one("#library-media-reader-select-info", Button).press()
+        provenance = await _wait_for_selector(
+            screen, pilot, "#library-media-reader-provenance"
+        )
+        payload = screen._selected_media_handoff_payload()
+
+        assert payload is not None
+        assert "Complete stored text excerpt" in str(provenance.renderable)
+        assert "Content excerpt:\n# Stored Markdown\n\n**Exact source text**" in payload.body
+        assert payload.body_truncated is False
+
+
+@pytest.mark.asyncio
+async def test_info_calls_empty_content_metadata_only_like_console():
+    """Info must not call the Console's explicit no-content payload complete text."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        _, backing_id, _ = _row_identity(row)
+        source = next(
+            item for item in service.media_items if item["id"] == f"media-{backing_id}"
+        )
+        source["content"] = ""
+        row.press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_backing_id == backing_id,
+            message="Empty-content detail did not load.",
+        )
+
+        screen.query_one("#library-media-reader-select-info", Button).press()
+        provenance = await _wait_for_selector(
+            screen, pilot, "#library-media-reader-provenance"
+        )
+        payload = screen._selected_media_handoff_payload()
+
+        assert payload is not None
+        assert "No stored content." in payload.body
+        assert "Metadata only (no stored text)" in str(provenance.renderable)
+
+
+@pytest.mark.asyncio
+async def test_pending_banner_names_selected_b_and_loaded_a():
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_a = screen.query_one("#library-media-row-0", Button)
+        canonical_a, backing_a, title_a = _row_identity(row_a)
+        row_a.press()
+        await _wait_for_detail_call(service, backing_a)
+        service.release(backing_a)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == canonical_a,
+            message="First detail did not load.",
+        )
+        row_b = screen.query_one("#library-media-row-1", Button)
+        _, backing_b, title_b = _row_identity(row_b)
+        row_b.press()
+        await _wait_for_detail_call(service, backing_b)
+        # task-22207: the banner is now a persistent display-gated widget,
+        # so presence alone is vacuous -- wait for it to be PAINTED.
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                bool(screen.query("#library-media-viewer-loading"))
+                and screen.query_one(
+                    "#library-media-viewer-loading", Static
+                ).display
+            ),
+            message="Reader never painted its pending banner.",
+        )
+
+        banner = screen.query_one("#library-media-viewer-loading", Static)
+        copy = str(banner.renderable)
+        assert title_b in copy
+        assert title_a in copy
+        service.release(backing_b)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_outcome", [None, RuntimeError("late failure")])
+async def test_late_completion_for_a_cannot_replace_loaded_b_or_show_error(
+    late_outcome,
+):
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_a = screen.query_one("#library-media-row-0", Button)
+        row_b = screen.query_one("#library-media-row-1", Button)
+        _, backing_a, _ = _row_identity(row_a)
+        canonical_b, backing_b, title_b = _row_identity(row_b)
+        row_a.press()
+        await _wait_for_detail_call(service, backing_a)
+        screen._select_library_media_reader_row(canonical_b, title_b, immediate=True)
+        await _wait_for_detail_call(service, backing_b)
+        service.release(backing_b)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == canonical_b,
+            message="B detail did not load.",
+        )
+
+        service.release(backing_a, late_outcome)
+        await pilot.pause()
+        assert screen._library_media_reader_session.loaded_id == canonical_b
+        assert screen._library_media_reader_session.error is None
+        assert screen._library_media_detail["id"] == f"media-{backing_b}"
+
+
+@pytest.mark.asyncio
+async def test_detail_failure_keeps_items_usable_and_reader_retryable():
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        _, backing_id, _ = _row_identity(row)
+        row.press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id, RuntimeError("private"))
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.error is not None,
+            message="Detail failure did not settle as retryable.",
+        )
+
+        assert screen.query_one("#library-media-row-1", Button).disabled is False
+        assert screen._library_media_view == "viewer"
+        assert screen._library_media_reader_session.pending_request is not None
+        retry = screen.query_one("#library-media-reader-retry", Button)
+        service.detail_outcomes.pop(backing_id)
+        retry.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_backing_id
+            == backing_id,
+            message="Reader-local Retry did not reload the failed item.",
+        )
+        assert screen._library_media_reader_session.error is None
+
+
+def test_rows_expose_textual_loading_and_loaded_state():
+    scope = MediaBrowseScope()
+    result = build_media_browse_result(
+        scope,
+        {
+            "items": [
+                {
+                    "id": "local:media:1",
+                    "backing_media_id": 1,
+                    "title": "A",
+                    "media_type": "audio",
+                    "updated_at": None,
+                },
+                {
+                    "id": "local:media:2",
+                    "backing_media_id": 2,
+                    "title": "B",
+                    "media_type": "video",
+                    "updated_at": None,
+                },
+            ],
+            "total": 2,
+            "limit": 20,
+            "offset": 0,
+        },
+    )
+
+    state = build_library_media_browse_state(
+        result,
+        type_options=(),
+        selected_id="local:media:2",
+        loading_id="local:media:2",
+        loaded_id="local:media:1",
+    )
+
+    assert state.rows[0].loaded is True
+    assert state.rows[1].loading is True
+
+
+@pytest.mark.asyncio
+async def test_filter_uses_authoritative_search_and_restores_page_three_anchor():
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-next")),
+            message="Page 1 pager did not settle.",
+        )
+        screen.query_one("#library-media-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_browse_controller.applied_scope.page == 2
+                and bool(screen.query("#library-media-next"))
+            ),
+            message="Page 2 did not apply and settle its pager.",
+        )
+        screen.query_one("#library-media-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_browse_controller.applied_scope.page == 3
+                and bool(screen.query("#library-media-row-10"))
+            ),
+            message="Page 3 did not apply and settle its rows.",
+        )
+        anchor = screen.query_one("#library-media-row-10", Button)
+        anchor_id, anchor_backing_id, _ = _row_identity(anchor)
+        anchor.press()
+        await _wait_for_detail_call(service, anchor_backing_id)
+        service.release(anchor_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == anchor_id,
+            message="Page-3 anchor did not load.",
+        )
+
+        media_filter = screen.query_one("#library-media-filter", Input)
+        media_filter.value = "Media item 03"
+        await _wait_for_condition(
+            pilot,
+            lambda: any(
+                call.get("query") == "Media item 03" for call in service.search_calls
+            ),
+            message="Filter did not call authoritative search.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_browse_controller.applied_scope.query
+                == "Media item 03"
+            ),
+            message="Filter result did not apply.",
+        )
+        filtered_id = str(
+            screen._library_media_browse_controller.retained_items[0]["id"]
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_reader_session.selected_id == filtered_id
+                and screen._library_media_reader_session.pending_request is not None
+            ),
+            message="The first authoritative filter result was not selected in Reader.",
+        )
+        screen.query_one("#library-media-filter-clear", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_browse_controller.applied_scope
+                == MediaBrowseScope(page=3)
+            ),
+            message="Unfiltered page 3 was not restored.",
+        )
+
+        assert screen._selected_media_id == anchor_id
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == anchor_id,
+            message="Clearing the filter did not restore the Reader anchor.",
+        )
+        assert (
+            len({row.media_id for row in screen._build_library_media_state().rows})
+            == 20
+        )
+        assert [
+            call["offset"] for call in service.search_calls if not call.get("query")
+        ][-1] == 40
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_entering_select_mode_cancels_pending_single_item_settlement():
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-row-1", Button).focus()
+        screen.query_one("#library-media-select-toggle", Button).press()
+        await pilot.pause()
+
+        assert screen._library_media_select_mode is True
+        assert screen._library_media_reader_session.pending_request is None
+        assert service.detail_calls == []
+
+
+@pytest.mark.asyncio
+async def test_delete_selects_following_row_then_previous_then_empty():
+    """Single delete keeps traversal anchored to the pre-delete ordering."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        ordered = [
+            _row_identity(screen.query_one(f"#library-media-row-{index}", Button))
+            for index in range(3)
+        ]
+        previous_id, previous_backing_id, _ = ordered[0]
+        middle_id, middle_backing_id, _ = ordered[1]
+        following_id, following_backing_id, _ = ordered[2]
+
+        screen.query_one("#library-media-row-1", Button).press()
+        await _wait_for_detail_call(service, middle_backing_id)
+        service.release(middle_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == middle_id,
+            message="Middle item did not load before delete.",
+        )
+
+        screen._library_media_bulk_delete_in_flight = True
+        screen._begin_library_media_mutation()
+        await screen._delete_library_media_item(middle_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_delete_receipt_ids == (middle_id,),
+            message="Single delete did not settle through the shared receipt.",
+        )
+
+        assert screen._library_media_reader_session.selected_id == following_id
+        await _wait_for_detail_call(service, following_backing_id)
+        service.release(following_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == following_id,
+            message="Following item did not load after delete.",
+        )
+
+        screen._library_media_bulk_delete_in_flight = True
+        screen._begin_library_media_mutation()
+        await screen._delete_library_media_item(following_id)
+        assert screen._library_media_reader_session.selected_id == previous_id
+        await _wait_for_detail_call(service, previous_backing_id)
+        service.release(previous_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == previous_id,
+            message="Previous item did not load after deleting the final row.",
+        )
+
+        screen._library_media_bulk_delete_in_flight = True
+        screen._begin_library_media_mutation()
+        await screen._delete_library_media_item(previous_id)
+        assert screen._library_media_reader_session.selected_id is None
+        assert screen._library_media_reader_session.loaded_id is None
+        assert screen._library_media_detail is None
+
+
+@pytest.mark.asyncio
+async def test_stale_detail_never_writes_progress_under_new_selected_id():
+    """Progress persists under the mounted loaded item, not traversal intent."""
+    loaded = LibraryMediaReaderSessionState(
+        selected_id="local:media:1",
+        selected_backing_id=1,
+        selected_title="Loaded",
+        loaded_id="local:media:1",
+        loaded_backing_id=1,
+        loaded_title="Loaded",
+    )
+    session = begin_selection(loaded, "local:media:2", 2, "Selected")
+    calls = []
+
+    async def update_reading_progress(**kwargs):
+        calls.append(kwargs)
+
+    async def run_service_call(call, *args, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **kwargs)
+
+    workers = []
+    fake = SimpleNamespace(
+        _library_media_reader_session=session,
+        _library_media_read_scroll_by_id={},
+        app_instance=SimpleNamespace(
+            media_reading_scope_service=SimpleNamespace(
+                update_reading_progress=update_reading_progress
+            )
+        ),
+        query_one=lambda *_args, **_kwargs: SimpleNamespace(scroll_x=0, scroll_y=17),
+        run_worker=lambda coro, **_kwargs: workers.append(coro),
+    )
+    fake._write_library_media_loaded_progress = MethodType(
+        LibraryScreen._write_library_media_loaded_progress, fake
+    )
+    fake._run_library_service_call = run_service_call
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+    await workers[0]
+    stale_cached = LibraryScreen._cache_library_media_reading_progress(
+        fake,
+        loaded.request_generation,
+        "local:media:1",
+        {"scroll_x": 0, "scroll_y": 99},
+    )
+
+    assert calls == [
+        {
+            "mode": "local",
+            "media_id": 1,
+            "progress_data": {"scroll_x": 0, "scroll_y": 17},
+        }
+    ]
+    assert stale_cached is False
+    assert fake._library_media_read_scroll_by_id["local:media:1"] == (0, 17)
+
+
+def test_progress_restores_after_loaded_content_mounts():
+    """The loaded local identity owns the offset restored into its body."""
+    calls = []
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            selected_id="local:media:7",
+            selected_backing_id=7,
+            selected_title="Seven",
+            loaded_id="local:media:7",
+            loaded_backing_id=7,
+            loaded_title="Seven",
+        ),
+        _library_media_read_scroll_by_id={"local:media:7": (2, 19)},
+        query_one=lambda *_args, **_kwargs: SimpleNamespace(
+            scroll_to=lambda **kwargs: calls.append(kwargs)
+        ),
+    )
+
+    LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:7")
+
+    assert calls == [{"x": 2, "y": 19, "animate": False, "force": True}]
+
+
+@pytest.mark.asyncio
+async def test_progress_loads_from_service_when_detail_has_no_embedded_progress():
+    """Fresh sessions use the progress service after fenced detail ownership."""
+    calls = []
+
+    async def get_reading_progress(**kwargs):
+        calls.append(kwargs)
+        return {"scroll_x": 0, "scroll_y": 12}
+
+    async def run_service_call(call, *args, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **kwargs)
+
+    session = begin_selection(
+        LibraryMediaReaderSessionState(), "local:media:1", 1, "One"
+    )
+    fake = SimpleNamespace(
+        _library_media_reader_session=session,
+        _library_media_read_scroll_by_id={},
+        app_instance=SimpleNamespace(
+            media_reading_scope_service=SimpleNamespace(
+                get_reading_progress=get_reading_progress
+            )
+        ),
+        _run_library_service_call=run_service_call,
+    )
+    fake._required_library_media_backing_id = MethodType(
+        LibraryScreen._required_library_media_backing_id, fake
+    )
+    fake._library_media_backing_id = MethodType(
+        LibraryScreen._library_media_backing_id, fake
+    )
+    detail = {"id": 1, "content": "No embedded progress"}
+
+    progress = await LibraryScreen._fetch_library_media_reading_progress(
+        fake, "local:media:1"
+    )
+    cached = LibraryScreen._cache_library_media_reading_progress(
+        fake, session.request_generation, "local:media:1", progress
+    )
+
+    assert "reading_progress" not in detail
+    assert calls == [{"mode": "local", "media_id": 1}]
+    assert cached is True
+    assert fake._library_media_read_scroll_by_id["local:media:1"] == (0, 12)
+
+
+def test_mode_change_preserves_per_item_read_scroll_for_session():
+    """Leaving and returning to Read uses the loaded item's session snapshot."""
+    restored = []
+    body = SimpleNamespace(
+        scroll_x=0,
+        scroll_y=23,
+        scroll_to=lambda **kwargs: restored.append(kwargs),
+    )
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            selected_id="local:media:4",
+            selected_backing_id=4,
+            selected_title="Four",
+            loaded_id="local:media:4",
+            loaded_backing_id=4,
+            loaded_title="Four",
+        ),
+        _library_media_read_scroll_by_id={},
+        app_instance=SimpleNamespace(media_reading_scope_service=None),
+        query_one=lambda *_args, **_kwargs: body,
+    )
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+    fake._library_media_reader_session = set_mode(
+        fake._library_media_reader_session, "analysis"
+    )
+    fake._library_media_reader_session = set_mode(
+        fake._library_media_reader_session, "read"
+    )
+    LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:4")
+
+    assert restored == [{"x": 0, "y": 23, "animate": False, "force": True}]
+
+
+def test_external_server_detail_does_not_use_local_progress_seam():
+    """External detail has no local loaded-id progress ownership."""
+    queried = []
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            selected_id="server:media:9",
+            selected_backing_id=9,
+            selected_title="Server",
+            loaded_id="server:media:9",
+            loaded_backing_id=9,
+            loaded_title="Server",
+            external_detail=True,
+        ),
+        _library_media_read_scroll_by_id={},
+        query_one=lambda *_args, **_kwargs: queried.append(True),
+        run_worker=lambda *_args, **_kwargs: pytest.fail("local progress worker ran"),
+    )
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+
+    assert queried == []
+
+
+def _escape_fake(*, region: str, more_open: bool = False):
+    layout = SimpleNamespace(items_open=True, library_open=True)
+    library = SimpleNamespace(role="library", ancestors=())
+    items = SimpleNamespace(role="items", ancestors=())
+    reader = SimpleNamespace(role="reader", ancestors=())
+    shell = SimpleNamespace(
+        library=library,
+        items=items,
+        reader=reader,
+        effective_layout=layout,
+    )
+    find = SimpleNamespace(role="find", ancestors=())
+    owner = {"library": library, "items": items, "reader": reader, "find": find}[
+        region
+    ]
+    focused = SimpleNamespace(ancestors=(owner,))
+    calls = []
+    fake = SimpleNamespace(
+        focused=focused,
+        _library_media_bulk_delete_in_flight=False,
+        _library_media_editing=False,
+        _library_media_confirming_delete=False,
+        _library_media_editing_analysis=False,
+        _library_media_content_query="needle",
+        _library_media_content_match_index=1,
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            more_open=more_open
+        ),
+        query_one=lambda selector, *_args: (
+            shell
+            if selector == "#library-media-reader-shell"
+            else find
+        ),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        _focus_library_rail_action=lambda selector: calls.append(("rail", selector)),
+        _exit_library_media_viewer=lambda: calls.append("back"),
+        _register_footer_shortcuts=lambda: calls.append("footer"),
+        call_after_refresh=lambda callback, *args: callback(*args),
+    )
+    return fake, calls, shell, find
+
+
+def test_escape_closes_more_find_confirmation_before_leaving_reader():
+    """Every Reader transient consumes Escape before outward graduation."""
+    fake, calls, _shell, _find = _escape_fake(region="reader", more_open=True)
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_reader_session.more_open is False
+    assert calls == ["sync", ("focus", "#library-media-reader-more")]
+
+    fake, calls, _shell, _find = _escape_fake(region="find")
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_content_query == ""
+    assert calls == ["sync", ("focus", "#library-media-reader-find")]
+
+    fake, calls, _shell, _find = _escape_fake(region="reader")
+    fake._library_media_confirming_delete = True
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_confirming_delete is False
+    assert calls == ["sync"]
+
+    fake, calls, _shell, _find = _escape_fake(region="reader")
+    fake._library_media_editing = True
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_editing is False
+    assert calls == ["sync"]
+
+    fake, calls, _shell, _find = _escape_fake(region="reader")
+    fake._library_media_editing_analysis = True
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_editing_analysis is False
+    assert calls == ["sync"]
+
+
+def test_escape_moves_reader_to_items_then_library_then_screen_back():
+    """One outward handler graduates through the effective pane hierarchy."""
+    fake, calls, shell, _find = _escape_fake(region="reader")
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls[:1] == [("focus", "#library-media-filter")]
+
+    fake.focused = SimpleNamespace(ancestors=(shell.items,))
+    calls.clear()
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls == [("rail", "#library-search-input")]
+
+    fake.focused = SimpleNamespace(ancestors=(shell.library,))
+    calls.clear()
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls == ["back"]
+
+
+def test_escape_skips_responsively_collapsed_panes():
+    """Collapsed intermediate roles are absent from outward graduation."""
+    fake, calls, shell, _find = _escape_fake(region="reader")
+    shell.effective_layout.items_open = False
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls[:1] == [("rail", "#library-search-input")]
+
+    calls.clear()
+    shell.effective_layout.library_open = False
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls == ["back", "footer"]
+
+
+@pytest.mark.asyncio
+async def test_hidden_panes_have_no_focusable_descendants_but_grips_remain_reachable():
+    """A collapsed pane leaves only its fixed grip in the focus chain."""
+    app, _service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        shell = screen.query_one("#library-media-reader-shell")
+        screen.query_one("#library-media-items-grip", Button).press()
+        await pilot.pause()
+
+        assert shell.items.display is False
+        assert shell.items.disabled is True
+        assert all(
+            widget is not shell.items and shell.items not in widget.ancestors
+            for widget in screen.focus_chain
+        )
+        assert shell.items_grip in screen.focus_chain
+
+
+def test_footer_advertises_only_working_current_actions():
+    """The Escape hint names the currently effective focus destination."""
+    fake, _calls, shell, _find = _escape_fake(region="reader")
+    assert LibraryScreen._library_media_escape_label(fake) == "focus Items"
+    fake.focused = SimpleNamespace(ancestors=(shell.items,))
+    assert LibraryScreen._library_media_escape_label(fake) == "focus Library"
+    shell.effective_layout.library_open = False
+    assert LibraryScreen._library_media_escape_label(fake) == "back"

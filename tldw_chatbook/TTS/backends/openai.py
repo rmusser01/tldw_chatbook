@@ -3,15 +3,21 @@
 #
 # Imports
 from typing import AsyncGenerator, Optional, Dict, Any
-import json
 import httpx
 import os
-from urllib.parse import urlsplit
 from loguru import logger
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
-from tldw_chatbook.TTS.base_backends import APITTSBackend
+from tldw_chatbook.TTS.base_backends import (
+    APITTSBackend,
+    TTSBackendConnectionError,
+)
+from tldw_chatbook.TTS.openai_compatible_config import (
+    OpenAIAuthenticationMode,
+    normalize_openai_authentication_mode,
+    normalize_openai_compatible_endpoint,
+)
 from tldw_chatbook.config import get_cli_setting
 
 #######################################################################################################################
@@ -22,40 +28,30 @@ from tldw_chatbook.config import get_cli_setting
 _DEFAULT_OPENAI_TTS_URL = "https://api.openai.com/v1/audio/speech"
 
 
-def _validate_openai_base_url(value: Any) -> str:
-    normalized = str(value or _DEFAULT_OPENAI_TTS_URL).strip()
-    try:
-        parsed = urlsplit(normalized)
-        valid = (
-            parsed.scheme.lower() in {"http", "https"}
-            and bool(parsed.netloc)
-            and bool(parsed.hostname)
-            and parsed.username is None
-            and parsed.password is None
-            and not parsed.fragment
-            and "\r" not in normalized
-            and "\n" not in normalized
+def _http_status_failure(status_code: int) -> tuple[str, ValueError]:
+    if status_code == 401:
+        return (
+            "authentication_failed",
+            ValueError(
+                "Authentication failed. Please check your API configuration (HTTP 401)."
+            ),
         )
-    except ValueError:
-        valid = False
-    if not valid:
-        raise ValueError(
-            "OpenAI base URL must be an absolute HTTP(S) URL without "
-            "credentials or a fragment"
+    if status_code == 429:
+        return (
+            "rate_limited",
+            ValueError("Rate limit exceeded. Please try again later (HTTP 429)."),
         )
-    return normalized
-
-
-def _is_official_openai_endpoint(url: str) -> bool:
-    """Whether the URL is the official OpenAI speech endpoint, ignoring
-    cosmetic differences (scheme/host casing, trailing slash, default port)."""
-    parsed = urlsplit(url)
+    if status_code >= 500:
+        return (
+            "service_unavailable",
+            ValueError(
+                "TTS service temporarily unavailable. Please try again later "
+                f"(HTTP {status_code})."
+            ),
+        )
     return (
-        parsed.scheme.lower() == "https"
-        and (parsed.hostname or "").lower() == "api.openai.com"
-        and parsed.port in (None, 443)
-        and parsed.path.rstrip("/") == "/v1/audio/speech"
-        and not parsed.query
+        "request_rejected",
+        ValueError(f"TTS request was rejected by the service (HTTP {status_code})."),
     )
 
 
@@ -64,8 +60,12 @@ class OpenAITTSBackend(APITTSBackend):
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         supplied_config = config or {}
-        base_url = _validate_openai_base_url(
+        endpoint = normalize_openai_compatible_endpoint(
             supplied_config.get("OPENAI_BASE_URL", _DEFAULT_OPENAI_TTS_URL)
+        )
+        authentication_mode = normalize_openai_authentication_mode(
+            supplied_config.get("OPENAI_AUTH_MODE"),
+            endpoint=endpoint,
         )
         organization_id = str(supplied_config.get("OPENAI_ORG_ID") or "").strip()
         if "\r" in organization_id or "\n" in organization_id:
@@ -73,78 +73,70 @@ class OpenAITTSBackend(APITTSBackend):
 
         super().__init__(config)
 
-        # Try environment variable first
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        logger.debug(
-            f"OpenAITTSBackend: Checking env var OPENAI_API_KEY: {'found' if self.api_key else 'not found'}"
-        )
-
-        if not self.api_key:
-            # Try to get API key from config dict
-            self.api_key = self.config.get("OPENAI_API_KEY")
+        self.authentication_mode = authentication_mode
+        self.api_key = None
+        if authentication_mode is OpenAIAuthenticationMode.API_KEY:
+            self.api_key = os.getenv("OPENAI_API_KEY")
             logger.debug(
-                f"OpenAITTSBackend: Checking config dict for OPENAI_API_KEY: {'found' if self.api_key else 'not found'}"
+                f"OpenAITTSBackend: Checking env var OPENAI_API_KEY: {'found' if self.api_key else 'not found'}"
             )
-
-        if not self.api_key:
-            # Try from api_settings.openai config (new standard location)
-            # We need to access the full config and navigate to api_settings.openai.api_key
-            from tldw_chatbook.config import load_cli_config_and_ensure_existence
-
-            full_config = load_cli_config_and_ensure_existence()
-            api_settings = full_config.get("api_settings", {})
-            if isinstance(api_settings, dict):
-                openai_settings = api_settings.get("openai", {})
-                self.api_key = openai_settings.get("api_key")
-            logger.debug(
-                f"OpenAITTSBackend: Checking api_settings.openai/api_key: {'found' if self.api_key else 'not found'}"
-            )
-            if self.api_key:
+            if not self.api_key:
+                self.api_key = self.config.get("OPENAI_API_KEY")
                 logger.debug(
-                    "OpenAITTSBackend: api_settings.openai API key is configured"
+                    f"OpenAITTSBackend: Checking config dict for OPENAI_API_KEY: {'found' if self.api_key else 'not found'}"
+                )
+            if not self.api_key:
+                from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
+                full_config = load_cli_config_and_ensure_existence()
+                api_settings = full_config.get("api_settings", {})
+                if isinstance(api_settings, dict):
+                    openai_settings = api_settings.get("openai", {})
+                    if isinstance(openai_settings, dict):
+                        self.api_key = openai_settings.get("api_key")
+                logger.debug(
+                    f"OpenAITTSBackend: Checking api_settings.openai/api_key: {'found' if self.api_key else 'not found'}"
+                )
+            if not self.api_key:
+                openai_api_settings = get_cli_setting("openai_api")
+                if openai_api_settings and isinstance(openai_api_settings, dict):
+                    self.api_key = openai_api_settings.get("api_key")
+                logger.debug(
+                    f"OpenAITTSBackend: Checking openai_api/api_key: {'found' if self.api_key else 'not found'}"
+                )
+            if not self.api_key:
+                api_settings = get_cli_setting("API")
+                if api_settings and isinstance(api_settings, dict):
+                    self.api_key = api_settings.get("openai_api_key")
+                logger.debug(
+                    f"OpenAITTSBackend: Checking API/openai_api_key: {'found' if self.api_key else 'not found'}"
+                )
+            if not self.api_key:
+                app_tts_settings = get_cli_setting("app_tts")
+                if app_tts_settings and isinstance(app_tts_settings, dict):
+                    self.api_key = app_tts_settings.get("OPENAI_API_KEY_fallback")
+                logger.debug(
+                    f"OpenAITTSBackend: Checking app_tts/OPENAI_API_KEY_fallback: {'found' if self.api_key else 'not found'}"
                 )
 
-        if not self.api_key:
-            # Try from openai_api config (legacy location)
-            openai_api_settings = get_cli_setting("openai_api")
-            if openai_api_settings and isinstance(openai_api_settings, dict):
-                self.api_key = openai_api_settings.get("api_key")
-            logger.debug(
-                f"OpenAITTSBackend: Checking openai_api/api_key: {'found' if self.api_key else 'not found'}"
-            )
-
-        if not self.api_key:
-            # Try from CLI config
-            api_settings = get_cli_setting("API")
-            if api_settings and isinstance(api_settings, dict):
-                self.api_key = api_settings.get("openai_api_key")
-            logger.debug(
-                f"OpenAITTSBackend: Checking API/openai_api_key: {'found' if self.api_key else 'not found'}"
-            )
-
-        if not self.api_key:
-            # Try from app_tts config
-            app_tts_settings = get_cli_setting("app_tts")
-            if app_tts_settings and isinstance(app_tts_settings, dict):
-                self.api_key = app_tts_settings.get("OPENAI_API_KEY_fallback")
-            logger.debug(
-                f"OpenAITTSBackend: Checking app_tts/OPENAI_API_KEY_fallback: {'found' if self.api_key else 'not found'}"
-            )
-
-        self.base_url = base_url
+        self.endpoint = endpoint
+        self.base_url = endpoint.speech_url
         self.organization_id = organization_id or None
         # OpenAI-compatible servers (e.g. pocket-tts) define their own models and
         # voices and are typically keyless, so OpenAI-specific constraints only
         # apply when talking to the official endpoint.
-        self.is_custom_endpoint = not _is_official_openai_endpoint(base_url)
+        self.is_custom_endpoint = not endpoint.official
 
-        if not self.api_key and not self.is_custom_endpoint:
+        if not self.api_key and authentication_mode is OpenAIAuthenticationMode.API_KEY:
             logger.warning("OpenAITTSBackend: No API key configured")
 
     async def initialize(self):
         """Initialize the backend"""
         logger.info("OpenAITTSBackend initialized")
-        if not self.api_key and not self.is_custom_endpoint:
+        if (
+            not self.api_key
+            and self.authentication_mode is OpenAIAuthenticationMode.API_KEY
+        ):
             logger.warning(
                 "OpenAITTSBackend: No API key available. Requests will fail."
             )
@@ -161,8 +153,7 @@ class OpenAITTSBackend(APITTSBackend):
         Yields:
             Audio bytes in the requested format
         """
-        # Only the official OpenAI endpoint requires an API key
-        if not self.is_custom_endpoint:
+        if self.authentication_mode is OpenAIAuthenticationMode.API_KEY:
             self._validate_api_key()
 
         # Validate input text
@@ -174,7 +165,10 @@ class OpenAITTSBackend(APITTSBackend):
             raise ValueError("Text input exceeds maximum length of 4096 characters.")
 
         headers = {"Content-Type": "application/json"}
-        if self.api_key:
+        if (
+            self.authentication_mode is OpenAIAuthenticationMode.API_KEY
+            and self.api_key
+        ):
             headers["Authorization"] = f"Bearer {self.api_key}"
         # The org ID is OpenAI account metadata — never forward it to
         # third-party OpenAI-compatible servers.
@@ -230,6 +224,7 @@ class OpenAITTSBackend(APITTSBackend):
             f"format={response_format}, speed={speed}"
         )
 
+        safe_failure: ValueError | None = None
         try:
             async with self.client.stream(
                 "POST", self.base_url, headers=headers, json=payload
@@ -279,56 +274,30 @@ class OpenAITTSBackend(APITTSBackend):
 
             logger.info("OpenAITTSBackend: Successfully completed TTS generation")
 
-        except httpx.HTTPStatusError as e:
-            # Try to read error content safely
-            error_msg = f"HTTP {e.response.status_code}"
-            error_details = None
-
-            # Check if response can still be read
-            if hasattr(e.response, "is_closed") and not e.response.is_closed:
-                try:
-                    error_content = await e.response.aread()
-                    error_details = error_content.decode("utf-8", errors="ignore")
-
-                    # Try to extract meaningful error message
-                    try:
-                        error_data = json.loads(error_details)
-                        if "error" in error_data and "message" in error_data["error"]:
-                            error_msg = error_data["error"]["message"]
-                    except (json.JSONDecodeError, KeyError, TypeError):
-                        # Keep the status code message if JSON parsing fails
-                        pass
-                except Exception as read_error:
-                    logger.debug(f"Could not read error response body: {read_error}")
-
-            # Log error without exposing sensitive information
-            logger.error(f"OpenAI API error {e.response.status_code}: {error_msg}")
-
-            # Provide user-friendly error messages
-            if e.response.status_code == 401:
-                raise ValueError(
-                    "Authentication failed. Please check your API configuration."
-                )
-            elif e.response.status_code == 429:
-                raise ValueError("Rate limit exceeded. Please try again later.")
-            elif e.response.status_code >= 500:
-                raise ValueError(
-                    "TTS service temporarily unavailable. Please try again later."
-                )
-            else:
-                raise ValueError(f"TTS request failed: {error_msg}")
+        except httpx.HTTPStatusError as error:
+            status_code = error.response.status_code
+            category, safe_failure = _http_status_failure(status_code)
+            logger.error(
+                "OpenAITTSBackend: Request failed "
+                f"(http_status={status_code}, category={category})"
+            )
 
         except httpx.RequestError:
             # Log without exposing connection details
             logger.error("OpenAITTSBackend: Network request failed")
-            raise ValueError(
+            safe_failure = TTSBackendConnectionError(
                 "Unable to connect to TTS service. Please check your internet connection."
             )
 
         except Exception:
             # Log error without stack trace that might contain sensitive data
             logger.error("OpenAITTSBackend: Unexpected error during TTS generation")
-            raise ValueError("An unexpected error occurred during TTS generation.")
+            safe_failure = ValueError(
+                "An unexpected error occurred during TTS generation."
+            )
+
+        if safe_failure is not None:
+            raise safe_failure
 
 
 #

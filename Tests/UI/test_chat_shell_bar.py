@@ -117,6 +117,25 @@ def test_chat_shell_context_supports_chat_session_data() -> None:
     assert session_context.session_label == "Session: Chat Session"
 
 
+def test_chat_shell_projects_character_and_session_labels_to_one_line() -> None:
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    raw_title = f"Chat with {raw_name}"
+    session = _SessionFixture(
+        title=raw_title,
+        assistant_kind="character",
+        character_name=raw_name,
+    )
+
+    context = ChatShellContext.from_session_data(session)
+
+    assert context.assistant_label == "Character: Nyx Admin?[/bold]"
+    assert context.session_label == "Session: Chat with Nyx Admin?[/bold]"
+    assert "\n" not in context.format(200)
+    assert "\t" not in context.format(200)
+    assert session.title == raw_title
+    assert session.character_name == raw_name
+
+
 @pytest.mark.parametrize(
     ("session_data", "resolver", "expected"),
     [

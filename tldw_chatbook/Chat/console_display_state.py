@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from html import escape as html_escape
-from typing import Any, Mapping, Optional
+from pathlib import PurePath
+from typing import Any, Mapping, Optional, Sequence
+
+from rich.cells import cell_len
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -32,9 +41,9 @@ CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON = "No tool calls are ready for review."
 CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON = "No Chatbook artifact is available."
 
 #: How many staged references the composer-level evidence strip lists before
-#: it collapses the rest into a "+N more" line. The strip sits between the
-#: status chips and the composer, so it must stay short enough never to push
-#: the composer off a small terminal.
+#: it collapses the rest into a "+N more" line. The strip sits directly above
+#: the composer (the status chips are below it now), so it must stay short
+#: enough never to push the composer off a small terminal.
 CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS = 3
 CONSOLE_STAGED_EVIDENCE_UNSTAGE_ID = "console-unstage-evidence"
 CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL = "Un-stage"
@@ -95,12 +104,21 @@ def resolve_assistant_identity_label(
         ``Character: <value>``, ``Persona: <value>``, or the generic
         ``Assistant: General`` fallback.
     """
-    character_text = _clean(character, "")
+    character_text = sanitize_character_display_label(
+        character,
+        max_characters=180,
+    )
     if character_text:
         return f"Character: {character_text}"
 
     assistant_kind_text = _clean(assistant_kind, "").lower()
-    persona_text = _clean(assistant_name, "") or _clean(assistant_id, "")
+    persona_text = sanitize_character_display_label(
+        assistant_name,
+        max_characters=180,
+    ) or sanitize_character_display_label(
+        assistant_id,
+        max_characters=180,
+    )
     if assistant_kind_text == "persona" and persona_text:
         return f"Persona: {persona_text}"
     return "Assistant: General"
@@ -191,6 +209,7 @@ def build_console_disabled_reason(
     has_draft: bool,
     send_blocked: bool,
     setup_blocked_reason: str = "",
+    wake_turn_active: bool = False,
 ) -> str:
     """Return concise disabled copy for Console action controls.
 
@@ -199,6 +218,13 @@ def build_console_disabled_reason(
         has_draft: Whether the composer currently has message text.
         send_blocked: Whether sending is blocked by setup or run state.
         setup_blocked_reason: Provider/setup blocker copy, when present.
+        wake_turn_active: Whether the active session is busy with a
+            machine-injected auto-wake turn (task-15862 AC#3). Checked
+            FIRST: during a wake the queue presentation's "wait to be
+            accepted" tooltip rides the ``setup_blocked_reason`` slot (a
+            chainless wake is never queue-accepted), and the setup
+            fallback below would blame provider setup for it -- the
+            observed live lie.
 
     Returns:
         A user-facing disabled reason, or an empty string when no conservative
@@ -206,6 +232,9 @@ def build_console_disabled_reason(
     """
     if action_id != "send":
         return ""
+
+    if send_blocked and wake_turn_active:
+        return "Send blocked — delivering a sub-agent result"
 
     setup_reason = _clean(setup_blocked_reason, "")
     setup_reason_lower = setup_reason.lower()
@@ -252,6 +281,116 @@ class ConsoleDisplayRow:
         return f"{self.label}: {self.value}{suffix}"
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleProjectInstructionSourceRow:
+    """Content-free metadata for one automatically resolved source."""
+
+    relative_source: str
+    scope: str
+    byte_count: int | None
+    outcome: str
+    warning_code: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleProjectInstructionState:
+    """Pure display state for the Inspector and Context surfaces."""
+
+    status: str
+    enabled: bool
+    binding_label: str
+    locator_match: str
+    sources: tuple[ConsoleProjectInstructionSourceRow, ...] = ()
+    warning_codes: tuple[str, ...] = ()
+    recovery_actions: tuple[str, ...] = ()
+
+
+def build_console_project_instruction_state(
+    control: ProjectInstructionControlState,
+    *,
+    binding_label: str = "",
+    locator_matches: bool | None = None,
+    sources: tuple[ConsoleProjectInstructionSourceRow, ...] = (),
+    warning_codes: tuple[str, ...] = (),
+    activation_events: tuple[Any, ...] = (),
+) -> ConsoleProjectInstructionState:
+    """Build the five-state project-instruction summary without source bodies."""
+    combined_sources = list(sources)
+    combined_warnings = [str(code) for code in warning_codes]
+    for event in activation_events:
+        event_outcomes = tuple(
+            str(code) for code in getattr(event, "outcome_codes", ()) if str(code)
+        )
+        combined_warnings.extend(event_outcomes)
+        for relative_source, scope in zip(
+            getattr(event, "relative_sources", ()),
+            getattr(event, "scopes", ()),
+        ):
+            combined_sources.append(
+                ConsoleProjectInstructionSourceRow(
+                    relative_source=str(relative_source),
+                    scope=str(scope),
+                    byte_count=None,
+                    outcome="active",
+                )
+            )
+    unique_sources = tuple(dict.fromkeys(combined_sources))
+    unique_warnings = tuple(dict.fromkeys(combined_warnings))
+    if not control.project_instructions_enabled:
+        status = "Off"
+    elif unique_warnings or locator_matches is False:
+        status = "Warning"
+    elif not control.working_folder_binding_id:
+        status = "Choose folder"
+    elif unique_sources:
+        loaded = sum(row.outcome == "active" for row in unique_sources)
+        status = f"{loaded} loaded"
+    else:
+        status = "None"
+    locator_match = (
+        "match"
+        if locator_matches is True
+        else "mismatch"
+        if locator_matches is False
+        else "not checked"
+    )
+    recovery_actions = (
+        ("enable",)
+        if status == "Off"
+        else ("choose", "disable")
+        if status in {"Choose folder", "Warning"}
+        else ()
+    )
+    return ConsoleProjectInstructionState(
+        status=status,
+        enabled=control.project_instructions_enabled,
+        binding_label=str(binding_label or ""),
+        locator_match=locator_match,
+        sources=unique_sources,
+        warning_codes=unique_warnings,
+        recovery_actions=recovery_actions,
+    )
+
+
+def merge_console_project_instruction_activations(
+    state: ConsoleProjectInstructionState,
+    control: ProjectInstructionControlState,
+    activation_events: tuple[Any, ...],
+) -> ConsoleProjectInstructionState:
+    """Merge one run's content-free activation events into cached UI state."""
+    if not activation_events:
+        return state
+    locator_matches = {"match": True, "mismatch": False}.get(state.locator_match)
+    return build_console_project_instruction_state(
+        control,
+        binding_label=state.binding_label,
+        locator_matches=locator_matches,
+        sources=state.sources,
+        warning_codes=state.warning_codes,
+        activation_events=activation_events,
+    )
+
+
 @dataclass(frozen=True)
 class ConsoleEvidenceDisplayState:
     """Readable Console summary for one staged evidence bundle."""
@@ -265,10 +404,31 @@ class ConsoleEvidenceDisplayState:
     reference_rows: tuple[ConsoleDisplayRow, ...] = ()
 
 
+#: Instance attribute used to cache one launch's parsed evidence bundle:
+#: ``(payload mapping identity, parsed bundle or None)``. Stored via
+#: ``object.__setattr__`` because ``ConsoleLiveWorkLaunch`` is a frozen
+#: dataclass (with a plain ``__dict__``, so the write is safe).
+_EVIDENCE_BUNDLE_CACHE_ATTR = "_tldw_parsed_evidence_bundle_cache"
+
+
 def evidence_bundle_from_launch(
     launch: ConsoleLiveWorkLaunch | None,
 ) -> EvidenceBundle | None:
-    """Parse a staged live-work evidence bundle without exposing raw payload text."""
+    """Parse a staged live-work evidence bundle without exposing raw payload text.
+
+    TASK-21118: parsed at most ONCE per launch. All Console staged-state
+    consumers (source counts, prompted text, the workspace context's
+    staged sources, the evidence display card) funnel through this seam,
+    and while a launch was staged the control-state build re-ran
+    ``EvidenceBundle.from_payload`` for each of them on every printable
+    keystroke -- measured >=2x per key by the 2026-08-22 holistic perf
+    review, and 11x across three keys by this task's mounted probe. The
+    parse result is cached on the launch object keyed by the identity of
+    the payload's ``evidence_bundle`` mapping, so replacing the payload
+    invalidates the cache while repeat reads (including of a failed
+    parse) are free. Launches copy their payload at construction and are
+    otherwise treated as immutable, so identity is the right key.
+    """
     if launch is None:
         return None
     evidence_payload = launch.payload.get("evidence_bundle")
@@ -276,10 +436,21 @@ def evidence_bundle_from_launch(
         return evidence_payload
     if not isinstance(evidence_payload, Mapping):
         return None
+    cached = getattr(launch, _EVIDENCE_BUNDLE_CACHE_ATTR, None)
+    if cached is not None and cached[0] is evidence_payload:
+        return cached[1]
     try:
-        return EvidenceBundle.from_payload(evidence_payload)
+        bundle: EvidenceBundle | None = EvidenceBundle.from_payload(evidence_payload)
     except (TypeError, ValueError):
-        return None
+        bundle = None
+    try:
+        object.__setattr__(
+            launch, _EVIDENCE_BUNDLE_CACHE_ATTR, (evidence_payload, bundle)
+        )
+    except (AttributeError, TypeError):
+        # A slotted or otherwise write-refusing launch double stays uncached.
+        pass
+    return bundle
 
 
 def build_console_evidence_display_state(
@@ -921,6 +1092,10 @@ class ConsoleInspectorState:
     #: streaming) — the status-summary/Live-work surfaces read this so they
     #: stop claiming "Ready" mid-run.
     run_active: bool = False
+    staged_source_count: int = 0
+    pending_approval_count: int = 0
+    scope_item_count: int | None = None
+    ephemeral: bool = False
 
     @classmethod
     def from_values(
@@ -946,6 +1121,7 @@ class ConsoleInspectorState:
         run_active: bool = False,
         ephemeral: bool = False,
         change_review_available: bool = False,
+        staged_source_count: int = 0,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
         # F2 (task-9 review): the inspector's Save Chatbook action is a
@@ -1059,7 +1235,787 @@ class ConsoleInspectorState:
             has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
             run_active=run_active,
+            staged_source_count=coerce_non_negative_int(staged_source_count),
+            pending_approval_count=normalized_approval_count,
+            scope_item_count=scope_item_count,
+            ephemeral=ephemeral,
         )
 
     def to_plain_text(self) -> str:
         return "\n".join(row.text for row in self.rows)
+
+
+@dataclass(frozen=True)
+class TurnFileEntry:
+    """One changed file on a turn's transcript card (task: turn file card).
+
+    ``label`` is what the row prints: the bare relpath for a single-root
+    turn, ``<root-name>/<relpath>`` when the turn touched several roots.
+    ``path``/``root`` stay separate because the diff loader needs the
+    exact (row, path) pair the provider expects.
+    """
+
+    label: str
+    path: str
+    root: str
+    status: str
+    adds: int
+    dels: int
+
+
+def turn_file_entries(
+    row_files: "Sequence[tuple[Mapping[str, Any], Sequence[Any]]]",
+) -> "list[tuple[TurnFileEntry, Mapping[str, Any]]]":
+    """Assemble a turn card's file rows from its snapshot rows.
+
+    Pairs each entry with the EXACT row it came from, by position -- never
+    keyed by root. A run's ``change_snapshots`` can hold rows from TWO
+    windows on the SAME root (a turn's own window and its surviving
+    sub-agents' post-turn window, PR3a-1 Task 6c; both markers carry the
+    same ``change_review_run_id``), and a root-keyed dict silently drops
+    one window's files and mispairs the rest. Building entries per row
+    instead means each entry's diff is always read against the row that
+    actually produced it, regardless of how many rows share a root.
+
+    Semantics ruling (deliberate, mirrors the `v` Review screen): a card
+    shows the UNION of ALL of its run's clean rows. When a turn and its
+    post-turn window share a root, both of that run's markers therefore
+    render the same union rather than each showing only its own slice --
+    exactly like ``AgentRunsChangeReviewProvider.turns()`` groups every
+    row for a ``run_id`` into one ``ReviewTurn`` regardless of window.
+
+    Args:
+        row_files: ``(row, changed_files)`` pairs in row order -- one pair
+            per row of the run's ``change_snapshots``. ``changed_files`` is
+            whatever ``AgentRunsChangeReviewProvider.changed_files(row)``
+            returned for that exact row. Tracking-error rows contribute
+            nothing -- the card degrades to the marker text for those (and
+            may be passed in unfiltered; they are dropped below).
+
+    Returns:
+        ``(entry, row)`` pairs in row order then file order, labels
+        root-prefixed only when more than one clean ROOT (not window)
+        contributed.
+    """
+    clean = [
+        (row, files) for row, files in row_files if not row.get("tracking_error")
+    ]
+    multi_root = len({str(row["root"]) for row, _ in clean}) > 1
+    paired: list[tuple[TurnFileEntry, Mapping[str, Any]]] = []
+    for row, files in clean:
+        root = str(row["root"])
+        prefix = f"{PurePath(root).name}/" if multi_root else ""
+        for changed in files:  # ChangedFile
+            paired.append(
+                (
+                    TurnFileEntry(
+                        label=f"{prefix}{changed.path}",
+                        path=changed.path,
+                        root=root,
+                        status=str(changed.status),
+                        adds=int(changed.adds),
+                        dels=int(changed.dels),
+                    ),
+                    row,
+                )
+            )
+    return paired
+
+
+@dataclass(frozen=True)
+class ConversationFileEntry:
+    """One file's cross-turn latest state in a conversation (review rail, TASK-18060 spec §1).
+
+    ``label`` follows :class:`TurnFileEntry`'s exact convention: the bare
+    relpath when every contributing row shares one root, ``<root-name>/
+    <relpath>`` when they span several. ``run_id``/``snapshot_id`` name the
+    NEWEST clean row that still covers this ``(root, path)`` -- the row
+    whose diff the file's ``status``/``adds``/``dels`` come from, and the
+    identity :func:`conversation_file_summary`'s caller (the rail's
+    click-through) opens the Review screen against.
+
+    **Counts honesty** (spec §1): ``adds``/``dels`` are that NEWEST row's
+    own deltas for this file, not a sum across every turn that touched
+    it -- callers must present them as "latest turn deltas", never as a
+    cumulative total.
+    """
+
+    root: str
+    path: str
+    label: str
+    status: str
+    adds: int
+    dels: int
+    run_id: str
+    snapshot_id: int
+    note_count: int
+
+
+def conversation_file_summary(
+    rows_with_files: "Sequence[tuple[Mapping[str, Any], Sequence[ChangedFile]]]",
+    note_counts: "Mapping[tuple[str, str], int]",
+) -> "list[ConversationFileEntry]":
+    """Cross-turn latest-state summary of a conversation's changed files.
+
+    Pure assembly -- no I/O, no git, no DB. The caller (the provider's
+    ``conversation_changed_files``) is responsible for filtering to CLEAN
+    rows before calling this (``tracking_error`` falsy, ``end_sha``
+    truthy -- the same guard :meth:`AgentRunsChangeReviewProvider.
+    changed_files` applies) and for skipping any row whose diff raised
+    ``ChangeTrackingError`` (retention-pruned history); a row that made it
+    into ``rows_with_files`` is assumed to be fully readable.
+
+    Latest-wins per ``(root, path)`` (spec §1): ``rows_with_files`` arrives
+    OLDEST first (mirrors ``ORDER BY cs.id``), and each row's files simply
+    overwrite whatever an earlier row recorded for the same path -- so a
+    path deleted in an early turn and recreated in a later one correctly
+    ends up "A", not "D", with no special-casing. A rename (``status
+    "R"``) keys its entry by the NEW path (``changed.path``) and deletes
+    any existing entry for the OLD path (``changed.old_path``) -- the old
+    path stops existing as of that row.
+
+    Args:
+        rows_with_files: ``(row, changed_files)`` pairs, one per CLEAN
+            snapshot row, oldest first. ``changed_files`` is whatever
+            :meth:`AgentRunsChangeReviewProvider.changed_files` returned
+            for that exact row.
+        note_counts: ``{(root, path): count}`` from
+            :meth:`AgentRunsDB.change_note_counts_for_conversation`,
+            joined onto each surviving entry's CURRENT path (a rename's
+            note count follows the note's own ``(root, path)`` key, which
+            is unaffected by later renames -- callers accept that a note
+            recorded against a path before it was renamed away no longer
+            joins to the renamed entry).
+
+    Returns:
+        One :class:`ConversationFileEntry` per ``(root, path)`` still
+        alive at the end of history, ordered NEWEST first by owning
+        snapshot id, then by path.
+    """
+    multi_root = len({str(row["root"]) for row, _ in rows_with_files}) > 1
+    latest: dict[tuple[str, str], ConversationFileEntry] = {}
+    for row, files in rows_with_files:
+        root = str(row["root"])
+        run_id = str(row["run_id"])
+        snapshot_id = int(row["id"])
+        prefix = f"{PurePath(root).name}/" if multi_root else ""
+        for changed in files:  # ChangedFile
+            if changed.status == "R" and changed.old_path:
+                latest.pop((root, str(changed.old_path)), None)
+            path = str(changed.path)
+            latest[(root, path)] = ConversationFileEntry(
+                root=root,
+                path=path,
+                label=f"{prefix}{path}",
+                status=str(changed.status),
+                adds=int(changed.adds),
+                dels=int(changed.dels),
+                run_id=run_id,
+                snapshot_id=snapshot_id,
+                note_count=int(note_counts.get((root, path), 0)),
+            )
+    return sorted(
+        latest.values(), key=lambda entry: (-entry.snapshot_id, entry.path)
+    )
+
+
+def _cell_trim_prefix(text: str, budget: int) -> str:
+    """Keep as much of ``text``'s START as fits ``budget`` display cells.
+
+    Drops trailing characters once the running cell width would exceed
+    ``budget`` -- used to shorten the FIRST path component in
+    :func:`middle_elide_path` (its directory hint lives at the front).
+    Measured whole-character via ``cell_len``, so a double-width character
+    that would not fully fit is dropped entirely rather than split.
+
+    Args:
+        text: The component text to trim.
+        budget: Maximum display-cell width of the result.
+
+    Returns:
+        The longest prefix of ``text`` whose ``cell_len`` is ``<=
+        budget``; ``""`` when ``budget <= 0``.
+    """
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for char in text:
+        width = cell_len(char)
+        if used + width > budget:
+            break
+        kept.append(char)
+        used += width
+    return "".join(kept)
+
+
+def _cell_trim_suffix(text: str, budget: int) -> str:
+    """Keep as much of ``text``'s END as fits ``budget`` display cells.
+
+    The mirror of :func:`_cell_trim_prefix`, used to shorten the LAST path
+    component in :func:`middle_elide_path` -- its recognizable tail (often
+    a file extension) lives at the end, so leading characters are dropped
+    instead.
+
+    Args:
+        text: The component text to trim.
+        budget: Maximum display-cell width of the result.
+
+    Returns:
+        The longest suffix of ``text`` whose ``cell_len`` is ``<=
+        budget``; ``""`` when ``budget <= 0``.
+    """
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for char in reversed(text):
+        width = cell_len(char)
+        if used + width > budget:
+            break
+        kept.append(char)
+        used += width
+    return "".join(reversed(kept))
+
+
+def middle_elide_path(path: str, budget: int) -> str:
+    """Middle-elide a path to fit a display budget, preserving both ends.
+
+    Keeps the first and last path components intact -- the two fragments a
+    user actually recognizes a file by (its directory of origin and its
+    own name) -- and collapses everything between them into a single "…"
+    placeholder component. Splits on "/" rather than going through
+    `pathlib`: every path this renders (``TurnFileEntry.label``) is
+    already a root-relative git path, not a local filesystem path to
+    resolve, and git always uses "/" regardless of host OS.
+
+    TASK-17611 (AC#5): budgeted in terminal display CELLS via
+    ``rich.cells.cell_len``, not raw ``len()`` -- a path carrying
+    double-width (CJK etc.) characters can fit comfortably within a
+    character-count budget while still overflowing the actual row width
+    by several cells; ``cell_len`` is the same width function
+    Rich/Textual use to lay out text, so this budget check matches what
+    actually gets painted. ASCII paths are unaffected: ``cell_len(text)
+    == len(text)`` for any text with no wide/zero-width characters, so
+    every existing ASCII-path caller/test keeps its exact prior result.
+
+    Qodo round (same task): the ``"<first>/…/<last>"`` candidate is now
+    itself MEASURED, not just assumed to fit -- a wide first/last
+    component (or just a long one) can overflow the budget even after
+    dropping every middle component, which the original AC#5 fix left
+    unaddressed. When it does, both endpoint components are further
+    trimmed, cell-aware (:func:`_cell_trim_prefix`/:func:`_cell_trim_
+    suffix`), splitting the remaining budget between them (a component
+    that already fits its half-share donates the rest to the other side)
+    so the FINAL result never exceeds ``budget`` whenever ``budget`` is at
+    least the ellipsis's own cell width -- only a budget too small even
+    for the bare "…" placeholder is allowed to overflow, since there is
+    nothing narrower left to offer.
+
+    Args:
+        path: The path to elide.
+        budget: Maximum display-cell width of the result.
+
+    Returns:
+        ``path`` unchanged when it already fits within ``budget``, or when
+        it has two or fewer components -- there is no middle left to drop
+        without mangling the one meaningful fragment that remains (a bare
+        filename, or a directory/filename pair where both ends already
+        ARE the whole path). Otherwise ``"<first>/…/<last>"`` when that
+        fits; when it doesn't, the same shape with one or both endpoint
+        components further cell-trimmed to fit ``budget`` exactly (or as
+        close as the budget allows) -- see the Qodo-round note above for
+        the one case still allowed to overflow.
+    """
+    if cell_len(path) <= budget:
+        return path
+    parts = path.split("/")
+    if len(parts) <= 2:
+        return path
+    first, last = parts[0], parts[-1]
+    candidate = f"{first}/…/{last}"
+    if cell_len(candidate) <= budget:
+        return candidate
+
+    ellipsis_width = cell_len("…")
+    if budget < ellipsis_width:
+        # Not even the bare placeholder fits -- nothing honest to return
+        # that respects the budget; this is the one case allowed to
+        # overflow (an unusably small budget).
+        return "…"
+    slash_width = cell_len("/")
+    endpoints_budget = budget - ellipsis_width - (2 * slash_width)
+    if endpoints_budget <= 0:
+        # Room for the ellipsis (and maybe the slashes) but nothing left
+        # for either endpoint component's own text.
+        return "…"
+
+    first_width = cell_len(first)
+    last_width = cell_len(last)
+    first_budget = endpoints_budget // 2
+    last_budget = endpoints_budget - first_budget
+    # A component that already fits its half-share doesn't need to eat
+    # into the other's -- redistribute the unused allowance so the
+    # tighter side gets more room instead of being trimmed needlessly.
+    if first_width <= first_budget:
+        last_budget += first_budget - first_width
+        first_budget = first_width
+    elif last_width <= last_budget:
+        first_budget += last_budget - last_width
+        last_budget = last_width
+
+    trimmed_first = _cell_trim_prefix(first, first_budget)
+    trimmed_last = _cell_trim_suffix(last, last_budget)
+    return f"{trimmed_first}/…/{trimmed_last}"
+
+
+# --------------------------------------------------------------------------
+# Diff hunk segmentation + annotate/feedback loop (task: turn-file-card
+# annotate loop, TASK-16800)
+# --------------------------------------------------------------------------
+
+#: Matches a unified-diff hunk header line verbatim, e.g. "@@ -1,4 +1,6 @@"
+#: or "@@ -1,4 +1,6 @@ def foo():" (git's optional trailing function
+#: context). Adapted from ``Tools/patch_tool_impls.py:58``'s
+#: ``_HUNK_HEADER`` -- copied locally rather than imported so this module's
+#: segmentation stays independent of the patch tool's own parser, which is
+#: not to be modified for this feature.
+_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
+
+#: The delivery block's heading (spec §4). Shared verbatim between
+#: ``render_diff_feedback_block`` and its consumer (the bridge attach seam,
+#: Task 5) so the format can't drift between definition and use.
+_DIFF_FEEDBACK_HEADING = "## Diff feedback from the user (on your earlier file changes)"
+
+
+@dataclass(frozen=True)
+class DiffHunk:
+    """One hunk of a single file's unified diff, plus its shared prelude.
+
+    ``file_prelude`` (the ``diff --git``/``index``/``---``/``+++`` lines)
+    is identical across every hunk of the same file -- it is repeated on
+    each ``DiffHunk`` rather than factored out so a hunk is a
+    self-contained unit callers can pass around individually (e.g. one
+    hunk per note).
+    """
+
+    header: str
+    body_lines: tuple[str, ...]
+    file_prelude: str
+
+
+def split_unified_diff(text: str) -> list[DiffHunk]:
+    """Segment one file's unified-diff text into per-hunk blocks.
+
+    Always runs over the FULL diff text (spec §2) -- never a
+    display-truncated slice -- so hunk indices are stable regardless of any
+    display cap a caller later applies. Expects ``text`` to be a single
+    file's diff output (e.g. ``provider.diff_text(row, path)``); a
+    multi-file diff is not a supported input shape.
+
+    Args:
+        text: The unified diff text for one file, verbatim.
+
+    Returns:
+        One ``DiffHunk`` per ``@@ ... @@`` header found, in order. When
+        the diff has no hunk headers at all (a binary file, or a clean
+        rename with no content change), returns a single fallback
+        ``DiffHunk`` with an empty ``header``/``file_prelude`` and every
+        line of ``text`` as ``body_lines`` -- this keeps such diffs
+        annotatable as one unit instead of vanishing from segmentation.
+    """
+    lines = text.splitlines()
+    header_indices = [i for i, line in enumerate(lines) if _HUNK_HEADER.match(line)]
+    if not header_indices:
+        return [DiffHunk(header="", body_lines=tuple(lines), file_prelude="")]
+
+    file_prelude = "\n".join(lines[: header_indices[0]])
+    hunks: list[DiffHunk] = []
+    for position, start in enumerate(header_indices):
+        end = (
+            header_indices[position + 1]
+            if position + 1 < len(header_indices)
+            else len(lines)
+        )
+        hunks.append(
+            DiffHunk(
+                header=lines[start],
+                body_lines=tuple(lines[start + 1 : end]),
+                file_prelude=file_prelude,
+            )
+        )
+    return hunks
+
+
+#: Byte cap applied to a captured hunk excerpt (Qodo #5, PR #1779 fix
+#: round). The line cap (``hunk_excerpt``'s ``cap`` parameter) alone is not
+#: enough: a minified single-line file's ONE body line can carry far more
+#: bytes than the whole delivery block's cap, and `render_diff_feedback_
+#: block`'s per-note inclusion loop treats any note whose entry alone
+#: exceeds the block cap as an unconditional queue-blocker (see that
+#: function's own fix below). Bounding excerpt bytes at CAPTURE time keeps
+#: newly-saved notes well clear of that failure mode; the render-time
+#: truncation-to-fit guard below is what protects notes captured before
+#: this cap existed.
+_EXCERPT_BYTE_CAP = 4096
+_EXCERPT_BYTE_CAP_TAIL = "… truncated"
+#: Tail appended when `render_diff_feedback_block` truncates the OLDEST
+#: pending note's excerpt to guarantee it is always deliverable (Qodo #5).
+_EXCERPT_TRUNCATED_TO_FIT_TAIL = "… excerpt truncated to fit"
+
+
+def _byte_safe_truncate(text: str, max_bytes: int) -> str:
+    """Truncate ``text`` to at most ``max_bytes`` UTF-8 bytes.
+
+    Never splits a multi-byte codepoint: backs off byte-by-byte from a
+    raw slice of the UTF-8 encoding until the remainder decodes cleanly.
+
+    Args:
+        text: The text to truncate.
+        max_bytes: The maximum UTF-8 byte length of the result.
+
+    Returns:
+        The longest prefix of ``text`` that both decodes cleanly and fits
+        in ``max_bytes`` bytes. Empty when ``max_bytes <= 0``.
+    """
+    if max_bytes <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    truncated = encoded[:max_bytes]
+    while truncated:
+        try:
+            return truncated.decode("utf-8")
+        except UnicodeDecodeError:
+            truncated = truncated[:-1]
+    return ""
+
+
+def _cap_text_to_byte_budget(text: str, budget_bytes: int, tail: str) -> str:
+    """Truncate ``text`` to fit ``budget_bytes`` UTF-8 bytes, tail included.
+
+    Prefers a line boundary: keeps whole lines from the start for as long
+    as they fit, then appends ``"\\n" + tail``. The one line that does NOT
+    fit whole is not simply dropped, though -- whatever budget remains
+    after the last whole line is spent on a byte-safe PARTIAL prefix of
+    it, so a body that is one huge line (e.g. a minified file's single
+    diff line -- the motivating case for this cap) still yields a useful,
+    budget-respecting excerpt instead of empty content past the header.
+
+    Args:
+        text: The text to cap.
+        budget_bytes: Maximum UTF-8 byte length of the result, tail
+            included.
+        tail: An honest elision marker appended (on its own line) when
+            truncation actually happens.
+
+    Returns:
+        ``text`` unchanged when it already fits ``budget_bytes``;
+        otherwise a truncated prefix plus ``"\\n" + tail``, guaranteed to
+        encode to at most ``budget_bytes`` UTF-8 bytes.
+    """
+    if len(text.encode("utf-8")) <= budget_bytes:
+        return text
+
+    tail_line = f"\n{tail}"
+    tail_bytes = len(tail_line.encode("utf-8"))
+    content_budget = budget_bytes - tail_bytes
+    if content_budget <= 0:
+        # No room for the tail alongside any content -- best effort: a
+        # bare hard truncation, no tail, still honoring the byte budget.
+        return _byte_safe_truncate(text, max(budget_bytes, 0))
+
+    lines = text.split("\n")
+    kept: list[str] = []
+    used = 0
+    for line in lines:
+        sep = "\n" if kept else ""
+        sep_bytes = len(sep)  # sep is ASCII ("" or "\n") -- 1 byte or 0
+        line_bytes = len(line.encode("utf-8"))
+        if used + sep_bytes + line_bytes <= content_budget:
+            kept.append(line)
+            used += sep_bytes + line_bytes
+            continue
+        # This line doesn't fit whole -- spend whatever budget remains on
+        # a byte-safe PARTIAL prefix of it rather than dropping its
+        # content outright.
+        remaining = content_budget - used - sep_bytes
+        if remaining > 0:
+            partial = _byte_safe_truncate(line, remaining)
+            if partial:
+                kept.append(partial)
+        break
+
+    return "\n".join(kept) + tail_line
+
+
+def hunk_excerpt(hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CAP) -> str:
+    """Render a capped, self-contained excerpt of one hunk.
+
+    This is the retention safety net (spec §1): captured once at note
+    creation, it keeps a note's display and delivery self-contained even
+    after the shadow repo prunes the snapshots the hunk came from.
+
+    Two independent caps apply, in order: ``cap`` bounds the number of
+    body LINES (as before); ``byte_cap`` then bounds the whole rendered
+    excerpt's UTF-8 BYTE size (Qodo #5, PR #1779 fix round) -- a line cap
+    alone does not bound a minified single-line file's excerpt, which can
+    carry far more bytes in that one line than the entire delivery
+    block's cap.
+
+    Args:
+        hunk: The hunk to excerpt.
+        cap: Maximum number of body lines to include before eliding.
+        byte_cap: Maximum UTF-8 byte size of the rendered excerpt.
+
+    Returns:
+        The header (when non-empty) followed by up to ``cap`` body lines,
+        newline-joined. When the body is longer than ``cap``, an honest
+        "… N more lines" tail line is appended. When the result (line cap
+        already applied) still exceeds ``byte_cap`` bytes, it is further
+        truncated at a line boundary where possible with an honest
+        "… truncated" tail.
+    """
+    parts: list[str] = []
+    if hunk.header:
+        parts.append(hunk.header)
+    body = hunk.body_lines
+    parts.extend(body[:cap])
+    if len(body) > cap:
+        parts.append(f"… {len(body) - cap} more lines")
+    text = "\n".join(parts)
+    return _cap_text_to_byte_budget(text, byte_cap, _EXCERPT_BYTE_CAP_TAIL)
+
+
+def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
+    """Render one note's block entry (spec §5), sans the shared heading.
+
+    Kind-aware (TASK-18060 Task 8, spec §5): ``note["anchor_kind"]`` picks
+    the shape. Every existing caller's dict predates this column and
+    lacks the key entirely, so a missing/falsy value defaults to
+    ``"hunk"`` -- the same "every existing row reads as hunk truthfully"
+    contract the DB migration itself makes (spec §4).
+
+    - ``"file"``: ``### <path> — whole file   [run <short-id>]`` + the
+      ``> note`` quote -- NO fence, NO ``@@`` (a file row's
+      ``hunk_header``/``hunk_excerpt`` are always the ``''`` sentinels
+      and are never rendered).
+    - ``"diff_line"``: the standard hunk heading, plus
+      ``> on line: <diff_line_text>`` ABOVE the ``> note`` quote, plus
+      the fenced excerpt exactly as a hunk note (the hunk fields are
+      ALSO populated for a line note -- spec §4).
+    - ``"hunk"`` (default): byte-unchanged from before this method
+      learned kinds -- this is the byte-parity contract every pre-Task-8
+      exact-format test pins.
+
+    The excerpt is fenced with FOUR backticks, not the usual three
+    (final-review fix wave): the excerpt is a verbatim hunk body, and a
+    hunk from a markdown-file diff can itself contain a triple-backtick
+    line -- with a three-backtick fence that would prematurely close the
+    fence mid-excerpt and corrupt the rest of the model payload. A bare
+    diff line can start with a literal backtick but a *fenced code block*
+    delimiter inside a diff of a markdown file is exactly the case this
+    guards; four backticks is the standard "fence one level up" escape
+    used for exactly this nesting problem.
+    """
+    short_id = str(note["run_id"])[:8]
+    kind = str(note.get("anchor_kind") or "hunk")
+    if kind == "file":
+        return f"### {note['path']} — whole file   [run {short_id}]\n" f"> {note['note']}"
+    if kind == "diff_line":
+        return (
+            f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
+            f"> on line: {note['diff_line_text']}\n"
+            f"> {note['note']}\n"
+            f"````\n{note['hunk_excerpt']}\n````"
+        )
+    return (
+        f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
+        f"> {note['note']}\n"
+        f"````\n{note['hunk_excerpt']}\n````"
+    )
+
+
+def _oldest_note_entry_truncated_to_fit(
+    note: Mapping[str, Any], *, cap_bytes: int, held_after: int
+) -> "str | None":
+    """Shrink ONLY this note's excerpt so its entry fits under ``cap_bytes``.
+
+    Queue-blocker guard (Qodo #5, PR #1779 fix round): the oldest pending
+    note must always be deliverable, even one whose captured excerpt (a
+    legacy row from before ``hunk_excerpt`` grew its own byte cap) is
+    larger than the whole block cap. Only the excerpt is shrunk -- path,
+    hunk header, and note text are never touched -- and the shrink budget
+    already reserves room for the "… N more notes held" line the caller
+    will need to append when ``held_after`` notes remain uninspected.
+
+    Args:
+        note: The oldest pending note's row dict.
+        cap_bytes: The block's overall byte cap.
+        held_after: How many notes after this one will be left pending
+            (the caller always stops considering further notes once this
+            guard engages, so this count is fixed at call time).
+
+    Returns:
+        The rendered entry (heading NOT included) when a truncation makes
+        it fit; ``None`` when even a zero-length excerpt can't -- the
+        note's own fixed metadata alone already exceeds the budget, so
+        the caller falls back to the pre-fix excluded/held behavior.
+    """
+    heading_bytes = len(_DIFF_FEEDBACK_HEADING.encode("utf-8"))
+    sep_bytes = 1  # the "\n" joining the heading and this entry
+    if held_after > 0:
+        holdover_bytes = len(
+            f"\n\n… {held_after} more notes held for the next message".encode(
+                "utf-8"
+            )
+        )
+    else:
+        holdover_bytes = 0
+
+    # -1 for a strict-inequality safety margin, matching the rest of this
+    # module's "strictly under cap" per-note convention.
+    entry_budget = cap_bytes - heading_bytes - sep_bytes - holdover_bytes - 1
+    skeleton = _diff_feedback_note_entry({**note, "hunk_excerpt": ""})
+    skeleton_bytes = len(skeleton.encode("utf-8"))
+    excerpt_budget = entry_budget - skeleton_bytes
+    if excerpt_budget <= 0:
+        return None
+
+    truncated_excerpt = _cap_text_to_byte_budget(
+        str(note["hunk_excerpt"]), excerpt_budget, _EXCERPT_TRUNCATED_TO_FIT_TAIL
+    )
+    return _diff_feedback_note_entry({**note, "hunk_excerpt": truncated_excerpt})
+
+
+def render_diff_feedback_block(
+    notes: Sequence[dict], *, cap_bytes: int = 16384
+) -> "tuple[str, list[int]]":
+    """Render the auto-attached diff-feedback block (spec §4).
+
+    Notes are included oldest-first (callers pass ``ORDER BY id``) while
+    the running UTF-8 size of the block-so-far stays under ``cap_bytes``:
+    a note is included only if adding its full rendering keeps the total
+    strictly under the cap. The first note that would push the block over
+    the cap, and every note after it, are excluded and NOT stamped
+    delivered by the caller -- they stay pending and ride the next send.
+
+    Queue-blocker guard (Qodo #5, PR #1779 fix round): when the very
+    FIRST (oldest) note alone doesn't fit -- typically a legacy row whose
+    excerpt predates ``hunk_excerpt``'s own byte cap, since a freshly
+    captured excerpt is now bounded well under this block's cap -- its
+    excerpt is truncated to fit instead of excluding it outright, so the
+    oldest pending note is (almost) always deliverable and can never
+    permanently block every note behind it. Every note after it still
+    follows the pre-existing break-at-cap behavior (they stay pending,
+    riding the next send, holdover line as today).
+
+    The cap covers the WHOLE rendered block, including the trailing
+    "… N more notes held for the next message" line when one is needed --
+    that line is never allowed to push the total over ``cap_bytes`` on its
+    own. When nothing is excluded, no such line is appended and nothing is
+    reserved for one, so a cap that exactly fits every note's own bytes is
+    never needlessly short by the holdover line's size.
+
+    Args:
+        notes: ``change_notes`` row dicts, oldest first.
+        cap_bytes: Maximum UTF-8 byte size of the rendered block.
+
+    Returns:
+        A ``(block, included_ids)`` pair. ``included_ids`` holds exactly
+        the ``id`` of every note that made it into ``block``, in the same
+        order. When any notes were excluded by the cap, ``block`` ends
+        with a "… N more notes held for the next message" line. Empty
+        ``notes`` returns ``("", [])``.
+    """
+    if not notes:
+        return "", []
+
+    lines: list[str] = [_DIFF_FEEDBACK_HEADING]
+    included_count = 0
+    floor = 0
+    for index, note in enumerate(notes):
+        entry = _diff_feedback_note_entry(note)
+        candidate = "\n".join(lines + [entry])
+        if len(candidate.encode("utf-8")) < cap_bytes:
+            lines.append(entry)
+            included_count += 1
+            continue
+
+        if index == 0:
+            # Queue-blocker guard: this oldest note doesn't fit even alone
+            # -- try shrinking ITS excerpt (only) so it is deliverable
+            # anyway, rather than leaving it (and everything behind it)
+            # pending forever.
+            held_after = len(notes) - 1
+            truncated_entry = _oldest_note_entry_truncated_to_fit(
+                note, cap_bytes=cap_bytes, held_after=held_after
+            )
+            if truncated_entry is not None:
+                lines.append(truncated_entry)
+                included_count = 1
+                # Guaranteed (by construction, see the helper's budget
+                # math) to already fit under cap_bytes with the holdover
+                # line included -- never evict it below this floor.
+                floor = 1
+        # Every note after the oldest keeps the pre-existing break-at-cap
+        # behavior regardless of whether the guard above engaged.
+        break
+
+    if included_count == len(notes):
+        # Everything fit -- no holdover line, so nothing needed to be
+        # reserved for one either.
+        return "\n".join(lines), [int(note["id"]) for note in notes]
+
+    # At least one note was excluded by the loop above (which did not yet
+    # account for the holdover line's own bytes). Evict from the tail
+    # until the holdover-inclusive block actually fits under cap_bytes --
+    # each eviction both shrinks the notes portion and (usually) shrinks
+    # "held"'s digit count, so this converges quickly. ``floor`` is the
+    # irreducible bound (0 normally; 1 when the queue-blocker guard above
+    # already placed a guaranteed-to-fit truncated oldest note that must
+    # never be evicted) and is returned even if it still exceeds
+    # cap_bytes -- there is nothing left that may be evicted.
+    while True:
+        held = len(notes) - included_count
+        block = "\n".join(lines) + f"\n\n… {held} more notes held for the next message"
+        if len(block.encode("utf-8")) <= cap_bytes or included_count <= floor:
+            included_ids = [int(note["id"]) for note in notes[:included_count]]
+            return block, included_ids
+        included_count -= 1
+        lines.pop()
+
+
+def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
+    """Render the disclosure text for delivered diff-feedback notes.
+
+    Shared verbatim by live emission at run completion and by resume
+    re-derivation from delivered ``change_notes`` rows (spec §4/§5) --
+    both callers must render identical text for the same notes, and that
+    byte-parity contract now holds PER KIND (TASK-18060 Task 8): each
+    caller renders the same rows through this one function, so a mixed
+    batch resumes byte-identical to how it was disclosed live.
+
+    Args:
+        notes: ``change_notes`` row dicts to disclose, one line each.
+
+    Returns:
+        One "📝 Diff feedback attached — ``<location>``: ``"<note>"``"
+        line per note, newline-joined, where ``<location>`` is
+        ``<path> <hunk_header>`` for a ``"hunk"`` note (default, byte-
+        unchanged), ``<path> (whole file)`` for a ``"file"`` note, or
+        ``<path> <hunk_header> line`` for a ``"diff_line"`` note. Empty
+        ``notes`` returns ``""``.
+    """
+    lines = []
+    for note in notes:
+        kind = str(note.get("anchor_kind") or "hunk")
+        if kind == "file":
+            location = f'{note["path"]} (whole file)'
+        elif kind == "diff_line":
+            location = f'{note["path"]} {note["hunk_header"]} line'
+        else:
+            location = f'{note["path"]} {note["hunk_header"]}'
+        lines.append(f'📝 Diff feedback attached — {location}: "{note["note"]}"')
+    return "\n".join(lines)

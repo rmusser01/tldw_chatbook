@@ -111,8 +111,10 @@ def _snapshot_fingerprint(snapshot: Any) -> str:
         "segments": [
             {
                 "collapse_state": segment.collapse_state,
+                "generated_boundary": segment.generated_boundary,
                 "label": segment.label,
                 "origin": segment.origin,
+                "paste_block": segment.paste_block,
                 "text": segment.text,
             }
             for segment in snapshot.segments

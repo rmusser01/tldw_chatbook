@@ -16,6 +16,7 @@ from tldw_chatbook.TTS.studio_preferences import (
 )
 from tldw_chatbook.UI.Speech.speech_settings_pane import (
     STUDIO_ACTIONS,
+    VOICE_DESTINATION_ACTIONS,
     SpeechSettingsPane,
 )
 
@@ -79,6 +80,46 @@ async def test_narrow_studio_actions_and_field_errors_remain_visible() -> None:
         await pilot.pause()
         assert pane.region.contains_region(error.region)
         assert error.region.width > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 48), (80, 24)])
+async def test_voice_destination_strip_has_computed_desktop_and_narrow_layout(
+    size: tuple[int, int],
+) -> None:
+    app = _Harness()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechSettingsPane)
+        strip = app.query_one("#studio-tts-voice-destination-actions")
+        buttons = [
+            app.query_one(f"#{action.id}", Button)
+            for action in VOICE_DESTINATION_ACTIONS
+        ]
+        strip.scroll_visible()
+        await pilot.pause()
+
+        if size[0] < 104:
+            assert pane.has_class("studio-tts-settings-stacked")
+            assert len({button.region.y for button in buttons}) == len(buttons)
+            assert all(
+                button.region.width == strip.content_region.width
+                for button in buttons
+            )
+        else:
+            assert not pane.has_class("studio-tts-settings-stacked")
+            assert len({button.region.y for button in buttons}) == 1
+            assert all(button.region.height == 1 for button in buttons)
+
+
+def test_voice_destination_css_selector_is_synced_to_bundle() -> None:
+    source = (
+        _BUNDLE.parent / "features" / "_lab.tcss"
+    ).read_text(encoding="utf-8")
+    bundle = _BUNDLE.read_text(encoding="utf-8")
+    for stylesheet in (source, bundle):
+        assert "#studio-tts-voice-destination-actions" in stylesheet
+        assert "#studio-tts-voice-profile-actions" not in stylesheet
 
 
 @pytest.mark.asyncio

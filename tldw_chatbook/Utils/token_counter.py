@@ -2,6 +2,8 @@
 # Description: Token counting utilities for various LLM models
 #
 # Imports
+import re
+import threading
 from typing import List, Dict, Any, Union, Optional, Tuple
 
 #
@@ -86,8 +88,18 @@ TOKENS_PER_CHAR_ESTIMATES = {
 }
 
 # Conservative chars-based estimate constants (used when no tokenizer is available).
-CJK_TOKENS_PER_CHAR = 1.0   # each CJK code point is >= ~1 token
-ESTIMATE_HEADROOM = 1.2     # documented headroom so estimates lean high (safe)
+CJK_TOKENS_PER_CHAR = 1.0  # each CJK code point is >= ~1 token
+ESTIMATE_HEADROOM = 1.2  # documented headroom so estimates lean high (safe)
+
+#: Fixed contribution for a non-text part of a multimodal message (an image /
+#: attachment block in the OpenAI part-list shape). 1024 matches the repo's
+#: existing per-image budget charge (``console_history_budget``'s
+#: ``DEFAULT_PER_IMAGE_TOKENS`` aliases THIS constant so the two can never
+#: drift) — using a lower figure here would let image-heavy no-usage turns
+#: slip past ``max_total_tokens`` enforcement (Qodo, PR #1783). Deliberately
+#: conservative, consistent with the estimator's floor-not-exact contract
+#: (TASK-17610).
+NON_TEXT_PART_TOKEN_ESTIMATE = 1024
 
 _CJK_RANGES = (
     (0x3000, 0x303F),  # CJK Symbols and Punctuation (。、「」etc.)
@@ -103,6 +115,65 @@ _CJK_RANGES = (
 def _is_cjk(ch: str) -> bool:
     cp = ord(ch)
     return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+
+#: Character class matching exactly the code points `_is_cjk` accepts, built
+#: from the same `_CJK_RANGES` tuple so the two can never disagree.
+#: TASK-18602: the CJK share used to be counted as
+#: `sum(1 for ch in text if _is_cjk(ch))` -- one Python call per character,
+#: with a 7-range generator inside it. Measured at 158.8 ms for a 640 KB
+#: payload, re-run over the whole conversation every turn.
+_CJK_RE = re.compile(
+    "[" + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _CJK_RANGES) + "]"
+)
+
+
+def _count_cjk(text: str) -> int:
+    """Count CJK-weighted characters in ``text``.
+
+    Two tiers, both avoiding the per-character Python loop this replaced:
+
+    * All-ASCII text -- the overwhelmingly common case for prompts, code,
+      and English prose -- cannot contain a CJK code point at all, and
+      ``str.isascii()`` settles it in one C-level scan (0.001 ms on 640 KB,
+      against 158.8 ms for the old loop).
+    * Anything else is counted by ``_CJK_RE.subn``, which does the same
+      count in a single C-level pass.
+
+    Args:
+        text: The text to scan.
+
+    Returns:
+        Number of characters inside `_CJK_RANGES`.
+    """
+    if text.isascii():
+        return 0
+    return _CJK_RE.subn("", text)[1]
+
+
+#: Bounded memo for `estimate_tokens`. TASK-18602: a conversation is
+#: append-only, but every caller re-estimates the WHOLE message list each
+#: turn, so an N-turn run pays O(N^2) to learn N answers -- 33.1 s of pure
+#: CPU across a simulated 400-turn run, against 0.16 s for counting only
+#: each turn's new text.
+#:
+#: Keyed by `(model, provider, len(text), hash(text))` rather than by the
+#: text itself, deliberately: the key holds NO strong reference, so memoing
+#: a 600 KB message cannot pin it in memory after the conversation moves
+#: on. CPython caches a str's hash on the object after first use, so repeat
+#: lookups of the same message cost a dict probe, not a rescan.
+#:
+#: A hash collision would serve one text's estimate for another's. Guarded
+#: by including the length and the tokenizer identity in the key, and
+#: bounded in consequence by what this function is: a token ESTIMATE whose
+#: own chars tier already applies approximation headroom. It is never used
+#: where an exact count is required.
+_ESTIMATE_CACHE: "dict[tuple[str, str, int, int], int]" = {}
+_ESTIMATE_CACHE_LOCK = threading.Lock()
+#: Cleared wholesale on overflow rather than evicted LRU-style: a miss costs
+#: exactly one recompute, so the simplest correct policy is the right one,
+#: and it keeps the locked section O(1).
+ESTIMATE_CACHE_MAX_ENTRIES = 4096
 
 
 def _norm_provider(provider: str) -> str:
@@ -126,39 +197,128 @@ def _chars_estimate(text: str, provider: str) -> int:
     """
     if not text:
         return 0
-    cjk = sum(1 for ch in text if _is_cjk(ch))
+    cjk = _count_cjk(text)
     other = len(text) - cjk
     base_ratio = TOKENS_PER_CHAR_ESTIMATES.get(
         _norm_provider(provider) or "default", TOKENS_PER_CHAR_ESTIMATES["default"]
     )
-    return max(1, int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM))
+    return max(
+        1, int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM)
+    )
 
 
-def estimate_tokens(text: str, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
-    """Estimate the token count of a text string with one consistent strategy.
+def _flatten_message_content(content: Any) -> "tuple[str, int]":
+    """Normalize message ``content`` into countable text + non-text part count.
+
+    Message content is usually a plain string, but multimodal/attachment turns
+    carry the OpenAI part-list shape (``[{"type": "text", "text": ...},
+    {"type": "image_url", ...}]``). Iterating that list as if it were a string
+    crashed the char estimator (``ord()`` on dict items — TASK-17610).
+
+    Args:
+        content: A message's ``content`` value in any shape.
+
+    Returns:
+        ``(text, non_text_parts)`` — the concatenated text of every string
+        part (dict parts contribute their ``"text"`` value when it is a
+        string), and the count of parts that carry no countable text (each
+        later contributes :data:`NON_TEXT_PART_TOKEN_ESTIMATE`).
+    """
+    if isinstance(content, str):
+        return content, 0
+    if isinstance(content, list):
+        texts: list[str] = []
+        non_text = 0
+        for part in content:
+            if isinstance(part, str):
+                texts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                texts.append(part["text"])
+            else:
+                non_text += 1
+        return "\n".join(texts), non_text
+    # Any other shape (None, dict, number): count its string form — same
+    # conservative-floor posture as the rest of the estimator.
+    return ("" if content is None else str(content)), 0
+
+
+def estimate_tokens(text: Any, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
+    """Estimate the token count of message content with one consistent strategy.
 
     Tiers: a custom tokenizer (only when one is actually installed), else
     tiktoken (when available), else a conservative chars-based floor. Never uses
-    a whitespace word count.
+    a whitespace word count. Non-string content (the multimodal part-list
+    shape) is normalized first: text parts are estimated normally and each
+    non-text part contributes :data:`NON_TEXT_PART_TOKEN_ESTIMATE`.
 
     Args:
-        text: The text to estimate.
+        text: The text (or part-list content) to estimate.
         model: Model name (selects the tiktoken encoding / custom tokenizer).
         provider: Provider name (case-insensitive); selects the chars-path ratio
             and the custom tokenizer's provider patterns.
 
     Returns:
-        Estimated token count (0 for empty text).
+        Estimated token count (0 for empty content).
     """
+    non_text_parts = 0
+    if not isinstance(text, str):
+        text, non_text_parts = _flatten_message_content(text)
+        if non_text_parts:
+            return (
+                estimate_tokens(text, model, provider)
+                + non_text_parts * NON_TEXT_PART_TOKEN_ESTIMATE
+            )
     if not text:
         return 0
+    # TASK-18602: memoized because every caller re-estimates the whole
+    # append-only conversation each turn. The tiers below are all O(len)
+    # or worse -- the tiktoken tier re-encodes, which is the dominant cost
+    # on installs that have it -- so recomputing an unchanged message is
+    # the single largest avoidable cost on the send and agent-turn paths.
+    # See `_ESTIMATE_CACHE` for the key's design and its collision
+    # argument.
+    cache_key = (model, _norm_provider(provider), len(text), hash(text))
+    cached = _ESTIMATE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     if CUSTOM_TOKENIZERS_AVAILABLE and custom_tokenizers_available():
         custom = count_tokens_with_custom(text, model, _norm_provider(provider))
         if custom is not None:
+            _cache_estimate(cache_key, custom)
             return custom
     if TIKTOKEN_AVAILABLE:
-        return count_tokens_tiktoken(text, model)
-    return _chars_estimate(text, provider)
+        counted = count_tokens_tiktoken(text, model)
+    else:
+        counted = _chars_estimate(text, provider)
+    _cache_estimate(cache_key, counted)
+    return counted
+
+
+def _cache_estimate(key: "tuple[str, str, int, int]", value: int) -> None:
+    """Store one memoized estimate, bounding the cache.
+
+    The read in `estimate_tokens` is deliberately unlocked: a dict `get` is
+    atomic under the GIL, and a racing writer can only cause a miss (one
+    extra recompute), never a torn or wrong value. Only the write takes the
+    lock, so concurrent estimation from the agent worker thread and the UI
+    thread never corrupts the dict's internal state.
+    """
+    with _ESTIMATE_CACHE_LOCK:
+        if len(_ESTIMATE_CACHE) >= ESTIMATE_CACHE_MAX_ENTRIES:
+            _ESTIMATE_CACHE.clear()
+        _ESTIMATE_CACHE[key] = value
+
+
+def clear_estimate_cache() -> None:
+    """Drop every memoized estimate.
+
+    Nothing depends on this for correctness -- entries are keyed by the
+    text they describe, so a stale entry cannot be served for changed
+    text. Exposed for tests that swap the tokenizer tier underneath the
+    estimator and need the next call to actually recompute.
+    """
+    with _ESTIMATE_CACHE_LOCK:
+        _ESTIMATE_CACHE.clear()
 
 
 # Token limits per model (approximate)
@@ -300,6 +460,30 @@ def count_tokens_chat_history(
     return count_tokens_messages(messages, model, provider)
 
 
+def get_table_model_token_limit(model: str, provider: str = "openai") -> int | None:
+    """Return a known exact/prefix table limit without a provider fallback.
+
+    Settings uses this tier to distinguish a detected model window from the
+    deliberately conservative unknown-model fallback.
+    """
+
+    provider_key = _norm_provider(provider)
+    if provider_key == "openrouter" and "/" in model:
+        upstream_provider, upstream_model = model.split("/", 1)
+        return get_table_model_token_limit(upstream_model, upstream_provider)
+    if model in MODEL_TOKEN_LIMITS:
+        return MODEL_TOKEN_LIMITS[model]
+    best_limit = None
+    best_len = -1
+    for model_prefix, limit in MODEL_TOKEN_LIMITS.items():
+        if model_prefix == "default":
+            continue
+        if model.startswith(model_prefix) and len(model_prefix) > best_len:
+            best_limit = limit
+            best_len = len(model_prefix)
+    return best_limit
+
+
 def get_model_token_limit(model: str, provider: str = "openai") -> int:
     """
     Get the input context-window token limit for a specific model.
@@ -312,10 +496,8 @@ def get_model_token_limit(model: str, provider: str = "openai") -> int:
     """
     provider_key = _norm_provider(provider)
 
-    # OpenRouter model IDs are "upstream_provider/model" (e.g. "openai/gpt-4o-mini");
-    # resolve against the upstream provider/model so they don't fall through to the
-    # generic default. Split once and re-dispatch -- the re-dispatch provider is the
-    # upstream (never "openrouter"), so this cannot recurse indefinitely.
+    # OpenRouter IDs carry the upstream provider. Re-dispatch the full
+    # resolution chain so an upstream provider fallback remains available.
     if provider_key == "openrouter" and "/" in model:
         upstream_provider, upstream_model = model.split("/", 1)
         return get_model_token_limit(upstream_model, upstream_provider)
@@ -330,21 +512,10 @@ def get_model_token_limit(model: str, provider: str = "openai") -> int:
     except Exception as e:  # never let capability resolution break token limits
         logger.debug(f"context_window lookup failed for {provider}/{model}: {e}")
 
-    # 2. Exact table match.
-    if model in MODEL_TOKEN_LIMITS:
-        return MODEL_TOKEN_LIMITS[model]
-
-    # 3. Longest matching table prefix (so "gpt-4" can't shadow "gpt-4-turbo").
-    best_limit = None
-    best_len = -1
-    for model_prefix, limit in MODEL_TOKEN_LIMITS.items():
-        if model_prefix == "default":
-            continue
-        if model.startswith(model_prefix) and len(model_prefix) > best_len:
-            best_limit = limit
-            best_len = len(model_prefix)
-    if best_limit is not None:
-        return best_limit
+    # 2-3. Exact or longest-prefix table match.
+    table_limit = get_table_model_token_limit(model, provider)
+    if table_limit is not None:
+        return table_limit
 
     # 4. Conservative provider default.
     provider_defaults = {

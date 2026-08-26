@@ -1,7 +1,6 @@
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
     SELECTOR_MERGE_CAP,
-    ModelCatalogSettings,
     load_model_catalog_settings,
 )
 
@@ -12,6 +11,20 @@ def test_defaults_when_section_missing():
     assert settings.stale_after_hours == 24.0
     assert settings.auto_refresh_disabled == frozenset()
     assert settings.write_to_config == frozenset()
+    # Confirm-first default: no consent until explicitly recorded.
+    assert settings.refresh_consent_recorded is False
+
+
+def test_consent_defaults_false_and_requires_explicit_true():
+    assert load_model_catalog_settings(
+        {"model_catalog": {"refresh_consent_recorded": True}}
+    ).refresh_consent_recorded is True
+    assert load_model_catalog_settings(
+        {"model_catalog": {"refresh_consent_recorded": "yes"}}
+    ).refresh_consent_recorded is False
+    assert load_model_catalog_settings(
+        {"model_catalog": {"refresh_consent_recorded": 1}}
+    ).refresh_consent_recorded is False
 
 
 def test_full_section_parsed_and_normalized():
@@ -44,8 +57,15 @@ def test_zero_stale_hours_is_allowed():
     assert settings.stale_after_hours == 0.0
 
 
-def test_six_providers_and_cap():
+def test_qwencloud_is_seventh_auto_refresh_cloud_provider():
     assert set(AUTO_REFRESH_PROVIDER_LIST_KEYS) == {
-        "OpenAI", "Anthropic", "MistralAI", "Moonshot", "OpenRouter", "ZAI",
+        "OpenAI",
+        "Anthropic",
+        "MistralAI",
+        "Moonshot",
+        "OpenRouter",
+        "QwenCloud",
+        "ZAI",
     }
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 7
     assert SELECTOR_MERGE_CAP == 50

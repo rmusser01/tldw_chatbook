@@ -177,6 +177,37 @@ async def test_help_panel_escape_dismisses():
 
 
 @pytest.mark.asyncio
+async def test_help_panel_second_f1_dismisses():
+    """task-4023 AC#4 (RC-10): F1 must toggle the help closed. Live at
+    HEAD a second F1 left the panel open -- the app-level F1 delegate
+    finds no ``action_show_workbench_help`` on the panel screen itself,
+    so the key press changed nothing. The panel now binds ``f1`` to
+    ``dismiss`` directly (screen bindings resolve before app bindings),
+    making F1 a true open/close toggle on every screen that uses it."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        initial_depth = len(app.screen_stack)
+        app.push_screen(
+            WorkbenchHelpPanel(
+                WorkbenchHelpState(
+                    route_id="library",
+                    title="Library Shortcuts",
+                    shortcuts=(("F1", "help"),),
+                )
+            )
+        )
+        await pilot.pause()
+        assert len(app.screen_stack) == initial_depth + 1
+
+        await pilot.press("f1")
+        await pilot.pause()
+
+        assert len(app.screen_stack) == initial_depth
+
+
+@pytest.mark.asyncio
 async def test_generic_help_fallback_lists_screen_bindings():
     """Screens without a custom handler get help generated from their BINDINGS."""
     class BareScreen:

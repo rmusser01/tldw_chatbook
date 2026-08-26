@@ -14,6 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
@@ -29,6 +33,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     PreflightReport,
     TransferError,
 )
+from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryScreen,
@@ -37,7 +42,7 @@ from tldw_chatbook.UI.Screens.library_screen import (
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
 
 
-class _ModalApp(App):
+class _ModalApp(ConsolidatedCSSApp):
     def compose(self):
         return []
 
@@ -354,16 +359,20 @@ def test_progress_message_updates_retained_state_and_widget() -> None:
         1,
         2,
     )
-    widget = MagicMock(spec=ModelInstallProgress)
+    label = MagicMock(spec=Static)
+    progress_widget = MagicMock(spec=ModelInstallProgress)
     screen = object.__new__(LibraryScreen)
     screen._parakeet_v2_install_progress = None
-    screen.query_one = MagicMock(return_value=widget)
+    screen._library_model_install_progress_label = "Parakeet v2"
+    screen.query_one = MagicMock(side_effect=(label, progress_widget))
 
     screen.handle_model_install_progressed(InstallProgressed(progress))
 
     assert screen._parakeet_v2_install_progress is progress
-    assert widget.display is True
-    widget.update_progress.assert_called_once_with(progress)
+    label.update.assert_called_once_with(screen._library_model_install_progress_label)
+    assert label.display is True
+    assert progress_widget.display is True
+    progress_widget.update_progress.assert_called_once_with(progress)
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +480,14 @@ def test_preflight_result_notify_text_uses_mapped_message_not_raw_exception() ->
 def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> None:
     mapped = _failure(GatedRepositoryError(_RAW_MARKER))
     screen = object.__new__(LibraryScreen)
-    screen._library_ingest_form = LibraryIngestFormState()
+    screen._library_ingest_form = LibraryIngestFormState(
+        type_options={
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model_dir": "/prior/external-parakeet",
+            }
+        }
+    )
     screen._parakeet_v2_install_worker = MagicMock()
     screen.app_instance = MagicMock()
     screen.refresh = MagicMock()
@@ -482,19 +498,30 @@ def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> N
     notify_text = screen.app_instance.notify.call_args[0][0]
     assert mapped in notify_text
     assert _RAW_MARKER not in notify_text
+    assert screen._library_ingest_form.type_options["audio_video"] == {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model_dir": "/prior/external-parakeet",
+    }
+    screen.app_instance._ensure_parakeet_source_service.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# Post-install batch selection: unchanged contract.
+# Post-install batch selection: activate managed only after success.
 # ---------------------------------------------------------------------------
 
 
-def test_successful_install_populates_current_batch_model_folder(
+def test_successful_install_prefers_managed_and_clears_external_override(
     tmp_path: Path,
 ) -> None:
     installed = tmp_path / "parakeet-v2"
     screen = object.__new__(LibraryScreen)
-    screen._library_ingest_form = LibraryIngestFormState()
+    screen._library_ingest_form = LibraryIngestFormState(
+        type_options={
+            "audio_video": {
+                "transcription_model_dir": "/prior/external-parakeet",
+            }
+        }
+    )
     screen._parakeet_v2_install_worker = MagicMock()
     screen.app_instance = MagicMock()
     screen.refresh = MagicMock()
@@ -504,6 +531,9 @@ def test_successful_install_populates_current_batch_model_folder(
 
     options = screen._library_ingest_form.type_options["audio_video"]
     assert options["transcription_provider"] == "parakeet-onnx"
-    assert options["transcription_model_dir"] == str(installed)
+    assert options["transcription_precision"] == "int8"
+    assert "transcription_model_dir" not in options
+    service = screen.app_instance._ensure_parakeet_source_service.return_value
+    service.prefer_managed.assert_called_once_with(ParakeetSourceKey.V2_INT8)
     screen.app_instance.notify.assert_called_once()
     screen.refresh.assert_called_once_with(recompose=True)

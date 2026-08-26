@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
 )
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
+
+APPROVED_SESSION_DECISION = "approved-session"
 
 
 @dataclass(frozen=True)
@@ -105,7 +108,8 @@ def build_record(
         arguments: Call arguments used only for their keys.
         registered_argument_names: Schema-approved argument names.
         result: Result used only for its type and top-level size.
-        decision: Permission decision ("allowed" for user-initiated tests).
+        decision: Permission decision (for example, "allowed", "approved",
+            or "approved-session").
 
     Returns:
         A frozen metadata-only ExecutionRecord safe to persist.
@@ -152,6 +156,10 @@ class MCPExecutionLog:
             raise ValueError("max_records_per_file must be positive")
         self.max_records_per_file = max_records_per_file
         self._lock = threading.RLock()
+        #: TASK-21134: identity fingerprint -> sanitized bytes, for each
+        #: generation this instance has already scrubbed. See
+        #: ``_migrate_generation``.
+        self._migrated: dict[str, tuple[tuple[int, ...], bytes]] = {}
 
     def append(self, record: ExecutionRecord) -> None:
         """Append one record, rotating generations at the size cap.
@@ -185,12 +193,20 @@ class MCPExecutionLog:
                     encoded_line,
                     application_owned_directory=self.path.parent,
                 )
+                # Both generations were just written from bytes that are
+                # already sanitized; re-deriving them on the next append
+                # would reproduce them exactly (TASK-21134).
+                self._remember_migration(rotated, active_payload or b"")
+                self._remember_migration(self.path, encoded_line)
                 return
             with open_private_text_append(
                 self.path,
                 application_owned_directory=self.path.parent,
             ) as handle:
                 handle.write(encoded_line.decode("utf-8"))
+            self._remember_migration(
+                self.path, (active_payload or b"") + encoded_line
+            )
 
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return recent records, newest first, across both generations.
@@ -341,11 +357,63 @@ class MCPExecutionLog:
             "result_size": result_size,
         }
 
+    @staticmethod
+    def _identity(path: Path) -> tuple[int, ...] | None:
+        """Fingerprint a generation file, or ``None`` if it cannot be read.
+
+        ``lstat`` deliberately: a symlink in the leaf's place reports the
+        link's own inode, which can never match the fingerprint of the
+        regular file this instance last wrote, so a swapped path is a cache
+        MISS and falls through to the guarded read. ``None`` (missing, or any
+        other stat failure) is also a miss, never a decision -- every failure
+        mode is handed to ``_read_bytes`` and its private-path guards to
+        classify, exactly as before this cache existed. The fingerprint
+        decides staleness only.
+        """
+        try:
+            stat = os.lstat(path)
+        except OSError:
+            return None
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+    def _remember_migration(self, path: Path, sanitized: bytes) -> None:
+        """Record ``sanitized`` as this generation's content, if it still is.
+
+        The size check is the multi-process window: another writer can append
+        between our read (or our own append) and this stat, and caching then
+        would pin bytes that are already short of the file while the
+        fingerprint says they are current. A mismatch simply means no cache
+        entry, i.e. the next call re-reads exactly as it did before.
+        """
+        identity = self._identity(path)
+        if identity is None or identity[2] != len(sanitized):
+            self._migrated.pop(str(path), None)
+            return
+        self._migrated[str(path)] = (identity, sanitized)
+
     def _migrate_generation(self, path: Path) -> bytes | None:
-        """Scrub legacy payload rows and torn lines before further use."""
+        """Scrub legacy payload rows and torn lines before further use.
+
+        The scrub is idempotent, so re-running it on a file this instance
+        already sanitized and has not seen change is pure waste. TASK-21134
+        measured that waste at one full-file parse + re-serialize per tool
+        invocation -- 4.6 ms at the 500-record cap, on every MCP tool call,
+        purely to re-derive bytes identical to what the previous call wrote.
+        A cached identity fingerprint (device/inode/size/mtime) skips it. Any
+        change by another process, or a replaced path, misses the cache and
+        takes the full scrub exactly as before.
+        """
+
+        cached = self._migrated.get(str(path))
+        if cached is not None:
+            identity = self._identity(path)
+            if identity is not None and identity == cached[0]:
+                return cached[1]
+            self._migrated.pop(str(path), None)
 
         raw = self._read_bytes(path)
         if raw is None:
+            self._migrated.pop(str(path), None)
             return None
         rows: list[dict[str, Any]] = []
         for line in raw.decode("utf-8", errors="replace").splitlines():
@@ -364,4 +432,5 @@ class MCPExecutionLog:
                 sanitized,
                 application_owned_directory=self.path.parent,
             )
+        self._remember_migration(path, sanitized)
         return sanitized

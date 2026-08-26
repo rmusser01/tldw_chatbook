@@ -5,7 +5,11 @@ CharactersRAGDB seeded through WorldBookManager (mirrors
 test_personas_dictionaries.py's PersonasTestApp harness)."""
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.coordinate import Coordinate
 from textual.widgets import (
     Button,
@@ -32,7 +36,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_tryit import (
 )
 
 
-class _DetailHost(App):
+class _DetailHost(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.posted = []
@@ -50,6 +54,13 @@ class _DetailHost(App):
 
     def on_lore_detach_requested(self, message) -> None:
         self.detach_posts.append(message.conversation_id)
+
+
+def test_detached_lore_detail_mount_is_a_noop() -> None:
+    """A deferred view may be detached before its mount callback runs."""
+    widget = PersonasLoreDetailWidget(id="personas-lore-detail")
+
+    widget.on_mount()
 
 
 @pytest.mark.asyncio
@@ -491,7 +502,7 @@ async def test_detach_with_no_selection_does_not_post():
         assert "Select an attached conversation first." in status
 
 
-class _TryItHost(App):
+class _TryItHost(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield PersonasLoreTryItWidget(id="personas-lore-tryit")
 
@@ -652,7 +663,7 @@ def stub_characters_lore(monkeypatch):
     )
 
 
-class LorePersonasTestApp(App):
+class LorePersonasTestApp(ConsolidatedCSSApp):
     """Delegating App harness — mirrors PersonasTestApp in test_personas_dictionaries.py."""
 
     def __init__(self, mock_app_instance):

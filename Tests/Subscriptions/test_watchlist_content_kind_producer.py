@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -296,7 +297,11 @@ async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(
 
     plain, _ansi = _rendered(item)
     assert f"{pct:.0f}% changed" in plain
-    assert "0% changed" not in plain, (
+    # `(?<!\d)` because a bare substring check matched the tail of any
+    # percentage ending in 0 -- TASK-16839's segment-level basis reports this
+    # fixture as "60% changed" (2 of its 3+2 sentence segments differ) and
+    # the old `"0% changed" not in plain` tripped on it.
+    assert not re.search(r"(?<!\d)0% changed", plain), (
         "a real change must never print as 0% -- the ratio/percent mismatch"
     )
     assert item["diff_summary"] in plain

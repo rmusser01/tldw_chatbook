@@ -7,20 +7,28 @@ side effect the feature exists to catch.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
+from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 @pytest.fixture()
@@ -255,7 +263,13 @@ def _run(bridge, session, assistant_id, root, **over):
     kwargs = dict(
         conversation_id="conv-1",
         session_id=session.id,
-        resolution=object(),
+        resolution=ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="",
+            model="test-model",
+            ready=True,
+            execution_key="llama_cpp",
+        ),
         assistant_message_id=assistant_id,
         model="test-model",
         session_system_prompt="",
@@ -373,7 +387,9 @@ def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
     gateway = _SideEffectGateway([[fence], ["42."]])
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
 
-    def probe_review(calls):
+    # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)` --
+    # the change-tracker wrapper passes it straight through.
+    def probe_review(calls, run_id):
         events.append("review-called")
         return {}
 
@@ -655,8 +671,6 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
     on the real screen object, not a reading.
     """
     from Tests.UI.app_factory import _build_test_app
-    from textual.app import App
-
     from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -676,7 +690,7 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
     assert outcome.status not in ("error",), outcome.steps
     assert db.change_snapshots_for_run(run_id), "precondition: the run recorded rows"
 
-    class _ConsoleHarness(App):
+    class _ConsoleHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self.app_instance = app_instance
@@ -743,8 +757,6 @@ async def test_the_summary_rows_own_review_action_opens_the_screen(
     handler -> pushed screen.
     """
     from Tests.UI.app_factory import _build_test_app
-    from textual.app import App
-
     from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Widgets.Console.console_transcript import (
@@ -766,7 +778,7 @@ async def test_the_summary_rows_own_review_action_opens_the_screen(
     )
     assert marker.change_review_run_id == run_id
 
-    class _ConsoleHarness(App):
+    class _ConsoleHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self.app_instance = app_instance
@@ -889,3 +901,736 @@ def test_resume_re_derives_the_failure_row_too(tmp_path, root):
         if "change tracking failed" in m.content
     ]
     assert resumed == live, "the failure disclosure vanished on resume"
+
+
+# -- PR3a-1 Task 6c (audit F2): a survivor's writes vs the turn window ------
+#
+# PR 3a lets a sub-agent outlive the `run_reply` that spawned it. The turn's
+# E snapshot is taken in that call's `finally`, so every byte a survivor
+# writes afterwards falls OUTSIDE its own turn's window -- into the NEXT
+# turn's baseline (invisible in every record) or into the next turn's diff
+# (attributed to an agent that never made it). Both are silent.
+
+
+class _FleetSurvivorGateway:
+    """One primary script per turn, plus a sub-agent turn gated on an Event.
+
+    The child's disk write fires on the child's own thread the moment the
+    gate opens -- the same "run-window side effect" technique
+    `_SideEffectGateway` uses for the primary, moved onto a survivor.
+
+    The gate is awaited through ``run_in_executor`` for the reason
+    `Tests/Chat/test_console_agent_bridge.py::_FleetTwoChildGateway`
+    documents at length: a bare ``.wait()`` inside a coroutine blocks the
+    one thread driving that loop.
+    """
+
+    def __init__(
+        self,
+        parent_scripts,
+        gate: threading.Event,
+        child_side_effect=None,
+        parent_side_effect=None,
+        parent_side_effect_on_call: int = 0,
+        child_scripts=None,
+        second_gate: "threading.Event | None" = None,
+    ):
+        self._parent = list(parent_scripts)
+        self._child = list(child_scripts or [["child answer"]])
+        self._gate = gate
+        self._second_gate = second_gate
+        self._child_side_effect = child_side_effect
+        self._parent_side_effect = parent_side_effect
+        self._parent_side_effect_on_call = parent_side_effect_on_call
+        self._lock = threading.Lock()
+        self.parent_calls = 0
+        self.child_calls = 0
+        self.child_started = threading.Event()
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        system = str(messages[0].get("content", "")) if messages else ""
+        if system.startswith(SUBAGENT_PROMPT_PREFIX):
+            with self._lock:
+                self.child_calls += 1
+                first_call = self.child_calls == 1
+                chunks = (
+                    self._child.pop(0) if self._child else ["child answer"]
+                )
+            loop = asyncio.get_running_loop()
+            if first_call:
+                self.child_started.set()
+                await loop.run_in_executor(None, self._gate.wait)
+                if self._child_side_effect is not None:
+                    side_effect, self._child_side_effect = (
+                        self._child_side_effect,
+                        None,
+                    )
+                    side_effect()
+            elif self._second_gate is not None:
+                # The child keeps RUNNING after its write -- how a test
+                # pins a window that must be closed by the next turn
+                # rather than by the child finishing.
+                await loop.run_in_executor(None, self._second_gate.wait)
+            for chunk in chunks:
+                yield chunk
+            return
+        with self._lock:
+            assert self._parent, "parent script exhausted"
+            chunks = self._parent.pop(0)
+            self.parent_calls += 1
+            fire = (
+                self._parent_side_effect is not None
+                and self.parent_calls == self._parent_side_effect_on_call
+            )
+        if fire:
+            self._parent_side_effect()
+        for chunk in chunks:
+            yield chunk
+
+
+def _spawn_fence(task: str) -> str:
+    return (
+        f"{FENCE_OPEN}\n"
+        + json.dumps(
+            {"name": "spawn_subagent", "arguments": {"task": task}}
+        )
+        + "\n```"
+    )
+
+
+def _join_fleet_threads(timeout: float = 5.0) -> None:
+    """Block until every live fleet child thread has fully finished.
+
+    Copied from `Tests/Chat/test_console_agent_bridge.py` for the same
+    reason it exists there: a child's run row goes terminal slightly
+    BEFORE its thread unwinds, so joining the thread -- not polling -- is
+    what guarantees any scope wrapping that run has already exited.
+    """
+    for thread in list(threading.enumerate()):
+        if thread.name.startswith("fleet-"):
+            thread.join(timeout)
+
+
+def _next_turn(store, session):
+    """Append the next user/assistant pair, as a real second Send does."""
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="again")
+    return store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    ).id
+
+
+def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
+    tmp_path, root, tracker
+):
+    """A child released after its turn returned writes to disk. That write
+    must be reviewable SOMEWHERE -- today it is in no record at all.
+    """
+    gate = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[[_spawn_fence("long job")], ["turn 1 final"]],
+        gate=gate,
+        child_side_effect=lambda: (root / "survivor.txt").write_text(
+            "written after the turn returned\n"
+        ),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_id, outcome = _run(bridge, session, aid, root)
+        assert outcome.status == "done"
+        assert gateway.child_started.wait(5), "the child never started"
+        # Nothing has changed on disk yet: the turn's own record is empty,
+        # which is correct and is the state the survivor writes into.
+        assert db.change_snapshots_for_run(run_id) == []
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    assert (root / "survivor.txt").exists(), "precondition: the child wrote"
+    rows = db.change_snapshots_for_run(run_id)
+    assert len(rows) == 1, (
+        "the survivor's write landed in NO change record: "
+        f"{rows}"
+    )
+    row = rows[0]
+    assert row["files_changed"] == 1, row
+    changed = tracker.service.repo_for_root(root).changed_files(
+        row["baseline_sha"], row["end_sha"]
+    )
+    assert [c.path for c in changed] == ["survivor.txt"], changed
+    marker = [
+        m
+        for m in _tool_rows(store, session)
+        if m.content.startswith("✎") and "sub-agent" in m.content
+    ]
+    assert len(marker) == 1, (
+        "nothing in the transcript says a sub-agent changed files after "
+        f"the turn: {[m.content for m in _tool_rows(store, session)]}"
+    )
+    assert marker[0].change_review_run_id == run_id
+
+
+def test_a_survivors_write_during_the_next_turn_is_disclosed_on_it(
+    tmp_path, root, tracker
+):
+    """The survivor writes strictly AFTER turn 2's baseline settled, so the
+    write is inside turn 2's diff -- a record attributing one turn's file
+    writes to another. The tracker is a working-tree differ and cannot
+    un-mix concurrent writers, so the record must SAY so.
+    """
+    gate = threading.Event()
+
+    def release_and_join():
+        gate.set()
+        _join_fleet_threads()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("long job")],  # turn 1, call 1
+            ["turn 1 final"],  # turn 1, call 2
+            [_calc_fence()],  # turn 2, call 1 -- a tool, so B2 is awaited
+            ["turn 2 final"],  # turn 2, call 2 -- fires the release
+        ],
+        gate=gate,
+        child_side_effect=lambda: (root / "survivor.txt").write_text(
+            "written during turn 2\n"
+        ),
+        parent_side_effect=release_and_join,
+        parent_side_effect_on_call=4,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_1, outcome_1 = _run(bridge, session, aid, root)
+        assert outcome_1.status == "done"
+        assert gateway.child_started.wait(5), "the child never started"
+        run_2, outcome_2 = _run(bridge, session, _next_turn(store, session), root)
+        assert outcome_2.status == "done"
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    # Characterisation: the survivor's file IS inside turn 2's diff. That
+    # is not fixable (one tree, two writers) -- what follows is.
+    rows_2 = db.change_snapshots_for_run(run_2)
+    assert len(rows_2) == 1, rows_2
+    changed = tracker.service.repo_for_root(root).changed_files(
+        rows_2[0]["baseline_sha"], rows_2[0]["end_sha"]
+    )
+    assert [c.path for c in changed] == ["survivor.txt"], changed
+
+    assert rows_2[0]["kind"] == "turn_concurrent_subagent", (
+        "turn 2's record does not record that an earlier turn's sub-agent "
+        "was writing during it"
+    )
+    disclosures = [
+        m
+        for m in _tool_rows(store, session)
+        if "earlier turn" in m.content and "sub-agent" in m.content
+    ]
+    assert len(disclosures) == 1, (
+        "turn 2's changes silently include a sub-agent's: "
+        f"{[m.content for m in _tool_rows(store, session)]}"
+    )
+
+
+def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(
+    tmp_path, root
+):
+    """The audit's second half: a survivor's tool dispatch passes turn 1's
+    ALREADY-SATISFIED `await_baseline()`, so it is gated on nothing while
+    turn 2's baseline is being taken -- and a write during that window is
+    swallowed into B2 and vanishes from turn 2's diff.
+
+    The baseline is made slow so the window is deterministic rather than a
+    coin flip, exactly as `test_baseline_completes_before_the_first_tool_
+    executes` does.
+    """
+    events: list[str] = []
+
+    class _SlowService(ShadowRepoService):
+        def repo_for_root(self, r):
+            repo = super().repo_for_root(r)
+            original = repo.snapshot
+
+            def slow_snapshot(message: str) -> str:
+                if "baseline" in message:
+                    time.sleep(0.6)
+                    events.append("baseline-finished")
+                return original(message)
+
+            repo.snapshot = slow_snapshot  # type: ignore[method-assign]
+            return repo
+
+    tracker = ChangeTurnTracker(service=_SlowService(data_dir=tmp_path / "app"))
+    gate = threading.Event()
+
+    def release_into_the_baseline_window():
+        gate.set()
+        _join_fleet_threads()
+
+    def child_writes():
+        # Recorded HERE, at the write itself -- an event appended after
+        # joining the child's thread would time the JOIN instead, and the
+        # join now waits for the very baseline this test is ordering
+        # against.
+        (root / "raced.txt").write_text(
+            "written while turn 2's baseline was still snapshotting\n"
+        )
+        events.append("survivor-wrote")
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("long job")],  # turn 1, call 1
+            ["turn 1 final"],  # turn 1, call 2
+            ["turn 2 final"],  # turn 2, call 1 -- fires while B2 runs
+        ],
+        gate=gate,
+        child_side_effect=child_writes,
+        parent_side_effect=release_into_the_baseline_window,
+        parent_side_effect_on_call=3,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_1, outcome_1 = _run(bridge, session, aid, root)
+        assert outcome_1.status == "done"
+        assert gateway.child_started.wait(5), "the child never started"
+        events.clear()  # drop turn 1's baseline; only turn 2's matters now
+        run_2, outcome_2 = _run(bridge, session, _next_turn(store, session), root)
+        assert outcome_2.status == "done"
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    assert "survivor-wrote" in events and "baseline-finished" in events, events
+    assert events.index("survivor-wrote") < events.index("baseline-finished"), (
+        "the survivor did NOT write inside turn 2's baseline window, so "
+        f"this test proves nothing: {events}"
+    )
+    # Turn 2's own diff cannot see it -- B2 swallowed it.
+    assert db.change_snapshots_for_run(run_2) == [], (
+        "expected the raced write to be inside turn 2's baseline"
+    )
+    rows_1 = db.change_snapshots_for_run(run_1)
+    assert len(rows_1) == 1, (
+        "a write that raced the next turn's baseline is in NO record: "
+        f"{rows_1}"
+    )
+    changed = tracker.service.repo_for_root(root).changed_files(
+        rows_1[0]["baseline_sha"], rows_1[0]["end_sha"]
+    )
+    assert [c.path for c in changed] == ["raced.txt"], changed
+
+
+def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(
+    tmp_path, root
+):
+    """CHARACTERISATION (green before and after this task's fix): the
+    mechanism behind the test above.
+
+    A survivor's tool batch still calls TURN 1's `review_tool_calls`
+    wrapper, whose `await_baseline()` was satisfied before turn 1 even
+    answered. So the survivor dispatches a tool while turn 2's baseline is
+    still being taken -- the exact "a tool writing before B settles races
+    its own change into the baseline" hazard the gate exists to prevent,
+    now reachable across turns and gated by nothing.
+
+    This is NOT fixed by re-gating (a survivor must not block on an
+    unrelated turn's snapshot); it is made harmless by the windows sharing
+    a boundary sha, which the test above pins.
+    """
+    events: list[str] = []
+    child_run_ids: list[str] = []
+
+    class _SlowService(ShadowRepoService):
+        def repo_for_root(self, r):
+            repo = super().repo_for_root(r)
+            original = repo.snapshot
+
+            def slow_snapshot(message: str) -> str:
+                if "baseline" in message:
+                    time.sleep(0.6)
+                    events.append("baseline-finished")
+                return original(message)
+
+            repo.snapshot = slow_snapshot  # type: ignore[method-assign]
+            return repo
+
+    tracker = ChangeTurnTracker(service=_SlowService(data_dir=tmp_path / "app"))
+    gate = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("long job")],
+            ["turn 1 final"],
+            ["turn 2 final"],
+        ],
+        gate=gate,
+        # The child calls a REAL tool once released, so its batch goes
+        # through the review hook (i.e. through turn 1's baseline gate).
+        child_scripts=[[_calc_fence()], ["child answer"]],
+        parent_side_effect=lambda: (gate.set(), _join_fleet_threads()),
+        parent_side_effect_on_call=3,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+
+    def review(calls, run_id):
+        events.append(f"review:{run_id}")
+        return {}
+
+    try:
+        run_1, outcome_1 = _run(
+            bridge, session, aid, root, review_tool_calls=review
+        )
+        assert outcome_1.status == "done"
+        assert gateway.child_started.wait(5), "the child never started"
+        child_run_ids.extend(
+            row["id"]
+            for row in db.list_runs("conv-1")
+            if row["agent_kind"] == "subagent"
+        )
+        assert child_run_ids, "no sub-agent run row"
+        events.clear()
+        _run(
+            bridge,
+            session,
+            _next_turn(store, session),
+            root,
+            review_tool_calls=review,
+        )
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    child_reviews = [
+        index
+        for index, event in enumerate(events)
+        if event == f"review:{child_run_ids[0]}"
+    ]
+    assert child_reviews, (
+        f"the survivor never dispatched a tool after turn 1: {events}"
+    )
+    baseline_done = events.index("baseline-finished")
+    assert child_reviews[0] < baseline_done, (
+        "the survivor's tool batch waited for turn 2's baseline (it does "
+        f"not, and this test exists to say so out loud): {events}"
+    )
+
+
+def test_the_survivor_window_ends_exactly_where_the_next_turn_begins(
+    tmp_path, root, tracker
+):
+    """The load-bearing invariant of the fix: the two windows ABUT.
+
+    A survivor's window is closed at the NEXT turn's baseline sha rather
+    than at a snapshot of its own, so the disk history is partitioned
+    (B1..E1, E1..B2, B2..E2) with no crack for a write to fall into and no
+    overlap for one to be counted twice in.
+    """
+    gate = threading.Event()
+    keep_running = threading.Event()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("long job")],
+            ["turn 1 final"],
+            [_calc_fence()],
+            ["turn 2 final"],
+        ],
+        gate=gate,
+        # Write, then keep working: the window must be closed by turn 2,
+        # not by the child finishing.
+        child_scripts=[[_calc_fence()], ["child answer"]],
+        second_gate=keep_running,
+        child_side_effect=lambda: (root / "survivor.txt").write_text("a\n"),
+        # Turn 2 writes its OWN file, after its baseline settled (its
+        # first call was a tool, so the gate has been awaited) -- without
+        # a change of its own turn 2 records no row to abut.
+        parent_side_effect=lambda: (root / "by_turn_2.txt").write_text("b\n"),
+        parent_side_effect_on_call=4,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_1, _ = _run(bridge, session, aid, root)
+        assert gateway.child_started.wait(5), "the child never started"
+        gate.set()
+        deadline = time.monotonic() + 5
+        while not (root / "survivor.txt").exists():
+            assert time.monotonic() < deadline, "the survivor never wrote"
+            time.sleep(0.02)
+        run_2, _ = _run(bridge, session, _next_turn(store, session), root)
+        # Recorded by the END of turn 2, while the child is still working:
+        # the window's content is settled the moment turn 2's baseline
+        # exists, so waiting for a survivor that may run for an hour
+        # before showing the user anything would be a choice, not a
+        # necessity.
+        post_turn = [
+            r
+            for r in db.change_snapshots_for_run(run_1)
+            if r["kind"] == "subagent_post_turn"
+        ]
+        assert post_turn, (
+            "the survivor's window was still open after the next turn "
+            "ended, so its record waits on a child that need never finish"
+        )
+    finally:
+        gate.set()
+        keep_running.set()
+    _join_fleet_threads()
+
+    post_turn = [
+        r
+        for r in db.change_snapshots_for_run(run_1)
+        if r["kind"] == "subagent_post_turn"
+    ]
+    assert len(post_turn) == 1, db.change_snapshots_for_run(run_1)
+    assert post_turn[0]["files_changed"] == 1, post_turn
+    turn_2_rows = [
+        r
+        for r in db.change_snapshots_for_conversation("conv-1")
+        if r["run_id"] == run_2
+    ]
+    assert turn_2_rows, "turn 2 recorded no row to abut"
+    assert post_turn[0]["end_sha"] == turn_2_rows[0]["baseline_sha"], (
+        "the survivor's window and turn 2's window do not share a "
+        "boundary, so a write between them belongs to neither"
+    )
+    # ... and therefore the write is in exactly ONE record.
+    changed_2 = tracker.service.repo_for_root(root).changed_files(
+        turn_2_rows[0]["baseline_sha"], turn_2_rows[0]["end_sha"]
+    )
+    assert "survivor.txt" not in [c.path for c in changed_2], (
+        "the same write is counted in both windows"
+    )
+    # The survivor's row must also be emitted in the position resume will
+    # re-derive it in -- BEFORE the next turn's own row, since it belongs
+    # to the earlier turn's block. (Closing the window as a side effect of
+    # opening the next one produces the same record in the wrong place.)
+    live = [
+        m.content
+        for m in _tool_rows(store, session)
+        if m.content.startswith("✎")
+    ]
+    fresh = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
+    resumed = [
+        m.content
+        for _anchor, block in fresh.resume_marker_messages("conv-1")
+        for m in block
+        if m.content.startswith("✎")
+    ]
+    assert resumed == live, (
+        f"live and resumed transcripts disagree: {live} vs {resumed}"
+    )
+
+
+def test_a_child_that_finishes_inside_its_turn_opens_no_survivor_window(
+    tmp_path, root, tracker
+):
+    """Negative control: the post-turn window exists for survivors, not
+    for every fleet turn. A child collected before the turn answers is
+    fully inside the turn's own window and must add nothing."""
+    gate = threading.Event()
+    gate.set()  # the child never blocks
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("quick job")],
+            [_calc_fence()],
+            ["turn 1 final"],
+        ],
+        gate=gate,
+        child_side_effect=lambda: (root / "by_the_child.txt").write_text("x\n"),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    run_id, outcome = _run(bridge, session, aid, root)
+    _join_fleet_threads()
+    assert outcome.status == "done"
+
+    rows = db.change_snapshots_for_run(run_id)
+    assert [r["kind"] for r in rows] == ["turn"], rows
+    assert not [
+        m
+        for m in _tool_rows(store, session)
+        if "after this turn" in m.content
+    ], "a survivor row was emitted for a child that never survived"
+
+
+def test_a_turn_without_a_foreign_survivor_is_not_stamped_concurrent(
+    tmp_path, root, tracker
+):
+    """Negative control for the disclosure: a turn whose own child is the
+    only sub-agent must NOT claim someone else's writes may be in it."""
+    gate = threading.Event()
+    gate.set()
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("quick job")],
+            [_calc_fence()],
+            ["turn 1 final"],
+        ],
+        gate=gate,
+        child_side_effect=lambda: (root / "by_the_child.txt").write_text("x\n"),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    run_id, _ = _run(bridge, session, aid, root)
+    _join_fleet_threads()
+
+    assert [r["kind"] for r in db.change_snapshots_for_run(run_id)] == ["turn"]
+    assert not [
+        m for m in _tool_rows(store, session) if "earlier turn" in m.content
+    ]
+
+
+def test_resume_re_derives_the_survivor_rows_byte_identical(
+    tmp_path, root, tracker
+):
+    """Both new transcript rows are re-derived from the stored `kind`.
+
+    Without the column a post-turn row and a turn row are indistinguishable
+    and resume would collapse them into ONE summary showing a turn that
+    never happened -- the same parity rule TASK-1972 set for the summary
+    and failure rows.
+    """
+    gate = threading.Event()
+
+    def release_and_join():
+        gate.set()
+        _join_fleet_threads()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("long job")],
+            ["turn 1 final"],
+            [_calc_fence()],
+            ["turn 2 final"],
+        ],
+        gate=gate,
+        child_side_effect=lambda: (root / "survivor.txt").write_text("a\n"),
+        parent_side_effect=release_and_join,
+        parent_side_effect_on_call=4,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        run_1, _ = _run(bridge, session, aid, root)
+        assert gateway.child_started.wait(5), "the child never started"
+        # Turn 2 both closes turn 1's window (at its baseline) AND absorbs
+        # the survivor's write, so this run exercises both new rows.
+        (root / "by_turn_1.txt").write_text("edited before turn 2\n")
+        run_2, _ = _run(bridge, session, _next_turn(store, session), root)
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    live = [
+        m.content
+        for m in _tool_rows(store, session)
+        if m.content.startswith("✎") or "earlier turn" in m.content
+    ]
+    assert len(live) >= 2, live
+
+    fresh = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
+    resumed = [
+        m.content
+        for _anchor, block in fresh.resume_marker_messages("conv-1")
+        for m in block
+        if m.content.startswith("✎") or "earlier turn" in m.content
+    ]
+    assert resumed == live, (
+        "the survivor rows did not survive resume byte-identical"
+    )
+
+
+def test_opening_a_window_whose_last_child_already_left_closes_it_at_once(
+    tmp_path, root, tracker
+):
+    """The sliver the open path exists to cover, probed directly.
+
+    A child can finish between the turn's E snapshot and the moment the
+    window is installed. Its final writes are then after E and before the
+    window exists, and nothing else will ever close that window -- the
+    last-child signal has already fired. Opening therefore re-checks the
+    live count and closes immediately.
+
+    Driven through the bridge's own methods rather than a scenario,
+    because the race is microseconds wide and no scripted run can land in
+    it reliably (see PR3a-1 Task 6b's P4: a branch no test can kill should
+    be probed directly, not shipped untested).
+    """
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=None,
+        change_tracker=tracker,
+    )
+    run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    tracker.end_turn(handle)  # the turn's own E; nothing changed
+    (root / "written_in_the_sliver.txt").write_text("x\n")
+
+    bridge._open_post_turn_change_window(
+        "conv-1", run_id=run_id, session_id=session.id, handle=handle
+    )
+
+    assert bridge._post_turn_change_windows.get("conv-1") is None, (
+        "a window nobody will ever close was left open"
+    )
+    rows = db.change_snapshots_for_run(run_id)
+    assert [r["kind"] for r in rows] == ["subagent_post_turn"], rows
+    assert rows[0]["files_changed"] == 1, rows
+
+
+def test_a_survivor_finishing_mid_turn_is_counted_in_exactly_one_window(
+    tmp_path, root, tracker
+):
+    """The other half of the abutment rule: a survivor that finishes
+    DURING the next turn must not have its write counted twice.
+
+    Its window cannot end at a snapshot of its own once the next turn's
+    baseline exists -- that would overlap the turn's window, and the same
+    file would appear on two cards as if it had been written twice.
+    """
+    gate = threading.Event()
+
+    def release_and_join():
+        gate.set()
+        _join_fleet_threads()
+
+    gateway = _FleetSurvivorGateway(
+        parent_scripts=[
+            [_spawn_fence("long job")],
+            ["turn 1 final"],
+            [_calc_fence()],  # turn 2 awaits B2 here
+            ["turn 2 final"],  # ... then the survivor is released
+        ],
+        gate=gate,
+        child_side_effect=lambda: (root / "survivor.txt").write_text("a\n"),
+        parent_side_effect=release_and_join,
+        parent_side_effect_on_call=4,
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    try:
+        _run(bridge, session, aid, root)
+        assert gateway.child_started.wait(5), "the child never started"
+        _run(bridge, session, _next_turn(store, session), root)
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    holding = [
+        row
+        for row in db.change_snapshots_for_conversation("conv-1")
+        if "survivor.txt"
+        in [
+            c.path
+            for c in tracker.service.repo_for_root(root).changed_files(
+                row["baseline_sha"], row["end_sha"]
+            )
+        ]
+    ]
+    assert len(holding) == 1, (
+        "the survivor's single write is on "
+        f"{len(holding)} change records: {[r['kind'] for r in holding]}"
+    )

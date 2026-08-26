@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from Tests.Model_Artifacts.lease_processes import hold_one, hold_set
+from Tests.Model_Artifacts.lease_processes import EventLike, hold_one, hold_set
+from Tests.Model_Artifacts.test_service import installed_artifact
 from tldw_chatbook.Model_Artifacts.leases import (
     ArtifactLeaseKey,
     ArtifactLeaseTimeoutError,
@@ -18,6 +19,27 @@ from tldw_chatbook.Model_Artifacts.leases import (
 
 pytestmark = pytest.mark.integration
 RawKey = tuple[str, str, str]
+
+
+def hold_removal_authority(
+    store_root: str,
+    raw_reference: RawKey,
+    ready: EventLike,
+    release: EventLike,
+) -> None:
+    """Hold one exact removal authority in a spawned process."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef, ModelArtifactService
+
+    authority = ModelArtifactService(Path(store_root)).acquire_removal_authority(
+        ArtifactRef(*raw_reference)
+    )
+    try:
+        ready.set()
+        if not release.wait(10.0):
+            raise RuntimeError("parent did not release removal authority")
+    finally:
+        authority.close()
 
 
 @contextmanager
@@ -217,3 +239,36 @@ def test_forced_process_death_releases_root_and_dependency_set(
             process.kill()
             process.join(5.0)
         assert process.is_alive() is False
+
+
+def test_spawned_removal_authority_blocks_probe_and_competing_authority(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Model_Artifacts import service as service_module
+
+    service, item, _source, target = installed_artifact(tmp_path)
+    raw_reference: RawKey = (
+        item.reference.artifact_id,
+        item.reference.revision,
+        item.reference.variant,
+    )
+    with holding_process(
+        hold_removal_authority,
+        (str(tmp_path / "store"), raw_reference),
+    ):
+        contender = service_module.ModelArtifactService(
+            tmp_path / "store",
+            lease_timeout_seconds=0.1,
+        )
+        assert (
+            contender.probe_removal_availability(item.reference)
+            is service_module.ArtifactRemovalAvailability.BUSY
+        )
+        with pytest.raises(service_module.ArtifactInUseError):
+            contender.acquire_removal_authority(item.reference)
+        assert target.is_dir()
+
+    assert (
+        service.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )

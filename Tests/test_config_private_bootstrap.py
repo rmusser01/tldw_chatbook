@@ -1,5 +1,6 @@
 import os
 import stat
+import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -18,6 +19,7 @@ def _clear_config_cache():
     config_module._CONFIG_CACHE_SOURCE = None
     config_module._SETTINGS_CACHE = None
     config_module._SETTINGS_CACHE_SOURCE = None
+    config_module._LAST_CONFIG_LOAD_FAILURE = None
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
@@ -608,3 +610,147 @@ def test_config_loader_reports_unverified_platform_without_claiming_acl_safety(
     assert "permission posture is unverified" in text
     assert "owner-only" not in text
     assert "acl-secure" not in text
+
+
+# --- TASK-13157: config-rewrite duplicate-key hardening + loud parse failure ---
+#
+# Root cause (see config.py's `_write_raw_cli_config_unlocked` and
+# `ConfigLoadFailure` docstrings for the full account): every config-mutating
+# dict in this module has structurally unique keys (it is a plain Python
+# `dict`, round-tripped through `tomllib.load`), so config.py's OWN write
+# paths cannot themselves construct a Python-level duplicate key. The actual
+# risk is that `toml.dumps()` (a separate, independently maintained encoder)
+# and `tomllib` (the stdlib reader the NEXT boot uses) have no guaranteed
+# round-trip contract with each other, and nothing verified the encoder's
+# own output before this fix -- a bad serialization (from any cause: an
+# encoder edge case, a future `toml` version regression, external file
+# mutation between two of the app's own rewrite passes) would sit on disk
+# undetected until the NEXT read failed, silently. The live incident's exact
+# trigger could not be deterministically reproduced through pure application
+# logic (extensively attempted: full default+user re-merge across up to 5
+# simulated launch/shutdown cycles, targeted `apply_settings_mutation_to_cli_
+# config` deltas, and a 3000-trial fuzz of `toml.dumps` round-trip fidelity
+# all stayed clean) -- consistent with the live-verification write-up's own
+# "neither edit alone was the problem" framing. The test below proves the
+# fix at the actual defect: it simulates a `toml.dumps()` that misbehaves
+# (the "Cannot overwrite a value" shape tomllib rejects) and asserts the
+# write path now refuses to commit it, rather than committing it and
+# discovering the corruption silently on the next boot.
+
+
+def test_config_rewrite_refuses_to_commit_a_serialization_that_would_duplicate_a_coinciding_key(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    # A user-set key that coincides with a template default key: the
+    # shipped CONFIG_TOML_CONTENT default for google is the active (not
+    # commented-out) `api_key = "<API_KEY_HERE>"`.
+    target.write_text(
+        '[api_settings.google]\napi_key = "user-real-key"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    _clear_config_cache()
+
+    # Pass 1: a legitimate settings write through the real rewrite path.
+    assert config_module.save_setting_to_cli_config(
+        "api_settings.google", "model", "gemini-2.5-pro"
+    )
+    after_pass_1 = target.read_text(encoding="utf-8")
+    tomllib.loads(after_pass_1)
+    assert after_pass_1.count('api_key = "user-real-key"') == 1
+
+    # Pass 2: the encoder misbehaves (simulated) and would re-declare the
+    # same table with the same key already set -- the failing-for-the-real-
+    # reason precondition this task exists to close.
+    real_dumps = toml.dumps
+
+    def _misbehaving_dumps(data):
+        serialized = real_dumps(data)
+        return serialized + '\n[api_settings.google]\napi_key = "duplicated"\n'
+
+    monkeypatch.setattr(config_module.toml, "dumps", _misbehaving_dumps)
+
+    # Pin the actual guard directly: the low-level writer raises
+    # `ConfigSerializationError` (a `ValueError` subclass) rather than ever
+    # calling `atomic_private_write_text` with unparseable content.
+    with pytest.raises(config_module.ConfigSerializationError):
+        config_module._write_raw_cli_config_unlocked(
+            target, {"api_settings": {"google": {"api_key": "user-real-key"}}}
+        )
+    assert target.read_text(encoding="utf-8") == after_pass_1
+
+    # `apply_settings_mutation_to_cli_config` -- what `save_setting_to_cli_
+    # config` calls -- never raises out to its caller; like every other
+    # write failure it catches and reports via its bool return (see
+    # `test_locked_encrypted_config_rejects_plaintext_incremental_secret`
+    # above for the established idiom). The guard raises `Config
+    # SerializationError` one layer down, at `_write_raw_cli_config_
+    # unlocked`, which is what actually stops the bad bytes from reaching
+    # disk; asserted directly below via the log-free black-box check (the
+    # file staying byte-for-byte what pass 1 left).
+    assert (
+        config_module.save_setting_to_cli_config(
+            "api_settings.google", "temperature", 0.5
+        )
+        is False
+    )
+
+    # The write must have been refused BEFORE touching disk: the file is
+    # exactly what pass 1 left behind -- still valid, still exactly one
+    # occurrence of the coinciding key, no duplicated table, and no
+    # half-applied `temperature` from the rejected pass.
+    after_pass_2 = target.read_text(encoding="utf-8")
+    assert after_pass_2 == after_pass_1
+    tomllib.loads(after_pass_2)
+    assert after_pass_2.count('api_key = "user-real-key"') == 1
+    assert "duplicated" not in after_pass_2
+
+
+def test_corrupt_config_produces_a_loud_load_failure_not_a_silent_default_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    # A hand-authored file that has already been corrupted into invalid
+    # TOML -- the exact shape tomllib rejects with "Cannot overwrite a
+    # value" (a table re-declared with a key it already set).
+    target.write_text(
+        '[api_settings.openrouter]\n'
+        'api_key = "sk-real-key"\n'
+        '\n'
+        '[api_settings.openrouter]\n'
+        'api_key = "sk-real-key"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    _clear_config_cache()
+
+    assert config_module.get_config_load_failure() is None
+
+    loaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+    # The silent-fallback SYMPTOM the incident reported: defaults, not the
+    # file's own (unreadable) settings.
+    assert loaded["general"]["users_name"] == "default_user"
+
+    # The fix: the failure is no longer invisible -- it is a named, gettable
+    # signal identifying the exact file and parse error, which app.py reads
+    # once at boot (mirroring `_instance_lock_status`) to raise a persistent,
+    # visible notification instead of leaving the degradation silent.
+    failure = config_module.get_config_load_failure()
+    assert failure is not None
+    assert failure.path == target
+    assert "api_settings" in failure.message or "twice" in failure.message.lower() or "overwrite" in failure.message.lower()
+
+    # Repair the file: the very next successful load retires the failure
+    # signal, exactly like the existing `_CONFIG_CACHE`/`_SETTINGS_CACHE`
+    # repair contract this file already pins.
+    target.write_text(
+        '[api_settings.openrouter]\napi_key = "sk-real-key"\n',
+        encoding="utf-8",
+    )
+    repaired = config_module.load_cli_config_and_ensure_existence()
+    assert repaired["api_settings"]["openrouter"]["api_key"] == "sk-real-key"
+    assert config_module.get_config_load_failure() is None

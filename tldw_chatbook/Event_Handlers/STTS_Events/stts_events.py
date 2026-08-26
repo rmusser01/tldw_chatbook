@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Dict, NamedTuple, Optional
+from uuid import UUID
 
 from loguru import logger
 from rich.markup import escape
@@ -21,10 +22,13 @@ from textual.widgets import Button, ProgressBar, RichLog, Static
 
 #
 # Local imports
+from tldw_chatbook.config import get_runtime_config_snapshot
 from tldw_chatbook.TTS import (
     OpenAISpeechRequest,
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
+    STTSPlaygroundResultProjection,
+    TTSCloneReference,
     TTSPreferencesSnapshot,
     TTSRequest,
     TTSRequestedSelectionSnapshot,
@@ -37,19 +41,35 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
 )
-from tldw_chatbook.TTS.audio_cpp_config import project_audio_cpp_config
-from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
+from tldw_chatbook.TTS.audio_cpp_contract import validate_pcm16_wav
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    project_audio_cpp_settings_config,
+)
+from tldw_chatbook.TTS.effective_settings import TTSSelectionSource
+from tldw_chatbook.TTS.legacy_bridge import (
+    legacy_provider_config,
+    openai_internal_model_id,
+)
 from tldw_chatbook.TTS.playground_types import (
     PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS,
     ProfileSaveBlockCode,
 )
 from tldw_chatbook.TTS.TTS_Generation import (
+    TTSDefaultActivationOutcome,
     TTSService,
     TTSSettingsPersistenceOutcome,
     TTSSettingsPublication,
+    TTSSettingsPublicationLease,
     TTSSettingsPublicationTicket,
     _join_retained_task,
 )
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    ProcessProviderTestEvidenceStore,
+    build_provider_test_fingerprint,
+    load_global_speech_tts_state,
+    process_provider_test_evidence_store,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import ProviderTestFingerprint
 from tldw_chatbook.Utils.secure_temp_files import (
     create_secure_temp_file,
     secure_delete_file,
@@ -120,6 +140,8 @@ _TTS_SETTING_BINDINGS = {
         ),
     ),
     "OPENAI_BASE_URL": _app_tts_binding("OPENAI_BASE_URL", "openai"),
+    "OPENAI_AUTH_MODE": _app_tts_binding("OPENAI_AUTH_MODE", "openai"),
+    "OPENAI_NONE_HTTP_CONFIRMATION": _app_tts_binding("OPENAI_NONE_HTTP_CONFIRMATION"),
     "OPENAI_ORG_ID": _app_tts_binding("OPENAI_ORG_ID", "openai"),
     "elevenlabs_api_key": _SettingBinding(
         (("api_settings.elevenlabs", "api_key"),),
@@ -300,7 +322,7 @@ def _effective_provider_config(
 ) -> Mapping[str, Any]:
     """Project one provider's effective registry configuration."""
     if provider_id == "audio_cpp":
-        return project_audio_cpp_config(effective_settings).to_mapping()
+        return project_audio_cpp_settings_config(effective_settings).to_mapping()
     return legacy_provider_config(provider_id, effective_settings)
 
 
@@ -394,6 +416,8 @@ class STTSSettingsSaveEvent(Message):
         delete_setting_keys: tuple[str, ...] | list[str] = (),
         request_id: int | None = None,
         reply_to: object | None = None,
+        commit_defaults_after_handoff: bool = False,
+        publication_lease: TTSSettingsPublicationLease | None = None,
     ) -> None:
         super().__init__()
         if request_id is not None:
@@ -401,6 +425,10 @@ class STTSSettingsSaveEvent(Message):
                 raise TypeError("TTS settings request ID must be an integer")
             if request_id < 0:
                 raise ValueError("TTS settings request ID must be nonnegative")
+        if type(commit_defaults_after_handoff) is not bool:
+            raise TypeError("TTS default activation intent must be boolean")
+        if commit_defaults_after_handoff and preferences is None:
+            raise ValueError("TTS default activation requires preferences")
         copied_deletes = tuple(delete_setting_keys)
         if not all(isinstance(key, str) and key for key in copied_deletes):
             raise ValueError("TTS setting delete keys must be non-empty strings")
@@ -411,6 +439,22 @@ class STTSSettingsSaveEvent(Message):
         self.delete_setting_keys = copied_deletes
         self.request_id = request_id
         self.reply_to = reply_to
+        self.commit_defaults_after_handoff = commit_defaults_after_handoff
+        self.publication_lease = publication_lease
+
+    def _publication_started(self) -> None:
+        """Drop event ownership after the service returns a retained ticket."""
+
+        self.publication_lease = None
+
+    def _abandon_publication_lease(self) -> None:
+        """Release the transfer only when no service adopted it."""
+
+        publication_lease = self.publication_lease
+        if publication_lease is None:
+            return
+        publication_lease.abandon()
+        self.publication_lease = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,12 +467,33 @@ class STTSSettingsSaveResult:
     failure_phase: str | None = None
     provider_configuration_revisions: Mapping[str, int] = field(default_factory=dict)
     provider_runtime_revisions: Mapping[str, int] = field(default_factory=dict)
+    staged_provider_ids: frozenset[str] = frozenset()
+    defaults_activated: bool | None = None
+    defaults_activation_status: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.request_id) is not int or self.request_id < 0:
             raise ValueError("TTS settings result request ID is invalid")
         if type(self.persisted) is not bool:
             raise TypeError("TTS settings persistence result must be boolean")
+        if (
+            self.defaults_activated is not None
+            and type(self.defaults_activated) is not bool
+        ):
+            raise TypeError("TTS default activation result must be boolean")
+        if self.defaults_activation_status not in {
+            None,
+            "activation_not_ready",
+            "committed",
+            "rolled_back",
+            "rollback_failed",
+        }:
+            raise ValueError("TTS default activation status is invalid")
+        if self.defaults_activation_status is not None and (
+            self.defaults_activated
+            is not (self.defaults_activation_status == "committed")
+        ):
+            raise ValueError("TTS default activation result is inconsistent")
         allowed_statuses = frozenset(
             {"applied", "unchanged", "pending", "superseded", "unavailable"}
         )
@@ -457,6 +522,12 @@ class STTSSettingsSaveResult:
             raise ValueError("Persisted TTS provider results require saved revisions")
         if self.failure_phase not in {None, "before_replace", "cache_reload"}:
             raise ValueError("TTS settings failure phase is invalid")
+        staged_provider_ids = frozenset(self.staged_provider_ids)
+        if any(
+            copied_statuses.get(provider_id) != "pending"
+            for provider_id in staged_provider_ids
+        ):
+            raise ValueError("Staged TTS providers require pending results")
         object.__setattr__(
             self,
             "provider_statuses",
@@ -472,15 +543,22 @@ class STTSSettingsSaveResult:
             "provider_runtime_revisions",
             MappingProxyType(copied_runtime_revisions),
         )
+        object.__setattr__(self, "staged_provider_ids", staged_provider_ids)
 
 
 class STTSProviderConfigurationChanged(Message):
     """Signal that one provider's effective configuration revision changed."""
 
-    def __init__(self, provider_id: str, configuration_revision: int) -> None:
+    def __init__(
+        self,
+        provider_id: str,
+        configuration_revision: int,
+        global_preferences_revision: int | None = None,
+    ) -> None:
         super().__init__()
         self.provider_id = provider_id
         self.configuration_revision = configuration_revision
+        self.global_preferences_revision = global_preferences_revision
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,8 +566,37 @@ class _STTSPlaygroundState:
     """Read-only handler-owned Playground lifecycle snapshot."""
 
     active_operation_id: str | None
-    artifact: STTSGeneratedAudio | None
+    artifact: STTSPlaygroundResultProjection | None
     generation_active: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _SampleEvidenceCandidate:
+    """Saved provider identity captured before one synthesis operation."""
+
+    fingerprint: ProviderTestFingerprint
+    runtime_revision: int
+    saved_selection: TTSPreferencesSnapshot | None
+
+
+@dataclass(frozen=True, slots=True)
+class _SampleGenerationFacts:
+    """Publication/runtime identities and effective-source eligibility."""
+
+    runtime_revision: int
+    certifies_saved_configuration: bool
+    saved_publication_revision: int | None = None
+    saved_selection: TTSPreferencesSnapshot | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _DefaultActivationIntent:
+    """One immutable, generation-fenced pending default activation."""
+
+    preferences: TTSPreferencesSnapshot
+    expected_saved_revision: int
+    provider_id: str
+    token: int
 
 
 class STTSAudioBookGenerateEvent(Message):
@@ -521,6 +628,9 @@ class STTSEventHandler:
 
     def __init__(self, app=None):
         self.app = app  # Reference to the main app
+        self.provider_test_evidence = process_provider_test_evidence_store(
+            app if app is not None else self
+        )
         self._stts_service = None
         self._current_audio_file = None
         self._current_playground_artifact: STTSGeneratedAudio | None = None
@@ -534,6 +644,195 @@ class STTSEventHandler:
         self._playground_file_leases: dict[Path, int] = {}
         self._cleanup_task: asyncio.Task[None] | None = None
         self._settings_save_lock = asyncio.Lock()
+        self._sample_generation_facts: dict[str, _SampleGenerationFacts] = {}
+        self._next_default_activation_token = 1
+        self._default_activation_intents: dict[str, _DefaultActivationIntent] = {}
+
+    def _capture_sample_evidence_candidate(
+        self,
+        request: STTSPlaygroundRequest,
+    ) -> _SampleEvidenceCandidate | None:
+        """Freeze the saved provider identity before synthesis can begin."""
+
+        service = self._stts_service
+        saved_revision = getattr(service, "saved_configuration_revision", None)
+        applied_revision = getattr(service, "applied_configuration_revision", None)
+        configuration_revision = getattr(service, "configuration_revision", None)
+        if (
+            not callable(saved_revision)
+            or not callable(applied_revision)
+            or not callable(configuration_revision)
+        ):
+            return None
+        try:
+            saved = saved_revision(request.provider_id)
+            applied = applied_revision(request.provider_id)
+            runtime = configuration_revision(request.provider_id)
+            if (
+                type(saved) is not int
+                or type(applied) is not int
+                or type(runtime) is not int
+                or saved < 0
+                or applied != saved
+                or runtime < 0
+            ):
+                return None
+            values = get_runtime_config_snapshot().values
+            state = load_global_speech_tts_state(
+                values if isinstance(values, Mapping) else {}
+            )
+            preferences_snapshot = getattr(service, "preferences_snapshot", None)
+            saved_selection = (
+                preferences_snapshot() if callable(preferences_snapshot) else None
+            )
+            if type(saved_selection) is not TTSPreferencesSnapshot:
+                saved_selection = None
+            if (
+                saved_selection is not None
+                and saved_selection.provider_id != request.provider_id
+            ):
+                return None
+            return _SampleEvidenceCandidate(
+                fingerprint=build_provider_test_fingerprint(
+                    state,
+                    provider_id=request.provider_id,
+                    saved_revision=saved,
+                ),
+                runtime_revision=runtime,
+                saved_selection=saved_selection,
+            )
+        except Exception:  # noqa: BLE001 - evidence cannot block synthesis
+            return None
+
+    @staticmethod
+    def _legacy_sample_generation_facts(
+        request: STTSPlaygroundRequest,
+        candidate: _SampleEvidenceCandidate | None,
+    ) -> _SampleGenerationFacts | None:
+        """Bind legacy evidence to the exact saved selection before synthesis."""
+
+        if candidate is None:
+            return None
+        saved = candidate.saved_selection
+        certifies = bool(
+            saved is not None
+            and saved.provider_id == request.provider_id
+            and saved.model_mode == "exact"
+            and saved.model_id == request.model_id
+            and saved.voice_mode == "exact"
+            and saved.voice_id == request.voice_id
+            and saved.response_format == request.response_format.lower()
+            and saved.speed == request.speed
+            and not request.options
+            and request.clone_audition is None
+            and request.profile_preview is None
+            and request.studio_draft is None
+            and request.studio_preferences is None
+        )
+        return _SampleGenerationFacts(
+            runtime_revision=candidate.runtime_revision,
+            certifies_saved_configuration=certifies,
+            saved_publication_revision=candidate.fingerprint.saved_revision,
+            saved_selection=saved,
+        )
+
+    @staticmethod
+    def _requested_selection_matches_sample_request(
+        selection: TTSRequestedSelectionSnapshot | None,
+        request: STTSPlaygroundRequest,
+    ) -> bool:
+        """Match admitted/effective provenance to one immutable sample request."""
+
+        return bool(
+            type(selection) is TTSRequestedSelectionSnapshot
+            and selection.provider_id == request.provider_id
+            and selection.model_id == request.model_id
+            and selection.voice_id == request.voice_id
+            and selection.response_format == request.response_format.lower()
+            and selection.speed == request.speed
+            and dict(selection.options) == dict(request.options)
+        )
+
+    def _record_successful_sample_evidence(
+        self,
+        artifact: STTSGeneratedAudio,
+        candidate: _SampleEvidenceCandidate | None,
+        facts: _SampleGenerationFacts | None,
+    ) -> bool:
+        """Record only a bounded, validated artifact for the saved provider."""
+
+        if candidate is None or facts is None:
+            return False
+        fingerprint = candidate.fingerprint
+        if (
+            not facts.certifies_saved_configuration
+            or artifact.provider_id != fingerprint.provider_id
+            or facts.runtime_revision != candidate.runtime_revision
+            or (
+                facts.saved_publication_revision is not None
+                and facts.saved_publication_revision != fingerprint.saved_revision
+            )
+        ):
+            return False
+        service = self._stts_service
+        saved_revision = getattr(service, "saved_configuration_revision", None)
+        applied_revision = getattr(service, "applied_configuration_revision", None)
+        configuration_revision = getattr(service, "configuration_revision", None)
+        if (
+            not callable(saved_revision)
+            or not callable(applied_revision)
+            or not callable(configuration_revision)
+        ):
+            return False
+        try:
+            if (
+                saved_revision(artifact.provider_id) != fingerprint.saved_revision
+                or applied_revision(artifact.provider_id) != fingerprint.saved_revision
+                or configuration_revision(artifact.provider_id)
+                != candidate.runtime_revision
+            ):
+                return False
+            if facts.saved_selection is not None:
+                preferences_snapshot = getattr(service, "preferences_snapshot", None)
+                if not callable(preferences_snapshot):
+                    return False
+                current_saved_selection = preferences_snapshot()
+                if (
+                    type(current_saved_selection) is not TTSPreferencesSnapshot
+                    or current_saved_selection != facts.saved_selection
+                ):
+                    return False
+            max_bytes = ProcessProviderTestEvidenceStore._DEFAULT_MAX_SAMPLE_BYTES
+            with artifact.path.open("rb") as source:
+                body = source.read(max_bytes + 1)
+            sample_rate_hz = artifact.metadata.get("sample_rate")
+            channels = artifact.metadata.get("channels")
+            sample_width_bytes = artifact.metadata.get("sample_width_bytes")
+            if sample_width_bytes is None:
+                bits_per_sample = artifact.metadata.get("bits_per_sample")
+                if type(bits_per_sample) is int and bits_per_sample % 8 == 0:
+                    sample_width_bytes = bits_per_sample // 8
+            return self.provider_test_evidence.record_successful_sample(
+                fingerprint,
+                status_code=200,
+                response_format=artifact.audio_format,
+                content_type=artifact.content_type,
+                body=body,
+                max_bytes=max_bytes,
+                sample_rate_hz=(
+                    sample_rate_hz if type(sample_rate_hz) is int else None
+                ),
+                channels=channels if type(channels) is int else None,
+                sample_width_bytes=(
+                    sample_width_bytes if type(sample_width_bytes) is int else None
+                ),
+            )
+        except Exception:  # noqa: BLE001 - evidence must not fail delivered audio
+            logger.warning(
+                "TTS sample evidence was not accepted (provider={}).",
+                artifact.provider_id,
+            )
+            return False
 
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
@@ -546,9 +845,14 @@ class STTSEventHandler:
 
     def playground_state(self) -> _STTSPlaygroundState:
         """Return immutable handler-owned generation and artifact state."""
+        artifact = self._current_playground_artifact
         return _STTSPlaygroundState(
             active_operation_id=self._active_playground_operation_id,
-            artifact=self._current_playground_artifact,
+            artifact=(
+                STTSPlaygroundResultProjection.from_artifact(artifact)
+                if artifact is not None
+                else None
+            ),
             generation_active=self._is_generating,
         )
 
@@ -692,6 +996,58 @@ class STTSEventHandler:
             if path in operation_files:
                 self._delete_operation_files(operation_id)
 
+    def lease_playground_result(self, operation_id: str, path: Path) -> bool:
+        """Lease the exact current handler artifact by sanitized identity."""
+
+        artifact = self._current_playground_artifact
+        if (
+            artifact is None
+            or artifact.operation_id != operation_id
+            or artifact.path != Path(path)
+        ):
+            return False
+        return self.lease_playground_artifact(artifact)
+
+    def release_playground_result(self, operation_id: str, path: Path) -> None:
+        """Release a result lease without publishing the private artifact."""
+
+        artifact = self._current_playground_artifact
+        if (
+            artifact is not None
+            and artifact.operation_id == operation_id
+            and artifact.path == Path(path)
+        ):
+            self.release_playground_artifact(artifact)
+            return
+        count = self._playground_file_leases.get(Path(path), 0)
+        if count <= 0:
+            return
+        if count == 1:
+            self._playground_file_leases.pop(Path(path), None)
+        else:
+            self._playground_file_leases[Path(path)] = count - 1
+            return
+        self._delete_operation_files(operation_id)
+
+    async def save_current_playground_profile(
+        self,
+        operation_id: str,
+        display_name: str,
+        profile_service: object,
+    ) -> object:
+        """Save the exact handler-owned result without exposing its artifact."""
+
+        artifact = self._current_playground_artifact
+        if artifact is None or artifact.operation_id != operation_id:
+            raise RuntimeError("The current speech result changed")
+        if artifact.clone_evidence is not None:
+            create = getattr(profile_service, "create_clone_from_artifact", None)
+        else:
+            create = getattr(profile_service, "create_from_artifact", None)
+        if not callable(create):
+            raise RuntimeError("The voice profile store is unavailable")
+        return await create(display_name, artifact)
+
     def _accept_playground_artifact(self, artifact: STTSGeneratedAudio) -> None:
         """Store the new artifact before securely retiring older files."""
         self._current_playground_artifact = artifact
@@ -757,8 +1113,11 @@ class STTSEventHandler:
             )
         )
         self._track_operation_file(snapshot.operation_id, path)
+        artifact_metadata = dict(response.metadata)
+        if type(response.sample_rate) is int and response.sample_rate > 0:
+            artifact_metadata["sample_rate"] = response.sample_rate
         try:
-            return STTSGeneratedAudio(
+            artifact = STTSGeneratedAudio(
                 path=path,
                 provider_id=response.provider_id,
                 model_id=response.model_id,
@@ -767,9 +1126,10 @@ class STTSEventHandler:
                 operation_id=snapshot.operation_id,
                 audio_format=response.audio_format,
                 content_type=response.content_type,
-                metadata=response.metadata,
+                metadata=artifact_metadata,
                 requested_selection=requested_selection,
             )
+            return artifact
         except BaseException:
             if secure_delete_file(path) or not path.exists():
                 self._forget_operation_file(snapshot.operation_id, path)
@@ -931,7 +1291,7 @@ class STTSEventHandler:
                     ),
                 )
             )
-            return STTSGeneratedAudio(
+            artifact = STTSGeneratedAudio(
                 path=output_file,
                 provider_id=snapshot.provider_id,
                 model_id=snapshot.model_id,
@@ -944,6 +1304,7 @@ class STTSEventHandler:
                 requested_selection=requested_selection,
                 profile_save_block_code=profile_save_block_code,
             )
+            return artifact
         except BaseException:
             for path in created_paths:
                 if secure_delete_file(path) or not path.exists():
@@ -964,14 +1325,62 @@ class STTSEventHandler:
 
         response = None
         effective = None
+        clone_evidence = None
         primary_error: BaseException | None = None
+        profile_reference_resolver = None
+        if snapshot.profile_preview is not None:
+
+            async def resolve_profile_reference(
+                profile_id: UUID,
+                repository_generation: int,
+                profile_revision: int,
+            ) -> TTSCloneReference:
+                loader = getattr(self.app, "_ensure_tts_profile_service", None)
+                if not callable(loader):
+                    raise RuntimeError("TTS profile service is unavailable")
+                profile_service = await loader()
+                if profile_service is None:
+                    raise RuntimeError("TTS profile service is unavailable")
+                loaded = await profile_service.get_profile(profile_id)
+                profile = loaded.profile
+                if (
+                    loaded.repository_generation != repository_generation
+                    or profile.revision != profile_revision
+                    or profile.provider_id != snapshot.provider_id
+                    or profile.model_id != snapshot.model_id
+                    or profile.reference is None
+                ):
+                    raise RuntimeError("TTS profile preview is stale")
+                return await profile_service.get_reference(
+                    profile_id,
+                    expected_generation=repository_generation,
+                    expected_revision=profile_revision,
+                )
+
+            profile_reference_resolver = resolve_profile_reference
         try:
-            response, effective = await self._stts_service.synthesize_effective(
+            synthesize_with_evidence = getattr(
+                self._stts_service,
+                "synthesize_effective_with_evidence",
+                None,
+            )
+            synthesis_kwargs = dict(
                 text=snapshot.text,
                 studio_draft=snapshot.studio_draft,
                 studio_preferences=snapshot.studio_preferences,
+                clone_audition=snapshot.clone_audition,
+                profile_preview=snapshot.profile_preview,
+                profile_reference_resolver=profile_reference_resolver,
                 progress_sink=progress_sink,
             )
+            if callable(synthesize_with_evidence):
+                response, effective, clone_evidence = await synthesize_with_evidence(
+                    **synthesis_kwargs
+                )
+            else:
+                response, effective = await self._stts_service.synthesize_effective(
+                    **synthesis_kwargs
+                )
             chunks = [chunk async for chunk in response.byte_stream]
         except BaseException as error:
             primary_error = error
@@ -990,9 +1399,12 @@ class STTSEventHandler:
 
         assert response is not None
         assert effective is not None
+        complete_audio = b"".join(chunks)
+        if clone_evidence is not None:
+            validate_pcm16_wav(complete_audio)
         path = Path(
             create_secure_temp_file(
-                b"".join(chunks),
+                complete_audio,
                 suffix=f".{response.audio_format.removeprefix('.')}",
                 prefix="stts_playground_",
             )
@@ -1008,7 +1420,7 @@ class STTSEventHandler:
             configuration_revision=(lambda: effective.revisions.provider_configuration),
         )
         try:
-            return STTSGeneratedAudio(
+            artifact = STTSGeneratedAudio(
                 path=path,
                 provider_id=effective.provider_id,
                 model_id=effective.model_id,
@@ -1020,7 +1432,27 @@ class STTSEventHandler:
                 metadata=response.metadata,
                 requested_selection=requested_selection,
                 profile_save_block_code=profile_save_block_code,
+                clone_evidence=clone_evidence,
             )
+            sources = tuple(getattr(effective, "sources", {}).values()) + tuple(
+                getattr(effective, "provider_option_sources", {}).values()
+            )
+            self._sample_generation_facts[snapshot.operation_id] = (
+                _SampleGenerationFacts(
+                    runtime_revision=(effective.revisions.provider_configuration),
+                    certifies_saved_configuration=bool(
+                        not getattr(effective, "studio_preview", False)
+                        and snapshot.profile_preview is None
+                        and snapshot.clone_audition is None
+                        and TTSSelectionSource.STUDIO_DRAFT not in sources
+                        and self._requested_selection_matches_sample_request(
+                            requested_selection,
+                            snapshot,
+                        )
+                    ),
+                )
+            )
+            return artifact
         except BaseException:
             if secure_delete_file(path) or not path.exists():
                 self._forget_operation_file(snapshot.operation_id, path)
@@ -1043,7 +1475,7 @@ class STTSEventHandler:
         provider_id = snapshot.provider_id
         if provider_id == "openai":
             model_id = snapshot.model_id.lower().replace("-", "")
-            return f"openai_official_{model_id}"
+            return openai_internal_model_id(model_id)
         if provider_id == "elevenlabs":
             return f"elevenlabs_{snapshot.model_id}"
         if provider_id == "kokoro":
@@ -1106,6 +1538,7 @@ class STTSEventHandler:
     ) -> None:
         """Generate from one immutable request and deliver one artifact."""
         snapshot = event.request
+        sample_candidate = self._capture_sample_evidence_candidate(snapshot)
         self._show_generation_progress(snapshot.operation_id)
 
         async def progress_callback(info: TTSProgress) -> None:
@@ -1123,6 +1556,12 @@ class STTSEventHandler:
                     progress_callback,
                 )
             else:
+                legacy_facts = self._legacy_sample_generation_facts(
+                    snapshot,
+                    sample_candidate,
+                )
+                if legacy_facts is not None:
+                    self._sample_generation_facts[snapshot.operation_id] = legacy_facts
                 artifact = await self._generate_legacy(
                     snapshot,
                     progress_callback,
@@ -1130,10 +1569,40 @@ class STTSEventHandler:
             if self._retired_playground_operation_id == snapshot.operation_id:
                 self._delete_operation_files(snapshot.operation_id)
                 return
+            sample_facts = self._sample_generation_facts.pop(
+                snapshot.operation_id,
+                None,
+            )
+            if (
+                sample_facts is None
+                and snapshot.provider_id == "audio_cpp"
+                and artifact.requested_selection is not None
+            ):
+                sample_facts = _SampleGenerationFacts(
+                    runtime_revision=(
+                        artifact.requested_selection.configuration_revision
+                    ),
+                    certifies_saved_configuration=(
+                        self._requested_selection_matches_sample_request(
+                            artifact.requested_selection,
+                            snapshot,
+                        )
+                    ),
+                )
+            self._record_successful_sample_evidence(
+                artifact,
+                sample_candidate,
+                sample_facts,
+            )
             self._accept_playground_artifact(artifact)
             self._deliver_generation_success(
                 snapshot.operation_id,
                 artifact,
+                accepted_clone_draft_revision=(
+                    snapshot.clone_audition.draft_revision
+                    if snapshot.clone_audition is not None
+                    else None
+                ),
             )
             self.app.notify("TTS generation complete!", severity="information")
         except asyncio.CancelledError:
@@ -1161,6 +1630,7 @@ class STTSEventHandler:
                 severity="error",
             )
         finally:
+            self._sample_generation_facts.pop(snapshot.operation_id, None)
             if self._active_playground_operation_id == snapshot.operation_id:
                 self._is_generating = False
                 if self._retired_playground_operation_id == snapshot.operation_id:
@@ -1219,6 +1689,8 @@ class STTSEventHandler:
         self,
         operation_id: str,
         artifact: STTSGeneratedAudio,
+        *,
+        accepted_clone_draft_revision: int | None = None,
     ) -> None:
         playground = self._mounted_playground(operation_id)
         if playground is None:
@@ -1229,8 +1701,16 @@ class STTSEventHandler:
                 "[bold green]Generation complete[/bold green]"
             )
             callback = getattr(playground, "_generation_complete", None)
+            if accepted_clone_draft_revision is not None:
+                accept_clone = getattr(
+                    playground,
+                    "_accept_clone_generation_result",
+                    None,
+                )
+                if callable(accept_clone):
+                    accept_clone(operation_id, accepted_clone_draft_revision)
             if callable(callback):
-                callback(artifact)
+                callback(STTSPlaygroundResultProjection.from_artifact(artifact))
                 return
             playground.query_one("#audio-play-btn", Button).disabled = False
             playground.query_one("#audio-export-btn", Button).disabled = False
@@ -1356,16 +1836,7 @@ class STTSEventHandler:
 
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save"""
-        if self._cleanup_task is not None:
-            logger.debug("Ignoring STTS settings after cleanup started")
-            self._reply_settings_save(
-                event,
-                persisted=False,
-                provider_statuses={},
-                failure_phase="before_replace",
-            )
-            return
-        async with self._settings_save_lock:
+        try:
             if self._cleanup_task is not None:
                 logger.debug("Ignoring STTS settings after cleanup started")
                 self._reply_settings_save(
@@ -1375,7 +1846,19 @@ class STTSEventHandler:
                     failure_phase="before_replace",
                 )
                 return
-            await self._persist_settings(event)
+            async with self._settings_save_lock:
+                if self._cleanup_task is not None:
+                    logger.debug("Ignoring STTS settings after cleanup started")
+                    self._reply_settings_save(
+                        event,
+                        persisted=False,
+                        provider_statuses={},
+                        failure_phase="before_replace",
+                    )
+                    return
+                await self._persist_settings(event)
+        finally:
+            event._abandon_publication_lease()
 
     async def _persist_settings(self, event: STTSSettingsSaveEvent) -> None:
         """Persist and publish one validated, service-owned settings proposal."""
@@ -1434,10 +1917,11 @@ class STTSEventHandler:
             )
             if not isinstance(preferences, TTSPreferencesSnapshot):
                 raise TypeError("Invalid TTS preferences proposal")
-            preference_mutation = preferences.config_mutation()
-            _merge_section_mutations(section_values, preference_mutation.sets)
-            for section, keys in preference_mutation.deletes.items():
-                proposed_deletes.setdefault(section, set()).update(keys)
+            if not event.commit_defaults_after_handoff:
+                preference_mutation = preferences.config_mutation()
+                _merge_section_mutations(section_values, preference_mutation.sets)
+                for section, keys in preference_mutation.deletes.items():
+                    proposed_deletes.setdefault(section, set()).update(keys)
             delete_keys = {
                 section: tuple(sorted(keys))
                 for section, keys in proposed_deletes.items()
@@ -1490,12 +1974,51 @@ class STTSEventHandler:
                     failure_phase=result.failure_phase,
                 )
 
-            ticket = service.begin_preferences_publication(
-                preferences,
-                provider_configs,
-                persist,
-            )
+            for provider_id in candidate_providers:
+                self._default_activation_intents.pop(provider_id, None)
+            activation_intent: _DefaultActivationIntent | None = None
+            if event.commit_defaults_after_handoff:
+                ticket = service.begin_preferences_publication(
+                    preferences,
+                    provider_configs,
+                    persist,
+                    publish_preferences=False,
+                    publication_lease=event.publication_lease,
+                )
+                activation_intent = self._new_default_activation_intent(
+                    preferences,
+                    expected_saved_revision=ticket.generation,
+                )
+            else:
+                ticket = service.begin_preferences_publication(
+                    preferences,
+                    provider_configs,
+                    persist,
+                    publication_lease=event.publication_lease,
+                )
+            event._publication_started()
             publication = await asyncio.shield(ticket.foreground)
+            activation_outcome: TTSDefaultActivationOutcome | None = None
+            if event.commit_defaults_after_handoff:
+                pending_handoff = any(
+                    status == "pending"
+                    and provider_id not in publication.staged_provider_ids
+                    for provider_id, status in publication.provider_statuses.items()
+                )
+                if pending_handoff:
+                    activation_outcome = TTSDefaultActivationOutcome(
+                        "activation_not_ready"
+                    )
+                else:
+                    claimed = self._claim_default_activation_intent(activation_intent)
+                    activation_outcome = (
+                        await self.commit_voice_setup_default(
+                            preferences,
+                            expected_saved_revision=publication.generation,
+                        )
+                        if claimed
+                        else TTSDefaultActivationOutcome("activation_not_ready")
+                    )
             if publication.persistence.caches_reloaded and self.app is not None:
                 refreshed_settings = getattr(config_module, "settings", None)
                 if isinstance(refreshed_settings, Mapping):
@@ -1520,9 +2043,21 @@ class STTSEventHandler:
                 service,
                 publication,
             )
-            if "pending" in publication.provider_statuses.values():
-                self._observe_pending_settings_publication(service, ticket, event)
-            self._notify_settings_publication(publication)
+            if any(
+                status == "pending"
+                and provider_id not in publication.staged_provider_ids
+                for provider_id, status in publication.provider_statuses.items()
+            ):
+                self._observe_pending_settings_publication(
+                    service,
+                    ticket,
+                    event,
+                    activation_intent=activation_intent,
+                )
+            self._notify_settings_publication(
+                publication,
+                activation_outcome=activation_outcome,
+            )
             self._reply_settings_save(
                 event,
                 persisted=publication.persistence.file_replaced,
@@ -1533,6 +2068,17 @@ class STTSEventHandler:
                     for provider_id in publication.provider_statuses
                 },
                 provider_runtime_revisions=publication.provider_revisions,
+                staged_provider_ids=publication.staged_provider_ids,
+                defaults_activated=(
+                    activation_outcome.activated
+                    if activation_outcome is not None
+                    else None
+                ),
+                defaults_activation_status=(
+                    activation_outcome.status
+                    if activation_outcome is not None
+                    else None
+                ),
             )
         except asyncio.CancelledError:
             raise
@@ -1556,6 +2102,9 @@ class STTSEventHandler:
         failure_phase: str | None,
         provider_configuration_revisions: Mapping[str, int] = MappingProxyType({}),
         provider_runtime_revisions: Mapping[str, int] = MappingProxyType({}),
+        staged_provider_ids: frozenset[str] = frozenset(),
+        defaults_activated: bool | None = None,
+        defaults_activation_status: str | None = None,
     ) -> None:
         """Deliver a bounded result to an optional mounted requester."""
         if event.request_id is None or event.reply_to is None:
@@ -1576,17 +2125,146 @@ class STTSEventHandler:
                     failure_phase=failure_phase,
                     provider_configuration_revisions=(provider_configuration_revisions),
                     provider_runtime_revisions=provider_runtime_revisions,
+                    staged_provider_ids=staged_provider_ids,
+                    defaults_activated=defaults_activated,
+                    defaults_activation_status=defaults_activation_status,
                 )
             )
         except Exception:
             logger.debug("TTS settings requester result delivery failed")
 
+    async def commit_voice_setup_default(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        *,
+        expected_saved_revision: int,
+    ) -> TTSDefaultActivationOutcome:
+        """Persist and activate only default axes for one active provider generation."""
+
+        service = self._stts_service
+        if service is None or not callable(
+            getattr(service, "_commit_voice_setup_default", None)
+        ):
+            return TTSDefaultActivationOutcome("activation_not_ready")
+        mutation = preferences.config_mutation()
+        from tldw_chatbook import config as config_module
+
+        current_settings = getattr(config_module, "settings", {})
+        try:
+            persisted_preferences = TTSPreferencesSnapshot.from_settings(
+                current_settings if isinstance(current_settings, Mapping) else {}
+            )
+        except (TypeError, ValueError):
+            persisted_preferences = None
+        frozen_sets = {
+            section: deepcopy(dict(values)) for section, values in mutation.sets.items()
+        }
+        frozen_deletes = {
+            section: tuple(keys) for section, keys in mutation.deletes.items()
+        }
+
+        def persist_defaults() -> TTSSettingsPersistenceOutcome:
+            result = config_module.apply_settings_mutation_to_cli_config(
+                frozen_sets,
+                delete_keys=frozen_deletes,
+            )
+            return TTSSettingsPersistenceOutcome(
+                file_replaced=result.file_replaced,
+                caches_reloaded=result.caches_reloaded,
+                failure_phase=result.failure_phase,
+            )
+
+        def rollback_defaults(
+            prior_preferences: TTSPreferencesSnapshot | None,
+        ) -> TTSSettingsPersistenceOutcome:
+            rollback_preferences = prior_preferences or persisted_preferences
+            if rollback_preferences is None:
+                return TTSSettingsPersistenceOutcome(
+                    file_replaced=False,
+                    caches_reloaded=False,
+                    failure_phase="before_replace",
+                )
+            prior_mutation = rollback_preferences.config_mutation()
+            prior_sets = {
+                section: deepcopy(dict(values))
+                for section, values in prior_mutation.sets.items()
+            }
+            prior_deletes = {
+                section: tuple(keys) for section, keys in prior_mutation.deletes.items()
+            }
+            result = config_module.apply_settings_mutation_to_cli_config(
+                prior_sets,
+                delete_keys=prior_deletes,
+            )
+            return TTSSettingsPersistenceOutcome(
+                file_replaced=result.file_replaced,
+                caches_reloaded=result.caches_reloaded,
+                failure_phase=result.failure_phase,
+            )
+
+        outcome = await service._commit_voice_setup_default(
+            preferences,
+            expected_saved_revision=expected_saved_revision,
+            persistence=persist_defaults,
+            rollback=rollback_defaults,
+        )
+        if outcome.activated and self.app is not None:
+            from tldw_chatbook import config as config_module
+
+            refreshed_settings = getattr(config_module, "settings", None)
+            if isinstance(refreshed_settings, Mapping):
+                self.app.app_config = deepcopy(dict(refreshed_settings))
+        return outcome
+
+    def _new_default_activation_intent(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        *,
+        expected_saved_revision: int,
+    ) -> _DefaultActivationIntent:
+        """Replace any older provider intent with one immutable token."""
+
+        intent = _DefaultActivationIntent(
+            preferences=preferences,
+            expected_saved_revision=expected_saved_revision,
+            provider_id=preferences.provider_id,
+            token=self._next_default_activation_token,
+        )
+        self._next_default_activation_token += 1
+        self._default_activation_intents[preferences.provider_id] = intent
+        return intent
+
+    def _claim_default_activation_intent(
+        self,
+        intent: _DefaultActivationIntent | None,
+    ) -> bool:
+        """Consume an intent exactly once if it remains the newest token."""
+
+        if intent is None:
+            return False
+        if self._default_activation_intents.get(intent.provider_id) != intent:
+            return False
+        self._default_activation_intents.pop(intent.provider_id, None)
+        return True
+
+    def _discard_default_activation_intent(
+        self,
+        intent: _DefaultActivationIntent | None,
+    ) -> None:
+        if (
+            intent is not None
+            and self._default_activation_intents.get(intent.provider_id) == intent
+        ):
+            self._default_activation_intents.pop(intent.provider_id, None)
+
     def _post_applied_settings_changes(
         self,
-        _service: TTSService,
+        service: TTSService,
         publication: TTSSettingsPublication,
     ) -> None:
         """Post every provider-scoped handoff that definitively applied."""
+        posted_provider_ids: set[str] = set()
+        global_revision = publication.generation if publication.published else None
         for provider_id, status in publication.provider_statuses.items():
             if status != "applied":
                 continue
@@ -1594,14 +2272,46 @@ class STTSEventHandler:
             if revision is None:
                 continue
             self.app.post_message(
-                STTSProviderConfigurationChanged(provider_id, revision)
+                STTSProviderConfigurationChanged(
+                    provider_id,
+                    revision,
+                    global_revision,
+                )
             )
+            posted_provider_ids.add(provider_id)
+
+        if global_revision is None or posted_provider_ids:
+            return
+        provider_id = publication.preferences.provider_id
+        provider_status = publication.provider_statuses.get(provider_id)
+        if provider_status not in {None, "unchanged"}:
+            return
+        revision = publication.provider_revisions.get(provider_id)
+        if revision is None:
+            revision_reader = getattr(service, "configuration_revision", None)
+            if not callable(revision_reader):
+                return
+            try:
+                revision = revision_reader(provider_id)
+            except (KeyError, RuntimeError, TypeError, ValueError):
+                return
+        if type(revision) is not int or revision < 0:
+            return
+        self.app.post_message(
+            STTSProviderConfigurationChanged(
+                provider_id,
+                revision,
+                global_revision,
+            )
+        )
 
     def _observe_pending_settings_publication(
         self,
         service: TTSService,
         ticket: TTSSettingsPublicationTicket,
         event: STTSSettingsSaveEvent,
+        *,
+        activation_intent: _DefaultActivationIntent | None = None,
     ) -> None:
         """Publish a bounded final handoff for the still-current save."""
 
@@ -1609,14 +2319,48 @@ class STTSEventHandler:
             try:
                 completion = await asyncio.shield(ticket.completion)
             except asyncio.CancelledError:
+                self._discard_default_activation_intent(activation_intent)
                 raise
             except BaseException:
+                self._discard_default_activation_intent(activation_intent)
                 return
+            activation_outcome: TTSDefaultActivationOutcome | None = None
+            if activation_intent is not None:
+                provider_status = completion.provider_statuses.get(
+                    activation_intent.provider_id
+                )
+                if (
+                    completion.generation == activation_intent.expected_saved_revision
+                    and provider_status in {"applied", "unchanged"}
+                    and self._claim_default_activation_intent(activation_intent)
+                ):
+                    activation_outcome = await self.commit_voice_setup_default(
+                        activation_intent.preferences,
+                        expected_saved_revision=(
+                            activation_intent.expected_saved_revision
+                        ),
+                    )
+                else:
+                    self._discard_default_activation_intent(activation_intent)
+                    activation_outcome = TTSDefaultActivationOutcome(
+                        "activation_not_ready"
+                    )
             self._post_applied_settings_changes(service, completion)
             self._reply_settings_runtime(
                 event,
                 completion,
+                activation_outcome=activation_outcome,
             )
+            if (
+                activation_outcome is not None
+                and activation_outcome.status == "rollback_failed"
+            ):
+                self.app.notify(
+                    "Defaults were saved, but rollback failed. Runtime still uses the "
+                    "previous default; restart may use the new default. Retry to "
+                    "reconcile.",
+                    severity="error",
+                )
             if "unavailable" in completion.provider_statuses.values():
                 self.app.notify(
                     "TTS settings are unavailable. Retry/Reconnect.",
@@ -1629,6 +2373,8 @@ class STTSEventHandler:
     def _reply_settings_runtime(
         event: STTSSettingsSaveEvent,
         publication: TTSSettingsPublication,
+        *,
+        activation_outcome: TTSDefaultActivationOutcome | None = None,
     ) -> None:
         """Deliver one safe final runtime result to the original requester."""
 
@@ -1641,18 +2387,39 @@ class STTSEventHandler:
         )
         if not callable(callback):
             return
+        provider_statuses = {
+            provider_id: status
+            for provider_id, status in publication.provider_statuses.items()
+            if provider_id not in publication.staged_provider_ids
+        }
+        if not provider_statuses:
+            return
         try:
             callback(
                 STTSSettingsSaveResult(
                     request_id=event.request_id,
                     persisted=publication.persistence.file_replaced,
-                    provider_statuses=publication.provider_statuses,
+                    provider_statuses=provider_statuses,
                     failure_phase=publication.persistence.failure_phase,
                     provider_configuration_revisions={
                         provider_id: publication.generation
-                        for provider_id in publication.provider_statuses
+                        for provider_id in provider_statuses
                     },
-                    provider_runtime_revisions=publication.provider_revisions,
+                    provider_runtime_revisions={
+                        provider_id: revision
+                        for provider_id, revision in publication.provider_revisions.items()
+                        if provider_id in provider_statuses
+                    },
+                    defaults_activated=(
+                        activation_outcome.activated
+                        if activation_outcome is not None
+                        else None
+                    ),
+                    defaults_activation_status=(
+                        activation_outcome.status
+                        if activation_outcome is not None
+                        else None
+                    ),
                 )
             )
         except Exception:
@@ -1661,6 +2428,8 @@ class STTSEventHandler:
     def _notify_settings_publication(
         self,
         publication: TTSSettingsPublication,
+        *,
+        activation_outcome: TTSDefaultActivationOutcome | None = None,
     ) -> None:
         """Render bounded, value-independent settings publication copy."""
         persistence = publication.persistence
@@ -1670,6 +2439,32 @@ class STTSEventHandler:
                 self.app.notify("Failed to save settings", severity="error")
             else:
                 self.app.notify("Settings unchanged", severity="information")
+            return
+        if (
+            activation_outcome is not None
+            and activation_outcome.status == "rollback_failed"
+        ):
+            self.app.notify(
+                "Defaults were saved, but rollback failed. Runtime still uses the "
+                "previous default; restart may use the new default. Retry to reconcile.",
+                severity="error",
+            )
+            return
+        if (
+            activation_outcome is not None
+            and activation_outcome.status == "activation_not_ready"
+            and "pending" in statuses.values()
+        ):
+            self.app.notify(
+                "Settings saved; default activation is waiting for TTS handoff.",
+                severity="information",
+            )
+            return
+        if activation_outcome is not None and not activation_outcome.activated:
+            self.app.notify(
+                "Saved, activation failed. Previous TTS defaults remain active; retry.",
+                severity="error",
+            )
             return
         if "unavailable" in statuses.values():
             self.app.notify(
@@ -1684,6 +2479,12 @@ class STTSEventHandler:
             )
             return
         if statuses.get("audio_cpp") == "pending":
+            if "audio_cpp" in publication.staged_provider_ids:
+                self.app.notify(
+                    "Saved — open Speech Lab to apply audio.cpp settings",
+                    severity="information",
+                )
+                return
             self.app.notify(
                 "Saved — applying after current speech",
                 severity="information",
@@ -1963,64 +2764,6 @@ class STTSEventHandler:
             except Exception:
                 pass
 
-    async def play_current_audio(self) -> None:
-        """Play the current audio file"""
-        audio_path = self._current_playground_audio_path()
-        if audio_path is None or not audio_path.exists():
-            self.app.notify("No audio file to play", severity="warning")
-            return
-
-        try:
-            # Use the existing play_audio_file function
-            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-                play_audio_file,
-            )
-
-            play_audio_file(audio_path)
-            self.app.notify("Playing audio...", severity="information")
-        except Exception as e:
-            logger.error(f"Failed to play audio: {e}")
-            self.app.notify(f"Failed to play audio: {e}", severity="error")
-
-    async def export_current_audio(self, target_path: Path) -> None:
-        """Export the current audio file"""
-        audio_path = self._current_playground_audio_path()
-        if audio_path is None or not audio_path.exists():
-            self.app.notify("No audio file to export", severity="warning")
-            return
-
-        try:
-            import shutil
-
-            from tldw_chatbook.Utils.path_validation import (
-                validate_filename,
-                validate_path_simple,
-            )
-
-            target_path = Path(target_path)
-            validate_path_simple(target_path, require_exists=False)
-            validated_parent = validate_path_simple(
-                target_path.parent, require_exists=True
-            ).resolve()
-            validated_filename = validate_filename(target_path.name)
-            validated_target_path = validated_parent / validated_filename
-
-            shutil.copy2(audio_path, validated_target_path)
-            self.app.notify(
-                f"Audio exported to {validated_target_path}", severity="information"
-            )
-        except Exception as e:
-            logger.error(f"Failed to export audio: {e}")
-            self.app.notify(f"Failed to export audio: {e}", severity="error")
-
-    def _current_playground_audio_path(self) -> Path | None:
-        """Return artifact provenance before the compatibility path field."""
-        if self._current_playground_artifact is not None:
-            return self._current_playground_artifact.path
-        if self._current_audio_file is None:
-            return None
-        return Path(self._current_audio_file)
-
     def _start_event_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
         """Start and retain an event task until it finishes."""
         if self._cleanup_task is not None:
@@ -2094,6 +2837,10 @@ class STTSEventHandler:
         event: STTSProviderConfigurationChanged,
     ) -> None:
         """Invalidate any mounted Playground for the changed provider."""
+        for widget in self.app.query("STTSWindow"):
+            callback = getattr(widget, "receive_provider_configuration_changed", None)
+            if callable(callback):
+                callback(event)
         for widget in self.app.query("SpeechPlaygroundPane"):
             callback = getattr(widget, "mark_provider_configuration_changed", None)
             if callable(callback):

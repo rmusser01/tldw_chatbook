@@ -8,6 +8,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TextArea
 
 from ...tldw_api.character_persona_schemas import PersonaMode
@@ -15,7 +16,10 @@ from .personas_pane_messages import (
     EditorContentChanged,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
+    VisualIdentityPackMetadata,
 )
+from .personas_persona_visual_pack_widget import PersonasPersonaVisualPackWidget
+from .personas_visual_identity_pack_widget import PersonasVisualIdentityPackWidget
 
 #: The `PersonaMode` literal's values, for the editor's mode `Select` options.
 PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
@@ -31,7 +35,7 @@ class PersonaProfileEditorWidget(Container):
     """ds-field-row form: name, description, system prompt, personality
     traits, mode, and enabled toggle."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonaProfileEditorWidget {
         width: 100%;
         height: 100%;
@@ -57,7 +61,7 @@ class PersonaProfileEditorWidget(Container):
     }
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
     PersonaProfileEditorWidget .is-invalid {
         border: round red;
@@ -92,10 +96,31 @@ class PersonaProfileEditorWidget(Container):
         # interacted with it. Set True on a genuine field edit or a Save
         # click; reset on every load.
         self._user_touched: bool = False
+        self._persona_visual_session_token = 0
+        self._actor_pack_mode = False
 
     def compose(self) -> ComposeResult:
-        yield Static("Persona Editor", classes="destination-section")
+        yield Static(
+            "Persona Editor",
+            id="personas-editor-title",
+            classes="destination-section",
+        )
         with VerticalScroll(id="personas-editor-body"):
+            with Vertical(id="personas-editor-pack-portrait") as pack_portrait:
+                yield Label("Required portrait Character")
+                yield Select(
+                    [],
+                    id="personas-editor-character-portrait",
+                    allow_blank=True,
+                    prompt="No eligible local portrait Character",
+                )
+                yield Static(
+                    "Choose a local Character with an embedded portrait.",
+                    id="personas-editor-pack-status",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            pack_portrait.display = False
             with Vertical(classes="ds-field-row"):
                 yield Label("Name")
                 yield Input(id="personas-editor-name", placeholder="Persona name")
@@ -125,6 +150,16 @@ class PersonaProfileEditorWidget(Container):
             with Horizontal(classes="ds-field-row"):
                 yield Label("Enabled")
                 yield Switch(id="personas-editor-enabled", value=True)
+            yield Container(
+                Static("Loading Shared Visual Identity reactions…", markup=False),
+                id="personas-editor-shared-visual-identity-host",
+            )
+            yield Static(
+                "Persona Visual operational states",
+                id="personas-editor-persona-visual-title",
+                classes="destination-section",
+            )
+            yield PersonasPersonaVisualPackWidget()
         # Validation stays outside the scroll body so it is always visible
         # next to Save (anchored-footer principle, same as the character editor).
         yield Static("", id="personas-editor-validation")
@@ -164,9 +199,7 @@ class PersonaProfileEditorWidget(Container):
         self.query_one(
             "#personas-editor-personality-traits", TextArea
         ).disabled = is_server
-        self.query_one(
-            "#personas-editor-local-fields-note", Static
-        ).display = is_server
+        self.query_one("#personas-editor-local-fields-note", Static).display = is_server
 
     def load_persona(
         self,
@@ -179,6 +212,8 @@ class PersonaProfileEditorWidget(Container):
         CCPPersonaHandler calls this method when it queries ``#ccp-persona-editor-view``
         and finds a ``load_persona`` attribute (see ccp_persona_handler._load_editor).
         """
+        self._persona_visual_session_token += 1
+        self._actor_pack_mode = False
         self._loading = True
         try:
             self.set_runtime_source(runtime_source or self._runtime_source)
@@ -195,9 +230,9 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-system-prompt", TextArea).text = str(
                 data.get("system_prompt", "")
             )
-            self.query_one(
-                "#personas-editor-personality-traits", TextArea
-            ).text = str(data.get("personality_traits", "") or "")
+            self.query_one("#personas-editor-personality-traits", TextArea).text = str(
+                data.get("personality_traits", "") or ""
+            )
             mode = data.get("mode") or _DEFAULT_MODE
             self.query_one("#personas-editor-mode", Select).value = (
                 mode if mode in PERSONA_MODES else _DEFAULT_MODE
@@ -205,6 +240,25 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-enabled", Switch).value = bool(
                 data.get("is_active", True)
             )
+            visual = self.query_one(PersonasPersonaVisualPackWidget)
+            shared_host = self.query_one(
+                "#personas-editor-shared-visual-identity-host", Container
+            )
+            if self._runtime_source == "server":
+                visual.set_availability("server")
+                self._set_shared_visual_identity_status(
+                    shared_host, "Save a local copy first"
+                )
+            elif self._persona_id is None:
+                visual.set_availability("unsaved")
+                self._set_shared_visual_identity_status(
+                    shared_host, "Save the Persona first"
+                )
+            else:
+                visual.set_availability("loading")
+                self._set_shared_visual_identity_status(
+                    shared_host, "Loading Shared Visual Identity reactions…"
+                )
             self.query_one("#personas-editor-validation", Static).update("")
             # Clear any stale per-field invalid marks left by a prior session:
             # if the reopened record's values are byte-identical to what's
@@ -215,13 +269,92 @@ class PersonaProfileEditorWidget(Container):
                 self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
         finally:
             self._loading = False
+        if self.is_mounted:
+            selector = self.query_one("#personas-editor-character-portrait", Select)
+            selector.set_options([])
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
         self._user_touched = False
+        if self.is_mounted:
+            self._sync_actor_pack_mode()
 
     def new_persona(self, *, runtime_source: str | None = None) -> None:
         """Clear the form for a new (unsaved) persona."""
         self.load_persona({}, runtime_source=runtime_source)
+
+    def begin_actor_pack_creation(
+        self, portrait_options: tuple[tuple[str, int], ...]
+    ) -> None:
+        """Reuse the local editor with one labelled required-portrait selector."""
+
+        self.new_persona(runtime_source="local")
+        self._actor_pack_mode = True
+        selector = self.query_one("#personas-editor-character-portrait", Select)
+        selector.set_options(list(portrait_options))
+        selector.value = portrait_options[0][1] if portrait_options else Select.BLANK
+        self._loaded_snapshot = self._form_snapshot()
+        self._dirty_posted = False
+        self._user_touched = False
+        self._sync_actor_pack_mode()
+
+    def mark_actor_pack_created(self, portable_uuid: str) -> None:
+        """Show the committed portable UUID beside the canonical form."""
+
+        self._actor_pack_mode = False
+        self.query_one("#personas-editor-title", Static).update(
+            "Persona Actor Pack created"
+        )
+        status = self.query_one("#personas-editor-pack-status", Static)
+        status.update(f"Portable UUID: {portable_uuid}")
+        self.query_one("#personas-editor-pack-portrait").display = True
+
+    def _sync_actor_pack_mode(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#personas-editor-title", Static).update(
+            "New Persona Actor Pack" if self._actor_pack_mode else "Persona Editor"
+        )
+        self.query_one("#personas-editor-pack-portrait").display = self._actor_pack_mode
+
+    @staticmethod
+    def _set_shared_visual_identity_status(host: Container, copy: str) -> None:
+        """Replace or update the host's single path-free status line."""
+
+        children = tuple(host.children)
+        if len(children) == 1 and isinstance(children[0], Static):
+            children[0].update(copy)
+            return
+        host.remove_children()
+        host.mount(Static(copy, markup=False))
+
+    async def show_shared_visual_identity_pack(
+        self, pack: VisualIdentityPackMetadata
+    ) -> PersonasVisualIdentityPackWidget:
+        """Mount one local Persona Shared Visual Identity metadata browser."""
+
+        host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
+        await host.remove_children()
+        browser = PersonasVisualIdentityPackWidget(pack, actor_kind="persona")
+        await host.mount(browser)
+        return browser
+
+    async def show_shared_visual_identity_unavailable(self) -> Static:
+        """Show one path-free non-authoring Shared Visual Identity state."""
+
+        host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
+        await host.remove_children()
+        status = Static("Unavailable", markup=False)
+        await host.mount(status)
+        return status
+
+    async def discard_shared_visual_identity_pack(self, content: Widget | None) -> None:
+        """Remove only one stale Shared Visual Identity mount."""
+
+        if content is None:
+            return
+        host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
+        if content.parent is host:
+            await content.remove()
 
     def mark_saved(self, record: Dict[str, Any]) -> None:
         """Re-baseline dirty state to a just-persisted persona (save-in-place).
@@ -236,11 +369,20 @@ class PersonaProfileEditorWidget(Container):
             record: The just-persisted persona record (carries the
                 incremented optimistic-lock ``version``).
         """
+        self._persona_visual_session_token += 1
         self._persona_id = str(record.get("id", "")) or self._persona_id
         self._version = record.get("version", self._version)
+        if self._runtime_source == "local" and self._persona_id is not None:
+            self.query_one(PersonasPersonaVisualPackWidget).set_availability("loading")
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
         self.query_one("#personas-editor-validation", Static).update("")
+
+    @property
+    def persona_visual_session_token(self) -> int:
+        """Return the identity of the currently loaded visual editor session."""
+
+        return self._persona_visual_session_token
 
     def collect(self) -> Dict[str, Any]:
         """Return the current form values as a dict.
@@ -263,6 +405,12 @@ class PersonaProfileEditorWidget(Container):
             data["personality_traits"] = self.query_one(
                 "#personas-editor-personality-traits", TextArea
             ).text
+        if self._actor_pack_mode:
+            portrait = self.query_one(
+                "#personas-editor-character-portrait", Select
+            ).value
+            if type(portrait) is int:
+                data["character_card_id"] = portrait
         if self._persona_id is not None:
             data["id"] = self._persona_id
         if self._version is not None:
@@ -278,6 +426,7 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-personality-traits", TextArea).text,
             self.query_one("#personas-editor-mode", Select).value,
             self.query_one("#personas-editor-enabled", Switch).value,
+            self.query_one("#personas-editor-character-portrait", Select).value,
         )
 
     @on(Input.Changed)
@@ -325,11 +474,25 @@ class PersonaProfileEditorWidget(Container):
         findings: list[tuple[str, str, str]] = []
         if not self.query_one("#personas-editor-name", Input).value.strip():
             findings.append(("personas-editor-name", "required", "error"))
+        if (
+            self._actor_pack_mode
+            and type(
+                self.query_one("#personas-editor-character-portrait", Select).value
+            )
+            is not int
+        ):
+            findings.append(
+                (
+                    "personas-editor-character-portrait",
+                    "portrait Character required",
+                    "error",
+                )
+            )
         return findings
 
     def _validated_field_ids(self) -> set[str]:
         """Field ids ``validate()`` can flag at ``error`` level."""
-        return {"personas-editor-name"}
+        return {"personas-editor-name", "personas-editor-character-portrait"}
 
     def _run_validation(self) -> list[tuple[str, str, str]]:
         """Compute findings, mark/un-mark offending rows, render the footer.

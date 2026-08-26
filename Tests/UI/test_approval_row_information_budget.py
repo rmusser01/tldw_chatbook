@@ -42,13 +42,17 @@ class _StyledCardHarness(App[None]):
 async def _show_batch(app, pilot, calls: list[dict]) -> None:
     """Render `calls` on the card and wait for real geometry, by CONDITION.
 
-    `ChatApprovalCard.on_mount` hides `#approval-batch-body` through
-    `call_after_refresh`. A fixed number of `pilot.pause()` calls RACES that
-    deferred hide: land `set_batch` first and the hide runs afterwards,
-    leaving every region at 0 -- a machine-speed-dependent failure, and the
-    exact shape of the flaky test filed as TASK-1900. So this waits for the
-    two states it actually depends on instead of counting frames: first that
-    the deferred hide has run, then that the rows have been laid out.
+    `#approval-batch-body` starts hidden. Before task-17500 that hide was
+    DEFERRED mount work (`on_mount` -> `call_after_refresh`), and a fixed
+    number of `pilot.pause()` calls RACED it: land `set_batch` first and
+    the hide ran afterwards, leaving every region at 0 -- a machine-speed-
+    dependent failure, the exact shape of the flaky test filed as
+    TASK-1900, and (recognised much later) the exact mechanism of the
+    task-17500 production bug, where a real terminal's slow first paint
+    made the hide land last and unrender a headless round's card. The card
+    is now hidden at CONSTRUCTION, so the first wait below is satisfied
+    immediately; it is kept as a cheap contract check. The second wait --
+    rows actually laid out -- is still load-bearing.
 
     Args:
         app: The mounted harness app.

@@ -16,6 +16,7 @@ LISTS = ROOT / "tldw_chatbook/css/components/_lists.tcss"
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
+NAVIGATION = ROOT / "tldw_chatbook/css/components/_navigation.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CONVERSATIONS = ROOT / "tldw_chatbook/css/features/_conversations.tcss"
@@ -43,7 +44,6 @@ CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
 EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
 ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
-MODEL_CARD_VIEWER = ROOT / "tldw_chatbook/Widgets/HuggingFace/model_card_viewer.py"
 CONSOLE_MODAL_FILES = (
     ROOT / "tldw_chatbook/Widgets/Console/console_settings_modal.py",
     ROOT / "tldw_chatbook/Widgets/Console/console_edit_message_modal.py",
@@ -85,6 +85,9 @@ NATIVE_CHOICE_HOVER_MARKERS = (
 # test_file_picker_list_highlight_uses_high_contrast_override_contract below.
 NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES = (
     "#file-list-pane .option-list--option-highlighted",
+    # TASK-14879: File Notes removes its perimeter outline, so the focused
+    # Tree cursor intentionally carries the stronger workbench focus cue.
+    "LibraryFileNotesWorkspace Tree:focus > .tree--cursor",
     # TASK-368: the discovered-model checkbox CHECKED glyph is a sanctioned
     # high-contrast override (scoped by id) so selected reads distinctly from the
     # empty unchecked box — the shared $surface/$text contract erases that.
@@ -496,7 +499,6 @@ def test_shared_form_and_native_inputs_use_thin_non_semantic_focus():
     for selector in (
         "Input:focus",
         "TextArea:focus",
-        "Select:focus",
         ".form-input:focus",
         ".form-textarea:focus",
     ):
@@ -506,6 +508,17 @@ def test_shared_form_and_native_inputs_use_thin_non_semantic_focus():
         assert "border-bottom: solid $ds-input-focus-accent;" in block
         assert "$error" not in block
         assert "$warning" not in block
+
+    # TASK-2300: Select draws its visible focus border on SelectCurrent.
+    # Adding the shared parent border consumes the control's value row, so
+    # the parent keeps only the non-semantic colour cue.
+    select_focus = css_block(text, "Select:focus")
+    assert "outline: heavy" not in select_focus
+    assert "border:" not in select_focus
+    assert "background: $ds-input-focus-bg;" in select_focus
+    assert "color: $ds-text-primary;" in select_focus
+    assert "$error" not in select_focus
+    assert "$warning" not in select_focus
 
 
 def test_native_toggle_focus_states_use_non_obscuring_contracts():
@@ -544,6 +557,50 @@ def test_bundled_native_toggle_focus_states_match_source_contracts():
     assert "$error" not in focus
     assert "border: solid $ds-focus-accent;" in focus
     assert "background: $ds-focus-bg;" in focus
+
+
+def test_bundled_compact_focus_outline_opt_outs_match_source_contracts():
+    """TASK-17961: the third `*:focus{outline:solid...}`-over-content-row
+    family member, after TASK-1160 (`DataTable:focus`, components/
+    _lists.tcss) and TASK-2300 (`Select.-textual-compact:focus`, also
+    components/_lists.tcss). A compact `Input` is exactly one row tall
+    (Textual pins `border: none !important` on `.-textual-compact`) and a
+    compact `ToggleButton`/`Checkbox`/`RadioButton` loses its own perimeter
+    the same way once this app's `ToggleButton:focus` border/background
+    rule re-adds a border `!important` cannot keep off (app CSS always
+    outranks a widget's own DEFAULT_CSS in Textual's cascade) -- so both
+    opt out of the outline AND restate `border: none` rather than relying
+    on Textual's compact contract alone. Mirrors
+    `test_bundled_native_toggle_focus_states_match_source_contracts`'s
+    two-surface shape (module source and bundle must agree)."""
+    for label, text in (
+        ("components/_forms.tcss", FORMS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        toggle_focus = css_block(text, "ToggleButton:focus")
+        assert "outline: none;" in toggle_focus, (
+            f"{label} ToggleButton:focus is missing outline: none"
+        )
+        assert "outline: solid" not in toggle_focus
+
+        compact_toggle_focus = css_block(text, "ToggleButton.-textual-compact:focus")
+        assert "outline: none;" in compact_toggle_focus, (
+            f"{label} ToggleButton.-textual-compact:focus is missing outline: none"
+        )
+        assert "border: none;" in compact_toggle_focus, (
+            f"{label} ToggleButton.-textual-compact:focus is missing border: none"
+        )
+
+        compact_input_focus = css_block(text, "Input.-textual-compact:focus")
+        assert "outline: none;" in compact_input_focus, (
+            f"{label} Input.-textual-compact:focus is missing outline: none"
+        )
+        assert "border: none;" in compact_input_focus, (
+            f"{label} Input.-textual-compact:focus is missing border: none"
+        )
+        assert "background: $ds-focus-bg;" in compact_input_focus, (
+            f"{label} Input.-textual-compact:focus is missing its recolour cue"
+        )
 
 
 def test_console_and_library_visible_offenders_do_not_obscure_labels():
@@ -742,29 +799,48 @@ def test_css_class_selector_matching_uses_token_boundaries():
 
 
 def test_console_composer_focus_uses_thin_input_treatment():
+    """task-17651: the composer follows the task-1586 dense-form convention.
+
+    Focus flips the one-column left edge to the thick action accent with a
+    focus background — never a border box (a Textual border box costs a row
+    above and below, which is exactly the chrome the flattening removed).
+    """
     text = AGENTIC.read_text(encoding="utf-8")
     block = css_block(text, "#console-native-composer.console-composer-focused")
     assert "border: heavy" not in block
-    assert "border: solid $ds-input-focus-border;" in block
-    assert "border-bottom: solid $ds-input-focus-accent;" in block
+    assert "border-left: thick $ds-action-focus;" in block
+    assert "background: $ds-input-focus-bg;" in block
+    assert "border: solid" not in block
+    assert "border-bottom:" not in block
 
 
 def test_console_structural_separators_use_visible_column_line_token():
     text = AGENTIC.read_text(encoding="utf-8")
+    grid = css_block(text, "#console-workspace-grid")
     transcript_region_blocks = css_blocks(text, "#console-transcript-region")
     composer = css_block(text, "#console-native-composer")
     transcript_rule = css_block(text, ".console-transcript-rule")
 
     assert transcript_region_blocks
     assert all("$ds-grid-line" not in block for block in transcript_region_blocks)
-    assert any(
-        "border: solid $ds-column-line;" in block for block in transcript_region_blocks
+    assert all(
+        "border: solid $ds-column-line;" not in block
+        for block in transcript_region_blocks
     )
-    assert any(
-        "border: round $ds-column-line;" in block for block in transcript_region_blocks
+    assert all(
+        "border: round $ds-column-line;" not in block
+        for block in transcript_region_blocks
     )
-    assert "border: round $ds-column-line;" in composer
-    assert "border: round $ds-grid-line;" not in composer
+    assert any("border: none;" in block for block in transcript_region_blocks)
+    assert "border-top: solid $ds-grid-line;" in grid
+    assert "border-bottom: solid $ds-grid-line;" in grid
+    assert "border-left:" not in grid
+    assert "border-right:" not in grid
+    # task-17651: the composer left the frame grammar — it is a dense-form
+    # field with a one-column left edge, never a border box.
+    assert "border: none;" in composer
+    assert "border-left: solid $ds-control-edge;" in composer
+    assert "border: round" not in composer
     assert "color: $ds-column-line;" in transcript_rule
     assert "color: $ds-grid-line;" not in transcript_rule
 
@@ -868,18 +944,31 @@ def test_console_settings_modal_select_overlay_is_readable():
 
 @pytest.mark.unit
 def test_console_transcript_focus_uses_stable_border_geometry():
+    """task-17651: no border in either state — stable geometry at zero rows.
+
+    The transcript's own frame is gone at every size (the compact-mode
+    drop generalized); its stable title carries the non-color focus cue,
+    while the transcript keeps only a scrollbar accent here. Neither state
+    may reintroduce a border or outline, which would cost the rows the
+    flattening reclaimed.
+    """
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
         base = css_block(text, "#console-native-transcript")
         focus = css_block(text, "#console-native-transcript:focus")
-        assert_stable_solid_border_geometry(base, focus)
-        assert "border: solid $ds-focus-accent;" in focus
-        assert "border-bottom: solid $ds-focus-accent;" in focus
-        assert "outline: heavy" not in focus
-        assert "$primary" not in focus
-        assert "$accent" not in focus
+        assert "border: none;" in base
+        assert "border: none;" in focus
+        assert "border: solid" not in base + focus
+        assert "border-bottom: solid" not in base + focus
+        # The opt-out from the global *:focus outline is load-bearing:
+        # without a border to absorb it, the reset's corner glyphs would
+        # overpaint the outermost transcript content rows.
+        assert "outline: none;" in focus
+        assert "outline: solid" not in base + focus
+        assert "outline: heavy" not in base + focus
+        assert "scrollbar-color: $ds-focus-accent;" in focus
 
 
 @pytest.mark.unit
@@ -999,7 +1088,7 @@ def test_acp_selected_session_row_uses_selected_contract():
 def test_top_navigation_inline_focus_uses_hybrid_contract():
     from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 
-    text = MainNavigationBar.DEFAULT_CSS
+    text = MainNavigationBar.BUNDLED_CSS
     focus = css_block(text, ".nav-button:focus")
     active = css_block(text, ".nav-button.is-active")
     active_focus = css_block(text, ".nav-button.is-active:focus")
@@ -1011,10 +1100,17 @@ def test_top_navigation_inline_focus_uses_hybrid_contract():
 def test_shared_navigation_button_uses_non_obscuring_active_and_focus_states():
     text = BASE_COMPONENTS.read_text(encoding="utf-8")
     hover = css_block(text, "NavigationButton:hover")
-    focus = css_block(text, "NavigationButton:focus")
-    active = css_block(text, "NavigationButton.active")
-    active_focus = css_block(text, "NavigationButton.active:focus")
     assert_native_row_hover_state_contract(hover)
+    # TASK-16811: the token-dependent .active/:focus states moved into
+    # css/components/_navigation.tcss -- inside the widget's DEFAULT_CSS the
+    # local `$ds-*:` "fallbacks" they required silently shadowed the bundle's
+    # real focus tokens (unfocused .active rendered $surface, not #51677e).
+    # The widget source must stay free of local $ds declarations.
+    assert "$ds-focus-bg:" not in text and "$ds-focus-fg:" not in text
+    nav_text = NAVIGATION.read_text(encoding="utf-8")
+    focus = css_block(nav_text, "NavigationButton:focus")
+    active = css_block(nav_text, "NavigationButton.active")
+    active_focus = css_block(nav_text, "NavigationButton.active:focus")
     assert_non_obscuring_focus(focus)
     assert "$ds-focus-bg" in focus or "$ds-surface-raised" in focus
     assert_readable_selected_state_contract(active)
@@ -1054,9 +1150,7 @@ def test_library_rag_collapsible_header_hover_uses_non_obscuring_surface_contrac
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
     text = WIDGETS.read_text(encoding="utf-8")
     block = css_block(text, "Collapsible > CollapsibleTitle:focus")
-    collapsed_focus = css_block(
-        text, "Collapsible.-collapsed > CollapsibleTitle:focus"
-    )
+    collapsed_focus = css_block(text, "Collapsible.-collapsed > CollapsibleTitle:focus")
     assert_non_obscuring_focus(block)
     assert "outline: heavy" not in block
     assert "border-bottom: solid $ds-focus-accent;" in collapsed_focus
@@ -1068,9 +1162,7 @@ def test_conversations_collapsible_active_header_uses_selected_contract():
         BUNDLE.read_text(encoding="utf-8"),
     ):
         blocks = css_blocks(text, "Collapsible.-active > CollapsibleTitle")
-        assert blocks, (
-            "Missing CSS block for Collapsible.-active > CollapsibleTitle"
-        )
+        assert blocks, "Missing CSS block for Collapsible.-active > CollapsibleTitle"
         active = blocks[-1]
         assert_readable_selected_state_contract(active)
         assert_no_dominant_selected_geometry(active)
@@ -1209,8 +1301,14 @@ def test_bundled_wizard_progress_active_states_match_source_contracts():
 def test_wizard_progress_default_css_matches_active_state_contract():
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
 
+    # TASK-16811: the .active states moved into css/features/_wizards.tcss
+    # (widget-local `$ds-*:` fallbacks shadowed the bundle tokens); the
+    # DEFAULT_CSS must stay free of local $ds declarations.
+    assert "$ds-" not in WizardProgress.DEFAULT_CSS.replace(
+        "$ds-focus-* tokens", ""
+    )
     assert_wizard_progress_active_contracts(
-        WizardProgress.DEFAULT_CSS, scope="WizardProgress"
+        WIZARDS.read_text(encoding="utf-8"), scope="WizardProgress"
     )
 
 
@@ -1500,6 +1598,15 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
     assert_all_native_choice_selectors_follow_contracts(text)
 
 
+def test_file_notes_tree_cursor_uses_readable_high_contrast_focus_contract():
+    selector = "LibraryFileNotesWorkspace Tree:focus > .tree--cursor"
+    for text in (
+        LISTS.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        assert_readable_selected_state_contract(css_block(text, selector))
+
+
 def test_file_picker_list_highlight_uses_high_contrast_override_contract():
     """task-430 AC#1: the file picker's list pane opts out of the neutral
     native-row $surface contract in favor of the readable-selected
@@ -1608,7 +1715,14 @@ def test_repo_tree_widget_states_match_code_repo_contract():
     source_hover = css_block(
         CODE_REPO.read_text(encoding="utf-8"), ".tree-expand-btn:hover"
     )
-    selected = css_block(TreeNode.DEFAULT_CSS, ".tree-node-selected")
+    # TASK-16811: the widget's own .tree-node-selected copy was dead weight
+    # the bundle always beat, and its local `$ds-*:` fallbacks shadowed the
+    # tokens; _code_repo.tcss is the single owner now.
+    assert "$ds-focus-bg:" not in TreeNode.DEFAULT_CSS
+    assert ".tree-node-selected {" not in TreeNode.DEFAULT_CSS
+    selected = css_block(
+        CODE_REPO.read_text(encoding="utf-8"), ".tree-node-selected"
+    )
     assert_native_row_hover_state_contract(hover)
     assert_native_row_hover_state_contract(source_hover)
     assert_readable_selected_state_contract(selected)
@@ -1633,9 +1747,17 @@ def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
 
     inline_text = CHATBOOKS_WINDOW_IMPROVED.read_text(encoding="utf-8")
     inline_base = css_block(inline_text, ".search-input")
-    inline_focus = css_block(inline_text, ".search-input:focus")
-    assert_stable_solid_border_geometry(inline_base, inline_focus)
-    assert_thin_inline_input_focus(inline_focus)
+    # TASK-16811: the :focus rule moved into css/components/_widgets.tcss,
+    # scoped to the window (its local `$ds-input-focus-*:` fallbacks here
+    # shadowed the bundle tokens); the window source must stay free of
+    # local $ds declarations.
+    assert "$ds-input-focus-bg:" not in inline_text
+    bundle_focus = css_block(
+        WIDGETS.read_text(encoding="utf-8"),
+        "ChatbooksWindowImproved .search-input:focus",
+    )
+    assert_stable_solid_border_geometry(inline_base, bundle_focus)
+    assert_thin_inline_input_focus(bundle_focus)
 
 
 def test_library_rag_query_input_uses_stable_thin_contracts():
@@ -1678,36 +1800,35 @@ def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
 
     text = BaseTamagotchi.DEFAULT_CSS
     base = css_block(text, "BaseTamagotchi")
-    focus = css_block(text, "BaseTamagotchi:focus")
     assert "border: round" in base
     assert "background: $panel;" in base
     assert "border: round $surface-lighten-1;" in base
+    # TASK-16811: the :focus state moved into css/components/_widgets.tcss
+    # (the widget-local `$ds-*:` fallbacks shadowed the bundle tokens); the
+    # DEFAULT_CSS must stay free of local $ds declarations.
+    assert "$ds-focus-bg:" not in text
+    focus = css_block(
+        WIDGETS.read_text(encoding="utf-8"), "BaseTamagotchi:focus"
+    )
     assert_custom_widget_focus_contract(focus)
-
-    assert text.index("BaseTamagotchi.dead") < text.index("BaseTamagotchi:focus")
-    assert text.index("BaseTamagotchi:focus") < text.index("BaseTamagotchi.compact")
 
 
 def test_compact_custom_buttons_use_readable_focus_cues():
-    for path, selector in (
+    # TASK-16811: both rules moved into css/components/_widgets.tcss (the
+    # widget-local `$ds-*:` fallbacks beside them shadowed the bundle
+    # tokens); the widget sources must stay free of local $ds declarations.
+    widgets_text = WIDGETS.read_text(encoding="utf-8")
+    for source, selector in (
         (EMOJI_PICKER, "EmojiButton.emoji_button:focus"),
         (ENHANCED_FILE_PICKER, "PathBreadcrumbs .breadcrumb-button:focus"),
     ):
-        block = css_block(path.read_text(encoding="utf-8"), selector)
+        assert "$ds-focus-bg:" not in source.read_text(encoding="utf-8")
+        block = css_block(widgets_text, selector)
         assert_non_obscuring_focus(block)
         assert "$primary" not in block
         assert "$accent" not in block
         assert "background: $ds-focus-bg;" in block
         assert "color: $ds-focus-fg;" in block
-
-
-def test_huggingface_model_card_selected_file_row_is_readable():
-    text = MODEL_CARD_VIEWER.read_text(encoding="utf-8")
-    for selector in (
-        "ModelCardViewer .file-item.selected",
-        "ModelCardViewer .file-item.selected:hover",
-    ):
-        assert_readable_inline_selected_state_contract(css_block(text, selector))
 
 
 def test_config_search_highlight_focus_uses_thin_non_semantic_focus():
@@ -1800,3 +1921,45 @@ def test_sidebar_hover_states_use_neutral_readable_surface(selector: str):
     bundled_blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
     assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
     assert_native_row_hover_state_contract(bundled_blocks[-1])
+
+
+def test_library_notes_focus_cues_are_visible_without_obscuring_content():
+    """Database Notes gives scroll surfaces and conflict recovery real focus cues."""
+    for path in (AGENTIC, BUNDLE):
+        text = path.read_text(encoding="utf-8")
+
+        for selector in (
+            "#library-note-preview-region:focus",
+            "#library-note-context-region:focus",
+        ):
+            block = css_block(text, selector)
+            assert "outline: heavy" not in block
+            assert "reverse" not in block
+            assert "border: solid $ds-input-focus-accent;" in block
+            assert "background: $ds-input-focus-bg;" in block
+
+        conflict = css_block(text, "#library-note-conflict-copy:focus")
+        assert_non_obscuring_focus(conflict)
+        assert "background: $ds-focus-bg;" in conflict
+        assert "color: $ds-focus-fg;" in conflict
+
+
+def test_library_notes_labeled_fields_keep_stable_non_semantic_focus_geometry():
+    """Filter, title, body, and both keyword editors use the shared thin cue."""
+    text = BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        "Input:focus",
+        "TextArea:focus",
+    ):
+        assert_thin_input_focus(css_block(text, selector))
+
+    for selector in (
+        "#library-notes-filter:focus",
+        "#library-note-title:focus",
+        "#library-note-keywords:focus",
+    ):
+        block = css_block(text, selector)
+        assert "outline: heavy" not in block
+        assert "reverse" not in block
+        assert "background: $ds-input-focus-bg;" in block
+        assert "color: $ds-text-primary;" in block

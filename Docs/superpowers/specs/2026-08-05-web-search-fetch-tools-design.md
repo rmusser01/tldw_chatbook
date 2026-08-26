@@ -1,9 +1,33 @@
 # Design: web_search + web_fetch tools for Console and MCP (hub-native)
 
 - Date: 2026-08-05
-- Status: approved design (approach A), pending implementation plan
-- Backlog: task-1354 (implementation); follow-ups task-1355..1361
-- ADR required: yes (egress/security policy + cross-module tool contract) — create `backlog/decisions/NNN-web-tools-egress-and-permission-policy.md` before implementation begins.
+- Status: superseded implementation draft; retained as historical rationale
+- Backlog: TASK-1354
+- ADR required: yes
+- ADR paths: `backlog/decisions/032-local-agent-tool-permission-boundary.md`; `backlog/decisions/053-mcp-unified-standalone-runtime-boundary.md`
+
+> **Do not implement this draft.** Before its proposed FastMCP/builtin design
+> was executed, the approved local-agent-tools architecture established
+> `LocalToolProvider` and ADR-032. The shipped `web_search` and `web_fetch`
+> cores live in `Tools/web_tool_impls.py`; Console catalog ids are
+> `local:web_search` and `local:web_fetch`; fresh permission state is Ask for
+> both; and `web_fetch` permits only public HTTP(S) targets, revalidating every
+> redirect hop. TASK-2828 later added opt-in external exposure through the
+> same provider, and TASK-2512/ADR-053 migrated that server from FastMCP to
+> `mcp-unified`. External Ask fails closed because stdio clients have no
+> Console approval callback. The historical proposal below—builtin
+> registration, default-Allow search, domain-scoped approvals, configurable
+> localhost/LAN access, Playwright escalation, and its proposed file layout—is
+> non-normative and was not shipped.
+>
+> Current implementation authority:
+> `Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md`,
+> `Docs/superpowers/specs/2026-08-05-local-agent-tools-phases-3-4-replan.md`,
+> ADR-032, ADR-053, and TASK-1354's current acceptance criteria. Follow-up
+> features landed under their actual task records: TASK-1355 through TASK-1359,
+> TASK-2832 (search caching), and TASK-2833 (robots.txt). The old `task-1360`
+> and `task-1361` references below were planning placeholders whose numbers
+> were later reused for unrelated work.
 
 ## 1. Goal
 

@@ -49,6 +49,15 @@ $ds-status-error: $error;
    foreground (7.71:1) for text and marks that must be READ, while
    $ds-status-error stays the decorative status hue. */
 $ds-status-error-readable: #ff8fa3;
+/* task-14824 (3): Textual's stock placeholder colour ($text-disabled)
+   measured 3.52:1 on an enabled ingest field and 3.49:1 on a disabled one
+   -- below AA for normal text, and a 0.03 delta means a placeholder is
+   also useless as a disabled-state cue. This grey clears AA against BOTH
+   the resting field surface (rgb 30) and the darkened disabled surface
+   (rgb 13) -- measured 4.94:1 / 5.63:1 -- while staying obviously dimmer
+   than a real value ($text, rgb 224), so a placeholder still reads as an
+   absent value rather than as content. */
+$ds-text-placeholder: #8a8a8a;
 $ds-status-paused: $warning;
 $ds-status-unsaved: $warning;
 $ds-status-recovered: $success;
@@ -60,6 +69,24 @@ $ds-source-role-context: $accent;
 $ds-source-role-evidence: $accent;
 $ds-source-role-editable-target: $warning;
 $ds-source-role-output-seed: $secondary;
+
+/* Console transcript speaker accents. Textual exposes whether the active
+   theme is dark or light as an App class; the two assistant tones keep the
+   same warm semantic role while meeting ordinary-text contrast on both. */
+$ds-chat-user-accent: $text-primary;
+$ds-chat-user-accent-dark: #8bd5ff;
+$ds-chat-user-accent-light: #004d6d;
+$ds-chat-assistant-accent-dark: #ffc473;
+$ds-chat-assistant-accent-light: #704000;
+/* Inline roleplay semantics inside assistant / character Markdown. These are
+   separate from the speaker accent so dialogue, action, and emphasis remain
+   distinguishable without changing the transcript's structural grammar. */
+$ds-chat-rp-speech-dark: #8bd5ff;
+$ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-action-dark: #d7b2ff;
+$ds-chat-rp-action-light: #5e3578;
+$ds-chat-rp-strong-dark: #fff0a6;
+$ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
 $ds-home-dashboard-grid-height: 18;
@@ -67,8 +94,7 @@ $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
 $ds-home-followup-row-height: 6;
 $ds-console-workspace-grid-height: 1fr;
-$ds-console-control-bar-height: 1;
-$ds-console-composer-height: 5;
+$ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
 $ds-library-source-action-width: auto;

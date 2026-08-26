@@ -41,13 +41,14 @@ import asyncio
 import base64
 import concurrent.futures
 import json
-from html import unescape
 import random
 import re
 import threading
 import time
-from typing import Optional, Dict, Any, List, Union, Callable, TypedDict
-from urllib.parse import urlparse, urlencode, unquote
+from functools import wraps
+from html import unescape
+from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict, Union
+from urllib.parse import unquote, urlencode, urlparse
 
 #
 # 3rd-Party Imports
@@ -55,7 +56,6 @@ import requests
 from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
-from functools import wraps
 
 # Handle optional lxml dependency
 try:
@@ -70,11 +70,6 @@ except ImportError:
 
 #
 # Local Imports
-from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call
-from tldw_chatbook.Internal_Prompts import render_internal_prompt
-from tldw_chatbook.Utils.egress import is_public_http_url
-
 # `analyze` (LLM_Calls.Summarization_General_Lib) pulls in the summarization
 # stack (nltk/scipy/sklearn/pandas via Chunking/Chunk_Lib). It is imported
 # lazily inside search_result_relevance(), only when actually summarizing a
@@ -82,8 +77,15 @@ from tldw_chatbook.Utils.egress import is_public_http_url
 # load it (this module sits on the app.py -> Tools -> WebSearch_APIs boot
 # path via the tool-executor registry).
 from loguru import logger
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+
+from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
 from tldw_chatbook.config import load_settings
+from tldw_chatbook.Internal_Prompts import render_internal_prompt
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.egress import is_public_http_url
+from tldw_chatbook.Utils.log_sanitizer import sanitize_string
+from tldw_chatbook.Web_Scraping import deep_search_citations
+from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 
 # Handle optional defusedxml (Yandex XML parsing)
 try:
@@ -369,6 +371,78 @@ def _sanitize_sub_questions(raw_values: Any) -> List[str]:
     return sanitized
 
 
+#: search_params keys generate_and_search cannot run without. Exported
+#: because callers that ASSEMBLE these params need to be able to check their
+#: own assembly before spending a run on it -- LocalResearchEngine's
+#: pre-flight (task-17371) does exactly that, after a window-launched run
+#: reaching this validation was the only signal that the window passed no
+#: params at all.
+#: Failure markers the summarizers use when they report by RETURNING a string
+#: instead of raising (task-17382). Matched case-insensitively against the
+#: START of the value only -- these functions put the marker in the first
+#: clause ("Llama: Error occurred while ...", "Ollama: JSON parse error ..."),
+#: so a legitimate summary that merely discusses errors downstream cannot be
+#: mistaken for one. The old guard tested only the "Error:" prefix, which no
+#: provider-prefixed message matches.
+_SUMMARY_FAILURE_MARKERS = (
+    # The legacy convention this guard originally tested for.
+    "error:",
+    # What the summarizers actually emit, verbatim from their return
+    # statements. Deliberately phrase-level, not the bare word "error": a
+    # real summary may open with "Error rates in retrieval systems are ..."
+    # and must not be thrown away.
+    "error occurred",
+    "error making",
+    "error decoding",
+    "error parsing",
+    "error summarizing",
+    "unexpected error",
+    "api request failed",
+    "json parse error",
+    "no choices in response",
+)
+
+#: How far into the value a marker still counts as the leading clause.
+_SUMMARY_FAILURE_PREFIX_CHARS = 60
+
+
+def _is_summary_failure(value: Any) -> bool:
+    """Whether a summarizer's return value is one of its error strings.
+
+    Args:
+        value: The summarizer's return value (any type; only str can fail).
+
+    Returns:
+        True when the value is a provider failure report rather than a summary.
+    """
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return True
+    head = text[:_SUMMARY_FAILURE_PREFIX_CHARS].casefold()
+    # Either the message leads with the marker, or a provider prefix does:
+    # "<provider>: <marker> ...". Split once so prose containing a colon
+    # later on cannot smuggle a marker in.
+    candidates = [head]
+    if ":" in head:
+        candidates.append(head.split(":", 1)[1].lstrip())
+    return any(
+        candidate.startswith(marker)
+        for candidate in candidates
+        for marker in _SUMMARY_FAILURE_MARKERS
+    )
+
+
+GENERATE_AND_SEARCH_REQUIRED_PARAMS = (
+    "engine",
+    "content_country",
+    "search_lang",
+    "output_lang",
+    "result_count",
+)
+
+
 def generate_and_search(question: str, search_params: Dict) -> Dict:
     """
     Generate sub-queries and perform web searches.
@@ -441,14 +515,7 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
         raise ValueError("Invalid search_params parameter")
 
     # Check for required keys in search_params
-    required_keys = [
-        "engine",
-        "content_country",
-        "search_lang",
-        "output_lang",
-        "result_count",
-    ]
-    for key in required_keys:
+    for key in GENERATE_AND_SEARCH_REQUIRED_PARAMS:
         if key not in search_params:
             raise ValueError(f"Missing required key in search_params: {key}")
 
@@ -650,6 +717,11 @@ async def analyze_and_aggregate(
             - user_review: Enable manual result selection
             - relevance_llm_timeout_s / relevance_scrape_timeout_s: per-call
               timeouts passed through to search_result_relevance (default 30/30)
+            - respect_robots_txt: bool, default False when absent -- passed
+              through to search_result_relevance's pre-scrape robots.txt
+              consult (task-3260). Absence (the dead-wired research-service
+              caller) keeps today's no-robots-check behavior; web_deep_search
+              (the tool) always sets this from the real [webfetch] setting.
         cancel_event: Optional cooperative-cancellation flag passed through to
             search_result_relevance (port of server WebSearch_APIs.py :638;
             task-1356).
@@ -676,6 +748,20 @@ async def analyze_and_aggregate(
     sub_questions = sub_query_dict.get("sub_questions", [])
     relevance_llm_timeout_s = float(search_params.get("relevance_llm_timeout_s", 30.0) or 30.0)
     relevance_scrape_timeout_s = float(search_params.get("relevance_scrape_timeout_s", 30.0) or 30.0)
+    # task-3260: default False when the key is absent -- the dead-wired
+    # research-service caller (never sets this) keeps today's no-robots-
+    # check behavior; web_deep_search (the tool) always places the real
+    # [webfetch] respect_robots_txt setting here.
+    raw_respect_robots = search_params.get("respect_robots_txt", False)
+    # Strict parse (Qodo PR #1451 — the fourth bool("false") catch of this
+    # arc): a stringly caller's "false" must not ENABLE enforcement. Bools
+    # pass through; only "true"/"1" strings enable; anything else is False.
+    if isinstance(raw_respect_robots, bool):
+        respect_robots_txt = raw_respect_robots
+    elif isinstance(raw_respect_robots, str):
+        respect_robots_txt = raw_respect_robots.strip().lower() in ("true", "1")
+    else:
+        respect_robots_txt = False
     relevant_results = await search_result_relevance(
         web_search_results_dict["results"],
         sub_query_dict["main_goal"],
@@ -684,6 +770,7 @@ async def analyze_and_aggregate(
         cancel_event=cancel_event,
         llm_timeout_s=relevance_llm_timeout_s,
         scrape_timeout_s=relevance_scrape_timeout_s,
+        respect_robots_txt=respect_robots_txt,
     )
     # FIXME
     logger.debug("Relevant results returned by search_result_relevance:")
@@ -745,6 +832,14 @@ async def analyze_and_aggregate(
         },
     )
 
+    if isinstance(final_answer, dict):
+        final_answer["gate"] = {
+            "relevant": len(relevant_results),
+            "raw": len(web_search_results_dict.get("results") or []),
+            "fallback": any(
+                entry.get("gate_unverified") for entry in relevant_results.values()
+            ),
+        }
     return {
         "final_answer": final_answer,
         "relevant_results": relevant_results,
@@ -755,6 +850,12 @@ async def analyze_and_aggregate(
 ######################### Question Analysis #########################
 #
 _SUBQUERY_GENERATION_MAX_ATTEMPTS = 3
+
+# One shared per-request HTTP timeout for every search backend this repo
+# owns (task-1355 added the literal to serper/exa/yandex; task-3060 to the
+# six older engines; Qodo PR #1451 named it). Bing predates both with its
+# own 10s and deliberately keeps it.
+SEARCH_BACKEND_TIMEOUT_S = 30
 """Number of paid LLM attempts `analyze_question` makes at generating
 sub-questions before giving up. Shared with `generate_and_search`'s
 total-failure warning (task-3221) so the "N attempts" the user is told
@@ -818,16 +919,18 @@ def analyze_question(question: str, api_endpoint) -> Dict:
                     "content": input_data + "\n\n" + sub_question_generation_prompt,
                 }
             ]
-            response = chat_api_call(
-                api_endpoint=api_endpoint,
-                messages_payload=messages_payload,
-                api_key=None,
-                temp=0.7,
-                system_message=None,
-                streaming=False,
-                minp=None,
-                maxp=None,
-                model=None,
+            response = chat_reply_text(
+                chat_api_call(
+                    api_endpoint=api_endpoint,
+                    messages_payload=messages_payload,
+                    api_key=None,
+                    temp=0.7,
+                    system_message=None,
+                    streaming=False,
+                    minp=None,
+                    maxp=None,
+                    model=None,
+                )
             )
             if response:
                 try:
@@ -907,18 +1010,44 @@ _DNS_GUARD_EXECUTOR_LOCK = threading.Lock()
 """Guards creation of the module-level DNS-guard executor below."""
 
 _DNS_GUARD_EXECUTOR: Optional[concurrent.futures.ThreadPoolExecutor] = None
-"""Dedicated, lazily-created, bounded executor for the pre-scrape SSRF DNS
-guard (`is_public_http_url`) offload in `search_result_relevance` (task-3220).
+"""Dedicated, lazily-created, bounded executor for TWO guard-class,
+synchronous-network-I/O offloads in `search_result_relevance`, both wrapped
+in `asyncio.wait_for(..., timeout=scrape_timeout_s)`: the pre-scrape SSRF
+DNS guard (`is_public_http_url`, task-3220) and the pre-scrape robots.txt
+check (`robots_allows_for_scrape`, task-3260). Both do synchronous network
+I/O (`socket.getaddrinfo` / a blocking `httpx.Client` request respectively)
+that cannot be cancelled once started -- when the caller's `wait_for` times
+out, the abandoned thread keeps occupying its executor slot until the
+underlying call itself gives up, not until the caller stopped waiting.
+Routing either through `asyncio.to_thread` would put it on the DEFAULT
+executor, the same one this loop's other offloads (the relevance/
+summarization `chat_api_call` calls, `aggregate_results`) share -- so a
+result set full of slow-DNS/slow-robots hosts could queue paid LLM calls
+behind dead resolvers/fetches. A small, separate pool isolates the
+abandoned threads so they can never crowd out those offloads.
 
-Constraint: that guard does synchronous `socket.getaddrinfo` and is wrapped
-in `asyncio.wait_for`; when the timeout fires, the abandoned resolver thread
-keeps occupying its executor slot until the OS resolver itself gives up --
-which can far outlast `scrape_timeout_s`. Routing it through
-`asyncio.to_thread` would put it on the DEFAULT executor, the same one this
-loop's other offloads (the relevance/summarization `chat_api_call` calls,
-`aggregate_results`) share -- so a result set full of slow-DNS hosts could
-queue paid LLM calls behind dead resolvers. A small, separate pool isolates
-the abandoned threads so they can never crowd out those offloads."""
+The two consumers fail in OPPOSITE directions once `wait_for` gives up on
+them (task-3260 design doc ruling 5, deliberate): the SSRF guard fails
+CLOSED (treated as non-public -> the scrape is refused) while the robots
+check fails OPEN (treated as allowed -> the scrape proceeds, matching
+`_fetch_robots_parser`'s existing fail-open for web_fetch/web_crawl).
+Sharing one pool between opposite-failing consumers has a real interaction
+under saturation: a hung robots check can hold its slot far longer than
+`scrape_timeout_s` -- `robots_allows_for_scrape`'s own client can chase up
+to `FETCH_MAX_REDIRECTS + 1` (6) hops, each independently bounded by
+`FETCH_TIMEOUT_SECONDS` (30s), so a host that hangs at every hop's timeout
+boundary can occupy a slot for ~180s even though the caller's own
+`wait_for` gave up after 30s. With only `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
+(4) slots, roughly 4 such hung hosts saturate the whole pool; every guard
+call submitted after that -- SSRF AND robots alike, since they share this
+one pool -- queues UNSTARTED behind them. A queued robots check that never
+gets to run before its OWN `wait_for` elapses times out and fails OPEN
+(robots enforcement goes silently off for it), while a queued SSRF check
+queued the same way times out and fails CLOSED (still refuses) -- so a
+burst of slow/hung hosts degrades robots enforcement specifically, without
+weakening the SSRF guard. Spec-sanctioned, recorded here rather than fixed
+(the alternative -- separate pools per consumer, or a circuit breaker -- is
+out of scope for task-3260)."""
 
 
 def _get_dns_guard_executor() -> concurrent.futures.ThreadPoolExecutor:
@@ -966,6 +1095,7 @@ async def search_result_relevance(
     cancel_event: Optional[asyncio.Event] = None,
     llm_timeout_s: float = 30.0,
     scrape_timeout_s: float = 30.0,
+    respect_robots_txt: bool = False,
 ) -> Dict[str, Dict]:
     """
     Evaluate search results for relevance and extract key content.
@@ -986,6 +1116,17 @@ async def search_result_relevance(
     result (not present on the server), for downstream citation display;
     (6) jitter stays chatbook's `random.uniform(0.2, 0.6)` (no config knob).
 
+    robots.txt parity (task-3260): when ``respect_robots_txt`` is True, a
+    relevant result's URL is also checked against its host's robots.txt --
+    same guard-class offload discipline as the SSRF check just above it
+    (dedicated DNS-guard executor, bounded by ``scrape_timeout_s``) -- right
+    before the ``scrape_article`` call. Disallowed takes the SAME path as an
+    SSRF refusal: the scrape is skipped and the result is kept with its
+    existing snippet/title/url fallback content, never discarded. A robots-
+    check error/timeout fails OPEN (proceeds to scrape) -- deliberately the
+    opposite of the SSRF guard's own timeout/refusal, matching
+    ``_fetch_robots_parser``'s existing fail-open for web_fetch/web_crawl.
+
     Args:
         search_results (List[Dict]): List of search results to evaluate.
         original_question (str): The original question posed by the user.
@@ -996,11 +1137,20 @@ async def search_result_relevance(
             the loop between results.
         llm_timeout_s: Wall-clock timeout for each relevance/summarization LLM call.
         scrape_timeout_s: Wall-clock timeout for the per-result scrape.
+        respect_robots_txt: When True, consult the target host's robots.txt
+            before scraping a relevant result (task-3260); default False
+            (no robots.txt fetch at all) preserves the pre-task-3260
+            behavior for any caller that doesn't pass this explicitly.
 
     Returns:
         Dict[str, Dict]: A dictionary of relevant results, keyed by a unique ID or index.
     """
     relevant_results: Dict[str, Dict] = {}
+    # task-16333: results the gate EVALUATED and rejected (verdict False).
+    # Only these are eligible for the zero-relevant fallback -- results
+    # skipped via timeout/cancel/no-content were never judged, and promoting
+    # them would launder unevaluated evidence.
+    gate_rejected: List[tuple] = []
 
     for idx, result in enumerate(search_results):
         if cancel_event and cancel_event.is_set():
@@ -1019,7 +1169,43 @@ async def search_result_relevance(
             sub_questions=sub_questions,
             content=content,
         )
+        # task-17066: calibrate for the kind of evidence under judgment.
+        # The strict usefulness prompt is calibrated for papers; repository
+        # records (datasets/software/figures) and scholarly metadata records
+        # fail the "answers the question" bar even when topically on-point
+        # (measured: repositories gate_pass 0.29 vs 0.72 for papers).
         input_data = "Evaluate the relevance of the search result."
+        try:
+            from tldw_chatbook.Research_Interop.research_source_catalog import (
+                source_kind_for_provider,
+            )
+
+            _provider = None
+            _metadata = result.get("metadata")
+            if isinstance(_metadata, dict):
+                _provider = _metadata.get("provider")
+            _source_kind = source_kind_for_provider(_provider)
+            _source_notes = {
+                "repository": (
+                    "Note: this result is a repository record (dataset, "
+                    "software, or figure) rather than a paper. It is relevant "
+                    "if it is topically related to the question and could "
+                    "serve as supporting evidence (data, methods, or "
+                    "artifacts); it does NOT need to directly answer the "
+                    "question."
+                ),
+                "metadata": (
+                    "Note: this result is a scholarly metadata record rather "
+                    "than full text. It is relevant if it describes a work "
+                    "topically related to the question; it does NOT need to "
+                    "directly answer the question."
+                ),
+            }
+            _source_note = _source_notes.get(_source_kind)
+            if _source_note:
+                input_data = f"{input_data} {_source_note}"
+        except Exception:  # noqa: BLE001 - note computation fails OPEN to the strict paper prompt
+            logger.debug("source-kind note skipped", exc_info=True)
 
         try:
             # Add delay to avoid rate limiting
@@ -1038,7 +1224,10 @@ async def search_result_relevance(
                         api_endpoint=api_endpoint,
                         messages_payload=_mp,
                         api_key=None,
-                        temp=0.7,
+                        # Classification, not generation (task-16333): the
+                        # binary relevant/not-relevant verdict must be stable
+                        # across identical runs; 0.7 flipped verdicts.
+                        temp=_RELEVANCE_JUDGMENT_TEMP,
                         system_message=None,
                         streaming=False,
                         minp=None,
@@ -1049,7 +1238,9 @@ async def search_result_relevance(
                     )
                 )
 
-            relevancy_result = await asyncio.wait_for(_eval_call(), timeout=llm_timeout_s)
+            relevancy_result = chat_reply_text(
+                await asyncio.wait_for(_eval_call(), timeout=llm_timeout_s)
+            )
 
             # FIXME
             logger.debug(
@@ -1137,16 +1328,70 @@ async def search_result_relevance(
                                     "back to search snippet/title/url"
                                 )
                             else:
-                                scraped_content = await asyncio.wait_for(
-                                    scrape_article(result["url"]), timeout=scrape_timeout_s
-                                )
-                                scraped_text = ""
-                                if isinstance(scraped_content, dict):
-                                    scraped_text = str(scraped_content.get("content") or "").strip()
-                                elif isinstance(scraped_content, str):
-                                    scraped_text = scraped_content.strip()
-                                if scraped_text:
-                                    source_content = scraped_text
+                                # robots.txt parity (task-3260): checked here,
+                                # between the SSRF guard above and the scrape
+                                # below -- same guard-class offload discipline
+                                # (dedicated DNS-guard executor, bounded by
+                                # scrape_timeout_s) as the SSRF check, since a
+                                # robots.txt fetch does its own network I/O.
+                                # Function-local import: no module-level cycle
+                                # (web_tool_impls already imports WebSearch_APIs
+                                # function-locally in the OTHER direction).
+                                robots_ok = True
+                                if respect_robots_txt:
+                                    from tldw_chatbook.Tools.web_tool_impls import (
+                                        robots_allows_for_scrape,
+                                    )
+
+                                    try:
+                                        robots_ok = await asyncio.wait_for(
+                                            asyncio.get_running_loop().run_in_executor(
+                                                _get_dns_guard_executor(),
+                                                robots_allows_for_scrape,
+                                                result["url"],
+                                            ),
+                                            timeout=scrape_timeout_s,
+                                        )
+                                    except asyncio.CancelledError:
+                                        raise
+                                    except Exception as robots_error:
+                                        # Fail-OPEN on a robots-check error or
+                                        # timeout (deliberately the opposite of
+                                        # the SSRF guard just above, whose own
+                                        # timeout/refusal still refuses) --
+                                        # matches _fetch_robots_parser's
+                                        # existing fail-open for web_fetch/
+                                        # web_crawl.
+                                        logger.debug(
+                                            f"robots.txt check failed for result "
+                                            f"{result_id}, failing open (will "
+                                            f"scrape): {robots_error}"
+                                        )
+                                        robots_ok = True
+
+                                if not robots_ok:
+                                    # Disallowed -> same path as an SSRF
+                                    # refusal: skip the scrape, keep the
+                                    # result via its existing fallback
+                                    # content (never discard). Log names the
+                                    # HOST only, never the query.
+                                    host = urlparse(result.get("url") or "").hostname or "unknown"
+                                    logger.debug(
+                                        f"Skipping scrape for result {result_id}: "
+                                        f"robots.txt disallows {host!r}; falling "
+                                        "back to search snippet/title/url"
+                                    )
+                                else:
+                                    scraped_content = await asyncio.wait_for(
+                                        scrape_article(result["url"]), timeout=scrape_timeout_s
+                                    )
+                                    scraped_text = ""
+                                    if isinstance(scraped_content, dict):
+                                        scraped_text = str(scraped_content.get("content") or "").strip()
+                                    elif isinstance(scraped_content, str):
+                                        scraped_text = scraped_content.strip()
+                                    if scraped_text:
+                                        source_content = scraped_text
                         except asyncio.CancelledError:
                             raise
                         except Exception as scrape_error:
@@ -1172,7 +1417,9 @@ async def search_result_relevance(
                         # lazily here (chatbook precedent, see module docstring)
                         # so a plain import of this module doesn't eagerly pull in
                         # the summarization stack.
-                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                            analyze,
+                        )
 
                         logger.info(f"Summarizing relevant result: ID={result_id}")
 
@@ -1197,13 +1444,15 @@ async def search_result_relevance(
                         except Exception as summ_error:
                             logger.error(f"Summary generation failed: {summ_error}")
 
-                        # `analyze()` reports failure by returning an "Error: ..."
-                        # string rather than raising -- treat both cases the same
-                        # way the port source treats a raised exception: fall back
-                        # to the (scraped or fallback) source content itself.
-                        if not summary or (
-                            isinstance(summary, str) and summary.startswith("Error:")
-                        ):
+                        # `analyze()` reports failure by RETURNING one of its
+                        # providers' error strings rather than raising -- treat
+                        # that the same way the port source treats a raised
+                        # exception: fall back to the (scraped or fallback)
+                        # source content itself. Detection cannot be a bare
+                        # "Error:" prefix test: a llama.cpp failure returns
+                        # "Llama: Error occurred while ..." and used to be
+                        # stored here AS the evidence (task-17382).
+                        if _is_summary_failure(summary) or not summary:
                             summary = source_content[:2000] or "Summary generation failed"
 
                         relevant_results[result_id] = {
@@ -1218,6 +1467,7 @@ async def search_result_relevance(
                         )
                     else:
                         logger.info(f"Irrelevant result: {reasoning}")
+                        gate_rejected.append((idx, result, content))
 
                 else:
                     logger.warning(
@@ -1232,6 +1482,33 @@ async def search_result_relevance(
             logger.error(
                 f"Error during relevance evaluation/summarization for result idx={idx}: {e}"
             )
+
+    # task-16333 zero-relevant fallback: the live baseline showed a strict
+    # gate silently producing NO report at all. When every EVALUATED result
+    # was rejected but raw results exist (and the run was not cancelled --
+    # a deadline hit must keep reporting the honest cutoff), keep the
+    # top-ranked rejected results as snippet-level evidence flagged
+    # gate_unverified: a flagged report beats no report. No scrape or
+    # summarization spend on fallback entries.
+    if (
+        not relevant_results
+        and gate_rejected
+        and not (cancel_event and cancel_event.is_set())
+    ):
+        for fb_idx, fb_result, fb_content in gate_rejected[:_GATE_FALLBACK_MAX_RESULTS]:
+            fb_result_id = str(fb_result.get("id", fb_idx))
+            relevant_results[fb_result_id] = {
+                "content": fb_content,
+                "original_content": fb_content,
+                "reasoning": "gate fallback: evidence not relevance-verified",
+                "url": fb_result.get("url"),
+                "title": fb_result.get("title"),
+                "gate_unverified": True,
+            }
+        logger.warning(
+            f"Relevance gate rejected all {len(gate_rejected)} evaluated result(s); "
+            f"proceeding with top {len(relevant_results)} flagged gate-unverified"
+        )
 
     return relevant_results
 
@@ -1295,6 +1572,12 @@ def review_and_select_results(
 
 ######################### Result Aggregation & Combination #########################
 #
+# task-16333: binary verdicts need determinism, not creativity.
+_RELEVANCE_JUDGMENT_TEMP = 0.1
+# task-16333: bounded zero-relevant fallback (search-rank order).
+_GATE_FALLBACK_MAX_RESULTS = 3
+
+
 class FinalAnswerDict(TypedDict):
     """Structured payload returned by the aggregation phase (port of server
     WebSearch_APIs.py :1034-1039; task-1356). `evidence` entries are dicts
@@ -1305,6 +1588,19 @@ class FinalAnswerDict(TypedDict):
     evidence: List[Dict[str, Any]]
     confidence: float
     chunks: List[Dict[str, Any]]
+    # Present ONLY on the LLM-success branch (task-16331): marker resolution
+    # and quote-check counts from deep_search_citations.verify_citations.
+    # Failure/empty branches omit it rather than fabricating a clean verdict.
+    citation_verification: NotRequired[Dict[str, Any]]
+    #: Present only when the synthesis stage produced no report (task-17386):
+    #: the failure's class, and the pool size it failed on. A run carrying this
+    #: has no citation verdict, and without it such a run is indistinguishable
+    #: from one nobody scored.
+    synthesis_failed: NotRequired[Dict[str, Any]]
+    # Present whenever relevance outcomes are known (task-16333):
+    # {"relevant": int, "raw": int, "fallback": bool} -- fallback marks a
+    # report built from gate-unverified evidence.
+    gate: NotRequired[Dict[str, Any]]
 
 
 def _build_chunk_infos(items: List[str], max_chars: int = 6000) -> List[Dict[str, Any]]:
@@ -1454,17 +1750,18 @@ def aggregate_results(
 
     evidence_payload: List[Dict[str, Any]] = []
     for n, (_rid, res) in numbered_items:
-        evidence_payload.append(
-            {
-                "id": n,
-                "url": res.get("url"),
-                "title": res.get("title"),
-                "content": res.get("content"),
-                "original_content": res.get("original_content"),
-                "reasoning": res.get("reasoning"),
-                "chunk_index": chunk_index_by_n.get(n),
-            }
-        )
+        evidence_entry = {
+            "id": n,
+            "url": res.get("url"),
+            "title": res.get("title"),
+            "content": res.get("content"),
+            "original_content": res.get("original_content"),
+            "reasoning": res.get("reasoning"),
+            "chunk_index": chunk_index_by_n.get(n),
+        }
+        if res.get("gate_unverified"):
+            evidence_entry["gate_unverified"] = True
+        evidence_payload.append(evidence_entry)
 
     concatenated_texts = "\n\n".join(entry_texts)
 
@@ -1520,7 +1817,9 @@ def aggregate_results(
         # is explicitly told to preserve "[n]" citation markers verbatim so
         # the citation-integrity fix (adaptation 4) survives this reduce step.
         # `analyze` is imported lazily (chatbook precedent, see module docstring).
-        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze as _analyze
+        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+            analyze as _analyze,
+        )
 
         summarized_chunks: List[str] = []
         for info in chunk_infos:
@@ -1546,9 +1845,7 @@ def aggregate_results(
                     system_message=None,
                     streaming=False,
                 )
-                if not chunk_summary or (
-                    isinstance(chunk_summary, str) and chunk_summary.startswith("Error:")
-                ):
+                if _is_summary_failure(chunk_summary) or not chunk_summary:
                     raise RuntimeError(chunk_summary or "empty chunk summary")
                 generated = True
             except Exception as chunk_error:
@@ -1599,6 +1896,12 @@ def aggregate_results(
 
     input_data = "Follow the above instructions."
 
+    synthesis_error: str | None = None
+    # Qodo (PR 1782): verify_citations runs inside this same block AFTER the
+    # provider has returned a report, so a citation-verification defect used to
+    # be recorded as a SYNTHESIS failure -- corrupting the very failure-class
+    # measurement this records. The stage is tracked as the block progresses.
+    failed_stage = "synthesis"
     try:
         logger.info("Generating the report")
         messages_payload = [
@@ -1607,41 +1910,82 @@ def aggregate_results(
                 "content": input_data + "\n\n" + analyze_search_results_prompt_2,
             }
         ]
-        returned_response = chat_api_call(
-            api_endpoint=api_endpoint,
-            messages_payload=messages_payload,
-            api_key=None,
-            temp=0.7,
-            system_message=None,
-            streaming=False,
-            minp=None,
-            maxp=None,
-            model=None,
-            topk=None,
-            topp=None,
+        returned_response = chat_reply_text(
+            chat_api_call(
+                api_endpoint=api_endpoint,
+                messages_payload=messages_payload,
+                api_key=None,
+                temp=0.7,
+                system_message=None,
+                streaming=False,
+                minp=None,
+                maxp=None,
+                model=None,
+                topk=None,
+                topp=None,
+            )
         )
         logger.debug(f"Returned response from LLM: {returned_response}")
         if returned_response:
+            # Citation verification (task-16331): resolve the "[n]" markers
+            # against the numbered evidence ids and quote-check quoted spans
+            # against the scraped originals -- pure string work, no network.
+            # Unknown ids are flagged inline ("[n?]") and counted, never
+            # deleted; failure/empty branches below carry no verdict rather
+            # than a fabricated clean one.
+            failed_stage = "verification"
+            cv = deep_search_citations.verify_citations(
+                returned_response, evidence_payload
+            )
             success_answer: FinalAnswerDict = {
-                "text": returned_response,
+                "text": cv["annotated_text"],
                 "evidence": evidence_payload,
                 "confidence": _estimate_confidence(
                     len(evidence_payload), len(chunk_infos), failed_chunks, has_llm=True
                 ),
                 "chunks": chunk_metadata,
+                "citation_verification": {
+                    key: cv[key]
+                    for key in (
+                        "markers_total",
+                        "markers_resolved",
+                        "unknown_marker_ids",
+                        "quotes_checked",
+                        "quotes_verified",
+                        "quotes_misquoted",
+                        "uncited_sentences",
+                        "claims",
+                    )
+                },
             }
             return success_answer
     except Exception as e:
         logger.error(f"Error aggregating results: {e}")
+        # task-17386: keep the CLASS of failure, not the message -- a timeout's
+        # text carries host:port, and this value travels into a run's artifacts.
+        synthesis_error = type(e).__name__
 
     logger.error("Could not create the report due to an error.")
+    # task-17386: a synthesis that never returns used to leave a generic string
+    # and no verdict, so the run "completed", the eval found no verification
+    # payload, and the sample vanished from the aggregate rather than counting
+    # as a failure. Measured: on a local model, synthesis of a 46-66 source pool
+    # ran 600-1200s against a 600s per-attempt provider timeout, so this is the
+    # normal shape of a large-pool run, not an exotic error.
+    reason = f" ({synthesis_error})" if synthesis_error else ""
     failure_answer: FinalAnswerDict = {
-        "text": "Could not create the report due to an error.",
+        "text": f"Could not create the report due to an error{reason}.",
         "evidence": evidence_payload,
         "confidence": _estimate_confidence(
             len(evidence_payload), len(chunk_infos), len(chunk_infos), has_llm=False
         ),
         "chunks": chunk_metadata,
+        "synthesis_failed": {
+            "stage": failed_stage,
+            "error_type": synthesis_error or "empty_response",
+            "evidence_count": len(evidence_payload),
+            "chunk_count": len(chunk_infos),
+        },
     }
     return failure_answer
 
@@ -2631,7 +2975,9 @@ def search_web_brave(
         "safeSearch": "Moderate",
     }
 
-    response = requests.get(search_url, headers=headers, params=params)
+    # task-3060: bound worst-case latency -- an unresponsive Brave endpoint
+    # must not hang perform_websearch (and the deep-search pipeline) indefinitely.
+    response = requests.get(search_url, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     # Response: https://api.search.brave.com/app/documentation/web-search/responses#WebSearchApiResponse
     brave_search_results = response.json()
@@ -2788,7 +3134,9 @@ def search_web_duckduckgo(
     results: list[dict[str, str]] = []
 
     for _ in range(5):
-        response = requests.post("https://html.duckduckgo.com/html", data=payload)
+        # task-3060: bound worst-case latency per bootstrap/pagination call
+        # (this loop can issue up to 5 requests.post calls, all this one site).
+        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
         resp_content = response.content
         if b"No  results." in resp_content:
             return results
@@ -2967,6 +3315,31 @@ def test_parse_duckduckgo_results():
 ######################### Google Search #########################
 #
 # https://developers.google.com/custom-search/v1/reference/rest/v1/cse/list
+
+# task-19552: allowlist of the Google Custom Search `params` keys that are
+# safe to write to a log record at any level. This is an ALLOWLIST, not a
+# denylist -- Utils/sensitive_llm_logging.py documents why a denylist has
+# already failed twice on the analogous LLM-request logging path in this
+# repo (new content-bearing keys kept slipping through unrecognized).
+# `key` -- the Google CSE API credential written into `params` below -- is
+# deliberately absent: any key not listed here, now or added in the future,
+# is dropped from the logged view instead of exposed by default.
+SAFE_GOOGLE_SEARCH_PARAM_KEYS: frozenset = frozenset({
+    "q", "c2coff", "cr", "cx", "num", "dateRestrict", "exactTerms",
+    "excludeTerms", "filter", "gl", "hl", "lr", "safe", "sort",
+})
+
+
+def _safe_search_params_for_log(params: Dict[str, Any], safe_keys: frozenset) -> Dict[str, Any]:
+    """Return an allowlisted, credential-free view of a request params dict.
+
+    Only keys present in ``safe_keys`` are copied through; everything else
+    (including a credential like Google's ``key``) is silently dropped so
+    the diagnostic stays useful without ever formatting a secret.
+    """
+    return {k: v for k, v in params.items() if k in safe_keys}
+
+
 def search_web_google(
     search_query: str,
     google_search_api_key: Optional[str] = None,
@@ -3078,10 +3451,18 @@ def search_web_google(
         if sort_results_by:
             params["sort"] = sort_results_by
 
-        logger.info(f"Prepared parameters for Google Search: {params}")
+        # task-19552: never format the raw `params` dict -- it carries the
+        # API key set above (`params["key"]`). Log only the allowlisted,
+        # credential-free view.
+        logger.info(
+            f"Prepared parameters for Google Search: "
+            f"{_safe_search_params_for_log(params, SAFE_GOOGLE_SEARCH_PARAM_KEYS)}"
+        )
 
         # Make the API call
-        response = requests.get(search_url, params=params)
+        # task-3060: bound worst-case latency -- an unresponsive Google CSE
+        # endpoint must not hang perform_websearch indefinitely.
+        response = requests.get(search_url, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
         response.raise_for_status()
         google_search_results = response.json()
 
@@ -3092,15 +3473,25 @@ def search_web_google(
         return google_search_results
 
     except ValueError as ve:
-        logger.error(f"Configuration error: {str(ve)}")
+        # task-19552: this function's own config-error ValueErrors never
+        # embed the key, but `requests.exceptions.JSONDecodeError` (raised
+        # by `response.json()` above) is ALSO a ValueError and is caught
+        # here rather than below -- sanitize defensively so nothing that
+        # lands in this branch, now or later, can carry the credential.
+        logger.error(f"Configuration error: {sanitize_string(str(ve))}")
         raise
 
     except RequestException as re:
-        logger.error(f"Error during API request: {str(re)}")
+        # task-19552: `key` travels as a URL query param for this engine
+        # (unlike every other engine here, which sends it as a header), so
+        # `requests`'s own HTTPError/ConnectionError text embeds the full
+        # request URL -- including the key -- via `response.url`. Redact at
+        # the formatting point rather than trust the exception's shape.
+        logger.error(f"Error during API request: {sanitize_string(str(re))}")
         raise
 
     except Exception as e:
-        logger.error(f"Unexpected error occurred: {str(e)}")
+        logger.error(f"Unexpected error occurred: {sanitize_string(str(e))}")
         raise
 
 
@@ -3282,7 +3673,9 @@ def search_web_kagi(query: str, limit: int = 10) -> Dict:
     endpoint = f"{search_url}/search"
     params = {"q": query, "limit": limit}
 
-    response = requests.get(endpoint, headers=headers, params=params)
+    # task-3060: bound worst-case latency -- an unresponsive Kagi endpoint
+    # must not hang perform_websearch indefinitely.
+    response = requests.get(endpoint, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     logger.debug(response.json())
     return response.json()
@@ -3443,7 +3836,10 @@ def search_web_searx(
         time.sleep(delay)
 
         session = searx_create_session()
-        response = session.get(search_url, headers=headers)
+        # task-3060: bound worst-case latency -- Session.get() does not
+        # inherit a timeout from the Session itself, so it must be passed
+        # per-request like every other engine here.
+        response = session.get(search_url, headers=headers, timeout=SEARCH_BACKEND_TIMEOUT_S)
         response.raise_for_status()
 
         # Check if the response is JSON
@@ -3593,7 +3989,7 @@ def search_web_serper(
         "hl": search_lang or "en",
         "num": int(result_count) if result_count else 10,
     }
-    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=30)
+    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     return response.json()
 
@@ -3663,7 +4059,7 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
         "type": "auto",
         "contents": {"highlights": True},
     }
-    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=30)
+    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
     response.raise_for_status()
     return response.json()
 
@@ -3703,14 +4099,38 @@ def parse_exa_results(exa_search_results: dict, web_search_results_dict: dict) -
 def search_web_tavily(
     search_query, result_count=10, site_whitelist=None, site_blacklist=None
 ):
+    """Search Tavily.
+
+    (TASK-19735) The API key travels in ``headers`` as
+    ``Authorization: Bearer <key>``, which Tavily accepts and which every
+    sibling backend in this module already uses (bing's
+    ``Ocp-Apim-Subscription-Key``, brave's ``X-Subscription-Token``, plus
+    kagi, serper, exa and yandex). It used to sit inside ``payload``
+    alongside the query and the result count -- the same shape that produced
+    the Google key disclosure TASK-19552 fixed, where a credential in a
+    parameter dict was eventually rendered into a log line. Nothing logged
+    ``payload`` here, so this was latent rather than a live leak; the point
+    of the move is that a maintainer adding
+    ``logger.debug(f"payload: {payload}")`` while debugging can no longer
+    disclose the key with a one-line change.
+
+    Args:
+        search_query: The user's query string.
+        result_count: Maximum number of results to request.
+        site_whitelist: Optional list of domains to restrict results to.
+        site_blacklist: Optional list of domains to exclude.
+
+    Returns:
+        Tavily's decoded JSON response, or a human-readable error string on
+        a request failure. The key is not in the URL, so ``str(exc)`` --
+        which carries the URL, not the body -- cannot carry it either.
+    """
     # Check if API URL is configured
     tavily_api_url = "https://api.tavily.com/search"
 
-    tavily_api_key = loaded_config_data["search_engines"]["tavily_search_api_key"]
-
-    # Prepare the request payload
+    # Prepare the request payload. No credential belongs in this dict: it is
+    # the loggable request-parameter object (see the docstring).
     payload = {
-        "api_key": tavily_api_key,
         "query": search_query,
         "max_results": result_count,
     }
@@ -3726,10 +4146,19 @@ def search_web_tavily(
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            # Read at the point of use and never bound to a local name, so
+            # there is no `tavily_api_key` variable for a debug log to reach
+            # for either.
+            "Authorization": (
+                "Bearer "
+                f"{loaded_config_data['search_engines']['tavily_search_api_key']}"
+            ),
         }
 
+        # task-3060: bound worst-case latency -- an unresponsive Tavily
+        # endpoint must not hang perform_websearch indefinitely.
         response = requests.post(
-            tavily_api_url, headers=headers, data=json.dumps(payload)
+            tavily_api_url, headers=headers, data=json.dumps(payload), timeout=SEARCH_BACKEND_TIMEOUT_S
         )
         response.raise_for_status()
         return response.json()
@@ -3834,7 +4263,7 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
         "responseFormat": "FORMAT_XML",
     }
     response = requests.post(
-        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=30
+        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S
     )
     response.raise_for_status()
     return response.json()

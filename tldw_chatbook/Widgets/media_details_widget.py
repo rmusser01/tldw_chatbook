@@ -44,7 +44,7 @@ class MediaDetailsWidget(Container):
     format_for_reading = reactive(False)
 
     # Search-related state
-    search_matches: reactive[List[Tuple[int, int]]] = reactive([])
+    search_matches: reactive[List[Tuple[int, int]]] = reactive(list)
     current_match_index: reactive[int] = reactive(-1)
 
     def __init__(self, app_instance: "TldwCli", type_slug: str, **kwargs):

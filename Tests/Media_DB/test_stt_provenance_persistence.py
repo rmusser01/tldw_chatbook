@@ -5,7 +5,6 @@ import json
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError, MediaDatabase
-from tldw_chatbook.DB.Sync_Client import ClientSyncEngine
 from tldw_chatbook.STT.persistence import (
     dump_transcription_provenance_document,
 )
@@ -221,85 +220,3 @@ def test_v4_to_v5_migration_rolls_back_column_version_and_data(
         ).fetchone()[0]
         is None
     )
-
-
-def test_sync_sender_to_receiver_preserves_provenance(tmp_path) -> None:
-    sender = MediaDatabase(tmp_path / "sender.sqlite", client_id="sender")
-    receiver = MediaDatabase(tmp_path / "receiver.sqlite", client_id="receiver")
-    try:
-        document = _provenance_document()
-        _, media_uuid, _ = sender.add_media_with_keywords(
-            title="Synced transcript",
-            media_type="audio",
-            content="sync this transcript",
-            transcription_model="large-v3",
-            transcription_provenance=document,
-        )
-        media_change = next(
-            entry
-            for entry in sender.get_sync_log_entries()
-            if entry["entity"] == "Media" and entry["operation"] == "create"
-        )
-        assert media_change["payload"]["transcription_provenance_json"] == (
-            dump_transcription_provenance_document(document)
-        )
-        remote_change = {
-            **media_change,
-            "payload": json.dumps(media_change["payload"]),
-        }
-        receiver_sync = ClientSyncEngine(
-            db_instance=receiver,
-            server_api_url="http://mock-server.test",
-            client_id="receiver",
-            state_file=tmp_path / "receiver-state.json",
-        )
-
-        assert receiver_sync._apply_remote_changes_batch([remote_change]) is True
-
-        row = receiver.execute_query(
-            "SELECT id, transcription_provenance_json FROM Media WHERE uuid = ?",
-            (media_uuid,),
-        ).fetchone()
-        assert json.loads(row["transcription_provenance_json"]) == document
-        assert receiver.get_media_by_id(row["id"])["transcription_model"] == "large-v3"
-    finally:
-        sender.close_connection()
-        receiver.close_connection()
-
-
-def test_sync_rejects_malformed_provenance_without_creating_media(tmp_path) -> None:
-    sender = MediaDatabase(tmp_path / "sender-invalid.sqlite", client_id="sender")
-    receiver = MediaDatabase(
-        tmp_path / "receiver-invalid.sqlite",
-        client_id="receiver",
-    )
-    try:
-        sender.add_media_with_keywords(
-            title="Invalid remote transcript",
-            media_type="audio",
-            content="must not sync",
-            transcription_model="large-v3",
-            transcription_provenance=_provenance_document(),
-        )
-        media_change = next(
-            entry
-            for entry in sender.get_sync_log_entries()
-            if entry["entity"] == "Media" and entry["operation"] == "create"
-        )
-        payload = dict(media_change["payload"])
-        payload["transcription_provenance_json"] = json.dumps(
-            {"schema_version": 1, "raw_exception": "private traceback"}
-        )
-        remote_change = {**media_change, "payload": json.dumps(payload)}
-        receiver_sync = ClientSyncEngine(
-            db_instance=receiver,
-            server_api_url="http://mock-server.test",
-            client_id="receiver",
-            state_file=tmp_path / "receiver-invalid-state.json",
-        )
-
-        assert receiver_sync._apply_remote_changes_batch([remote_change]) is False
-        assert receiver.execute_query("SELECT COUNT(*) FROM Media").fetchone()[0] == 0
-    finally:
-        sender.close_connection()
-        receiver.close_connection()

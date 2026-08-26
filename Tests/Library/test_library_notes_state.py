@@ -1,16 +1,32 @@
-"""Pure display-state contracts for the Library notes canvas."""
+"""Pure display and lossless-session contracts for Library Database Notes."""
 
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 
+import pytest
+from rich.cells import cell_len
+
 from tldw_chatbook.Library.library_notes_state import (
+    DATABASE_NOTE_BODY_MAX_CHARS,
+    DATABASE_NOTE_KEYWORD_MAX_CHARS,
+    DATABASE_NOTE_TITLE_MAX_CHARS,
+    DatabaseNoteDraft,
+    DatabaseNoteSavePayload,
+    LibraryNoteSessionSnapshot,
+    LibraryNotesFocusIdentity,
     LibraryNotesListRow,
+    LibraryNotesOperationState,
+    NormalizedDatabaseNote,
+    NoteValidationVeto,
     build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
+    ellipsize_note_title_cells,
     next_notes_sort_mode,
     notes_autosave_status_text,
     patch_note_records_after_save,
     sort_notes_records,
+    validate_database_note_draft,
 )
 
 NOW = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
@@ -42,9 +58,25 @@ def test_list_state_builds_rows_with_age_and_header():
 
 
 def test_list_state_empty_uses_quiet_copy():
-    state = build_library_notes_list_state([], now=NOW)
+    state = build_library_notes_list_state([], total_count=0, now=NOW)
     assert state.rows == ()
-    assert state.empty_copy == "No notes yet. Create one to see it here."
+    assert state.empty_copy == "No notes yet. Create your first note."
+    assert state.empty_kind == "source-empty"
+    assert state.total_count == 0
+    assert state.result_count == 0
+
+
+def test_list_state_filtered_empty_does_not_claim_the_source_is_empty():
+    state = build_library_notes_list_state(
+        [], filter_note="[draft] <plan>", total_count=2, now=NOW
+    )
+
+    assert state.header_copy == "Notes (2)"
+    assert state.status_copy == "filter: [draft] <plan> · 0 results"
+    assert state.empty_copy == "No notes match “[draft] <plan>”. Clear the filter."
+    assert state.empty_kind == "filter-empty"
+    assert state.total_count == 2
+    assert state.result_count == 0
 
 
 def test_list_state_filter_note_reflects_active_filter():
@@ -52,10 +84,102 @@ def test_list_state_filter_note_reflects_active_filter():
     assert state.status_copy == "filter: retro · 1 result"
 
 
+def test_list_state_filter_status_is_one_row_cell_bounded_and_plain():
+    state = build_library_notes_list_state(
+        [],
+        filter_note="[draft]\n" + "界" * 80,
+        total_count=2,
+        now=NOW,
+    )
+
+    assert "\n" not in state.status_copy
+    assert cell_len(state.status_copy) <= 52
+    assert state.status_copy.endswith("…")
+
+
+def test_list_state_exposes_sort_chooser_and_active_operation_status():
+    state = build_library_notes_list_state(
+        [NOTE_A],
+        sort_choices_visible=True,
+        operation_status="Import note…",
+        now=NOW,
+    )
+
+    assert state.sort_choices_visible is True
+    assert state.operation_status == "Import note…"
+    assert state.status_copy == "Import note…"
+    assert state.empty_kind == "populated"
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected"),
+    (
+        ("running", "Import…"),
+        ("complete", "Import complete."),
+        ("failed", "Import failed — choose another file."),
+    ),
+)
+def test_note_operation_state_formats_typed_status(phase, expected):
+    state = LibraryNotesOperationState(
+        kind="import",
+        token=7,
+        phase=phase,
+        region="navigator",
+        failure_next_action="choose another file",
+    )
+
+    assert state.status_line == expected
+    assert state.running is (phase == "running")
+
+
+def test_note_operation_state_formats_committed_recovery_status():
+    state = LibraryNotesOperationState(
+        kind="import",
+        token=8,
+        phase="complete",
+        region="navigator",
+        completion_next_action="select the new note from Notes to open",
+    )
+
+    assert (
+        state.status_line == "Import complete — select the new note from Notes to open."
+    )
+
+
 def test_list_state_tolerates_missing_fields():
     state = build_library_notes_list_state([{"id": "x"}], now=NOW)
     assert state.rows[0].title == "Untitled"
     assert state.rows[0].age_label == ""
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("title", 7),
+        ("body", {"not": "text"}),
+        ("keywords", ["valid", 7]),
+    ),
+)
+def test_database_note_validation_vetoes_non_text_field_shapes(field, value):
+    values = {
+        "title": "Valid title",
+        "body": "Valid body",
+        "keywords": "valid, keywords",
+    }
+    values[field] = value
+    draft = DatabaseNoteDraft(
+        note_id="",
+        title=values["title"],
+        body=values["body"],
+        keywords_text=values["keywords"],
+        revision=1,
+    )
+
+    outcome = validate_database_note_draft(draft)
+
+    assert isinstance(outcome, NoteValidationVeto)
+    assert outcome.field == field
+    assert "must be text" in outcome.message.lower()
 
 
 def test_sort_mode_cycles_and_wraps():
@@ -321,3 +445,174 @@ def test_patch_note_records_after_save_leaves_unknown_ids_and_shapes_alone():
 
     assert patched == (NOTE_A, "not-a-mapping")
     assert patch_note_records_after_save(None, "n-1", title="X", modified_at="s") == ()
+
+
+def test_save_payload_preserves_valid_raw_content_exactly():
+    draft = DatabaseNoteDraft(
+        note_id="n-1",
+        title="[draft] <plan>",
+        body="line 1\n<script example>\x3c/script>",
+        keywords_text="alpha, βeta",
+        revision=7,
+    )
+
+    result = validate_database_note_draft(draft)
+
+    assert result == DatabaseNoteSavePayload(
+        title="[draft] <plan>",
+        body="line 1\n<script example>\x3c/script>",
+        keywords=("alpha", "βeta"),
+        revision=7,
+    )
+
+
+@pytest.mark.parametrize(
+    ("draft", "field"),
+    (
+        (
+            DatabaseNoteDraft(
+                "n", "x" * (DATABASE_NOTE_TITLE_MAX_CHARS + 1), "", "", 1
+            ),
+            "title",
+        ),
+        (
+            DatabaseNoteDraft(
+                "n", "ok", "x" * (DATABASE_NOTE_BODY_MAX_CHARS + 1), "", 1
+            ),
+            "body",
+        ),
+        (
+            DatabaseNoteDraft(
+                "n",
+                "ok",
+                "",
+                "x" * (DATABASE_NOTE_KEYWORD_MAX_CHARS + 1),
+                1,
+            ),
+            "keywords",
+        ),
+        (DatabaseNoteDraft("n", "bad\x00title", "", "", 1), "title"),
+        (DatabaseNoteDraft("n", " spaced ", "", "", 1), "title"),
+        (DatabaseNoteDraft("n", "ok", "bad\x00body", "", 1), "body"),
+    ),
+)
+def test_invalid_or_transforming_payload_is_a_typed_veto(draft, field):
+    result = validate_database_note_draft(draft)
+
+    assert isinstance(result, NoteValidationVeto)
+    assert result.field == field
+    assert result.revision == draft.revision
+    assert result.message
+
+
+def test_keyword_delimiter_whitespace_is_syntax_not_content():
+    draft = DatabaseNoteDraft("n", "ok", "", " alpha , , βeta ", 1)
+
+    result = validate_database_note_draft(draft)
+
+    assert isinstance(result, DatabaseNoteSavePayload)
+    assert result.keywords == ("alpha", "βeta")
+
+
+def test_keyword_limit_is_per_semantic_token_not_aggregate_field():
+    keywords = ", ".join(f"topic-{index:02d}" for index in range(20))
+    assert len(keywords) > DATABASE_NOTE_KEYWORD_MAX_CHARS
+
+    result = validate_database_note_draft(DatabaseNoteDraft("n", "ok", "", keywords, 1))
+
+    assert isinstance(result, DatabaseNoteSavePayload)
+    assert result.keywords == tuple(f"topic-{index:02d}" for index in range(20))
+
+
+def test_casefold_duplicate_keywords_are_vetoed_not_silently_deduplicated():
+    result = validate_database_note_draft(
+        DatabaseNoteDraft("n", "ok", "", "Straße, STRASSE", 1)
+    )
+
+    assert isinstance(result, NoteValidationVeto)
+    assert result.field == "keywords"
+
+
+def test_cell_ellipsis_honors_wide_unicode_and_keeps_raw_title():
+    raw = "研究計画 [draft] roadmap"
+
+    visible = ellipsize_note_title_cells(raw, 10)
+
+    assert cell_len(visible) <= 10
+    assert visible.endswith("…")
+    assert raw == "研究計画 [draft] roadmap"
+
+
+def test_cell_ellipsis_keeps_persisted_line_separators_out_of_one_row_header():
+    raw = "first line\nsecond\tline"
+
+    visible = ellipsize_note_title_cells(raw, 40)
+
+    assert visible == "first line second line"
+    assert "\n" not in visible and "\t" not in visible
+    assert raw == "first line\nsecond\tline"
+
+
+@pytest.mark.parametrize(
+    ("budget", "expected"),
+    ((0, ""), (1, "…"), (20, "short title")),
+)
+def test_cell_ellipsis_handles_zero_tiny_and_untruncated_budgets(budget, expected):
+    assert ellipsize_note_title_cells("short title", budget) == expected
+
+
+def test_session_snapshot_is_immutable_and_exposes_canonical_draft_values():
+    baseline = NormalizedDatabaseNote(
+        note_id="n-1",
+        title="Original",
+        body="baseline body",
+        keywords=("one",),
+        version=4,
+        created_at="2026-07-01T00:00:00+00:00",
+        modified_at="2026-07-02T00:00:00+00:00",
+    )
+    draft = DatabaseNoteDraft("n-1", "Draft", "new body", "one, two", 3)
+    snapshot = LibraryNoteSessionSnapshot(
+        baseline=baseline,
+        draft=draft,
+        session_generation=9,
+        saved_revision=2,
+        dirty=True,
+        saving=False,
+        in_conflict=False,
+        conflict_generation=0,
+        status_message="Unsaved changes",
+    )
+
+    assert snapshot.note_id == "n-1"
+    assert snapshot.title == "Draft"
+    assert snapshot.body == "new body"
+    assert snapshot.keywords_text == "one, two"
+    assert snapshot.draft_revision == 3
+    assert snapshot.version == 4
+    with pytest.raises(FrozenInstanceError):
+        snapshot.dirty = False
+
+
+def test_focus_identity_is_portable_immutable_value_state():
+    identity = LibraryNotesFocusIdentity(
+        stage="notes",
+        region="editor",
+        note_id="n-1",
+        semantic_role="body",
+        body_selection_start=(3, 4),
+        body_selection_end=(5, 6),
+        scroll_offset=(0, 7),
+    )
+
+    assert identity == LibraryNotesFocusIdentity(
+        stage="notes",
+        region="editor",
+        note_id="n-1",
+        semantic_role="body",
+        body_selection_start=(3, 4),
+        body_selection_end=(5, 6),
+        scroll_offset=(0, 7),
+    )
+    with pytest.raises(FrozenInstanceError):
+        identity.semantic_role = "title"

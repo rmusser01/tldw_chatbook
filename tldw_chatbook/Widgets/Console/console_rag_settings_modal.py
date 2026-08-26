@@ -16,7 +16,6 @@ from typing import Any, Sequence
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
@@ -25,6 +24,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SOURCE_TYPES,
     library_rag_source_scope_summary,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
 #: The Console's Library RAG source-type default: exactly the three kinds
@@ -45,7 +45,6 @@ CONSOLE_RAG_SOURCE_SUMMARY_PREFIX = "Sources"
 CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX = "console-rag-settings-source-"
 CONSOLE_RAG_SOURCE_TOGGLE_CLASS = "console-rag-settings-source-toggle"
 _SOURCE_TYPE_LABELS = dict(LIBRARY_RAG_SOURCE_TYPES)
-
 
 def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
     """Return a usable Console RAG source-type selection from loose input.
@@ -116,7 +115,9 @@ class ConsoleRagSettingsResult:
     source_types: tuple[str, ...] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
 
 
-class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
+class ConsoleRagSettingsModal(
+    SafeModalDismissMixin, ModalScreen["ConsoleRagSettingsResult | None"]
+):
     """Edit the Library search query and optionally run the search now."""
 
     DEFAULT_CSS = """
@@ -185,7 +186,8 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss_modal", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-rag-settings"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     def __init__(
         self,
@@ -359,7 +361,7 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
             return
         self.dismiss(self._run_result())
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route source toggles; dismiss with the run result or no changes.
 
         Args:
@@ -378,29 +380,4 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
             return
         if button_id == "console-rag-settings-cancel":
             event.stop()
-            self.dismiss(None)
-
-    def on_click(self, event: Click) -> None:
-        """Dismiss with no changes when a click lands on the backdrop.
-
-        Same contract as the composer ☰ menu: containment is tested against
-        the modal box's region, and a click that carries no screen
-        coordinates (synthesized clicks under textual-web) keeps the modal
-        open rather than guessing.
-
-        Args:
-            event: The screen-level click, carrying absolute coordinates.
-        """
-        screen_x = getattr(event, "screen_x", None)
-        screen_y = getattr(event, "screen_y", None)
-        if screen_x is None or screen_y is None:
-            return
-        box = self.query_one("#console-rag-settings")
-        if box.region.contains(screen_x, screen_y):
-            return
-        event.stop()
-        self.dismiss(None)
-
-    def action_dismiss_modal(self) -> None:
-        """Close without changes (Escape), matching the hint copy."""
-        self.dismiss(None)
+            await self.request_safe_cancel(source="button")

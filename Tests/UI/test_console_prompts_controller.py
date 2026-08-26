@@ -31,16 +31,27 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.app import App
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+    fingerprint_system_text,
+)
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
+from Tests.console_provider_doubles import with_destination
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
-class ConsoleHarness(App):
+class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -78,6 +89,43 @@ def _prompt_record(
     }
 
 
+def _replacement_application(
+    *,
+    snapshot,
+    session_id: str,
+    user_text: str | None,
+    system_text: str | None = None,
+    system_fingerprint: str | None = None,
+    created_monotonic: float | None = None,
+) -> PromptVariableApplication:
+    values = {
+        "system_text": system_text,
+        "user_text": user_text,
+        "apply_system": system_text is not None,
+        "apply_user": user_text is not None,
+        "destination": "replace_snapshot",
+        "target_session_id": session_id,
+        "composer_fingerprint": snapshot.fingerprint,
+        "system_fingerprint": system_fingerprint,
+    }
+    if created_monotonic is not None:
+        values["created_monotonic"] = created_monotonic
+    return PromptVariableApplication(**values)
+
+
+def _append_application(session_id: str, user_text: str) -> PromptVariableApplication:
+    return PromptVariableApplication(
+        system_text=None,
+        user_text=user_text,
+        apply_system=False,
+        apply_user=True,
+        destination="append_active",
+        target_session_id=session_id,
+        composer_fingerprint=None,
+        system_fingerprint=None,
+    )
+
+
 class _PromptScopeService:
     """The `app_instance.prompt_scope_service` seam the cluster reads."""
 
@@ -105,7 +153,9 @@ class _PromptScopeService:
         }
 
     async def search_prompts(self, *, mode: str, query: str, limit: int, **kwargs):
-        self.search_calls.append({"mode": mode, "query": query, "limit": limit, **kwargs})
+        self.search_calls.append(
+            {"mode": mode, "query": query, "limit": limit, **kwargs}
+        )
         return [dict(self.record)]
 
     async def get_prompt(self, *, mode: str, prompt_identifier: str, **kwargs):
@@ -126,6 +176,7 @@ async def test_prompts_modal_open_persists_the_reviewed_system_selection() -> No
     """Drive `_open_console_prompts_modal` for real, then apply through the
     modal's own host coordinator and assert the store PERSISTED it."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -169,6 +220,7 @@ async def test_prompts_modal_apply_refuses_when_the_system_prompt_moved() -> Non
     """The opening fingerprint is the guard: a System prompt changed behind
     the modal must make the apply stale rather than clobber it."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -199,9 +251,7 @@ async def test_prompts_modal_apply_refuses_when_the_system_prompt_moved() -> Non
         outcome = await modal._apply_improvement_result(result, None)
 
         assert outcome.kind == "stale"
-        assert (
-            store.session_settings(session_id).system_prompt == "Changed elsewhere."
-        )
+        assert store.session_settings(session_id).system_prompt == "Changed elsewhere."
 
 
 @pytest.mark.asyncio
@@ -209,6 +259,7 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
     """The Configure-provider seam is resolved when the modal is BUILT, so a
     screen-level replacement made beforehand must reach the modal."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -292,18 +343,16 @@ class _CountingResolutionGateway:
 
     async def resolve_for_send(self, selection):
         self.resolve_calls += 1
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider="llama_cpp",
             base_url=selection.base_url or "http://127.0.0.1:9099",
             model=(
-                selection.explicit_model
-                or selection.configured_model
-                or "local-model"
+                selection.explicit_model or selection.configured_model or "local-model"
             ),
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
-        )
+        ))
 
 
 async def _open_prompts_modal(host, pilot, console) -> ConsolePromptsModal:
@@ -319,6 +368,7 @@ async def test_prompt_source_callables_forward_the_exact_service_contract() -> N
     """Page size, search limit and the `source`-to-`mode` rename are the
     contract the Prompt Library modal is built against."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     service = _RecordingPromptScopeService()
     app.prompt_scope_service = service
@@ -358,6 +408,7 @@ async def test_prompt_source_callables_name_the_source_they_cannot_reach() -> No
     """A scope service missing a method is a user-visible refusal, per
     callable and per source -- never an AttributeError."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = SimpleNamespace()
     host = ConsoleHarness(app)
@@ -383,6 +434,7 @@ async def test_prompt_source_callables_name_the_source_they_cannot_reach() -> No
 @pytest.mark.asyncio
 async def test_prompts_modal_dismissal_restores_composer_focus() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -393,8 +445,8 @@ async def test_prompts_modal_dismissal_restores_composer_focus() -> None:
 
         modal = await _open_prompts_modal(host, pilot, console)
         focus_calls: list[dict[str, object]] = []
-        console._focus_console_composer_if_needed = (
-            lambda **kwargs: focus_calls.append(kwargs)
+        console._focus_console_composer_if_needed = lambda **kwargs: focus_calls.append(
+            kwargs
         )
 
         modal.dismiss(None)
@@ -408,6 +460,7 @@ async def test_improvement_target_is_pinned_once_and_shared_across_callbacks() -
     """`activate` pins the disclosed target; the model-free manual path must
     reuse that same pin rather than resolve a second, possibly different one."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     gateway = _CountingResolutionGateway()
@@ -437,6 +490,7 @@ async def test_improvement_target_is_pinned_once_and_shared_across_callbacks() -
 @pytest.mark.asyncio
 async def test_improvement_activation_refuses_a_moved_system_prompt() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     app.console_provider_gateway_factory = lambda: _CountingResolutionGateway()
@@ -460,6 +514,7 @@ async def test_improvement_snapshot_refuses_an_unpinned_provider_target() -> Non
     """No disclosure, no request: the snapshot builder must not fall back to
     resolving a target the user was never shown."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     app.console_provider_gateway_factory = lambda: _CountingResolutionGateway()
@@ -482,6 +537,7 @@ async def test_improvement_validation_prefers_the_captured_snapshot() -> None:
     """The reviewed working copy is validated against the snapshot the request
     captured; a captured object without one falls back to the opening draft."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -516,8 +572,9 @@ async def test_improvement_validation_prefers_the_captured_snapshot() -> None:
 @pytest.mark.asyncio
 async def test_prompt_command_replaces_the_draft_with_the_resolved_body() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
-    app.prompt_scope_service = _PromptScopeService()
+    app.prompt_scope_service = _PromptScopeService(_prompt_record(system_prompt=""))
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 40)) as pilot:
@@ -526,17 +583,466 @@ async def test_prompt_command_replaces_the_draft_with_the_resolved_body() -> Non
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("/prompt Summarize")
 
-        await console._console_command_insert_prompt(
-            SimpleNamespace(args="Summarize")
-        )
+        await console._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
         await pilot.pause()
 
         assert composer.draft_text() == "Summarize the following."
 
 
 @pytest.mark.asyncio
+async def test_prompt_application_replaces_complete_snapshot_and_persists_draft() -> (
+    None
+):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("ordinary ")
+        composer.insert_file_segment("secret file", "notes.txt · 11 B")
+        composer.insert_pasted_text(" tail")
+        snapshot = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        pending = PendingAttachment(
+            file_path="/tmp/photo.png",
+            display_name="photo.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"image",
+            mime_type="image/png",
+            original_size=5,
+            processed_size=5,
+        )
+        assert store.add_pending_attachment(session_id, pending) is True
+        application = _replacement_application(
+            snapshot=snapshot,
+            session_id=session_id,
+            user_text="replacement",
+        )
+
+        applied = console._prompts._apply_prompt_application(
+            application,
+            captured_snapshot=snapshot,
+        )
+
+        assert applied is True
+        assert composer.draft_text() == "replacement"
+        assert store.session_draft(session_id) == "replacement"
+        assert store.pending_attachments(session_id) == [pending]
+        assert [
+            segment.origin for segment in composer.capture_draft_snapshot().segments
+        ] == ["paste"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_application_refuses_stale_draft_system_session_and_expiry() -> (
+    None
+):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        notify = Mock()
+        app.notify = notify
+
+        composer.load_draft("draft")
+        stale_draft_snapshot = composer.capture_draft_snapshot()
+        stale_draft = _replacement_application(
+            snapshot=stale_draft_snapshot,
+            session_id=session_id,
+            user_text="draft secret",
+        )
+        composer.insert_text(" changed")
+        assert (
+            console._prompts._apply_prompt_application(
+                stale_draft,
+                captured_snapshot=stale_draft_snapshot,
+            )
+            is False
+        )
+        assert composer.draft_text() == "draft changed"
+
+        composer.load_draft("system draft")
+        stale_system_snapshot = composer.capture_draft_snapshot()
+        stale_system = _replacement_application(
+            snapshot=stale_system_snapshot,
+            session_id=session_id,
+            user_text="user secret",
+            system_text="system secret",
+            system_fingerprint=fingerprint_system_text(""),
+        )
+        store.set_session_system_prompt(session_id, "changed elsewhere")
+        assert (
+            console._prompts._apply_prompt_application(
+                stale_system,
+                captured_snapshot=stale_system_snapshot,
+            )
+            is False
+        )
+        assert composer.draft_text() == "system draft"
+        assert store.session_settings(session_id).system_prompt == "changed elsewhere"
+
+        composer.load_draft("session draft")
+        stale_session_snapshot = composer.capture_draft_snapshot()
+        stale_session = _replacement_application(
+            snapshot=stale_session_snapshot,
+            session_id=session_id,
+            user_text="session secret",
+        )
+        settings = store.session_settings(session_id)
+        store.create_session(title="Other", settings=settings)
+        assert (
+            console._prompts._apply_prompt_application(
+                stale_session,
+                captured_snapshot=stale_session_snapshot,
+            )
+            is False
+        )
+        assert composer.draft_text() == "session draft"
+
+        new_session_id = store.active_session_id
+        assert new_session_id is not None
+        expired_snapshot = composer.capture_draft_snapshot()
+        expired = _replacement_application(
+            snapshot=expired_snapshot,
+            session_id=new_session_id,
+            user_text="expired secret",
+            created_monotonic=0.0,
+        )
+        assert (
+            console._prompts._apply_prompt_application(
+                expired,
+                captured_snapshot=expired_snapshot,
+            )
+            is False
+        )
+        assert composer.draft_text() == "session draft"
+
+        assert notify.call_count == 4
+        notification_text = " ".join(str(call) for call in notify.call_args_list)
+        assert "draft secret" not in notification_text
+        assert "user secret" not in notification_text
+        assert "system secret" not in notification_text
+        assert "session secret" not in notification_text
+        assert "expired secret" not in notification_text
+
+
+@pytest.mark.asyncio
+async def test_prompt_application_rolls_back_draft_when_system_mutation_raises(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        composer.load_draft("draft before")
+        snapshot = composer.capture_draft_snapshot()
+        store.set_session_draft(session_id, composer.draft_text())
+        application = _replacement_application(
+            snapshot=snapshot,
+            session_id=session_id,
+            user_text="user secret",
+            system_text="system secret",
+            system_fingerprint=fingerprint_system_text(""),
+        )
+        notify = Mock()
+        app.notify = notify
+        real_set_system = store.set_session_system_prompt
+        calls = 0
+
+        def fail_system(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                real_set_system(*args, **kwargs)
+            raise RuntimeError("exception detail secret")
+
+        monkeypatch.setattr(store, "set_session_system_prompt", fail_system)
+
+        assert (
+            console._prompts._apply_prompt_application(
+                application,
+                captured_snapshot=snapshot,
+            )
+            is False
+        )
+        restored = composer.capture_draft_snapshot()
+        assert restored.segments == snapshot.segments
+        assert restored.cursor_index == snapshot.cursor_index
+        assert restored.selection == snapshot.selection
+        assert store.session_draft(session_id) == "draft before"
+        assert store.session_settings(session_id).system_prompt is None
+        assert "secret" not in str(notify.call_args)
+
+
+@pytest.mark.asyncio
+async def test_prompt_application_reports_durable_system_failure_separately(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        composer.load_draft("draft before")
+        snapshot = composer.capture_draft_snapshot()
+        application = _replacement_application(
+            snapshot=snapshot,
+            session_id=session_id,
+            user_text="user after",
+            system_text="system after",
+            system_fingerprint=fingerprint_system_text(""),
+        )
+        real_set_system = store.set_session_system_prompt
+
+        def apply_but_report_unsaved(*args, **kwargs):
+            session, _persisted = real_set_system(*args, **kwargs)
+            return session, False
+
+        monkeypatch.setattr(
+            store,
+            "set_session_system_prompt",
+            apply_but_report_unsaved,
+        )
+
+        def fail_popup_sync() -> None:
+            raise RuntimeError("popup exception secret")
+
+        monkeypatch.setattr(
+            console,
+            "_sync_console_command_popup",
+            fail_popup_sync,
+        )
+        notify = Mock()
+        app.notify = notify
+
+        assert (
+            console._prompts._apply_prompt_application(
+                application,
+                captured_snapshot=snapshot,
+            )
+            is True
+        )
+        assert composer.draft_text() == "user after"
+        assert store.session_settings(session_id).system_prompt == "system after"
+        assert [item.args[0] for item in notify.call_args_list] == [
+            ConsolePromptsController._PROMPT_DISPLAY_SYNC_FAILED_COPY,
+            ConsolePromptsController._PROMPT_SYSTEM_PERSISTENCE_FAILED_COPY,
+        ]
+        assert all(
+            item.kwargs == {"severity": "warning"} for item in notify.call_args_list
+        )
+        assert "secret" not in str(notify.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_prompt_application_keeps_durable_system_when_surface_sync_fails(
+    monkeypatch,
+) -> None:
+    class RecordingPersistence:
+        def __init__(self) -> None:
+            self.system_updates: list[tuple[str, str | None]] = []
+
+        def update_conversation_system_prompt(
+            self,
+            *,
+            conversation_id: str,
+            system_prompt: str | None,
+        ) -> bool:
+            self.system_updates.append((conversation_id, system_prompt))
+            return True
+
+    app = _build_test_app()
+
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        session = next(item for item in store.sessions() if item.id == session_id)
+        persistence = RecordingPersistence()
+        session.persisted_conversation_id = "conversation-1"
+        store.persistence = persistence
+        composer.load_draft("draft before")
+        snapshot = composer.capture_draft_snapshot()
+        application = _replacement_application(
+            snapshot=snapshot,
+            session_id=session_id,
+            user_text="user after",
+            system_text="system after",
+            system_fingerprint=fingerprint_system_text(""),
+        )
+        notify = Mock()
+        app.notify = notify
+
+        def fail_surface_sync() -> None:
+            raise RuntimeError("surface exception secret")
+
+        monkeypatch.setattr(
+            console,
+            "_sync_console_chat_core_state",
+            fail_surface_sync,
+        )
+
+        assert (
+            console._prompts._apply_prompt_application(
+                application,
+                captured_snapshot=snapshot,
+            )
+            is True
+        )
+        assert composer.draft_text() == "user after"
+        assert store.session_draft(session_id) == "user after"
+        assert store.session_settings(session_id).system_prompt == "system after"
+        assert persistence.system_updates == [("conversation-1", "system after")]
+        notify.assert_called_once_with(
+            ConsolePromptsController._PROMPT_DISPLAY_SYNC_FAILED_COPY,
+            severity="warning",
+        )
+        assert "secret" not in str(notify.call_args)
+
+
+@pytest.mark.parametrize(
+    ("system_fails", "expected_applied", "expected_undo"),
+    [(False, True, False), (True, False, True)],
+)
+@pytest.mark.asyncio
+async def test_system_only_empty_apply_settles_prior_prompt_undo(
+    monkeypatch,
+    system_fails: bool,
+    expected_applied: bool,
+    expected_undo: bool,
+) -> None:
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        composer.load_draft("unrelated older draft")
+        prior_snapshot = composer.capture_draft_snapshot()
+        composer.replace_snapshot_as_paste(prior_snapshot, "")
+        empty_snapshot = composer.capture_draft_snapshot()
+        application = _replacement_application(
+            snapshot=empty_snapshot,
+            session_id=session_id,
+            user_text=None,
+            system_text="new system",
+            system_fingerprint=fingerprint_system_text(""),
+        )
+
+        if system_fails:
+
+            def fail_system(*_args, **_kwargs):
+                raise RuntimeError("system mutation failed")
+
+            monkeypatch.setattr(store, "set_session_system_prompt", fail_system)
+
+        assert (
+            console._prompts._apply_prompt_application(
+                application,
+                captured_snapshot=empty_snapshot,
+            )
+            is expected_applied
+        )
+        assert composer.draft_text() == ""
+        assert store.session_settings(session_id).system_prompt == (
+            "new system" if expected_applied else None
+        )
+        assert composer.improvement_undo_available is expected_undo
+        assert composer.undo_improvement() is expected_undo
+        assert composer.draft_text() == (
+            "unrelated older draft" if expected_undo else ""
+        )
+
+
+@pytest.mark.asyncio
+async def test_prompt_application_handles_composer_failure_without_secondary_error(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        composer.load_draft("draft before")
+        snapshot = composer.capture_draft_snapshot()
+        application = _replacement_application(
+            snapshot=snapshot,
+            session_id=session_id,
+            user_text="replacement",
+        )
+        notify = Mock()
+        app.notify = notify
+
+        def fail_composer(*_args, **_kwargs):
+            raise RuntimeError("composer exception secret")
+
+        monkeypatch.setattr(composer, "replace_snapshot_as_paste", fail_composer)
+
+        assert (
+            console._prompts._apply_prompt_application(
+                application,
+                captured_snapshot=snapshot,
+            )
+            is False
+        )
+        assert composer.draft_text() == "draft before"
+        assert "secret" not in str(notify.call_args)
+
+
+@pytest.mark.asyncio
 async def test_system_command_applies_and_persists_the_resolved_system_part() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -560,6 +1066,7 @@ async def test_system_command_applies_and_persists_the_resolved_system_part() ->
 @pytest.mark.asyncio
 async def test_prompt_search_filters_recipes_and_uses_a_prefix_fts_query() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     service = _PromptScopeService(_prompt_record(artifact_type="recipe"))
     app.prompt_scope_service = service
@@ -573,9 +1080,7 @@ async def test_prompt_search_filters_recipes_and_uses_a_prefix_fts_query() -> No
 
         assert records == []
         assert service.search_calls[-1]["fts_match_query"] == '"Summ"*'
-        assert (
-            await console._prompts._resolve_console_prompt_by_name("Summ") is None
-        )
+        assert await console._prompts._resolve_console_prompt_by_name("Summ") is None
 
 
 def test_recipe_records_are_never_executable() -> None:
@@ -598,6 +1103,7 @@ def test_prompt_prefix_fts_query_escapes_embedded_quotes() -> None:
 @pytest.mark.asyncio
 async def test_system_prompt_save_to_library_reports_create_and_collision() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     service = _PromptScopeService()
     app.prompt_scope_service = service
@@ -612,9 +1118,7 @@ async def test_system_prompt_save_to_library_reports_create_and_collision() -> N
             == "Enter a name to save this system prompt to Library."
         )
         assert (
-            await console._prompts._save_console_system_prompt_to_library(
-                "Name", "  "
-            )
+            await console._prompts._save_console_system_prompt_to_library("Name", "  ")
             == "Enter a system prompt to save."
         )
         assert (
@@ -636,6 +1140,7 @@ async def test_system_prompt_save_to_library_reports_create_and_collision() -> N
 @pytest.mark.asyncio
 async def test_prompt_history_store_is_lazy_shared_and_factory_seamed() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     sentinel = object()
     app.console_prompt_history_factory = lambda: sentinel
@@ -652,6 +1157,8 @@ async def test_library_prompt_insert_handoff_appends_onto_the_live_draft() -> No
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -662,8 +1169,11 @@ async def test_library_prompt_insert_handoff_appends_onto_the_live_draft() -> No
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.clear_draft()
         composer.insert_text("existing")
+        session_id = console._ensure_console_chat_store().active_session_id
+        assert session_id is not None
         app.pending_handoffs.stage(
-            HandoffChannel.CONSOLE_PROMPT_INSERT, "staged body"
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _append_application(session_id, "staged body"),
         )
 
         await console._consume_pending_console_prompt_insert()
@@ -676,10 +1186,14 @@ async def test_library_prompt_insert_handoff_appends_onto_the_live_draft() -> No
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes() -> None:
+async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes() -> (
+    None
+):
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.prompt_scope_service = _PromptScopeService()
     host = ConsoleHarness(app)
@@ -692,8 +1206,11 @@ async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes()
         console._console_setup_blocked_reason = lambda: "blocked"
         notify = Mock()
         app.notify = notify
+        session_id = console._ensure_console_chat_store().active_session_id
+        assert session_id is not None
         app.pending_handoffs.stage(
-            HandoffChannel.CONSOLE_PROMPT_INSERT, "staged body"
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            _append_application(session_id, "staged body"),
         )
 
         await console._consume_pending_console_prompt_insert()
@@ -713,6 +1230,7 @@ async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes()
 
 def test_prompts_controller_is_wired_in_chat_screen_init() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
 
     screen = ChatScreen(app)
@@ -726,9 +1244,7 @@ def test_prompts_controller_owns_no_dom() -> None:
     """A controller owns behaviour and state, and zero pixels: no `query_one`
     /`query` anywhere in the module, matching every existing controller."""
     source = inspect.getsource(
-        __import__(
-            "tldw_chatbook.UI.Console_Modules.prompts", fromlist=["prompts"]
-        )
+        __import__("tldw_chatbook.UI.Console_Modules.prompts", fromlist=["prompts"])
     )
     tree = ast.parse(source)
     dom_calls = [

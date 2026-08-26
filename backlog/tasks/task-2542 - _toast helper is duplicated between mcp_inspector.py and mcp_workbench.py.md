@@ -1,5 +1,5 @@
 ---
-id: task-2542
+id: TASK-2542
 title: _toast helper is duplicated between mcp_inspector.py and mcp_workbench.py
 status: To Do
 assignee: []

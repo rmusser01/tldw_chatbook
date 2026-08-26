@@ -22,6 +22,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     InputError,
     ConflictError,
 )
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
+)
 
 
 #
@@ -220,48 +224,60 @@ class TestDBInitialization:
     def test_conversations_migrate_from_v17_to_v18_adds_system_prompt_column(
         self, db_path, client_id
     ):
-        db = CharactersRAGDB(db_path, client_id)
-        conn = db.get_connection()
+        # Build a genuinely v17-shaped DB: the production migration chain
+        # itself, run under a patched _CURRENT_SCHEMA_VERSION, stops and
+        # stamps at 17 (task-16840; replaces the retired rollback registry,
+        # which had to fake this state by dropping artifacts from a
+        # current-version DB and could never carry the real v17 triggers).
+        with chachanotes_db_at_version(db_path, 17, client_id=client_id) as db:
+            conn = db.get_connection()
 
-        # Simulate a v17-shaped DB: drop the sync triggers that reference the
-        # new column (SQLite refuses to drop a column referenced by a
-        # trigger), drop the column itself, then roll the recorded schema
-        # version back to 17 so re-opening replays the V17->V18 migration.
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_create")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
-        # A version-only rollback is not a valid pre-v25 fixture because the
-        # citation migration deliberately rejects pre-existing/partial tables.
-        # Remove the current provenance schema before replaying from v17.
-        for table in (
-            "rag_artifact_owner_operations",
-            "rag_artifact_owner_leases",
-            "rag_source_observations",
-            "rag_message_trace_owners",
-            "rag_trace_evidence_refs",
-            "rag_answer_attempt_payloads",
-            "rag_evidence_runs",
-            "rag_citation_traces",
-            "rag_evidence_snapshots",
-            "rag_payload_tombstones",
-            "rag_legacy_migration_journal",
-            "rag_identity_context",
-        ):
-            conn.execute(f"DROP TABLE {table}")
-        # A V17 fixture also predates the V27->V28 character-authority column.
-        conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
-        # A V17 fixture also predates the V29->V30 local-only usage_json column.
-        conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
-        conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
-        conn.execute(
-            "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",
-            (db._SCHEMA_NAME,),
+            # Guard the replay preconditions: the column the V17->V18
+            # migration must add is absent, the conversations sync triggers
+            # EXIST in their real pre-V18 form (none references
+            # system_prompt) — so replay exercises the migration's genuine
+            # redefine-live-triggers path, which the registry-era fixture
+            # could not (it had to drop the triggers to drop the column) —
+            # and no later migration's table exists (note_folders was the
+            # artifact that broke the registry-era fixture in task-15765).
+            columns_before = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            assert "system_prompt" not in columns_before
+            trigger_sql = {
+                row["name"]: row["sql"]
+                for row in conn.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'conversations_sync_%'"
+                ).fetchall()
+            }
+            assert set(trigger_sql) == {
+                "conversations_sync_create",
+                "conversations_sync_update",
+                "conversations_sync_delete",
+                "conversations_sync_undelete",
+            }
+            assert all(
+                "system_prompt" not in sql for sql in trigger_sql.values()
+            )
+            table_names = {
+                row["name"]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            assert "note_folders" not in table_names
+            assert "note_folder_memberships" not in table_names
+            version_before = conn.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                (db._SCHEMA_NAME,),
+            ).fetchone()
+            assert version_before["version"] == 17
+
+        migrated = open_current_chachanotes_from_legacy(
+            db_path, client_id=client_id
         )
-        conn.commit()
-        db.close_connection()
-
-        migrated = CharactersRAGDB(db_path, client_id)
         migrated_conn = migrated.get_connection()
 
         version_row = migrated_conn.execute(
@@ -286,21 +302,28 @@ class TestDBInitialization:
         conv_id = migrated.add_conversation(
             {"character_id": char_id, "title": "Migration check"}
         )
-        before_log_count = migrated_conn.execute(
-            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
-            (conv_id,),
-        ).fetchone()["n"]
+        # task-19564 replaced the row-count proxy this used to assert. The
+        # v45 retention triggers drop superseded `sync_log` versions, so the
+        # total no longer grows by one -- but "the trigger fired, with the new
+        # column in its payload" is what the test is actually for, and the
+        # frontier row states that directly instead of by arithmetic.
         current = migrated.get_conversation_by_id(conv_id)
         migrated.update_conversation(
             conv_id,
             {"system_prompt": "Migrated prompt."},
             expected_version=current["version"],
         )
-        after_log_count = migrated_conn.execute(
-            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
+        latest_entry = migrated_conn.execute(
+            "SELECT operation, version, payload FROM sync_log "
+            "WHERE entity = 'conversations' AND entity_id = ? "
+            "ORDER BY change_id DESC LIMIT 1",
             (conv_id,),
-        ).fetchone()["n"]
-        assert after_log_count == before_log_count + 1
+        ).fetchone()
+        assert latest_entry["operation"] == "update"
+        assert latest_entry["version"] == current["version"] + 1
+        assert (
+            json.loads(latest_entry["payload"])["system_prompt"] == "Migrated prompt."
+        )
         assert (
             migrated.get_conversation_by_id(conv_id)["system_prompt"]
             == "Migrated prompt."
@@ -376,6 +399,33 @@ class TestCharacterCards:
             c["name"] for c in cards if c["name"] != "Default Assistant"
         }
         assert added_card_names == {card_data1["name"], card_data2["name"]}
+
+    def test_list_character_cards_excludes_image_by_default(
+        self, db_instance: CharactersRAGDB
+    ):
+        """task-15474: list/picker reads must not fetch the `image` BLOB
+        column by default -- it drags up to `limit` raw images through
+        SQLite/Python for callers that only render name/description rows."""
+        image_bytes = b"\x89PNG\r\n\x1a\n" + b"fake-png-bytes" * 100
+        card_id = db_instance.add_character_card(
+            {"name": "Imaged Default List", "image": image_bytes}
+        )
+        cards = db_instance.list_character_cards(limit=100)
+        assert cards
+        for card in cards:
+            assert "image" not in card
+        assert any(c["id"] == card_id for c in cards)
+
+    def test_list_character_cards_include_image_true_round_trips(
+        self, db_instance: CharactersRAGDB
+    ):
+        image_bytes = b"\x89PNG\r\n\x1a\n" + b"fake-png-bytes" * 100
+        card_id = db_instance.add_character_card(
+            {"name": "Imaged Include List", "image": image_bytes}
+        )
+        cards = db_instance.list_character_cards(limit=100, include_image=True)
+        card = next(c for c in cards if c["id"] == card_id)
+        assert card["image"] == image_bytes
 
     def test_update_character_card(
         self, db_instance: CharactersRAGDB, sample_card: dict
@@ -694,6 +744,50 @@ class TestConversationsAndMessages:
         results = db_instance.search_messages_by_content("UniqueMessageContentAlpha")
         assert len(results) == 1
         assert results[0]["id"] == msg1_data["id"]
+
+    def test_search_messages_by_content_unscoped_excludes_deleted_conversations(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        """task-19567 A: the shape that is one caller away from a leak.
+
+        Soft-deleting a conversation leaves its messages at `deleted = 0`, and
+        this method filtered only `m.deleted = 0` without joining
+        `conversations` -- while its sibling `search_conversations_by_content`
+        filtered both. It was not exploitable at the time only because the one
+        live caller always passed a `conversation_id` obtained from that
+        already-filtered sibling. Called UNSCOPED, as any new caller would,
+        it returned the deleted conversation's messages.
+        """
+        needle = "UniqueDeletedConversationBodyOmega"
+        kept_conv = db_instance.add_conversation(
+            {"character_id": char_id, "title": "KeptConv"}
+        )
+        dropped_conv = db_instance.add_conversation(
+            {"character_id": char_id, "title": "DroppedConv"}
+        )
+        kept_message = db_instance.add_message(
+            {"conversation_id": kept_conv, "sender": "user", "content": needle}
+        )
+        db_instance.add_message(
+            {"conversation_id": dropped_conv, "sender": "user", "content": needle}
+        )
+        assert len(db_instance.search_messages_by_content(needle)) == 2
+
+        db_instance.soft_delete_conversation(dropped_conv, expected_version=1)
+
+        unscoped = db_instance.search_messages_by_content(needle)
+        assert [row["id"] for row in unscoped] == [kept_message]
+        # ... and it now agrees with the sibling it used to diverge from.
+        assert [
+            row["id"] for row in db_instance.search_conversations_by_content(needle)
+        ] == [kept_conv]
+        # Scoping to the deleted conversation must not reopen the hole.
+        assert (
+            db_instance.search_messages_by_content(
+                needle, conversation_id=dropped_conv
+            )
+            == []
+        )
 
     def test_update_message_usage_local_leaves_version_and_last_modified_untouched(
         self, db_instance: CharactersRAGDB, char_id

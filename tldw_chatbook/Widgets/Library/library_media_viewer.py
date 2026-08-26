@@ -7,15 +7,20 @@ from typing import Any, Sequence
 from rich.color import Color
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
+from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches, QueryError
+from textual.widget import Widget
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
 )
-from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
+from tldw_chatbook.Widgets.Library.library_media_content import (
+    LibraryMediaContentBody,
+    LibraryMediaContentSearchControls,
+)
 
 
 class LibraryMediaViewer(Vertical):
@@ -75,6 +80,18 @@ class LibraryMediaViewer(Vertical):
         content_query: str = "",
         content_match_index: int = 0,
         content_mode: str = "raw",
+        loading: bool = False,
+        loading_message: str = "Loading media…",
+        error_message: str = "",
+        reader_mode: str = "read",
+        more_open: bool = False,
+        external_detail: bool = False,
+        console_representation: str = "Complete stored text excerpt",
+        image_preview: Widget | None = None,
+        image_preview_status: str = "",
+        image_preview_hidden: bool = False,
+        image_preview_available: bool = False,
+        image_preview_source: Any = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -86,12 +103,24 @@ class LibraryMediaViewer(Vertical):
         self.content_query = content_query
         self.content_match_index = content_match_index
         self.content_mode = content_mode
+        self.loading = loading
+        self.loading_message = loading_message
+        self.error_message = error_message
+        self.reader_mode = reader_mode
+        self.more_open = more_open
+        self.external_detail = external_detail
+        self.console_representation = console_representation
+        self.image_preview = image_preview
+        self.image_preview_status = image_preview_status
+        self.image_preview_hidden = image_preview_hidden
+        self.image_preview_available = image_preview_available
+        self.image_preview_source = image_preview_source
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
         # space and lets the text bodies wrap.
         self.styles.width = "1fr"
-        self.styles.min_width = 40
+        self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
         """Render the back control, title, metadata, content, and actions.
@@ -111,130 +140,208 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the media viewer canvas.
         """
-        yield Button(
-            "‹ Back to list",
-            id="library-media-back",
-            classes="library-canvas-action",
-            compact=True,
+        if self.error_message:
+            yield Static(
+                self.error_message,
+                id="library-media-viewer-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield Button(
+                "Retry",
+                id="library-media-reader-retry",
+                classes="library-canvas-action",
+                compact=True,
+            )
+        if not self.viewer.media_id:
+            yield Static(
+                "Loading media…"
+                if self.loading
+                else "Select a media item to read it here.",
+                id="library-media-reader-empty",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
+        # task-22207: the pending banner is a PERSISTENT, display-gated
+        # widget rather than a conditional child. Traversal keystrokes flip
+        # only the loading state, and rebuilding the whole viewer (with a
+        # fresh full-document body) just to add/remove this one Static was
+        # the dominant per-keystroke cost. ``sync_loading_state`` patches
+        # its copy and visibility in place.
+        banner = Static(
+            self.loading_message,
+            id="library-media-viewer-loading",
+            classes="destination-purpose",
+            markup=False,
         )
+        banner.display = self.loading
+        yield banner
+        yield Static(
+            "Server item · not in local Media list"
+            if self.external_detail
+            else "Local Media item",
+            id="library-media-reader-identity",
+            markup=False,
+        )
+        yield Button("‹ Back", id="library-media-back", compact=True)
         yield Static(
             "Edit media details" if self.editing else self.viewer.title,
             id="library-media-viewer-title",
             markup=False,
         )
-        if self.editing:
-            yield from self._compose_edit_form()
-        else:
+        if not self.editing:
             yield Static(
-                "\n".join(self.viewer.metadata_lines),
-                id="library-media-viewer-meta",
+                next(
+                    (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
+                     if line.startswith("Author: ")),
+                    "",
+                )
+                or next(
+                    (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
+                     if line.startswith("URL: ")),
+                    "",
+                ),
+                id="library-media-reader-byline",
                 markup=False,
             )
-        yield Static(
-            "Content",
-            id="library-media-viewer-content-title",
-            classes="destination-section",
-        )
-        yield from self._compose_content_mode_toggle()
-        yield from self._compose_content_search()
-        with VerticalScroll(id="library-media-viewer-content"):
-            if self.viewer.is_markdown and self.content_mode == "rendered":
-                # LIB-13: the SAME render path Notes Preview uses
-                # (``library_notes_canvas.py``'s ``_compose_editor``) --
-                # reused verbatim, not a second markdown pipeline.
-                # ``Markdown`` parses and escapes internally (never Rich
-                # markup), so this stays the same terminal-escaping path
-                # the raw ``Static`` branch below uses for its own content.
-                yield Markdown(
-                    self.viewer.content or "No stored content.",
-                    id="library-media-viewer-content-markdown",
-                    parser_factory=front_matter_parser_factory(),
-                )
-            else:
-                yield Static(
-                    self._content_renderable(),
-                    id="library-media-viewer-content-text",
-                    markup=False,
-                )
-        yield from self._compose_analysis()
-
-        yield from self._compose_highlights()
+        yield from self._compose_primary_toolbar()
+        yield from self._compose_mode_toolbar()
 
         if self.confirming_delete and not self.editing:
             # A single full-width Static above the toolbar, not inside it --
             # mixing a Static with the toolbar's Buttons is the known
             # non-rendering failure mode called out on ``compose`` above.
+            # task-14901 (ADR-055): single delete leaves the same Undo
+            # receipt as "Delete selected". task-4025 AC3: the Trash view
+            # now exists (the media list toolbar's "Trash" action), so the
+            # copy names the durable recovery path exactly like the bulk
+            # confirm does -- one promise, two entry points.
             yield Static(
-                "Delete this media? This moves it to trash.",
+                "Delete this media? You can undo right away, or restore "
+                "later from Trash.",
                 id="library-media-delete-confirm-copy",
                 markup=False,
             )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button(
+                    "Delete", id="library-media-delete-confirm", compact=True
+                )
+                yield Button(
+                    "Cancel", id="library-media-delete-cancel", compact=True
+                )
 
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
-        with toolbar:
-            if self.editing:
+        yield from self._compose_active_body()
+
+    def _compose_primary_toolbar(self) -> ComposeResult:
+        """Render the always-reachable Reader actions."""
+        with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
+            yield Button("Find", id="library-media-reader-find", compact=True)
+            if not self.external_detail:
                 yield Button(
-                    "Save",
-                    id="library-media-edit-save",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Cancel",
-                    id="library-media-edit-cancel",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            elif self.confirming_delete:
-                yield Button(
-                    "Delete",
-                    id="library-media-delete-confirm",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Cancel",
-                    id="library-media-delete-cancel",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            else:
-                # Object/primary actions first, then the escape hatch to the
-                # legacy screen, then the destructive Delete pushed to the far
-                # end (CSS margin) so it is not adjacent to Edit -- avoids the
-                # classic Edit/Delete misclick trap.
-                yield Button(
-                    "Edit",
-                    id="library-media-edit",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Use in Console",
-                    id="library-media-use-in-chat",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Remove from read-it-later"
-                    if self.viewer.read_later
-                    else "Read it later",
+                    "Remove later" if self.viewer.read_later else "Read later",
                     id="library-media-read-later",
-                    classes="library-canvas-action",
                     compact=True,
                 )
+            yield Button("Use in Console", id="library-media-use-in-chat", compact=True)
+            if not self.external_detail or self.viewer.original_source:
+                yield Button("More", id="library-media-reader-more", compact=True)
+        if self.more_open:
+            with Vertical(id="library-media-reader-more-actions"):
+                if not self.external_detail:
+                    yield Button("Edit metadata", id="library-media-edit", compact=True)
+                if self.viewer.original_source:
+                    yield Button("Open original", id="library-media-open-original", compact=True)
+                if not self.external_detail:
+                    yield Button("Open manager", id="library-media-open", compact=True)
+                    yield Button("Move to trash", id="library-media-delete", compact=True)
+
+    def _compose_mode_toolbar(self) -> ComposeResult:
+        """Render one explicit mode selector; external detail remains read-only."""
+        if self.external_detail:
+            return
+        with Horizontal(classes="ds-toolbar", id="library-media-reader-mode-toolbar"):
+            for mode, label in (
+                ("read", "Read"),
+                ("analysis", "Analysis"),
+                ("highlights", "Highlights"),
+                ("info", "Info"),
+            ):
                 yield Button(
-                    "Open in Library ▸ Media",
-                    id="library-media-open",
-                    classes="library-canvas-action",
+                    f"{label} (selected)" if self.reader_mode == mode else label,
+                    id=f"library-media-reader-select-{mode}",
+                    classes="library-media-reader-mode",
                     compact=True,
                 )
-                yield Button(
-                    "Delete",
-                    id="library-media-delete",
-                    classes="library-canvas-action library-media-action-danger",
-                    compact=True,
+
+    def _compose_active_body(self) -> ComposeResult:
+        """Compose exactly the selected Reader body; never mount hidden modes."""
+        if self.external_detail or self.reader_mode == "read":
+            with Vertical(id="library-media-reader-mode-read"):
+                yield Static("Read", classes="destination-section")
+                if self.image_preview is not None and not self.image_preview_hidden:
+                    with Vertical(id="library-media-image-preview"):
+                        yield self.image_preview
+                if self.image_preview_status:
+                    yield Static(
+                        self.image_preview_status,
+                        id="library-media-image-preview-status",
+                        markup=False,
+                    )
+                if self.image_preview_available:
+                    yield Button(
+                        "Show preview" if self.image_preview_hidden else "Hide preview",
+                        id="library-media-image-preview-toggle",
+                        compact=True,
+                    )
+                elif self.image_preview_status:
+                    yield Button(
+                        "Retry preview",
+                        id="library-media-image-preview-retry",
+                        compact=True,
+                    )
+                yield from self._compose_content_mode_toggle()
+                matches = find_content_matches(self.viewer.content, self.content_query)
+                yield LibraryMediaContentSearchControls(
+                    is_markdown=self.viewer.is_markdown,
+                    query=self.content_query,
+                    matches=matches,
+                    match_index=self.content_match_index,
+                    id="library-media-content-search-controls",
+                )
+                yield LibraryMediaContentBody(
+                    content=self.viewer.content,
+                    is_markdown=self.viewer.is_markdown,
+                    mode=self.content_mode,
+                    query=self.content_query,
+                    match_index=self.content_match_index,
+                    id="library-media-viewer-content",
+                )
+            return
+        if self.reader_mode == "analysis":
+            with Vertical(id="library-media-reader-mode-analysis"):
+                yield from self._compose_analysis()
+            return
+        if self.reader_mode == "highlights":
+            with Vertical(id="library-media-reader-mode-highlights"):
+                yield from self._compose_highlights()
+            return
+        with Vertical(id="library-media-reader-mode-info"):
+            yield Static("Info", classes="destination-section")
+            if self.editing:
+                yield from self._compose_edit_form()
+            else:
+                yield Static("\n".join(self.viewer.metadata_lines), id="library-media-viewer-meta", markup=False)
+                yield Static(
+                    "\n".join((
+                        f"Backend: {self.viewer.backend}",
+                        f"Canonical ID: {self.viewer.canonical_id}",
+                        f"Original source: {self.viewer.original_source or 'None recorded'}",
+                        f"Stored representation: {self.viewer.stored_representation}",
+                        f"Use in Console sends: {self.console_representation}",
+                    )),
+                    id="library-media-reader-provenance",
+                    markup=False,
                 )
 
     def _compose_content_mode_toggle(self) -> ComposeResult:
@@ -275,125 +382,128 @@ class LibraryMediaViewer(Vertical):
             raw_button.set_class(raw_selected, "-selected")
             yield raw_button
 
-    def _compose_content_search(self) -> ComposeResult:
-        """Render the in-content search box, and its status/prev-next only while active.
+    def sync_loading_state(self, *, loading: bool, message: str) -> None:
+        """Patch the mounted loading placeholder without rebuilding the body.
 
-        The search ``Input`` always renders, full-width above the content
-        ``VerticalScroll``. The match-count status ``Static`` and the
-        prev/next ``ds-toolbar`` only render while ``self.content_query``
-        is non-empty -- with no active search there is nothing to page
-        through, so the status line and toolbar are omitted entirely
-        rather than left showing as empty/orphaned chrome. When present,
-        Input and Static are each their own row and prev/next live in a
-        plain ``ds-toolbar`` of buttons only, matching the render-safety
-        rule on ``compose`` above (never mix a ``1fr`` sibling with a
-        fixed-width widget in one ``Horizontal``).
-
-        The search always matches against the RAW stored text (never the
-        rendered Markdown's visual output) regardless of which content
-        view is showing -- LIB-13's decision. When a Rendered|Raw toggle
-        is offered, the placeholder says so explicitly so a search made
-        while viewing Rendered is never mistaken for searching the
-        on-screen (rendered) text.
-
-        Returns:
-            ComposeResult for the content search row and, when a query is
-            active, the status line and prev/next action toolbar.
-        """
-        placeholder = (
-            "Search content (raw text)…"
-            if self.viewer.is_markdown
-            else "Search content…"
-        )
-        yield Input(
-            value=self.content_query,
-            placeholder=placeholder,
-            id="library-media-content-search",
-        )
-        if not self.content_query:
-            return
-        matches = find_content_matches(self.viewer.content, self.content_query)
-        yield Static(
-            self._content_search_status_text(matches),
-            id="library-media-content-search-status",
-            markup=False,
-        )
-        search_toolbar = Horizontal(classes="ds-toolbar")
-        search_toolbar.styles.height = "auto"
-        with search_toolbar:
-            yield Button(
-                "◀ Prev",
-                id="library-media-content-search-prev",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Next ▶",
-                id="library-media-content-search-next",
-                classes="library-canvas-action",
-                compact=True,
-            )
-
-    def _content_search_status_text(self, matches: tuple[int, ...]) -> str:
-        """Build the in-content search status line text.
+        task-22207: a traversal keystroke flips only the pending-request
+        state; recomposing the viewer for that re-parses the full document
+        being LEFT purely to paint "Loading…". This patches the persistent
+        banner (or the empty-reader placeholder) in place instead.
+        Display-gating a widget composed once -- rather than mounting and
+        unmounting it here -- is deliberate: an async mount seam on this
+        surface is the TASK-21116 M3 ``DuplicateIds`` race class.
 
         Args:
-            matches: Ordered line indices matching ``self.content_query``,
-                as returned by ``find_content_matches``.
+            loading: Whether a detail request is pending without error.
+            message: Banner copy for the pending request.
 
         Returns:
-            "" when the query is blank (no search active), "No matches"
-            when a non-blank query has no hits, otherwise
-            "Match {i} of {n} matches" for the current (wrapped) index.
+            None.
         """
-        if not self.content_query:
-            return ""
-        if not matches:
-            return "No matches"
-        index = self.content_match_index % len(matches)
-        return f"Match {index + 1} of {len(matches)} matches"
+        self.loading = loading
+        self.loading_message = message
+        if not self.viewer.media_id:
+            try:
+                empty = self.query_one("#library-media-reader-empty", Static)
+            except (NoMatches, QueryError):
+                # Not composed yet -- compose() reads the attributes above.
+                return
+            copy = (
+                "Loading media…"
+                if loading
+                else "Select a media item to read it here."
+            )
+            if str(empty.content) != copy:
+                empty.update(copy)
+            return
+        try:
+            banner = self.query_one("#library-media-viewer-loading", Static)
+        except (NoMatches, QueryError):
+            # Not composed yet -- compose() reads the attributes above.
+            return
+        if loading and str(banner.content) != message:
+            banner.update(message)
+        if banner.display != loading:
+            banner.display = loading
 
-    def _content_renderable(self) -> Text | str:
-        """Return the content body, marking the matched lines while searching.
+    def sync_query_state(
+        self, *, query: str, matches: tuple[int, ...], match_index: int
+    ) -> None:
+        """Synchronize a submitted query without rebuilding the viewer.
 
-        With no active search this is the plain content string. While a
-        search is active, the first occurrence of the query on each matching
-        line is marked (case-insensitive), so the number of visible marks
-        equals the line-based "Match N of M" count from
-        ``find_content_matches`` -- otherwise the count and the highlighting
-        would disagree on any line that contains the query twice. The
-        currently-focused match (``content_match_index``) is marked
-        ``reverse bold`` while the others are ``reverse``, so prev/next has a
-        visible target. Built as a Rich ``Text`` from raw slices (never
-        markup) so arbitrary content cannot inject styles.
+        Args:
+            query: Submitted content-search query.
+            matches: Source-line indexes matching ``query``.
+            match_index: Zero-based index of the active match.
 
         Returns:
-            The plain content ``str`` when idle, or a Rich ``Text`` with the
-            matched lines marked while searching.
+            None.
         """
-        content = self.viewer.content or "No stored content."
-        query = (self.content_query or "").strip()
-        if not query or not self.viewer.content:
-            return content
-        matches = find_content_matches(self.viewer.content, query)
-        if not matches:
-            return content
-        current_line = matches[self.content_match_index % len(matches)]
-        needle = query.lower()
-        span = len(needle)
-        text = Text()
-        for index, line in enumerate(content.split("\n")):
-            if index:
-                text.append("\n")
-            hit = line.lower().find(needle)
-            if hit == -1:
-                text.append(line)
-                continue
-            style = "reverse bold" if index == current_line else "reverse"
-            text.append(line[:hit])
-            text.append(line[hit : hit + span], style=style)
-            text.append(line[hit + span :])
-        return text
+        self.content_query = query
+        self.content_match_index = match_index
+        self.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        ).sync_query_state(
+            is_markdown=self.viewer.is_markdown,
+            query=query,
+            matches=matches,
+            match_index=match_index,
+        )
+        self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_search(query, match_index)
+
+    def sync_match_index(
+        self, *, matches: tuple[int, ...], match_index: int
+    ) -> None:
+        """Synchronize match navigation without rebuilding viewer children.
+
+        Args:
+            matches: Source-line indexes matching the active query.
+            match_index: Zero-based index of the active match.
+
+        Returns:
+            None.
+        """
+        self.content_match_index = match_index
+        self.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        ).sync_match_index(matches=matches, match_index=match_index)
+        self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_search(self.content_query, match_index)
+
+    async def sync_mode(self, mode: str) -> None:
+        """Synchronize toggle state and reuse the persistent content views.
+
+        Args:
+            mode: Requested content mode, either ``"raw"`` or ``"rendered"``.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If ``mode`` is not a supported content mode.
+        """
+        self.content_mode = mode
+        rendered_selected = mode == "rendered"
+        rendered_button = self.query_one(
+            "#library-media-content-mode-rendered", Button
+        )
+        raw_button = self.query_one("#library-media-content-mode-raw", Button)
+        rendered_button.label = (
+            "Rendered (selected)" if rendered_selected else "Rendered"
+        )
+        raw_button.label = "Raw" if rendered_selected else "Raw (selected)"
+        rendered_button.set_class(rendered_selected, "-selected")
+        raw_button.set_class(not rendered_selected, "-selected")
+        rendered_button.refresh(layout=True)
+        raw_button.refresh(layout=True)
+        await self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_mode(mode)
 
     def _compose_edit_form(self) -> ComposeResult:
         """Render the metadata edit inputs, prefilled from ``viewer.edit_fields``.
@@ -430,6 +540,9 @@ class LibraryMediaViewer(Vertical):
                     placeholder=placeholder,
                     id=field_id,
                 )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button("Save", id="library-media-edit-save", compact=True)
+                yield Button("Cancel", id="library-media-edit-cancel", compact=True)
 
     def _compose_analysis(self) -> ComposeResult:
         """Render the Analysis section: read-only text + Edit toggle, or the edit form.

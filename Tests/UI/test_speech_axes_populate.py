@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Select
+from textual.widgets import Button, Select
 
 from Tests.UI.speech_playground_fixtures import (
     FakeTTSService,
@@ -68,6 +68,63 @@ async def test_the_provider_axis_offers_real_providers(faked_service):
         values = _option_values(select)
 
     assert "audio_cpp" in values, f"provider axis never populated: {values}"
+
+
+class _SeededOpenAIHarness(App[None]):
+    """A pane opened with saved exact custom OpenAI axis values."""
+
+    def compose(self) -> ComposeResult:
+        """Mount the pane seeded like a saved custom-endpoint setup.
+
+        Returns:
+            A ``ComposeResult`` yielding one seeded ``SpeechPlaygroundPane``.
+        """
+        seeded = {
+            "tts-provider-select": "openai",
+            "tts-model-select": "pocket-tts-model",
+            "tts-voice-select": "pocket-voice",
+        }
+        yield SpeechPlaygroundPane(
+            provider="openai",
+            axis_values=dict(seeded),
+            axis_defaults=dict(seeded),
+        )
+
+
+@pytest.mark.asyncio
+async def test_saved_exact_custom_openai_model_and_voice_reach_the_axes(
+    faked_service,
+):
+    """Saved custom OpenAI names must appear selected, not silently swapped.
+
+    Settings ▸ Speech & TTS lets a user save an exact model and voice for a
+    custom OpenAI-compatible endpoint (TASK-2260); before TASK-15421 the
+    pane discarded both in favour of the official catalog's first entries
+    (`tts-1` / `alloy`), so Generate synthesized with values the user never
+    chose.
+
+    Args:
+        faked_service: Pane service hook pointed at the shared fake.
+    """
+    app = _SeededOpenAIHarness()
+    async with app.run_test(size=(160, 60)) as pilot:
+        model_select = app.query_one("#tts-model-select", Select)
+        await _wait_until(
+            pilot,
+            lambda: "pocket-tts-model" in _option_values(model_select),
+        )
+        assert model_select.value == "pocket-tts-model"
+        voice_select = app.query_one("#tts-voice-select", Select)
+        await _wait_until(
+            pilot,
+            lambda: "pocket-voice" in _option_values(voice_select),
+        )
+        assert voice_select.value == "pocket-voice"
+        # The pinned selection must actually be generatable — the readiness
+        # gate used to veto any model outside the official catalog, leaving
+        # the pinned axes displayed but Generate permanently disabled.
+        generate = app.query_one("#tts-generate-btn", Button)
+        await _wait_until(pilot, lambda: not generate.disabled)
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,21 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    DEFAULT_CONSOLE_TRANSCRIPT_STYLE,
+    ConsoleTranscriptStyle,
+    normalize_console_transcript_style,
+)
+from tldw_chatbook.Utils.adaptive_reader_state import (
+    ITEMS_MAX_WIDTH,
+    ITEMS_MIN_WIDTH,
+    ITEMS_TARGET_WIDTH,
+    LIBRARY_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    LIBRARY_TARGET_WIDTH,
+    normalize_adaptive_reader_preferences,
+)
+
 from .settings_config_models import SettingsValidationResult
 
 
@@ -20,7 +35,11 @@ DEFAULT_SMOOTH_SCROLLING = True
 DEFAULT_REDUCE_MOTION = False
 # TASK-2154.19 (AC-01): ASCII-safe status markers for narrow-font terminals.
 DEFAULT_ASCII_GLYPHS = False
+DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE = DEFAULT_CONSOLE_TRANSCRIPT_STYLE.value
 SUPPORTED_DENSITIES = frozenset({"compact", "normal", "comfortable"})
+SUPPORTED_CONSOLE_TRANSCRIPT_STYLES = frozenset(
+    style.value for style in ConsoleTranscriptStyle
+)
 MIN_PALETTE_THEME_LIMIT = 0
 MAX_PALETTE_THEME_LIMIT = 100
 MIN_FONT_SIZE = 6
@@ -40,6 +59,20 @@ class SettingsAppearanceDefaults:
     smooth_scrolling: bool = DEFAULT_SMOOTH_SCROLLING
     reduce_motion: bool = DEFAULT_REDUCE_MOTION
     ascii_glyphs: bool = DEFAULT_ASCII_GLYPHS
+    console_transcript_style: str = DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE
+    library_reader_library_open: bool = True
+    library_reader_custom_widths_enabled: bool = False
+    library_reader_library_width: int = LIBRARY_TARGET_WIDTH
+    library_media_items_open: bool = True
+    library_media_items_width: int = ITEMS_TARGET_WIDTH
+    library_conversations_items_open: bool = True
+    library_conversations_items_width: int = ITEMS_TARGET_WIDTH
+    library_notes_items_open: bool = True
+    library_notes_items_width: int = ITEMS_TARGET_WIDTH
+    library_prompts_items_open: bool = True
+    library_prompts_items_width: int = ITEMS_TARGET_WIDTH
+    library_skills_items_open: bool = True
+    library_skills_items_width: int = ITEMS_TARGET_WIDTH
 
 
 def _mapping_child(parent: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -121,6 +154,32 @@ def load_appearance_defaults(
     general = _mapping_child(app_config, "general")
     web_server = _mapping_child(app_config, "web_server")
     appearance = _mapping_child(app_config, "appearance")
+    library = _mapping_child(app_config, "library")
+    legacy_media_reader = _mapping_child(library, "media_reader")
+    raw_reader = _mapping_child(library, "reader")
+    shared_raw = {
+        key: raw_reader.get(key, legacy_media_reader.get(key))
+        for key in ("library_open", "custom_widths_enabled", "library_width")
+    }
+    shared_reader = normalize_adaptive_reader_preferences(shared_raw)
+    shared_width = normalize_adaptive_reader_preferences(
+        {**shared_raw, "custom_widths_enabled": True}
+    ).library_width
+
+    def destination_reader(section: str):
+        raw_destination = _mapping_child(library, section)
+        return normalize_adaptive_reader_preferences(
+            {
+                "custom_widths_enabled": True,
+                "items_open": raw_destination.get("items_open"),
+                "items_width": raw_destination.get("items_width"),
+            }
+        )
+
+    destination_readers = {
+        name: destination_reader(f"{name}_reader")
+        for name in ("media", "conversations", "notes", "prompts", "skills")
+    }
 
     return SettingsAppearanceDefaults(
         default_theme=_normalise_theme(general.get("default_theme", DEFAULT_THEME)),
@@ -149,6 +208,31 @@ def load_appearance_defaults(
             appearance.get("ascii_glyphs", DEFAULT_ASCII_GLYPHS),
             DEFAULT_ASCII_GLYPHS,
         ),
+        console_transcript_style=normalize_console_transcript_style(
+            appearance.get(
+                "console_transcript_style",
+                DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE,
+            )
+        ).value,
+        library_reader_library_open=shared_reader.library_open,
+        library_reader_custom_widths_enabled=(
+            shared_reader.custom_widths_enabled
+        ),
+        library_reader_library_width=shared_width,
+        library_media_items_open=destination_readers["media"].items_open,
+        library_media_items_width=destination_readers["media"].items_width,
+        library_conversations_items_open=(
+            destination_readers["conversations"].items_open
+        ),
+        library_conversations_items_width=(
+            destination_readers["conversations"].items_width
+        ),
+        library_notes_items_open=destination_readers["notes"].items_open,
+        library_notes_items_width=destination_readers["notes"].items_width,
+        library_prompts_items_open=destination_readers["prompts"].items_open,
+        library_prompts_items_width=destination_readers["prompts"].items_width,
+        library_skills_items_open=destination_readers["skills"].items_open,
+        library_skills_items_width=destination_readers["skills"].items_width,
     )
 
 
@@ -212,6 +296,68 @@ def validate_appearance_defaults(
             False,
             "ASCII glyphs must be enabled or disabled.",
         )
+    if str(values.console_transcript_style) not in SUPPORTED_CONSOLE_TRANSCRIPT_STYLES:
+        return SettingsValidationResult(
+            False,
+            "Transcript style must be neutral, role accents, or immersive RP.",
+        )
+    if _strict_bool(values.library_reader_library_open) is None:
+        return SettingsValidationResult(
+            False, "Library pane preference must be open or collapsed."
+        )
+    if _strict_bool(values.library_reader_custom_widths_enabled) is None:
+        return SettingsValidationResult(
+            False, "Custom widths must be enabled or disabled."
+        )
+    library_width = _strict_int(values.library_reader_library_width)
+    if (
+        library_width is None
+        or not LIBRARY_MIN_WIDTH <= library_width <= LIBRARY_MAX_WIDTH
+    ):
+        return SettingsValidationResult(
+            False,
+            f"Library width must be between {LIBRARY_MIN_WIDTH} and {LIBRARY_MAX_WIDTH}.",
+        )
+    for label, open_value, width_value in (
+        (
+            "Items",
+            values.library_media_items_open,
+            values.library_media_items_width,
+        ),
+        (
+            "Conversations Items",
+            values.library_conversations_items_open,
+            values.library_conversations_items_width,
+        ),
+        (
+            "Notes Items",
+            values.library_notes_items_open,
+            values.library_notes_items_width,
+        ),
+        (
+            "Prompts Items",
+            values.library_prompts_items_open,
+            values.library_prompts_items_width,
+        ),
+        (
+            "Skills Items",
+            values.library_skills_items_open,
+            values.library_skills_items_width,
+        ),
+    ):
+        if _strict_bool(open_value) is None:
+            return SettingsValidationResult(
+                False, f"{label} pane preference must be open or collapsed."
+            )
+        items_width = _strict_int(width_value)
+        if (
+            items_width is None
+            or not ITEMS_MIN_WIDTH <= items_width <= ITEMS_MAX_WIDTH
+        ):
+            return SettingsValidationResult(
+                False,
+                f"{label} width must be between {ITEMS_MIN_WIDTH} and {ITEMS_MAX_WIDTH}.",
+            )
     return SettingsValidationResult(True, "Appearance defaults are valid.")
 
 
@@ -231,6 +377,8 @@ def build_appearance_save_sections(
     general = dict(deepcopy(_mapping_child(app_config, "general")))
     web_server = dict(deepcopy(_mapping_child(app_config, "web_server")))
     appearance = dict(deepcopy(_mapping_child(app_config, "appearance")))
+    library = dict(deepcopy(_mapping_child(app_config, "library")))
+    reader = dict(deepcopy(_mapping_child(library, "reader")))
 
     general.update(
         {
@@ -246,11 +394,39 @@ def build_appearance_save_sections(
             "smooth_scrolling": bool(values.smooth_scrolling),
             "reduce_motion": bool(values.reduce_motion),
             "ascii_glyphs": bool(values.ascii_glyphs),
+            "console_transcript_style": str(values.console_transcript_style),
         }
     )
+    reader.update(
+        {
+            "library_open": bool(values.library_reader_library_open),
+            "custom_widths_enabled": bool(
+                values.library_reader_custom_widths_enabled
+            ),
+            "library_width": int(values.library_reader_library_width),
+        }
+    )
+    library["reader"] = reader
+    for destination in ("media", "conversations", "notes", "prompts", "skills"):
+        section_name = f"{destination}_reader"
+        destination_reader = dict(
+            deepcopy(_mapping_child(library, section_name))
+        )
+        destination_reader.update(
+            {
+                "items_open": bool(
+                    getattr(values, f"library_{destination}_items_open")
+                ),
+                "items_width": int(
+                    getattr(values, f"library_{destination}_items_width")
+                ),
+            }
+        )
+        library[section_name] = destination_reader
 
     return {
         "general": general,
         "web_server": web_server,
         "appearance": appearance,
+        "library": library,
     }

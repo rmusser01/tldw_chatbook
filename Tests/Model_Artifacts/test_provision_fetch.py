@@ -35,6 +35,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactAcquisitionService,
     CatalogError,
     TransferError,
+    TransferFailureCode,
     _ProvisionProgressState,
 )
 from tldw_chatbook.Model_Artifacts.leases import (
@@ -46,6 +47,13 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
+
+# Network opt-in (task-15111): this module fetches from
+# `FixtureArtifactServer`, an in-process HTTP server on an ephemeral
+# loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
 
 
 def _make_two_file_descriptor(source_url: str) -> ArtifactDescriptor:
@@ -153,11 +161,15 @@ async def test_fetch_full_download_writes_sidecar_and_reports_progress(tmp_path)
         desc = make_descriptor(files_body=body, source_url=srv.url("/model.onnx"))
         staging_dir = tmp_path / "staging" / "m"
 
-        progress_state = _ProvisionProgressState(callback=events.append, bytes_total=len(body))
+        progress_state = _ProvisionProgressState(
+            callback=events.append, bytes_total=len(body)
+        )
         await svc._fetch_artifact(desc, staging_dir, progress_state)
 
         assert (staging_dir / "model.onnx").read_bytes() == body
-        sidecar = json.loads((staging_dir.parent / "state" / "fetch-state.json").read_text())
+        sidecar = json.loads(
+            (staging_dir.parent / "state" / "fetch-state.json").read_text()
+        )
         assert sidecar["files"]["model.onnx"] == {
             "etag": '"v1"',
             "last_modified": None,
@@ -218,7 +230,9 @@ async def test_fetch_over_large_checkpoint_restarts_cleanly(tmp_path):
         await svc._fetch_artifact(desc, staging_dir, progress_state)
 
         assert (staging_dir / "model.onnx").read_bytes() == body
-        sidecar = json.loads((staging_dir.parent / "state" / "fetch-state.json").read_text())
+        sidecar = json.loads(
+            (staging_dir.parent / "state" / "fetch-state.json").read_text()
+        )
         assert sidecar["files"]["model.onnx"]["complete"] is True
         assert sidecar["files"]["model.onnx"]["bytes_done"] == len(body)
         # A clean restart-from-zero means a FULL GET, never a Range resume.
@@ -259,7 +273,9 @@ async def test_fetch_skips_file_already_complete_in_sidecar(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_fetch_zero_byte_file_creates_empty_destination_and_skips_network(tmp_path):
+async def test_fetch_zero_byte_file_creates_empty_destination_and_skips_network(
+    tmp_path,
+):
     """A zero-byte declared file must never leave the sidecar claiming
     'complete' over a destination that doesn't exist -- Task 8's pre-verify
     would hit FileNotFoundError trying to hash it."""
@@ -278,7 +294,9 @@ async def test_fetch_zero_byte_file_creates_empty_destination_and_skips_network(
         destination = staging_dir / "model.onnx"
         assert destination.exists()
         assert destination.read_bytes() == b""
-        sidecar = json.loads((staging_dir.parent / "state" / "fetch-state.json").read_text())
+        sidecar = json.loads(
+            (staging_dir.parent / "state" / "fetch-state.json").read_text()
+        )
         entry = sidecar["files"]["model.onnx"]
         assert entry["complete"] is True
         assert entry["bytes_done"] == 0
@@ -341,12 +359,16 @@ async def test_fetch_resumes_partial_file_with_range_request(tmp_path):
             },
         )
 
-        progress_state = _ProvisionProgressState(callback=None, bytes_total=len(body) - 4000)
+        progress_state = _ProvisionProgressState(
+            callback=None, bytes_total=len(body) - 4000
+        )
         await svc._fetch_artifact(desc, staging_dir, progress_state)
 
         assert (staging_dir / "model.onnx").read_bytes() == body
         assert any("Range" in headers for headers in srv.requests["/model.onnx"])
-        sidecar = json.loads((staging_dir.parent / "state" / "fetch-state.json").read_text())
+        sidecar = json.loads(
+            (staging_dir.parent / "state" / "fetch-state.json").read_text()
+        )
         entry = sidecar["files"]["model.onnx"]
         assert entry["bytes_done"] == len(body)
         assert entry["complete"] is True
@@ -380,11 +402,15 @@ async def test_fetch_restarts_from_zero_on_changed_etag(tmp_path):
             },
         )
 
-        progress_state = _ProvisionProgressState(callback=None, bytes_total=len(new_body))
+        progress_state = _ProvisionProgressState(
+            callback=None, bytes_total=len(new_body)
+        )
         await svc._fetch_artifact(desc, staging_dir, progress_state)
 
         assert (staging_dir / "model.onnx").read_bytes() == new_body
-        sidecar = json.loads((staging_dir.parent / "state" / "fetch-state.json").read_text())
+        sidecar = json.loads(
+            (staging_dir.parent / "state" / "fetch-state.json").read_text()
+        )
         entry = sidecar["files"]["model.onnx"]
         assert entry["etag"] == '"v2"'
         assert entry["bytes_done"] == len(new_body)
@@ -428,7 +454,11 @@ async def test_fetch_mid_body_disconnect_leaves_durable_sidecar_and_reprovision_
         # to disk by fetch.py -- but NOT fsynced/recorded to the sidecar,
         # since that only happens after stream_fetch returns successfully.
         srv.serve(
-            "/model.onnx", body, etag='"v1"', support_range=True, disconnect_after=1_100_000
+            "/model.onnx",
+            body,
+            etag='"v1"',
+            support_range=True,
+            disconnect_after=1_100_000,
         )
         progress_state = _ProvisionProgressState(
             callback=None, bytes_total=len(body) - len(seed)
@@ -436,11 +466,14 @@ async def test_fetch_mid_body_disconnect_leaves_durable_sidecar_and_reprovision_
         with pytest.raises(TransferError) as excinfo:
             await svc._fetch_artifact(desc, staging_dir, progress_state)
         assert excinfo.value.retryable is True
+        assert excinfo.value.code is TransferFailureCode.SOURCE_UNAVAILABLE
 
         # Durable state consistent: the sidecar still shows the last
         # checkpoint that was actually fsynced and recorded -- this failed
         # call never got far enough to update it.
-        sidecar = json.loads((staging_dir.parent / "state" / "fetch-state.json").read_text())
+        sidecar = json.loads(
+            (staging_dir.parent / "state" / "fetch-state.json").read_text()
+        )
         assert sidecar["files"]["model.onnx"]["bytes_done"] == len(seed)
         # The failed attempt genuinely left an untrusted tail beyond the
         # durable checkpoint (the whole point of this scenario).
@@ -459,7 +492,9 @@ async def test_fetch_mid_body_disconnect_leaves_durable_sidecar_and_reprovision_
         # ran (truncating the leaked bytes), not just that a Range request
         # happened at all.
         assert srv.requests["/model.onnx"][-1].get("Range") == f"bytes={len(seed)}-"
-        sidecar_final = json.loads((staging_dir.parent / "state" / "fetch-state.json").read_text())
+        sidecar_final = json.loads(
+            (staging_dir.parent / "state" / "fetch-state.json").read_text()
+        )
         assert sidecar_final["files"]["model.onnx"]["complete"] is True
         assert sidecar_final["files"]["model.onnx"]["bytes_done"] == len(body)
 
@@ -512,6 +547,7 @@ async def test_fetch_enospc_raises_transfer_error_retryable_and_retains_staging(
             await svc._fetch_artifact(desc, staging_dir, progress_state)
 
         assert excinfo.value.retryable is True
+        assert excinfo.value.code is TransferFailureCode.LOCAL_STATE
         # Staging retained -- no cleanup on a failed fetch.
         assert staging_dir.exists()
 

@@ -21,6 +21,10 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import DataTable, Select, Static
 
 import tldw_chatbook
@@ -66,7 +70,7 @@ class _FakeAppInstance:
         self.notifications.append((message, severity))
 
 
-class EvalsHarness(App):
+class EvalsHarness(ConsolidatedCSSApp):
     CSS_PATH = _BUNDLED_CSS_PATH
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:

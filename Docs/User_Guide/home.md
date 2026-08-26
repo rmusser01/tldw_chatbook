@@ -52,7 +52,7 @@ conversation: \<title\>**) and the suggestion itself.
 
 ### What lands in each section
 
-- **Needs Attention** — failed watchlist runs, failed Library ingest jobs
+- **Needs Attention** — failed watchlist runs, failed Library import jobs
   (including those marked "Interrupted by app restart" when the app closed
   mid-import), items pending approval, and a synthetic "Flashcards due: N"
   row when Study cards are waiting.
@@ -68,11 +68,11 @@ Selecting a row repaints the canvas for that item; the highest-priority item
 
 | Button | What it does |
 |---|---|
-| **Retry** | Real for Library ingest jobs: "Retry queued for \<file\>." (or "This ingest job can no longer be retried." for permanent failures — those rows omit the button). For anything else, see the warning below. |
-| **Open details** | Navigates to the owning screen — "Opening Library ingest job details." lands on Library's import queue; a watchlist run opens Watchlists at that run. |
+| **Retry** | Real for Library import jobs: "Retry queued for \<file\>." (or "This import job can no longer be retried." for permanent failures — those rows omit the button). For anything else, see the warning below. |
+| **Open details** | Navigates to the owning screen — "Opening Library import job details." lands on Library's import queue; a watchlist run opens Watchlists at that run. |
 | **Open in Console** | Only offered for watchlist runs and Chatbook artifacts — opens Console following that work. |
 | **Approve** / **Reject** / **Pause** / **Resume** | **Decorative today.** Each shows the same warning toast — "\<Label\> is not connected to an active run service yet. Open details or Console to inspect the work." — and changes nothing. Decide approvals on the owning screen. |
-| **Review flashcards** | On the "Flashcards due: N" row — opens Study at flashcards. |
+| **Review flashcards** | On the "Flashcards due: N" row — opens Study directly at its flashcards section. Study's breadcrumb reads "Home ▸ Study" and Escape returns here, to Home (task-4011). |
 
 ### The next-action ladder
 
@@ -143,7 +143,7 @@ Palette entries that land here: "Tab Navigation: Switch to Home".
 ## Related settings & docs
 
 - Where the work comes from: [Library ▸ Import & export](library/import-and-export.md)
-  (ingest jobs), [Watchlists](watchlists.md) 🚧 (runs and notifications),
+  (import jobs), [Watchlists](watchlists.md) 🚧 (runs and notifications),
   [Artifacts](artifacts.md) 🚧 (Chatbooks), Study (flashcards),
   [Console](console.md) (conversations, agent runs).
 - [Settings ▸ Providers & Models](settings.md) — what "Model: Ready" *should*
@@ -187,4 +187,4 @@ Palette entries that land here: "Tab Navigation: Switch to Home".
   suggestion for a full Library.
 
 —
-*Verified against dev @ 84e4b33f0 — 2026-08-06*
+*Verified against dev @ 642567627 — 2026-08-10*

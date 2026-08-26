@@ -8,17 +8,92 @@ limit / count_tokens_messages), which tasks 320/321 sharpen later.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationOwnerGroup,
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+    continuation_owner_group,
+    validate_continuation_restore,
+)
+
 from tldw_chatbook.Utils.token_counter import (
+    NON_TEXT_PART_TOKEN_ESTIMATE,
     count_tokens_messages,
     get_model_token_limit,
 )
 
 DEFAULT_RESPONSE_RESERVATION = 1024
-DEFAULT_PER_IMAGE_TOKENS = 1024
+# One shared per-image charge with the generic estimator (TASK-17610 /
+# Qodo PR #1783): a lower estimator figure would let image-heavy no-usage
+# turns slip past budget enforcement that charges images at this rate.
+DEFAULT_PER_IMAGE_TOKENS = NON_TEXT_PART_TOKEN_ESTIMATE
 _MIN_SAFETY_MARGIN = 512
+
+
+@dataclass(frozen=True, repr=False)
+class ProviderContinuationSidecar:
+    """Private checkpoint attached to one visible assistant owner ID."""
+
+    owner_message_id: str
+    checkpoint: ProviderContinuationCheckpoint
+
+    def __post_init__(self) -> None:
+        if type(self.owner_message_id) is not str or not self.owner_message_id.strip():
+            raise ValueError("Continuation owner ID must be nonblank.")
+        if not isinstance(self.checkpoint, ProviderContinuationCheckpoint):
+            raise TypeError("Continuation checkpoint must be canonical.")
+
+    def __repr__(self) -> str:
+        return (
+            "ProviderContinuationSidecar("
+            f"owner_message_id={self.owner_message_id!r}, checkpoint=<redacted>)"
+        )
+
+
+def is_deleted_history_value(value: object) -> bool:
+    """Accept only SQLite's exact deleted encodings, never generic truthiness."""
+    return value is True or type(value) is int and value == 1
+
+
+def provider_continuation_owner_groups(
+    messages: Sequence[Mapping[str, Any] | ProviderContinuationSidecar],
+    *,
+    target: ContinuationRestoreTarget,
+) -> tuple[ContinuationOwnerGroup, ...]:
+    """Return validated canonical private groups for one active history path."""
+    groups: list[ContinuationOwnerGroup] = []
+    for message in messages:
+        if isinstance(message, ProviderContinuationSidecar):
+            owner_id = message.owner_message_id
+            checkpoint = message.checkpoint
+            visible: Mapping[str, Any] = {
+                "id": owner_id,
+                "role": "assistant",
+                "content": "",
+            }
+        else:
+            if is_deleted_history_value(message.get("deleted")):
+                continue
+            checkpoint = message.get("provider_continuation")
+            visible = message
+        if not isinstance(checkpoint, ProviderContinuationCheckpoint):
+            continue
+        if checkpoint.state != "complete":
+            validate_continuation_restore(checkpoint, target)
+            raise ContinuationConflictError(
+                "Active continuation requires explicit recovery."
+            )
+        try:
+            validate_continuation_restore(checkpoint, target)
+        except ContinuationConflictError:
+            continue
+        groups.append(continuation_owner_group(visible, checkpoint))
+    return tuple(groups)
 
 
 @dataclass(frozen=True)
@@ -111,6 +186,43 @@ def count_console_messages_tokens(
     return count_tokens_messages(flattened, model) + per_image_tokens * image_count
 
 
+def count_provider_continuation_tokens(
+    group: ContinuationOwnerGroup,
+    *,
+    model: str,
+    count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
+) -> int:
+    """Count canonical private rounds without creating provider wire rows."""
+    counter = count_fn or count_console_messages_tokens
+    accounting_rows: list[dict[str, Any]] = []
+    for round_ in group.rounds:
+        calls = [
+            {
+                "call_id": call.call_id,
+                "name": call.name,
+                "arguments": call.arguments,
+                "state": call.state,
+                **({"result": call.result.value} if call.result is not None else {}),
+            }
+            for call in round_.calls
+        ]
+        accounting_rows.append(
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "assistant_content": round_.assistant_content,
+                        "reasoning_blocks": round_.reasoning_blocks,
+                        "calls": calls,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            }
+        )
+    return counter(accounting_rows, model)
+
+
 def _group_turns(
     messages: list[dict[str, Any]],
     *,
@@ -165,6 +277,7 @@ def bound_messages_to_window(
     is_turn_boundary: Callable[[dict[str, Any]], bool] | None = None,
     pin_first_user: bool = False,
     pin_row_index: int | None = None,
+    mandatory_row_index: int | None = None,
     min_recent_turns: int = 0,
 ) -> BoundResult:
     """Drop oldest whole turns until the payload fits the model window.
@@ -223,6 +336,9 @@ def bound_messages_to_window(
             position. Out-of-range or ``None`` (every Console call site)
             is a no-op. Composes with ``pin_first_user``: the pinned
             prefix extends through whichever of the two reaches further.
+        mandatory_row_index: Exact row whose grouped unit cannot be evicted,
+            without pinning unrelated older rows before it. Used only by
+            continuation-aware run-log eviction to preserve the task row.
         min_recent_turns: Minimum number of most-recent turns guaranteed to
             survive, COUNTING the current turn as one of them (so ``0`` and
             ``1`` are equivalent to the original contract, where the current
@@ -307,12 +423,36 @@ def bound_messages_to_window(
     current_turn = rest[last_user:]
     kept_turns = _group_turns(rest[:last_user], is_boundary=boundary)
 
-    def assemble(drop: int) -> list[dict[str, Any]]:
-        return (
-            system_prefix
-            + [m for turn in kept_turns[drop:] for m in turn]
-            + current_turn
+    mandatory_turn = next(
+        (
+            index
+            for index, turn in enumerate(kept_turns)
+            if mandatory_row_index is not None
+            and 0 <= mandatory_row_index < len(messages)
+            and any(row is messages[mandatory_row_index] for row in turn)
+        ),
+        None,
+    )
+    protected_recent = set(
+        range(
+            max(0, len(kept_turns) - max(0, min_recent_turns - 1)),
+            len(kept_turns),
         )
+    )
+    droppable = [
+        index
+        for index in range(len(kept_turns))
+        if index != mandatory_turn and index not in protected_recent
+    ]
+
+    def assemble(drop: int) -> list[dict[str, Any]]:
+        removed = set(droppable[:drop])
+        return system_prefix + [
+            message
+            for index, turn in enumerate(kept_turns)
+            if index not in removed
+            for message in turn
+        ] + current_turn
 
     # Drop oldest whole turns until the payload fits. The token count is
     # monotonically non-increasing as more turns drop (each turn contributes
@@ -329,7 +469,7 @@ def bound_messages_to_window(
     # - 1)` of them. At the default 0 (every Console call site), this is
     # `max(0, len(kept_turns) - max(0, -1))` = `len(kept_turns)`, identical
     # to the original unbounded search.
-    max_drop = max(0, len(kept_turns) - max(0, min_recent_turns - 1))
+    max_drop = len(droppable)
     lo, hi = 0, max_drop
     best = hi  # if nothing fits within the floor, drop the most the floor allows
     while lo <= hi:
@@ -340,5 +480,5 @@ def bound_messages_to_window(
         else:
             lo = mid + 1
 
-    dropped = sum(len(turn) for turn in kept_turns[:best])
+    dropped = sum(len(kept_turns[index]) for index in droppable[:best])
     return BoundResult(assemble(best), dropped, best)

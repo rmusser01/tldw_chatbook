@@ -29,7 +29,9 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
 )
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
+from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 def _repair_contract(context: str) -> CitationRepairContract:
@@ -189,6 +191,7 @@ async def test_controller_rejects_duck_typed_repair_contract():
 @pytest.mark.asyncio
 async def test_console_controller_wires_current_staged_rag_capture(monkeypatch):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
         title="Source",
@@ -202,7 +205,7 @@ async def test_console_controller_wires_current_staged_rag_capture(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        retrieval_module,
         "capture_console_staged_evidence_for_chat",
         capture,
     )
@@ -250,8 +253,8 @@ async def test_console_library_rag_stages_all_retrieved_evidence():
         for index in (1, 2)
     )
     staged = []
-    screen = SimpleNamespace(
-        is_mounted=True,
+    owner = SimpleNamespace(
+        _is_mounted=lambda: True,
         _stage_console_library_rag_launch=staged.append,
     )
     request = LibraryRagSearchRequest(
@@ -262,8 +265,8 @@ async def test_console_library_rag_stages_all_retrieved_evidence():
     )
     outcome = SimpleNamespace(results=rows)
 
-    await chat_screen_module.ChatScreen._apply_console_library_rag_search_outcome(
-        screen,
+    await ConsoleRetrievalController._apply_console_library_rag_search_outcome(
+        owner,
         request,
         outcome,
     )

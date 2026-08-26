@@ -326,6 +326,43 @@ of the small ones pass the `Button.Pressed` event itself — moving those would
 breach the no-DOM-and-no-events-in-a-controller invariant. An honest stays-list
 is worth more than a flattering diff.
 
+**Wave 5 (partial — the composer keymap only)** — `ConsoleComposerBar` gained
+`handle_console_key`; `chat_screen.py` **17,727 -> 17,685**, `ChatScreen` 593
+methods (unchanged: this moved branch bodies, not methods).
+
+The wave's remaining tasks (image and character controllers) are **deferred with
+tasks filed**, not abandoned. What landed is complete and reviewed on its own.
+
+**The planning lesson is the durable part.** The plan predicted 18 of `on_key`'s
+24 branches would move; **seven did**. The premise was verified only half-way:
+all 17 composer *operations* those branches call were confirmed to already exist
+on `ConsoleComposerBar` (by AST, not assumption) — but nobody checked whether the
+branches ALSO call *screen* methods. Eleven do:
+`_sync_console_workbench_actions_from_draft` (workbench state + slash-command
+popup), `_dismiss_console_guidance` (repaints the transcript),
+`_console_composer_undo`/`_redo` (session-settle gate + chat-store persistence),
+and `ctrl+c` (the app clipboard). The task's own rule sent them back, so it
+netted −42 lines rather than ~−120.
+
+**When scoping a move, verify BOTH directions of the seam** — what the moving
+code needs from its destination, and what it still needs from its source. A
+"does the body mention X" filter answers only the first, and screen-method calls
+like `self._sync_console_workbench_actions_from_draft(...)` match no obvious
+token.
+
+What did move is right, and is a different shape from the earlier waves: the
+keymap now lives with the operations it maps to. `on_key` stays on the screen
+because it is *focus-routing policy* — "treat the composer as the default
+printable text target" — which is a screen concern, and Textual resolves it by
+name there anyway. The composer's return value tells the screen whether the key
+was consumed, so unconsumed keys still fall through; seven tests pin that
+contract, including the up/down fall-through.
+
+Task-3749 records the unblock: a composer `DraftChanged` message the screen
+subscribes to would free six of the eleven. It is a design change, not an
+extraction, and an extraction that also changes how components communicate gives
+a regression two candidate causes — so it is filed rather than smuggled in.
+
 ## Migration safety
 
 This is the section that matters most, because this refactor walks directly through this

@@ -9,7 +9,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -140,6 +144,8 @@ class StaticLibraryNotesScopeService:
         self.detail_calls = []
         self.save_calls = []
         self.delete_calls = []
+        self.restore_calls = []
+        self.deleted_notes = {}
         self._next_note_id = len(self.notes) + 1
 
     async def list_notes(self, **kwargs):
@@ -282,10 +288,33 @@ class StaticLibraryNotesScopeService:
                 continue
             if version != note.get("version"):
                 return False
+            deleted = dict(note)
+            deleted["version"] = int(version) + 1
+            self.deleted_notes[target_id] = deleted
             del notes[index]
             self.notes = tuple(notes)
             return True
         return False
+
+    async def restore_note(self, *, scope, note_id, version, user_id=None, **kwargs):
+        self.restore_calls.append(
+            {
+                "scope": scope,
+                "note_id": note_id,
+                "version": version,
+                "user_id": user_id,
+                **kwargs,
+            }
+        )
+        target_id = str(note_id)
+        deleted = self.deleted_notes.get(target_id)
+        if deleted is None or version != deleted.get("version"):
+            return False
+        restored = dict(deleted)
+        restored["version"] = int(version) + 1
+        self.notes = self.notes + (restored,)
+        del self.deleted_notes[target_id]
+        return restored
 
 
 class StaticLibraryNotesListScopeService:
@@ -600,9 +629,53 @@ class StaticLibraryConversationScopeService:
 
     async def list_conversations(self, **kwargs):
         self.calls.append(kwargs)
+        query = str(kwargs.get("query") or "").casefold()
+        matching = [
+            record
+            for record in self.conversations
+            if not query or query in str(record.get("title") or "").casefold()
+        ]
+        offset = max(0, int(kwargs.get("offset", 0)))
+        limit = max(0, int(kwargs.get("limit", len(matching))))
+        page = matching[offset : offset + limit]
         return {
-            "items": list(self.conversations),
-            "pagination": {"total": len(self.conversations)},
+            "items": page,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "total": len(matching),
+                "has_more": offset + len(page) < len(matching),
+            },
+        }
+
+    async def locate_conversation_page(self, conversation_id, **kwargs):
+        self.calls.append(
+            {"conversation_id": conversation_id, "locator": True, **kwargs}
+        )
+        limit = max(0, int(kwargs.get("limit", 20)))
+        target_index = next(
+            (
+                index
+                for index, record in enumerate(self.conversations)
+                if str(record.get("id") or record.get("conversation_id") or "")
+                == conversation_id
+            ),
+            None,
+        )
+        if target_index is None or limit == 0:
+            return None
+        offset = (target_index // limit) * limit
+        page = self.conversations[offset : offset + limit]
+        return {
+            "items": list(page),
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "page": offset // limit + 1,
+                "total": len(self.conversations),
+                "target_index": target_index,
+                "has_more": offset + len(page) < len(self.conversations),
+            },
         }
 
 
@@ -822,7 +895,7 @@ class StaticHomeActiveWorkAdapter:
         return HomeDashboardInput(active_work_items=self.items)
 
 
-class DestinationHarness(App):
+class DestinationHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance, route, seen_routes=None, restored_state=None):
         super().__init__()
         self.app_instance = app_instance
@@ -1072,7 +1145,7 @@ def _custom_policy_recovery_state(
         # `.destination-purpose` line, just with Library's own copy instead
         # of the generic "source material" phrasing artifacts/personas use.
         # (F-013: the copy was rewritten in plain language -- "Search
-        # everything, pick a section on the left, or add something new.")
+        # everything, pick a section, or add something new.")
         ("library", "#library-header-line", "pick a section"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-header", "who the ai plays"),
@@ -1117,6 +1190,50 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text
         assert "Collections" not in visible_text
+
+
+def test_watchlists_help_and_footer_bindings_only_advertise_live_pane_actions():
+    bindings = {binding[0]: binding for binding in WatchlistsCollectionsScreen.BINDINGS}
+
+    assert bindings["z"][2] == "Toggle focused side pane"
+    assert bindings["Z"][2] == "Article Focus (Read only)"
+    assert bindings["left_square_bracket"][2] == "Navigation"
+    assert bindings["right_square_bracket"][2] == "Inspector"
+    assert not (
+        {
+            "ctrl+c",
+            "ctrl+v",
+            "ctrl+x",
+            "ctrl+s",
+            "ctrl+d",
+            "ctrl+z",
+            "ctrl+a",
+            "ctrl+r",
+            "ctrl+w",
+            "ctrl+p",
+            "ctrl+q",
+            "f1",
+            "f6",
+        }
+        & set(bindings)
+    )
+
+
+def test_watchlists_context_help_names_permanent_reader_and_side_pane_actions():
+    app = _build_test_app()
+    app.notify = Mock()
+    screen = WatchlistsCollectionsScreen(app)
+
+    screen.action_show_help()
+
+    copy = str(app.notify.call_args.args[0])
+    assert "z=toggle focused side pane" in copy
+    assert "Z=Article Focus (Read only)" in copy
+    assert "[=Navigation ]=Inspector" in copy
+    assert "Reader is permanent" in copy
+    assert "solo" not in copy.lower()
+    assert "Expand" not in copy
+    assert "collapsed header" not in copy.lower()
 
 
 @pytest.mark.asyncio
@@ -1485,7 +1602,7 @@ async def test_library_destination_empty_state_disables_console_handoff():
         # successor as standalone canvas text; the landing canvas purpose
         # line plus the zero-state rail row counts carry the same "there is
         # nothing here yet" signal, and Console handoff stays disabled.
-        assert "Search everything, pick a section on the left, or add something new." in text
+        assert "Search everything, pick a section, or add something new." in text
         assert "Notes (0)" in text
         assert "Media (0)" in text
         assert "Conversations (0)" in text
@@ -2437,6 +2554,7 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(
             "Skill import is not wired in this shell yet.",
         ),
     ],
+    ids=("skills",),
 )
 @pytest.mark.asyncio
 async def test_unwired_destination_actions_are_disabled_with_honest_copy(
@@ -3086,7 +3204,7 @@ async def test_mcp_destination_test_tool_binding_opens_panel_for_selected_tool_e
         assert screen.query_one("#mcp-inspector-test-tool", Button).disabled is True
 
 
-class MCPFooterHarness(App):
+class MCPFooterHarness(ConsolidatedCSSApp):
     """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
     for the MCP destination: composes an `AppFooterStatus` directly on the
     App's own default screen, exactly like `TldwCli._create_main_ui_widgets`
@@ -3975,7 +4093,23 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
             return True
 
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
-    host = DestinationHarness(app, "settings")
+
+    # task-17660: this flow needs the REAL stylesheet. The bare harness
+    # loads no bundle, so `.settings-secondary-card { height: auto }` never
+    # applies and the card falls back to a container default that clamps it
+    # to a fraction of the pane — the checkbox lays out past the clamp,
+    # sibling detail rows paint over it, and pilot.click misses silently
+    # (returns False), so the draft never staged and Save truthfully said
+    # "no changes". The card grew past the clamp when Status row placement
+    # and Selection side chat landed; in the bundled app the card
+    # auto-grows and the control is reachable by scrolling, exactly as a
+    # user does below.
+    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+
+    class _StyledDestinationHarness(DestinationHarness):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    host = _StyledDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
@@ -3991,7 +4125,10 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
 
         assert toggle.value is expected_checked
 
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        toggle.scroll_visible(animate=False)
+        await pilot.pause()
+        clicked = await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        assert clicked, "checkbox click missed — widget not in view"
         await pilot.pause(0.1)
 
         assert app.app_config["console"]["collapse_large_pastes"] == initial_value
@@ -4066,3 +4203,56 @@ async def test_workspace_import_sources_mounts_the_ingest_canvas_in_place():
         assert getattr(screen, "_library_selected_row_id") == "ingest-import-media"
 
     assert seen_routes == [], "Import sources must not hand off to another screen"
+
+
+@pytest.mark.asyncio
+async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.STT.parakeet_sources import (
+        ParakeetSourceKey,
+        ParakeetSourcePreference,
+        ParakeetSourceRecord,
+    )
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _window: False,
+    )
+
+    selected = (tmp_path / "private-parakeet-root").absolute()
+    service = MagicMock()
+    service.records.return_value = {
+        ParakeetSourceKey.V2_INT8: ParakeetSourceRecord(
+            model_id=PARAKEET_V2_MODEL,
+            precision="int8",
+            directory=selected,
+            preferred_source=ParakeetSourcePreference.EXTERNAL,
+        )
+    }
+    service.may_delete.return_value = None
+    app = _build_test_app()
+    app._parakeet_source_service = service
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        await _wait_for_selector(screen, pilot, "#external-models-view", timeout=30.0)
+        external = screen.query_one(ExternalModelView)
+        path_nodes = [
+            node
+            for node in screen.query(Static)
+            if str(selected) in str(node.renderable)
+        ]
+
+        assert len(path_nodes) == 1
+        assert "external-model-path" in path_nodes[0].classes
+        assert external in path_nodes[0].ancestors

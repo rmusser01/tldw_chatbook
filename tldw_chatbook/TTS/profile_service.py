@@ -2,31 +2,51 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from itertools import islice
+from threading import RLock
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 from uuid import UUID, uuid4
 
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
+    TTSCloneGenerationEvidence,
     TTSConfigurationRevisionError,
     TTSModelInfo,
     TTSNativeCapabilitySnapshot,
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
 )
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactConsumerRequirement,
+)
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
     TTSRequestedSelectionSnapshot,
 )
-from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileServiceError,
     ProfileValidationError,
+)
+from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+    TTSCloneRecipeRequirement,
+    TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_types import (
     AUDIO_CPP_PROFILE_SPEED,
@@ -39,6 +59,13 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfileCollisionSnapshot,
     TTSProfileDraft,
     TTSProfilePage,
+    TTSProfileVerificationEvidence,
+    profile_options_fingerprint,
+)
+from tldw_chatbook.TTS.sample_audio_validation import validate_playable_audio_file
+from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppGuidedDependencySnapshot,
+    validate_audio_cpp_guided_dependency_snapshot,
 )
 
 ProfileAvailabilityState: TypeAlias = Literal[
@@ -47,10 +74,28 @@ ProfileAvailabilityState: TypeAlias = Literal[
     "unverified",
 ]
 ProfileRecoveryAction: TypeAlias = Literal["none", "refresh", "edit"]
+ProfileDependencyReason: TypeAlias = Literal[
+    "none",
+    "recipe_missing",
+    "recipe_mismatch",
+    "recipe_pending_apply",
+]
+ProfileDependencyAction: TypeAlias = Literal[
+    "none",
+    "open_audio_cpp_settings",
+    "open_speech_lab_apply",
+]
+ProfilePortabilityAdvisory: TypeAlias = Literal[
+    "none",
+    "recipe_provenance_unavailable",
+]
+ProfilePortabilityAction: TypeAlias = Literal["none", "generate_new_profile"]
 PortableProfileImportChoice: TypeAlias = Literal["create", "reuse", "copy"]
 
 _PROFILE_PROVIDER_ID = "audio_cpp"
 _PROFILE_PAGE_LIMIT = 50
+_PROFILE_SAMPLE_EVIDENCE_LIMIT = 256
+_PROFILE_CONSUMER_SNAPSHOT_LIMIT = 200
 _CHARACTER_REF_TYPE: type[CharacterRef] = CharacterRef
 _CHARACTER_TTS_ASSIGNMENT_TYPE: type[CharacterTTSAssignment] = CharacterTTSAssignment
 _ASSIGNED_TTS_PROFILE_SNAPSHOT_TYPE: type[AssignedTTSProfileSnapshot] = (
@@ -61,6 +106,13 @@ _TTS_PROFILE_COLLISION_SNAPSHOT_TYPE: type[TTSProfileCollisionSnapshot] = (
 )
 _TTS_GENERATION_PROFILE_TYPE: type[TTSGenerationProfile] = TTSGenerationProfile
 _TTS_PROFILE_DRAFT_TYPE: type[TTSProfileDraft] = TTSProfileDraft
+_TTS_CLONE_REFERENCE_TYPE: type[TTSCloneReference] = TTSCloneReference
+_TTS_CLONE_REFERENCE_SUMMARY_TYPE: type[TTSCloneReferenceSummary] = (
+    TTSCloneReferenceSummary
+)
+_TTS_CLONE_RECIPE_REQUIREMENT_TYPE: type[TTSCloneRecipeRequirement] = (
+    TTSCloneRecipeRequirement
+)
 _PORTABLE_TTS_PROFILE_TYPE: type[PortableTTSProfile] = PortableTTSProfile
 _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
     TTSNativeCapabilitySnapshot
@@ -116,6 +168,16 @@ class _ProfileRepositoryProtocol(Protocol):
         expected_generation: int | None = None,
     ) -> ProfileStoreResult[TTSGenerationProfile]: ...
 
+    async def create_profile_with_reference(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
+        *,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSGenerationProfile]: ...
+
     async def update_profile(
         self,
         profile_id: UUID,
@@ -166,6 +228,14 @@ class _ProfileRepositoryProtocol(Protocol):
         profile_id: UUID,
     ) -> ProfileStoreResult[TTSGenerationProfile]: ...
 
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSCloneReference]: ...
+
 
 @runtime_checkable
 class _PortableProfileRepositoryProtocol(Protocol):
@@ -203,6 +273,19 @@ class _ProfileTTSServiceProtocol(Protocol):
         provider_id: str,
         expected_revision: int,
     ) -> None: ...
+
+    async def audio_cpp_guided_dependency_snapshot(
+        self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> AudioCppGuidedDependencySnapshot: ...
+
+
+@runtime_checkable
+class _ArtifactLeaseCoordinatorProtocol(Protocol):
+    def lease_consumers(
+        self,
+        consumers: Iterable[AudioCppArtifactConsumerRequirement],
+    ) -> object: ...
 
 
 def _validate_nonnegative_integer(value: object, code: str) -> int:
@@ -394,6 +477,90 @@ def _canonicalize_exact_profile_id(value: object) -> UUID:
     return canonical
 
 
+def _canonicalize_exact_recipe_requirement(
+    value: object,
+) -> TTSCloneRecipeRequirement | None:
+    """Return a fresh exact clone recipe requirement or legacy absence."""
+
+    if value is None:
+        return None
+    if type(value) is not _TTS_CLONE_RECIPE_REQUIREMENT_TYPE:
+        raise ProfileValidationError("reference_invalid")
+    requirement = cast(TTSCloneRecipeRequirement, value)
+    try:
+        canonical = TTSCloneRecipeRequirement(
+            recipe_id=requirement.recipe_id,
+            recipe_revision=requirement.recipe_revision,
+            model_id=requirement.model_id,
+        )
+    except Exception:
+        raise ProfileValidationError("reference_invalid") from None
+    return canonical
+
+
+def _canonicalize_exact_reference_summary(
+    value: object,
+) -> TTSCloneReferenceSummary:
+    """Return a fresh exact private-reference summary or fail closed."""
+
+    if type(value) is not _TTS_CLONE_REFERENCE_SUMMARY_TYPE:
+        raise ProfileValidationError("reference_invalid")
+    summary = cast(TTSCloneReferenceSummary, value)
+    try:
+        canonical = TTSCloneReferenceSummary(
+            reference_id=_canonicalize_exact_profile_id(summary.reference_id),
+            byte_length=summary.byte_length,
+            duration_ms=summary.duration_ms,
+            sample_rate_hz=summary.sample_rate_hz,
+            channels=summary.channels,
+            sample_encoding=summary.sample_encoding,
+            created_at=summary.created_at,
+            updated_at=summary.updated_at,
+            recipe_requirement=_canonicalize_exact_recipe_requirement(
+                summary.recipe_requirement
+            ),
+        )
+    except Exception:
+        raise ProfileValidationError("reference_invalid") from None
+    if canonical != summary:
+        raise ProfileValidationError("reference_invalid")
+    return canonical
+
+
+def _canonicalize_exact_reference(value: object) -> TTSCloneReference:
+    """Return a fresh exact private reference without exposing its values."""
+
+    if type(value) is not _TTS_CLONE_REFERENCE_TYPE:
+        raise ProfileValidationError("reference_invalid")
+    reference = cast(TTSCloneReference, value)
+    try:
+        summary = _canonicalize_exact_reference_summary(reference.summary)
+        direct_requirement = _canonicalize_exact_recipe_requirement(
+            reference.recipe_requirement
+        )
+        if summary.recipe_requirement != direct_requirement:
+            raise ValueError
+        canonical = TTSCloneReference(
+            summary=summary,
+            reference_text=reference.reference_text,
+            sha256=reference.sha256,
+            wav_bytes=reference.wav_bytes,
+            recipe_requirement=summary.recipe_requirement,
+        )
+    except Exception:
+        raise ProfileValidationError("reference_invalid") from None
+    if (
+        type(reference.reference_text) is not str
+        or type(reference.sha256) is not str
+        or type(reference.wav_bytes) is not bytes
+        or canonical.reference_text != reference.reference_text
+        or canonical.sha256 != reference.sha256
+        or canonical.wav_bytes != reference.wav_bytes
+    ):
+        raise ProfileValidationError("reference_invalid")
+    return canonical
+
+
 def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
     """Return a fresh profile only when every source field is already canonical."""
 
@@ -417,6 +584,11 @@ def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
             revision=profile.revision,
             created_at=profile.created_at,
             updated_at=profile.updated_at,
+            reference=(
+                None
+                if profile.reference is None
+                else _canonicalize_exact_reference_summary(profile.reference)
+            ),
         )
         valid = all(
             _matches_exact_canonical_value(source, expected)
@@ -433,6 +605,7 @@ def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
                 (profile.revision, canonical.revision),
                 (profile.created_at, canonical.created_at),
                 (profile.updated_at, canonical.updated_at),
+                (profile.reference, canonical.reference),
             )
         )
     except Exception:  # noqa: BLE001 - hostile profile values fail closed
@@ -722,11 +895,17 @@ def _availability(
     profile_id: UUID,
     state: ProfileAvailabilityState,
     provider_id: str,
+    dependency: TTSProfileDependencyProjection | None = None,
+    provider_configuration_revision: int | None = None,
 ) -> TTSProfileAvailability:
     return TTSProfileAvailability(
         profile_id=profile_id,
         state=state,
         recovery_action=_recovery_action(provider_id, state),
+        dependency=(
+            TTSProfileDependencyProjection() if dependency is None else dependency
+        ),
+        provider_configuration_revision=provider_configuration_revision,
     )
 
 
@@ -741,6 +920,9 @@ class TTSPlaygroundSelectionPreset:
     speed: float
     options: Mapping[str, Any] = field(default_factory=dict)
     availability: ProfileAvailabilityState = "unverified"
+    profile_id: UUID | None = None
+    repository_generation: int | None = None
+    profile_revision: int | None = None
 
     def __post_init__(self) -> None:
         draft = TTSProfileDraft(
@@ -753,6 +935,24 @@ class TTSPlaygroundSelectionPreset:
             options=self.options,
         )
         state = _validate_availability_state(self.availability)
+        identity = (
+            self.profile_id,
+            self.repository_generation,
+            self.profile_revision,
+        )
+        if any(value is not None for value in identity):
+            if any(value is None for value in identity):
+                raise ValueError("Reference preview identity must be complete")
+            if type(self.profile_id) is not UUID:
+                raise TypeError("profile_id must be a UUID")
+            if type(self.repository_generation) is not int:
+                raise TypeError("repository_generation must be an integer")
+            if self.repository_generation < 0:
+                raise ValueError("repository_generation must be nonnegative")
+            if type(self.profile_revision) is not int:
+                raise TypeError("profile_revision must be an integer")
+            if self.profile_revision < 1:
+                raise ValueError("profile_revision must be positive")
         object.__setattr__(self, "provider_id", draft.provider_id)
         object.__setattr__(self, "model_id", draft.model_id)
         object.__setattr__(self, "voice_id", draft.voice_id)
@@ -827,20 +1027,91 @@ class LoadedCharacterTTSAssignment:
 
 
 @dataclass(frozen=True, slots=True)
+class TTSProfileDependencyProjection:
+    """Bounded dependency blocker plus an independent portability advisory."""
+
+    reason: ProfileDependencyReason = "none"
+    display: str | None = None
+    action: ProfileDependencyAction = "none"
+    advisory: ProfilePortabilityAdvisory = "none"
+    advisory_display: str | None = None
+    advisory_action: ProfilePortabilityAction = "none"
+
+    def __post_init__(self) -> None:
+        blockers = {
+            "none": (None, "none"),
+            "recipe_missing": ("Needs compatible model", "open_audio_cpp_settings"),
+            "recipe_mismatch": ("Needs compatible model", "open_audio_cpp_settings"),
+            "recipe_pending_apply": (
+                "Compatible model saved; apply settings",
+                "open_speech_lab_apply",
+            ),
+        }
+        advisories = {
+            "none": (None, "none"),
+            "recipe_provenance_unavailable": (
+                "Recipe provenance unavailable",
+                "generate_new_profile",
+            ),
+        }
+        if (
+            type(self.reason) is not str
+            or self.reason not in blockers
+            or type(self.action) is not str
+            or (self.display, self.action) != blockers[self.reason]
+            or type(self.advisory) is not str
+            or self.advisory not in advisories
+            or type(self.advisory_action) is not str
+            or (self.advisory_display, self.advisory_action)
+            != advisories[self.advisory]
+        ):
+            raise ProfileValidationError("dependency")
+
+
+@dataclass(frozen=True, slots=True)
 class TTSProfileAvailability:
     """The current bounded availability state for one exact profile UUID."""
 
     profile_id: UUID
     state: ProfileAvailabilityState
     recovery_action: ProfileRecoveryAction
+    dependency: TTSProfileDependencyProjection = field(
+        default_factory=TTSProfileDependencyProjection
+    )
+    provider_configuration_revision: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.profile_id) is not UUID:
             raise ProfileValidationError("profile_id")
         state = _validate_availability_state(self.state)
         action = _validate_recovery_action(self.recovery_action, state)
+        dependency = self.dependency
+        if type(dependency) is not TTSProfileDependencyProjection:
+            raise ProfileValidationError("dependency")
+        dependency = TTSProfileDependencyProjection(
+            reason=dependency.reason,
+            display=dependency.display,
+            action=dependency.action,
+            advisory=dependency.advisory,
+            advisory_display=dependency.advisory_display,
+            advisory_action=dependency.advisory_action,
+        )
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "recovery_action", action)
+        object.__setattr__(self, "dependency", dependency)
+        provider_revision = self.provider_configuration_revision
+        if provider_revision is not None:
+            provider_revision = _validate_nonnegative_integer(
+                provider_revision,
+                "configuration_revision",
+            )
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "recovery_action", action)
+        object.__setattr__(
+            self,
+            "provider_configuration_revision",
+            provider_revision,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -885,6 +1156,66 @@ class TTSProfileAvailabilitySnapshot:
         )
         object.__setattr__(self, "catalog_revision", catalog_revision)
         object.__setattr__(self, "profiles", profiles)
+
+
+def _provenance_projection(
+    profile: TTSGenerationProfile,
+) -> TTSProfileDependencyProjection:
+    reference = profile.reference
+    if reference is not None and reference.recipe_requirement is None:
+        return TTSProfileDependencyProjection(
+            advisory="recipe_provenance_unavailable",
+            advisory_display="Recipe provenance unavailable",
+            advisory_action="generate_new_profile",
+        )
+    return TTSProfileDependencyProjection()
+
+
+def _dependency_projection(
+    state: str,
+    *,
+    advisory: TTSProfileDependencyProjection,
+) -> TTSProfileDependencyProjection:
+    blockers: dict[
+        str, tuple[ProfileDependencyReason, str | None, ProfileDependencyAction]
+    ] = {
+        "exact": ("none", None, "none"),
+        "missing": (
+            "recipe_missing",
+            "Needs compatible model",
+            "open_audio_cpp_settings",
+        ),
+        "mismatch": (
+            "recipe_mismatch",
+            "Needs compatible model",
+            "open_audio_cpp_settings",
+        ),
+        "pending": (
+            "recipe_pending_apply",
+            "Compatible model saved; apply settings",
+            "open_speech_lab_apply",
+        ),
+    }
+    try:
+        reason, display, action = blockers[state]
+    except (KeyError, TypeError):
+        raise ProfileServiceError("operation_failed") from None
+    return TTSProfileDependencyProjection(
+        reason=reason,
+        display=display,
+        action=action,
+        advisory=advisory.advisory,
+        advisory_display=advisory.advisory_display,
+        advisory_action=advisory.advisory_action,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProfileEvidenceLifecycle:
+    """Latest profile revision or tombstone observed by this service."""
+
+    revision: int
+    deleted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1035,6 +1366,7 @@ class TTSProfileService:
         repository: _ProfileRepositoryProtocol,
         tts_service: _ProfileTTSServiceProtocol,
         *,
+        artifact_lease_coordinator: _ArtifactLeaseCoordinatorProtocol | None = None,
         _uuid_factory: Callable[[], UUID] | None = None,
     ) -> None:
         validation_failed = False
@@ -1042,6 +1374,13 @@ class TTSProfileService:
             if (
                 not isinstance(repository, _ProfileRepositoryProtocol)
                 or not isinstance(tts_service, _ProfileTTSServiceProtocol)
+                or (
+                    artifact_lease_coordinator is not None
+                    and not isinstance(
+                        artifact_lease_coordinator,
+                        _ArtifactLeaseCoordinatorProtocol,
+                    )
+                )
                 or (_uuid_factory is not None and not callable(_uuid_factory))
             ):
                 validation_failed = True
@@ -1051,6 +1390,13 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         self._repository = repository
         self._tts_service = tts_service
+        self._sample_evidence: dict[UUID, TTSProfileVerificationEvidence] = {}
+        self._sample_evidence_lock = RLock()
+        self._sample_evidence_lifecycle: dict[UUID, _ProfileEvidenceLifecycle] = {}
+        self._sample_evidence_epoch = 0
+        self._consumer_mutation_lock = asyncio.Lock()
+        if artifact_lease_coordinator is not None:
+            self._artifact_lease_coordinator = artifact_lease_coordinator
         if _uuid_factory is not None:
             self._uuid_factory = _uuid_factory
 
@@ -1069,6 +1415,70 @@ class TTSProfileService:
         if validation_failed:
             raise ProfileServiceError("operation_failed")
         return cast(_PortableProfileRepositoryProtocol, self._repository)
+
+    @staticmethod
+    def _artifact_consumer(
+        provider_id: str,
+        model_id: str,
+        requirement: TTSCloneRecipeRequirement | None = None,
+    ) -> AudioCppArtifactConsumerRequirement:
+        return AudioCppArtifactConsumerRequirement(
+            provider_id=provider_id,
+            model_id=model_id,
+            recipe_requirement=requirement,
+        )
+
+    @asynccontextmanager
+    async def consumer_mutation_fence(self) -> AsyncIterator[None]:
+        """Serialize one external repository mutation with bounded snapshots."""
+
+        async with self._consumer_mutation_lock:
+            yield
+
+    @asynccontextmanager
+    async def _lease_artifact_consumers(
+        self,
+        *consumers: AudioCppArtifactConsumerRequirement,
+    ) -> AsyncIterator[None]:
+        coordinator = getattr(self, "_artifact_lease_coordinator", None)
+        if coordinator is None:
+            async with self.consumer_mutation_fence():
+                yield
+            return
+        async with cast(Any, coordinator.lease_consumers(consumers)):
+            async with self.consumer_mutation_fence():
+                yield
+
+    async def _run_owned_repository_call(self, awaitable: Awaitable[Any]) -> Any:
+        """Keep one admitted repository mutation leased through settlement."""
+
+        task: asyncio.Future[Any] = asyncio.ensure_future(awaitable)
+        cancellation: asyncio.CancelledError | None = None
+        waiter = asyncio.current_task()
+        requests = waiter.cancelling() if waiter is not None else 0
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                current = waiter.cancelling() if waiter is not None else 0
+                if current > requests:
+                    cancellation = cancellation or error
+                    requests = current
+            except BaseException:
+                if not task.done():
+                    raise
+        try:
+            result = task.result()
+        except BaseException as error:
+            if cancellation is not None:
+                cancellation.add_note(
+                    "profile repository mutation also failed after cancellation"
+                )
+                raise cancellation from None
+            raise error
+        if cancellation is not None:
+            raise cancellation
+        return result
 
     async def list_profiles(
         self,
@@ -1114,6 +1524,47 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         self._require_repository_generation(generation)
         return snapshot
+
+    async def bounded_profile_assignment_snapshot(
+        self,
+    ) -> tuple[tuple[TTSGenerationProfile, int], ...]:
+        """Read one bounded complete inventory while profile mutations wait."""
+
+        async with self._consumer_mutation_lock:
+            captured: list[tuple[TTSGenerationProfile, int]] = []
+            seen_profile_ids: set[UUID] = set()
+            expected_total: int | None = None
+            expected_generation: int | None = None
+            offset = 0
+            while len(captured) < _PROFILE_CONSUMER_SNAPSHOT_LIMIT:
+                page = await self.list_profiles(search=None, offset=offset)
+                if page.total > _PROFILE_CONSUMER_SNAPSHOT_LIMIT:
+                    raise ProfileServiceError("operation_failed")
+                if expected_total is None:
+                    expected_total = page.total
+                    expected_generation = page.repository_generation
+                elif (
+                    page.total != expected_total
+                    or page.repository_generation != expected_generation
+                ):
+                    raise ProfileServiceError("operation_failed")
+                if not page.profiles:
+                    break
+                if len(captured) + len(page.profiles) > page.total:
+                    raise ProfileServiceError("operation_failed")
+                for profile in page.profiles:
+                    if profile.profile_id in seen_profile_ids:
+                        raise ProfileServiceError("operation_failed")
+                    seen_profile_ids.add(profile.profile_id)
+                    loaded = LoadedTTSProfile(page.repository_generation, profile)
+                    count = await self.assignment_count(loaded)
+                    captured.append((loaded.profile, count))
+                offset += len(page.profiles)
+                if offset >= page.total:
+                    break
+            if expected_total is None or len(captured) != expected_total:
+                raise ProfileServiceError("operation_failed")
+            return tuple(captured)
 
     async def get_assigned_profile(
         self,
@@ -1220,6 +1671,49 @@ class TTSProfileService:
             profile=profile,
         )
 
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> TTSCloneReference:
+        """Read and revalidate one exact private reference under store fences."""
+
+        canonical_id = _canonicalize_exact_profile_id(profile_id)
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ProfileValidationError("revision")
+        generation = _validate_nonnegative_integer(
+            expected_generation,
+            "generation",
+        )
+        failed = False
+        result = None
+        try:
+            result = await self._repository.get_reference(
+                canonical_id,
+                expected_revision=expected_revision,
+                expected_generation=generation,
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide private collaborator detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+
+        value = self._require_admitted_store_result(result, generation)
+        reference: TTSCloneReference | None = None
+        validation_failed = False
+        try:
+            reference = _canonicalize_exact_reference(value)
+        except Exception:  # noqa: BLE001 - hostile private values fail closed
+            validation_failed = True
+        if validation_failed or reference is None:
+            raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(generation)
+        return reference
+
     async def observe_availability(
         self,
         page: TTSProfilePageSnapshot,
@@ -1248,23 +1742,50 @@ class TTSProfileService:
         self._require_repository_generation(expected_generation)
         page = canonical_page
 
+        provider_revisions = {
+            provider_id: self._current_configuration_revision(provider_id)
+            for provider_id in dict.fromkeys(
+                profile.provider_id for profile in page.profiles
+            )
+            if provider_id != _PROFILE_PROVIDER_ID
+        }
+        audio_cpp_profiles = tuple(
+            profile
+            for profile in page.profiles
+            if profile.provider_id == _PROFILE_PROVIDER_ID
+        )
+        compatibility_revision: int | None = None
+        if not any(
+            _profile_is_structurally_supported(profile)
+            for profile in audio_cpp_profiles
+        ):
+            compatibility_revision = self._current_configuration_revision(
+                _PROFILE_PROVIDER_ID
+            )
+            if audio_cpp_profiles:
+                provider_revisions[_PROFILE_PROVIDER_ID] = compatibility_revision
+
         supported_profiles = tuple(
             profile
             for profile in page.profiles
             if _profile_is_structurally_supported(profile)
         )
         if not supported_profiles:
-            revision = self._current_configuration_revision()
             self._require_repository_generation(page.repository_generation)
+            self._require_provider_revisions_unchanged(provider_revisions)
             return TTSProfileAvailabilitySnapshot(
                 repository_generation=page.repository_generation,
-                configuration_revision=revision,
+                configuration_revision=compatibility_revision,
                 catalog_revision=None,
                 profiles=tuple(
                     _availability(
                         profile.profile_id,
                         "unavailable",
                         profile.provider_id,
+                        dependency=_provenance_projection(profile),
+                        provider_configuration_revision=provider_revisions[
+                            profile.provider_id
+                        ],
                     )
                     for profile in page.profiles
                 ),
@@ -1276,23 +1797,32 @@ class TTSProfileService:
             if profile.provider_id == _PROFILE_PROVIDER_ID
         )
         if not audio_cpp_supported:
-            revision = self._current_configuration_revision()
             self._require_repository_generation(page.repository_generation)
+            self._require_provider_revisions_unchanged(provider_revisions)
             return TTSProfileAvailabilitySnapshot(
                 repository_generation=page.repository_generation,
-                configuration_revision=revision,
+                configuration_revision=compatibility_revision,
                 catalog_revision=None,
                 profiles=tuple(
-                    _availability(
-                        profile.profile_id,
-                        (
-                            "unverified"
-                            if _profile_is_structurally_supported(profile)
-                            else "unavailable"
+                    TTSProfileAvailability(
+                        profile_id=item.profile_id,
+                        state=item.state,
+                        recovery_action=item.recovery_action,
+                        dependency=_provenance_projection(profile),
+                        provider_configuration_revision=(
+                            item.provider_configuration_revision
                         ),
-                        profile.provider_id,
                     )
-                    for profile in page.profiles
+                    for profile, item in (
+                        (
+                            profile,
+                            self._classify_profile_with_evidence(
+                                profile,
+                                provider_revisions[profile.provider_id],
+                            ),
+                        )
+                        for profile in page.profiles
+                    )
                 ),
             )
 
@@ -1322,16 +1852,92 @@ class TTSProfileService:
             _PROFILE_PROVIDER_ID,
             snapshot.configuration_revision,
         )
+        compatibility_revision = snapshot.configuration_revision
+        provider_revisions[_PROFILE_PROVIDER_ID] = snapshot.configuration_revision
 
-        availability = tuple(
-            self._classify_profile(profile, snapshot) for profile in page.profiles
-        )
+        projected: list[TTSProfileAvailability] = []
+        for profile in page.profiles:
+            if profile.provider_id != _PROFILE_PROVIDER_ID:
+                evidence_item = self._classify_profile_with_evidence(
+                    profile,
+                    provider_revisions[profile.provider_id],
+                )
+                projected.append(
+                    TTSProfileAvailability(
+                        profile_id=evidence_item.profile_id,
+                        state=evidence_item.state,
+                        recovery_action=evidence_item.recovery_action,
+                        dependency=_provenance_projection(profile),
+                        provider_configuration_revision=(
+                            evidence_item.provider_configuration_revision
+                        ),
+                    )
+                )
+                continue
+            base = self._classify_profile(profile, snapshot)
+            advisory = _provenance_projection(profile)
+            requirement = (
+                None
+                if profile.reference is None
+                else profile.reference.recipe_requirement
+            )
+            if base.state != "available" or requirement is None:
+                projected.append(
+                    _availability(
+                        profile.profile_id,
+                        base.state,
+                        profile.provider_id,
+                        dependency=advisory,
+                        provider_configuration_revision=(
+                            snapshot.configuration_revision
+                        ),
+                    )
+                )
+                continue
+            dependency_failed = False
+            dependency: AudioCppGuidedDependencySnapshot | None = None
+            try:
+                dependency = (
+                    await self._tts_service.audio_cpp_guided_dependency_snapshot(
+                        requirement
+                    )
+                )
+            except Exception:  # noqa: BLE001 - collaborator detail stays private
+                dependency_failed = True
+            dependency = validate_audio_cpp_guided_dependency_snapshot(
+                dependency,
+                requirement,
+            )
+            if dependency_failed or dependency is None:
+                raise ProfileServiceError("operation_failed") from None
+            await self._require_configuration_revision(
+                _PROFILE_PROVIDER_ID,
+                dependency.provider_configuration_revision,
+            )
+            dependency_projection = _dependency_projection(
+                dependency.state,
+                advisory=advisory,
+            )
+            projected.append(
+                _availability(
+                    profile.profile_id,
+                    (
+                        "available"
+                        if dependency_projection.reason == "none"
+                        else "unavailable"
+                    ),
+                    profile.provider_id,
+                    dependency=dependency_projection,
+                    provider_configuration_revision=snapshot.configuration_revision,
+                )
+            )
+        availability = tuple(projected)
         self._require_repository_generation(page.repository_generation)
-        if self._current_configuration_revision() != snapshot.configuration_revision:
-            raise ProfileServiceError("stale_configuration")
+        self._require_provider_revisions_unchanged(provider_revisions)
+        assert compatibility_revision is not None
         return TTSProfileAvailabilitySnapshot(
             repository_generation=page.repository_generation,
-            configuration_revision=snapshot.configuration_revision,
+            configuration_revision=compatibility_revision,
             catalog_revision=(
                 None if snapshot.catalog is None else snapshot.catalog.revision
             ),
@@ -1356,7 +1962,7 @@ class TTSProfileService:
 
         repository_generation = self._current_repository_generation()
         if draft.provider_id != _PROFILE_PROVIDER_ID:
-            revision = self._current_configuration_revision()
+            revision = self._current_configuration_revision(_PROFILE_PROVIDER_ID)
             self._require_repository_generation(repository_generation)
             return PortableProfileAvailabilityObservation(
                 repository_generation=repository_generation,
@@ -1398,7 +2004,10 @@ class TTSProfileService:
             )
         )
         self._require_repository_generation(repository_generation)
-        if self._current_configuration_revision() != snapshot.configuration_revision:
+        if (
+            self._current_configuration_revision(_PROFILE_PROVIDER_ID)
+            != snapshot.configuration_revision
+        ):
             raise ProfileServiceError("stale_configuration")
         return PortableProfileAvailabilityObservation(
             repository_generation=repository_generation,
@@ -1618,7 +2227,12 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.create_profile(draft)
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(draft.provider_id, draft.model_id)
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.create_profile(draft)
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -1635,10 +2249,220 @@ class TTSProfileService:
             expected_revision=1,
         )
         self._require_repository_generation(repository_generation)
-        return LoadedTTSProfile(
+        loaded = LoadedTTSProfile(
             repository_generation=repository_generation,
             profile=profile,
         )
+        self._mark_profile_evidence_current(profile)
+        self.record_sample_evidence(loaded, artifact)
+        return loaded
+
+    def record_sample_evidence(
+        self,
+        loaded: LoadedTTSProfile,
+        artifact: STTSGeneratedAudio,
+    ) -> None:
+        """Remember exact successful sample provenance for this process only."""
+
+        if type(artifact) is not STTSGeneratedAudio:
+            return
+        try:
+            profile = self._validate_loaded(loaded)
+            with self._sample_evidence_lock:
+                lifecycle = self._sample_evidence_lifecycle.get(profile.profile_id)
+                if lifecycle is not None and (
+                    lifecycle.deleted or lifecycle.revision != profile.revision
+                ):
+                    return
+                admission_epoch = self._sample_evidence_epoch
+            selection = artifact.requested_selection
+            if type(selection) is not TTSRequestedSelectionSnapshot:
+                return
+            if not all(
+                _matches_exact_canonical_value(source, expected)
+                for source, expected in (
+                    (selection.provider_id, profile.provider_id),
+                    (selection.model_id, profile.model_id),
+                    (selection.voice_id, profile.voice_id),
+                    (selection.response_format, profile.response_format),
+                    (selection.speed, profile.speed),
+                    (selection.options, profile.options),
+                    (artifact.provider_id, profile.provider_id),
+                    (artifact.model_id, profile.model_id),
+                    (artifact.voice_id, profile.voice_id),
+                )
+            ):
+                return
+            audio_format = artifact.audio_format
+            if (
+                type(audio_format) is not str
+                or audio_format.removeprefix(".") != profile.response_format
+            ):
+                return
+            if (
+                validate_playable_audio_file(
+                    artifact.path,
+                    profile.response_format,
+                    artifact.content_type,
+                    artifact.metadata,
+                )
+                is None
+            ):
+                return
+            provider_revision = self._current_configuration_revision(
+                profile.provider_id
+            )
+            if provider_revision != selection.configuration_revision:
+                return
+            evidence = TTSProfileVerificationEvidence(
+                profile_id=profile.profile_id,
+                profile_revision=profile.revision,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options_fingerprint=profile_options_fingerprint(profile.options),
+                provider_configuration_revision=provider_revision,
+            )
+            if (
+                self._current_configuration_revision(profile.provider_id)
+                != provider_revision
+            ):
+                return
+        except Exception:  # noqa: BLE001 - malformed artifacts are ineligible
+            return
+
+        with self._sample_evidence_lock:
+            lifecycle = self._sample_evidence_lifecycle.get(evidence.profile_id)
+            if (
+                self._sample_evidence_epoch != admission_epoch
+                or lifecycle is not None
+                and (lifecycle.deleted or lifecycle.revision != profile.revision)
+            ):
+                return
+            # FIFO is intentional: re-recording an existing UUID does not
+            # extend its residency; only first admission establishes order.
+            self._sample_evidence[evidence.profile_id] = evidence
+            while len(self._sample_evidence) > _PROFILE_SAMPLE_EVIDENCE_LIMIT:
+                oldest_profile_id = next(iter(self._sample_evidence))
+                self._sample_evidence.pop(oldest_profile_id, None)
+
+    async def create_clone_from_artifact(
+        self,
+        display_name: str,
+        artifact: STTSGeneratedAudio,
+    ) -> LoadedTTSProfile:
+        """Atomically persist one exact successful clone artifact.
+
+        Args:
+            display_name: User-selected name for the new profile.
+            artifact: Exact retained STTS result carrying clone evidence.
+
+        Returns:
+            The committed revision-2 profile and repository generation.
+
+        Raises:
+            ProfileServiceError: If the artifact or collaborator result is
+                ineligible, incoherent, or unsafe.
+            ProfileRepositoryError: If persistence or freshness fails.
+            ProfileValidationError: If the selected profile values are invalid.
+        """
+
+        if (
+            type(artifact) is not STTSGeneratedAudio
+            or type(artifact.requested_selection) is not TTSRequestedSelectionSnapshot
+            or type(artifact.clone_evidence) is not TTSCloneGenerationEvidence
+        ):
+            raise ProfileServiceError("artifact_ineligible")
+        selection = artifact.requested_selection
+        evidence = artifact.clone_evidence
+        assert selection is not None
+        assert evidence is not None
+        if (
+            artifact.provider_id != "audio_cpp"
+            or artifact.model_id != selection.model_id
+            or artifact.voice_id != selection.voice_id
+            or artifact.audio_format.removeprefix(".") != selection.response_format
+            or selection.provider_id != "audio_cpp"
+            or evidence.model_id != selection.model_id
+            or evidence.provider_configuration_revision
+            != selection.configuration_revision
+            or not _selection_is_profile_safe(
+                selection.provider_id,
+                selection.response_format,
+                selection.speed,
+                selection.options,
+            )
+        ):
+            raise ProfileServiceError("artifact_ineligible")
+        draft = TTSProfileDraft(
+            display_name=display_name,
+            provider_id=selection.provider_id,
+            model_id=selection.model_id,
+            voice_id=selection.voice_id,
+            response_format=selection.response_format,
+            speed=selection.speed,
+            options=selection.options,
+        )
+        await self._require_configuration_revision(
+            selection.provider_id,
+            evidence.provider_configuration_revision,
+        )
+        repository_generation = self._current_repository_generation()
+        profile_id = self._next_portable_uuid(set())
+        recipe_requirement = TTSCloneRecipeRequirement(
+            recipe_id=evidence.recipe_id,
+            recipe_revision=evidence.recipe_revision,
+            model_id=evidence.model_id,
+        )
+
+        failed = False
+        result = None
+        try:
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    draft.provider_id,
+                    draft.model_id,
+                    recipe_requirement,
+                )
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.create_profile_with_reference(
+                        draft,
+                        profile_id,
+                        evidence.canonical_reference,
+                        recipe_requirement,
+                        expected_generation=repository_generation,
+                    )
+                )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+        value = self._require_admitted_store_result(result, repository_generation)
+        profile = self._require_profile_mutation_result(
+            value,
+            draft,
+            expected_revision=2,
+            required_profile_id=profile_id,
+        )
+        reference = profile.reference
+        canonical = evidence.canonical_reference
+        if (
+            reference is None
+            or reference.byte_length != canonical.byte_length
+            or reference.duration_ms != canonical.duration_ms
+            or reference.sample_rate_hz != canonical.sample_rate_hz
+            or reference.channels != canonical.channels
+            or reference.sample_encoding != canonical.sample_encoding
+            or reference.recipe_requirement != recipe_requirement
+        ):
+            raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(repository_generation)
+        return LoadedTTSProfile(repository_generation, profile)
 
     async def update_profile(
         self,
@@ -1656,18 +2480,37 @@ class TTSProfileService:
             draft.options,
         ):
             raise ProfileServiceError("unsupported_profile")
+        if loaded_profile.reference is not None and not self._generation_fields_match(
+            loaded_profile,
+            draft,
+        ):
+            raise ProfileServiceError("operation_failed")
         if not self._generation_fields_match(loaded_profile, draft):
             await self._require_authoritative_capability(draft)
 
         failed = False
         result = None
         try:
-            result = await self._repository.update_profile(
-                loaded_profile.profile_id,
-                loaded_profile.revision,
-                draft,
-                expected_generation=loaded.repository_generation,
-            )
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    loaded_profile.provider_id,
+                    loaded_profile.model_id,
+                    (
+                        None
+                        if loaded_profile.reference is None
+                        else loaded_profile.reference.recipe_requirement
+                    ),
+                ),
+                self._artifact_consumer(draft.provider_id, draft.model_id),
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.update_profile(
+                        loaded_profile.profile_id,
+                        loaded_profile.revision,
+                        draft,
+                        expected_generation=loaded.repository_generation,
+                    )
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -1685,6 +2528,7 @@ class TTSProfileService:
             required_profile_id=loaded_profile.profile_id,
         )
         self._require_repository_generation(loaded.repository_generation)
+        self._mark_profile_evidence_current(profile)
         return LoadedTTSProfile(
             repository_generation=loaded.repository_generation,
             profile=profile,
@@ -1720,10 +2564,23 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.create_profile(
-                draft,
-                expected_generation=loaded.repository_generation,
-            )
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    source.provider_id,
+                    source.model_id,
+                    (
+                        None
+                        if source.reference is None
+                        else source.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.create_profile(
+                        draft,
+                        expected_generation=loaded.repository_generation,
+                    )
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -1828,18 +2685,31 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.set_assignment(
-                canonical_ref,
-                profile.profile_id,
-                expected_generation=repository_generation,
-                expected_profile_revision=profile.revision,
-                expected_current_profile_id=(
-                    None
-                    if expected_assignment is None
-                    else expected_assignment.profile_id
-                ),
-                expected_profile=profile,
-            )
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    profile.provider_id,
+                    profile.model_id,
+                    (
+                        None
+                        if profile.reference is None
+                        else profile.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.set_assignment(
+                        canonical_ref,
+                        profile.profile_id,
+                        expected_generation=repository_generation,
+                        expected_profile_revision=profile.revision,
+                        expected_current_profile_id=(
+                            None
+                            if expected_assignment is None
+                            else expected_assignment.profile_id
+                        ),
+                        expected_profile=profile,
+                    )
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -1886,14 +2756,47 @@ class TTSProfileService:
         )
         self._require_repository_generation(expected_generation)
 
+        loaded_profile: TTSGenerationProfile | None = None
+        failed = False
+        try:
+            loaded_result = await self._repository.get_profile(
+                canonical_assignment.profile_id
+            )
+            loaded_value = self._require_admitted_store_result(
+                loaded_result,
+                expected_generation,
+            )
+            loaded_profile = _canonicalize_exact_profile(loaded_value)
+            if loaded_profile.profile_id != canonical_assignment.profile_id:
+                raise ProfileValidationError("assignment")
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or loaded_profile is None:
+            raise ProfileServiceError("operation_failed")
+
         failed = False
         result = None
         try:
-            result = await self._repository.remove_assignment(
-                canonical_assignment.character_ref,
-                expected_generation=expected_generation,
-                expected_profile_id=canonical_assignment.profile_id,
-            )
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    loaded_profile.provider_id,
+                    loaded_profile.model_id,
+                    (
+                        None
+                        if loaded_profile.reference is None
+                        else loaded_profile.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.remove_assignment(
+                        canonical_assignment.character_ref,
+                        expected_generation=expected_generation,
+                        expected_profile_id=canonical_assignment.profile_id,
+                    )
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -1916,10 +2819,23 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.delete_profile(
-                profile.profile_id,
-                expected_generation=loaded.repository_generation,
-            )
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    profile.provider_id,
+                    profile.model_id,
+                    (
+                        None
+                        if profile.reference is None
+                        else profile.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.delete_profile(
+                        profile.profile_id,
+                        expected_generation=loaded.repository_generation,
+                    )
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -1932,6 +2848,8 @@ class TTSProfileService:
         )
         if value is not None:
             raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(loaded.repository_generation)
+        self._mark_profile_evidence_deleted(profile)
 
     async def _read_portable_collisions(
         self,
@@ -2068,11 +2986,19 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.create_profile(
-                portable.draft,
-                portable.profile_id,
-                expected_generation=expected_generation,
-            )
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    portable.draft.provider_id,
+                    portable.draft.model_id,
+                )
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.create_profile(
+                        portable.draft,
+                        portable.profile_id,
+                        expected_generation=expected_generation,
+                    )
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2100,15 +3026,25 @@ class TTSProfileService:
         result = None
         repository = self._require_portable_repository()
         try:
-            result = await repository.create_profile_with_assignment(
-                portable.draft,
-                portable.profile_id,
-                character_ref,
-                expected_generation=expected_generation,
-                expected_current_profile_id=(
-                    None if expected_current is None else expected_current.profile_id
-                ),
-            )
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    portable.draft.provider_id,
+                    portable.draft.model_id,
+                )
+            ):
+                result = await self._run_owned_repository_call(
+                    repository.create_profile_with_assignment(
+                        portable.draft,
+                        portable.profile_id,
+                        character_ref,
+                        expected_generation=expected_generation,
+                        expected_current_profile_id=(
+                            None
+                            if expected_current is None
+                            else expected_current.profile_id
+                        ),
+                    )
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2144,16 +3080,31 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.set_assignment(
-                character_ref,
-                profile.profile_id,
-                expected_generation=expected_generation,
-                expected_profile_revision=profile.revision,
-                expected_current_profile_id=(
-                    None if expected_current is None else expected_current.profile_id
-                ),
-                expected_profile=profile,
-            )
+            async with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    profile.provider_id,
+                    profile.model_id,
+                    (
+                        None
+                        if profile.reference is None
+                        else profile.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._run_owned_repository_call(
+                    self._repository.set_assignment(
+                        character_ref,
+                        profile.profile_id,
+                        expected_generation=expected_generation,
+                        expected_profile_revision=profile.revision,
+                        expected_current_profile_id=(
+                            None
+                            if expected_current is None
+                            else expected_current.profile_id
+                        ),
+                        expected_profile=profile,
+                    )
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2192,6 +3143,13 @@ class TTSProfileService:
             speed=profile.speed,
             options=profile.options,
             availability=effective_availability,
+            profile_id=(profile.profile_id if profile.reference is not None else None),
+            repository_generation=(
+                loaded.repository_generation if profile.reference is not None else None
+            ),
+            profile_revision=(
+                profile.revision if profile.reference is not None else None
+            ),
         )
 
     @staticmethod
@@ -2299,16 +3257,26 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         return assignment
 
-    def _current_configuration_revision(self) -> int:
+    def _current_configuration_revision(self, provider_id: str) -> int:
+        """Return one provider's active runtime revision, not publication state."""
+
         failed = False
         revision = None
         try:
-            revision = self._tts_service.configuration_revision(_PROFILE_PROVIDER_ID)
+            revision = self._tts_service.configuration_revision(provider_id)
         except Exception:  # noqa: BLE001 - configuration detail is not public
             failed = True
         if failed or type(revision) is not int or revision < 0:
             raise ProfileServiceError("operation_failed")
         return revision
+
+    def _require_provider_revisions_unchanged(
+        self,
+        expected: Mapping[str, int],
+    ) -> None:
+        for provider_id, revision in expected.items():
+            if self._current_configuration_revision(provider_id) != revision:
+                raise ProfileServiceError("stale_configuration")
 
     async def _require_configuration_revision(
         self,
@@ -2409,6 +3377,60 @@ class TTSProfileService:
                 (draft.speed, profile.speed),
                 (draft.options, profile.options),
             )
+        )
+
+    def _mark_profile_evidence_current(self, profile: TTSGenerationProfile) -> None:
+        with self._sample_evidence_lock:
+            self._sample_evidence_epoch += 1
+            self._sample_evidence_lifecycle[profile.profile_id] = (
+                _ProfileEvidenceLifecycle(profile.revision, False)
+            )
+            self._sample_evidence.pop(profile.profile_id, None)
+
+    def _mark_profile_evidence_deleted(self, profile: TTSGenerationProfile) -> None:
+        with self._sample_evidence_lock:
+            self._sample_evidence_epoch += 1
+            self._sample_evidence_lifecycle[profile.profile_id] = (
+                _ProfileEvidenceLifecycle(profile.revision, True)
+            )
+            self._sample_evidence.pop(profile.profile_id, None)
+
+    def _classify_profile_with_evidence(
+        self,
+        profile: TTSGenerationProfile,
+        provider_configuration_revision: int,
+    ) -> TTSProfileAvailability:
+        if not _profile_is_structurally_supported(profile):
+            state: ProfileAvailabilityState = "unavailable"
+        else:
+            expected = TTSProfileVerificationEvidence(
+                profile_id=profile.profile_id,
+                profile_revision=profile.revision,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options_fingerprint=profile_options_fingerprint(profile.options),
+                provider_configuration_revision=provider_configuration_revision,
+            )
+            with self._sample_evidence_lock:
+                lifecycle = self._sample_evidence_lifecycle.get(profile.profile_id)
+                evidence = (
+                    None
+                    if lifecycle is not None
+                    and (lifecycle.deleted or lifecycle.revision != profile.revision)
+                    else self._sample_evidence.get(profile.profile_id)
+                )
+                if evidence is not None and evidence != expected:
+                    self._sample_evidence.pop(profile.profile_id, None)
+                    evidence = None
+            state = "available" if evidence == expected else "unverified"
+        return _availability(
+            profile.profile_id,
+            state,
+            profile.provider_id,
+            provider_configuration_revision=provider_configuration_revision,
         )
 
     @staticmethod

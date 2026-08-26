@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from tldw_chatbook.config import get_chachanotes_db_lazy, get_media_db_lazy
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 
 from .server import MCP_AVAILABLE, describe_local_mcp_capabilities
 
@@ -145,7 +147,7 @@ class RawToolCallRefusedError(PermissionError):
 
 
 class LocalMCPRuntimeDelegate:
-    """Direct local MCP runtime adapter that avoids loopback FastMCP dependency."""
+    """Direct in-process runtime kept separate from the standalone gateway."""
 
     _PROTOCOL_VERSION = "2025-03-26"
     _REQUEST_METHODS = (
@@ -206,9 +208,22 @@ class LocalMCPRuntimeDelegate:
     )
 
     def __init__(
-        self, *, manifest_provider: Callable[[], dict[str, Any]] | None = None
+        self,
+        *,
+        manifest_provider: Callable[[], dict[str, Any]] | None = None,
+        library_service: Any | None = None,
+        policy_enforcer: Any | None = None,
     ) -> None:
         self._manifest_provider = manifest_provider or describe_local_mcp_capabilities
+        # task-1337 (plan Task 9): shared synchronous LocalLibraryToolService
+        # (duck-typed ``invoke``). Injected by tests/hosts; lazily composed
+        # from the process-local databases on first Library dispatch.
+        self._library_service = library_service
+        # chunking-agent-tools (Task 5, spec §6): threaded into the lazily
+        # composed shared Library service so the WRITING chunk tools are
+        # service-level gated on the local MCP surface (the Console
+        # construction site passes the same app handle).
+        self._policy_enforcer = policy_enforcer
         self._tools: Any | None = None
         self._resources: Any | None = None
         self._prompts: Any | None = None
@@ -313,7 +328,10 @@ class LocalMCPRuntimeDelegate:
                         name
                         for name in tool_names
                         if name not in self._UNAVAILABLE_DIRECT_TOOLS
-                        and hasattr(self, f"_tool_{name}")
+                        and (
+                            name in LIBRARY_TOOL_DESCRIPTORS
+                            or hasattr(self, f"_tool_{name}")
+                        )
                     ],
                     "unavailable": [
                         name
@@ -324,6 +342,7 @@ class LocalMCPRuntimeDelegate:
                         name
                         for name in tool_names
                         if name not in self._UNAVAILABLE_DIRECT_TOOLS
+                        and name not in LIBRARY_TOOL_DESCRIPTORS
                         and not hasattr(self, f"_tool_{name}")
                     ],
                 },
@@ -380,6 +399,15 @@ class LocalMCPRuntimeDelegate:
     ) -> Any:
         normalized_name = str(tool_name or "").strip()
         payload = dict(arguments or {})
+        if normalized_name in LIBRARY_TOOL_DESCRIPTORS:
+            # task-1337 (plan Task 9): descriptor-backed Library tools dispatch
+            # to the shared synchronous service, always off the event loop,
+            # and the service payload returns unchanged (structured errors
+            # included -- they are data, not exceptions).
+            service = self._get_library_service()
+            return await asyncio.to_thread(
+                service.invoke, normalized_name, payload
+            )
         handler = getattr(self, f"_tool_{normalized_name}", None)
         if handler is None:
             raise KeyError(f"Unsupported local MCP tool: {normalized_name}")
@@ -618,15 +646,6 @@ class LocalMCPRuntimeDelegate:
             format=str(arguments.get("format") or "markdown"),
         )
 
-    async def _tool_ingest_media(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if not arguments.get("url") and not arguments.get("file_path"):
-            return {"error": "Either url or file_path must be provided"}
-        return {
-            "status": "queued",
-            "media_id": "placeholder_id",
-            "message": "Media ingestion queued",
-        }
-
     def _require_chachanotes_db(self):
         db = get_chachanotes_db_lazy()
         if db is None:
@@ -689,6 +708,23 @@ class LocalMCPRuntimeDelegate:
                 self._require_chachanotes_db(), self._require_media_db()
             )
         return self._tools
+
+    def _get_library_service(self):
+        """Lazily compose the shared Library tool service (built once, cached).
+
+        Uses the server module's single service construction site
+        (``server.build_local_library_tool_service``) so direct Library
+        execution and standalone-server backend wiring cannot drift.
+        """
+        if self._library_service is None:
+            from .server import build_local_library_tool_service
+
+            self._library_service = build_local_library_tool_service(
+                chachanotes_db=self._require_chachanotes_db(),
+                media_db=self._require_media_db(),
+                policy_enforcer=self._policy_enforcer,
+            )
+        return self._library_service
 
     def _get_resources(self):
         if self._resources is None:

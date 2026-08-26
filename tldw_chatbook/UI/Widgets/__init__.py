@@ -11,16 +11,6 @@ Reusable widget components for the application.
 from .SmartContentTree import SmartContentTree, ContentNodeData, ContentSelectionChanged
 from .config_search_widget import ConfigSearchResult, UIElementSearchEngine
 
-# Optional imports
-try:
-    from .MindmapViewer import MindmapViewer, MindmapNodeSelected
-
-    MINDMAP_AVAILABLE = True
-except ImportError:
-    MINDMAP_AVAILABLE = False
-    MindmapViewer = None
-    MindmapNodeSelected = None
-
 __all__ = [
     "SmartContentTree",
     "ContentNodeData",
@@ -28,6 +18,3 @@ __all__ = [
     "ConfigSearchResult",
     "UIElementSearchEngine",
 ]
-
-if MINDMAP_AVAILABLE:
-    __all__.extend(["MindmapViewer", "MindmapNodeSelected"])

@@ -27,6 +27,16 @@ Nine tools, named with the `fs_`/`web_`/`todo_` domain-prefix convention establi
 | `web_search` | migrate `WebSearchTool` | Delegates to `Web_Scraping/WebSearch_APIs.perform_websearch` (sync); wrapper supplies config defaults for its 15-arg dispatcher |
 | `todo_write` | new | Session-scoped todo list (content/status/activeForm, claude-code `TodoWrite` semantics); session-lifetime, in-memory only |
 
+> **Superseded for Console session tasks (TASK-13216, 2026-08-11).** This
+> document preserves the historical `todo_write` design. The governing
+> replacement is
+> `Docs/superpowers/specs/2026-08-11-local-todo-task-api-design.md`: a supplied
+> Console session store registers `todo_create`, `todo_update`, `todo_get`, and
+> `todo_list`; stable session-local IDs and exact expected-version CAS protect
+> atomic mutations, while pure task records and the next-ID high-water mark
+> remain process-memory-only across in-process navigation. Unrelated file, web,
+> and permission decisions in this historical design remain unchanged.
+
 ## 3. Architecture
 
 ### 3.1 Components

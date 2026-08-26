@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import sys
+import time
+import wave
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,14 +15,20 @@ from uuid import UUID, uuid4
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.css.query import QueryError
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static, TextArea
+from textual.worker import WorkerFailed
 
+from Tests.UI.background_signals import wait_for_background_signal
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
     ProfileRepositoryError,
     ProfileServiceError,
     STTSGeneratedAudio,
+    TTSCloneRecipeRequirement,
+    TTSCloneReferenceSummary,
     TTSGenerationProfile,
     TTSPlaygroundSelectionPreset,
     TTSProfileAvailability,
@@ -27,7 +36,12 @@ from tldw_chatbook.TTS import (
     TTSProfileDraft,
     TTSProfilePageSnapshot,
     TTSRequestedSelectionSnapshot,
+    TTSVoiceBundleHandle,
+    TTSVoiceBundleImportChoice,
+    TTSVoiceBundleImportResult,
+    TTSVoiceBundleReview,
 )
+from tldw_chatbook.TTS.profile_service import TTSProfileDependencyProjection
 from tldw_chatbook.TTS.profile_portability import (
     PortableTTSProfile,
     portable_profile_payload,
@@ -35,16 +49,67 @@ from tldw_chatbook.TTS.profile_portability import (
 from tldw_chatbook.UI import STTS_Window as stts_window_module
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.speech_settings_mixin import SpeechSettingsMixin
+from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_STORE_UNAVAILABLE_COPY,
     STTSProfileLibrary,
+    TTSProfileExportChoiceModal,
+    TTSVoiceBundleConsentModal,
+    VoiceBundleActionProjection,
+    voice_bundle_export_actions,
+    voice_bundle_import_choice,
+    voice_bundle_review_action,
 )
-from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
-from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
+from tldw_chatbook.UI.tts_profile_recovery import dependency_recovery_actions
 from tldw_chatbook.UI.STTS_Window import (
     AudioBookGenerationWidget,
     STTSWindow,
 )
+
+
+def test_audiobook_narrator_separator_preserves_voice_and_blend_ids() -> None:
+    class _NarratorSelect:
+        id = "narrator-voice-select"
+        _options = [
+            ("Bella (US Female)", "af_bella"),
+            ("──── Voice Blends ────", "_separator"),
+            ("Duet", "blend:duet"),
+        ]
+
+        def __init__(self, value: object) -> None:
+            self.value = value
+
+    widget = AudioBookGenerationWidget()
+    narrator = _NarratorSelect("af_bella")
+
+    AudioBookGenerationWidget.on_audiobook_selects_changed(
+        widget,
+        SimpleNamespace(select=narrator, value="af_bella"),
+    )
+    narrator.value = "_separator"
+    AudioBookGenerationWidget.on_audiobook_selects_changed(
+        widget,
+        SimpleNamespace(select=narrator, value="_separator"),
+    )
+    assert narrator.value == "af_bella"
+    assert narrator.value != "Bella (US Female)"
+
+    narrator.value = "blend:duet"
+    AudioBookGenerationWidget.on_audiobook_selects_changed(
+        widget,
+        SimpleNamespace(select=narrator, value="blend:duet"),
+    )
+    assert narrator.value == "blend:duet"
+
+    fresh_widget = AudioBookGenerationWidget()
+    fresh_narrator = _NarratorSelect("_separator")
+    AudioBookGenerationWidget.on_audiobook_selects_changed(
+        fresh_widget,
+        SimpleNamespace(select=fresh_narrator, value="_separator"),
+    )
+    assert fresh_narrator.value in {Select.BLANK, None}
 
 
 def _profile(index: int) -> TTSGenerationProfile:
@@ -64,6 +129,82 @@ def _profile(index: int) -> TTSGenerationProfile:
         created_at=timestamp,
         updated_at=timestamp,
     )
+
+
+def test_profile_test_context_consume_is_atomic_and_idempotent() -> None:
+    profile_library_module._PROFILE_TEST_CONTEXTS.clear()
+    service = _ControlledProfileService()
+    loaded = LoadedTTSProfile(repository_generation=3, profile=_profile(0))
+    registration = profile_library_module._remember_profile_test_context(
+        service,
+        loaded,
+        TTSPlaygroundSelectionPreset(
+            provider_id=loaded.profile.provider_id,
+            model_id=loaded.profile.model_id,
+            voice_id=loaded.profile.voice_id,
+            response_format=loaded.profile.response_format,
+            speed=loaded.profile.speed,
+            options=loaded.profile.options,
+            availability="unverified",
+        ),
+    )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        consumed = list(
+            executor.map(
+                lambda _index: profile_library_module._consume_profile_test_context(
+                    registration.context_token,
+                    registration.preset,
+                ),
+                range(2),
+            )
+        )
+
+    assert sum(context is not None for context in consumed) == 1
+    assert profile_library_module._profile_test_context_count() == 0
+
+
+def test_stale_profile_test_token_cannot_consume_newer_same_profile_context() -> None:
+    profile_library_module._PROFILE_TEST_CONTEXTS.clear()
+    service = _ControlledProfileService()
+    loaded = LoadedTTSProfile(repository_generation=3, profile=_profile(0))
+    preset = TTSPlaygroundSelectionPreset(
+        provider_id=loaded.profile.provider_id,
+        model_id=loaded.profile.model_id,
+        voice_id=loaded.profile.voice_id,
+        response_format=loaded.profile.response_format,
+        speed=loaded.profile.speed,
+        options=loaded.profile.options,
+        availability="unverified",
+    )
+    stale = profile_library_module._remember_profile_test_context(
+        service,
+        loaded,
+        preset,
+    )
+    current = profile_library_module._remember_profile_test_context(
+        service,
+        loaded,
+        preset,
+    )
+
+    assert profile_library_module._retire_profile_test_context(stale.context_token)
+    assert (
+        profile_library_module._resolve_profile_test_context(
+            current.context_token,
+            current.preset,
+        )
+        is not None
+    )
+    assert not profile_library_module._retire_profile_test_context(stale.context_token)
+    assert (
+        profile_library_module._consume_profile_test_context(
+            current.context_token,
+            current.preset,
+        )
+        is not None
+    )
+    assert profile_library_module._profile_test_context_count() == 0
 
 
 class _ControlledProfileService:
@@ -250,10 +391,12 @@ class _ActionProfileService:
         *,
         availability_state: str = "available",
         availability_recovery: str | None = None,
+        dependency: TTSProfileDependencyProjection | None = None,
     ) -> None:
         self.page = _page(profile, generation=11)
         self.availability_state = availability_state
         self.availability_recovery = availability_recovery
+        self.dependency = dependency
         self.list_calls: list[tuple[str | None, int]] = []
         self.availability_calls: list[TTSProfilePageSnapshot] = []
         self.create_calls: list[tuple[str, STTSGeneratedAudio]] = []
@@ -263,6 +406,9 @@ class _ActionProfileService:
         self.delete_calls: list[LoadedTTSProfile] = []
         self.preview_preset_calls: list[
             tuple[LoadedTTSProfile, TTSProfileAvailability]
+        ] = []
+        self.sample_evidence_calls: list[
+            tuple[LoadedTTSProfile, STTSGeneratedAudio]
         ] = []
         self.assignment_total = 0
         self.create_error: BaseException | None = None
@@ -300,6 +446,7 @@ class _ActionProfileService:
             page,
             state=self.availability_state,
             recovery_action=self.availability_recovery,
+            dependency=self.dependency,
         )
 
     async def create_from_artifact(
@@ -358,6 +505,27 @@ class _ActionProfileService:
             availability=availability.state,
         )
 
+    def record_sample_evidence(
+        self,
+        loaded: LoadedTTSProfile,
+        artifact: STTSGeneratedAudio,
+    ) -> None:
+        self.sample_evidence_calls.append((loaded, artifact))
+        selection = artifact.requested_selection
+        profile = loaded.profile
+        if (
+            type(selection) is TTSRequestedSelectionSnapshot
+            and artifact.path.is_file()
+            and selection.provider_id == profile.provider_id
+            and selection.model_id == profile.model_id
+            and selection.voice_id == profile.voice_id
+            and selection.response_format == profile.response_format
+            and selection.speed == profile.speed
+            and dict(selection.options) == dict(profile.options)
+        ):
+            self.availability_state = "available"
+            self.availability_recovery = "none"
+
 
 class _PendingAvailabilityActionProfileService(_ActionProfileService):
     def __init__(self, profile: TTSGenerationProfile) -> None:
@@ -378,9 +546,15 @@ class _ActionHost(_STTSHost):
     def __init__(self, service: object | None) -> None:
         super().__init__(service)
         self.preview_messages: list[object] = []
+        self.nav_routes: list[str] = []
+        self.nav_contexts: list[dict[str, object]] = []
 
     def on_profile_preview_requested(self, message: object) -> None:
         self.preview_messages.append(message)
+
+    def on_navigate_to_screen(self, message: object) -> None:
+        self.nav_routes.append(str(getattr(message, "screen_name", "")))
+        self.nav_contexts.append(dict(getattr(message, "screen_context", {}) or {}))
 
 
 def _page(
@@ -403,6 +577,7 @@ def _availability(
     configuration_revision: int = 1,
     catalog_revision: int | None = 1,
     recovery_action: str | None = None,
+    dependency: TTSProfileDependencyProjection | None = None,
 ) -> TTSProfileAvailabilitySnapshot:
     recovery = (
         recovery_action
@@ -421,14 +596,168 @@ def _availability(
                 profile_id=profile.profile_id,
                 state=state,  # type: ignore[arg-type]
                 recovery_action=recovery,  # type: ignore[arg-type]
+                dependency=dependency or TTSProfileDependencyProjection(),
             )
             for profile in page.profiles
         ),
     )
 
 
+@pytest.mark.parametrize(
+    ("dependency", "expected"),
+    (
+        (
+            TTSProfileDependencyProjection(
+                reason="recipe_missing",
+                display="Needs compatible model",
+                action="open_audio_cpp_settings",
+            ),
+            ("open_audio_cpp_settings",),
+        ),
+        (
+            TTSProfileDependencyProjection(
+                reason="recipe_pending_apply",
+                display="Compatible model saved; apply settings",
+                action="open_speech_lab_apply",
+            ),
+            ("open_speech_lab_apply",),
+        ),
+        (
+            TTSProfileDependencyProjection(
+                advisory="recipe_provenance_unavailable",
+                advisory_display="Recipe provenance unavailable",
+                advisory_action="generate_new_profile",
+            ),
+            ("generate_new_profile",),
+        ),
+        (
+            TTSProfileDependencyProjection(
+                reason="recipe_mismatch",
+                display="Needs compatible model",
+                action="open_audio_cpp_settings",
+                advisory="recipe_provenance_unavailable",
+                advisory_display="Recipe provenance unavailable",
+                advisory_action="generate_new_profile",
+            ),
+            ("open_audio_cpp_settings", "generate_new_profile"),
+        ),
+    ),
+)
+def test_dependency_recovery_projection_preserves_blocker_then_advisory_truth(
+    dependency: TTSProfileDependencyProjection,
+    expected: tuple[str, ...],
+) -> None:
+    actions = dependency_recovery_actions(dependency)
+
+    assert tuple(action.operation for action in actions) == expected
+    assert all(action.label and action.tooltip for action in actions)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((80, 24), (100, 30)))
+@pytest.mark.parametrize(
+    ("dependency", "button_id", "expected_route", "expects_preview"),
+    (
+        (
+            TTSProfileDependencyProjection(
+                reason="recipe_missing",
+                display="Needs compatible model",
+                action="open_audio_cpp_settings",
+            ),
+            "stts-profile-dependency-primary-btn",
+            "settings",
+            False,
+        ),
+        (
+            TTSProfileDependencyProjection(
+                reason="recipe_pending_apply",
+                display="Compatible model saved; apply settings",
+                action="open_speech_lab_apply",
+            ),
+            "stts-profile-dependency-primary-btn",
+            "",
+            True,
+        ),
+        (
+            TTSProfileDependencyProjection(
+                advisory="recipe_provenance_unavailable",
+                advisory_display="Recipe provenance unavailable",
+                advisory_action="generate_new_profile",
+            ),
+            "stts-profile-dependency-advisory-btn",
+            "",
+            True,
+        ),
+    ),
+)
+async def test_profile_library_routes_projected_dependency_recovery_exactly(
+    size: tuple[int, int],
+    dependency: TTSProfileDependencyProjection,
+    button_id: str,
+    expected_route: str,
+    expects_preview: bool,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile, dependency=dependency)
+    app = _ActionHost(service)
+
+    async with app.run_test(size=size) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+        actions = dependency_recovery_actions(dependency)
+        projected = actions[-1] if "advisory" in button_id else actions[0]
+        button = app.query_one(f"#{button_id}", Button)
+        assert str(button.label) == projected.label
+        assert button.tooltip == projected.tooltip
+        assert button.region.width > 0
+        assert button.region.height == 1
+        button.press()
+        await pilot.pause()
+
+        assert bool(app.preview_messages) is expects_preview
+        assert app.nav_routes == ([expected_route] if expected_route else [])
+        if expected_route == "settings":
+            assert app.nav_contexts[-1]["category"] == "speech-tts"
+        assert library._selected_profile is not None
+
+
 def _table_cell(table: DataTable[Any], row: int, column: int) -> str:
     return str(table.get_row_at(row)[column])
+
+
+def _playable_profile_artifact(
+    tmp_path: Path,
+    profile: TTSGenerationProfile,
+    *,
+    model_id: str | None = None,
+    operation_id: str = "profile-test-operation",
+) -> STTSGeneratedAudio:
+    path = tmp_path / f"{operation_id}.wav"
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16_000)
+        output.writeframes(b"\x00\x00" * 160)
+    requested_model = profile.model_id if model_id is None else model_id
+    selection = TTSRequestedSelectionSnapshot(
+        provider_id=profile.provider_id,
+        model_id=requested_model,
+        voice_id=profile.voice_id,
+        response_format=profile.response_format,
+        speed=profile.speed,
+        options=profile.options,
+        configuration_revision=1,
+    )
+    return STTSGeneratedAudio(
+        path=path,
+        provider_id=profile.provider_id,
+        model_id=requested_model,
+        voice_id=profile.voice_id,
+        source_text="Profile verification sample",
+        operation_id=operation_id,
+        audio_format=profile.response_format,
+        content_type="audio/wav",
+        requested_selection=selection,
+    )
 
 
 def _visible_content_rows(widget: Widget) -> tuple[str, ...]:
@@ -440,6 +769,122 @@ def _visible_content_rows(widget: Widget) -> tuple[str, ...]:
         ].strip()
         for y in range(region.y, region.y + region.height)
     )
+
+
+def _relative_luminance(color: Any) -> float:
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        component = value / 255
+        return (
+            component / 12.92
+            if component <= 0.04045
+            else ((component + 0.055) / 1.055) ** 2.4
+        )
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _painted_contrast(first: Any, second: Any) -> float:
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_style_of_text(app: App[Any], region: Any, needle: str) -> Any:
+    strips = list(app.screen._compositor.render_strips())
+    for y in range(region.y, region.y + region.height):
+        if y >= len(strips):
+            break
+        segments = list(strips[y]._segments)
+        row_text = "".join(segment.text for segment in segments)
+        index = row_text.find(needle)
+        if index < 0:
+            continue
+        x = 0
+        for segment in segments:
+            if x + len(segment.text) > index:
+                return segment.style
+            x += len(segment.text)
+    return None
+
+
+_BUNDLED_CSS = str(
+    Path(profile_library_module.__file__).parent.parent
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
+
+
+class _DisabledImportContrastHost(App[None]):
+    CSS_PATH = _BUNDLED_CSS
+
+    def compose(self) -> ComposeResult:
+        async def no_service() -> None:
+            return None
+
+        yield STTSProfileLibrary(
+            no_service,
+            voice_bundle_service_loader=no_service,
+            bundle_platform_supported=False,
+        )
+
+
+class _DisabledPortabilityContrastHost(App[None]):
+    CSS_PATH = _BUNDLED_CSS
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="stts-portability-dialog"):
+            with Horizontal(classes="stts-portability-actions"):
+                yield Button(
+                    "Export portable voice bundle",
+                    id="stts-export-choice-bundle",
+                    disabled=True,
+                )
+
+
+@pytest.mark.parametrize(
+    "theme",
+    ("textual-dark", "textual-light", "tokyo-night", "monokai", "dracula"),
+)
+@pytest.mark.parametrize(
+    ("host_type", "selector", "needle"),
+    (
+        (
+            _DisabledImportContrastHost,
+            "#stts-profile-import-btn",
+            "Import bundle",
+        ),
+        (
+            _DisabledPortabilityContrastHost,
+            "#stts-export-choice-bundle",
+            "Export portable voice bundle",
+        ),
+    ),
+)
+async def test_portability_disabled_actions_paint_at_three_to_one_across_themes(
+    theme: str,
+    host_type: type[App[None]],
+    selector: str,
+    needle: str,
+) -> None:
+    app = host_type()
+    app.theme = theme
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        button = app.query_one(selector, Button)
+        assert button.disabled is True
+        assert button.styles.opacity == 1.0
+        painted = _painted_style_of_text(app, button.region, needle)
+        assert painted is not None
+        assert painted.color is not None and painted.bgcolor is not None
+        ratio = _painted_contrast(painted.color, painted.bgcolor)
+        assert ratio >= 3.0, f"{selector} is {ratio:.2f}:1 under {theme}"
 
 
 def _status_copy(app: App[Any]) -> str:
@@ -484,6 +929,23 @@ async def _open_stts_view(
     await pilot.pause()
 
 
+def _profile_table_row_count(app: App[Any]) -> int | None:
+    """The profiles table's row count, or None while the view swap is mid-flight.
+
+    `STTSWindow.watch_current_view` replaces the body in a `speech-view-mount`
+    worker, so right after `current_view` is assigned the table may not exist
+    yet. Its existence is therefore part of the condition being settled on,
+    not a precondition: an unguarded `query_one` inside the predicate raised
+    `NoMatches` straight out of `_wait_until`'s first poll whenever the mount
+    worker had not run yet -- reproduced 13/13 under CPU load (task-19047).
+    """
+    try:
+        table = app.query_one("#stts-profile-table", DataTable)
+    except QueryError:
+        return None
+    return table.row_count
+
+
 async def _select_action_profile(
     app: _ActionHost,
     pilot: Any,
@@ -491,15 +953,13 @@ async def _select_action_profile(
     await _open_stts_view(app, pilot, "profiles")
     await _wait_until(
         pilot,
-        lambda: app.query_one("#stts-profile-table", DataTable).row_count == 1,
+        lambda: _profile_table_row_count(app) == 1,
     )
     table = app.query_one("#stts-profile-table", DataTable)
     table.move_cursor(row=0)
     table.action_select_cursor()
-    await pilot.pause()
     library = app.query_one(STTSProfileLibrary)
-    selected = library._selected_profile
-    assert selected is not None
+    selected = await _wait_selected(app, pilot)
     return library, selected
 
 
@@ -507,13 +967,118 @@ async def _wait_until(
     pilot: Any,
     predicate: Any,
     *,
-    attempts: int = 100,
+    timeout: float = 15.0,
 ) -> None:
-    for _ in range(attempts):
+    """Poll a condition, bounded by wall clock, never by attempt count.
+
+    `pilot.pause(delay)` is a bare `asyncio.sleep`, and `pilot.pause()`'s
+    `wait_for_idle` is a CPU-idleness heuristic: under external machine load
+    a starved process looks idle while its message queue is still full, so a
+    fixed attempt budget (the old `attempts=100`, ~1s nominal) exhausted on
+    loaded machines (task-16842). A monotonic deadline keeps the settle
+    measured -- the loop still exits on the first true predicate.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
         if predicate():
             return
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"condition did not become true within {timeout:.1f}s")
         await pilot.pause(0.01)
-    raise AssertionError("condition did not become true")
+
+
+async def _wait_selected(app: App[Any], pilot: Any) -> LoadedTTSProfile:
+    """Settle on the row selection actually landing.
+
+    `DataTable.action_select_cursor()` posts `RowSelected`; the library's
+    handler (which sets `_selected_profile` and arms the action buttons) runs
+    only when the pump processes it. A single `pilot.pause()` is a CPU-idle
+    heuristic, not a queue drain, so reading `_selected_profile` -- or
+    pressing an action `Button`, which silently swallows `press()` while
+    still disabled -- right after the pause races under load (task-16842).
+    """
+    library = app.query_one(STTSProfileLibrary)
+    await _wait_until(pilot, lambda: library._selected_profile is not None)
+    selected = library._selected_profile
+    assert selected is not None
+    return selected
+
+
+async def _wait_focused(app: App[Any], pilot: Any, widget_id: str) -> None:
+    """Settle on the focus state itself, never on a mounted-state proxy.
+
+    `Widget.focus()` does not focus synchronously: it schedules
+    `screen.set_focus` via `app.call_later`, one pump callback AFTER the
+    widget became queryable. Waiting for a modal's button to be mounted and
+    then asserting `app.focused` therefore races -- mounted is not focused
+    yet, and under load `app.focused` stays None for several 10ms polls
+    (task-16842: the family's standalone reproducer). Not a product race:
+    the callback is FIFO-ordered before any user input that arrives after
+    the modal is visible.
+    """
+    await _wait_until(
+        pilot,
+        lambda: app.focused is not None and app.focused.id == widget_id,
+    )
+
+
+async def _acknowledge_bundle_warning(app: App[Any], pilot: Any) -> None:
+    """Toggle the consent checkbox, then press Continue only once it arms.
+
+    `Checkbox.toggle()` posts `Changed`; the handler that enables Continue
+    runs when the pump drains that message. `Button.press()` is a one-shot
+    that returns early while the button is still disabled, so a press after
+    a heuristic pause is silently swallowed under load and never retried
+    (task-16842).
+    """
+    app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
+    continue_button = app.screen.query_one("#bundle-warning-continue", Button)
+    await _wait_until(pilot, lambda: not continue_button.disabled)
+    continue_button.press()
+
+
+async def _wait_availability_projected(app: App[Any], pilot: Any) -> None:
+    """Settle on the availability projection landing for the selected row.
+
+    Availability arrives via an async observe->apply flow after rows render;
+    until it lands the preview action reads "Checking" and the status copy
+    is not yet the availability-derived text. Selection settling alone does
+    not settle this (task-16842). Not for tests that deliberately hold the
+    availability future pending.
+    """
+    preview = app.query_one("#stts-profile-preview-btn", Button)
+    await _wait_until(pilot, lambda: str(preview.label) != "Checking")
+
+
+def _stts_content_first_child(app: App[Any]) -> Widget | None:
+    """The first mounted child of the STTS body, or None mid-swap.
+
+    `STTSWindow._mount_view_unlocked` awaits `remove_children()` and then
+    `mount(...)`, so the body container is observably EMPTY between the two
+    awaits. Indexing `children[0]` inside a `_wait_until` predicate raised
+    IndexError out of the poll whenever it landed in that window --
+    reproduced 3x under 20-burner CPU load (task-19047). The container's
+    emptiness is part of the condition being settled on, not a precondition.
+    """
+    try:
+        children = app.query_one(".stts-content").children
+    except QueryError:
+        return None
+    return children[0] if children else None
+
+
+def _playground_is_mounted(app: App[Any]) -> bool:
+    """Return whether the async view replacement mounted strict descendants."""
+    try:
+        window = app.query_one(STTSWindow)
+        playground = app.query_one(SpeechPlaygroundPane)
+        playground.query_one("#tts-provider-select", Select).query_one("SelectOverlay")
+    except QueryError:
+        return False
+    return (
+        window.current_view == "playground"
+        and window._pending_playground_preset is None
+    )
 
 
 @pytest.mark.asyncio
@@ -538,9 +1103,17 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
 
     async with app.run_test(size=(150, 55)) as pilot:
         await pilot.pause()
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            SpeechPlaygroundPane,
+        # Settle, don't sample: `watch_current_view` swaps the body in a
+        # worker, so `.children[0]` one-shots here sit in 19047's
+        # raising-predicate/empty-window class (task-19196). The playground
+        # settles fold in the generate button's existence so the plain
+        # asserts below read settled structure, not a mid-mount pane.
+        await _wait_until(
+            pilot,
+            lambda: (
+                isinstance(_stts_content_first_child(app), SpeechPlaygroundPane)
+                and bool(app.query("#tts-generate-btn"))
+            ),
         )
         assert app.query_one("#tts-generate-btn", Button)
 
@@ -549,29 +1122,169 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
         assert app.query_one(STTSProfileLibrary)
 
         await _open_stts_view(app, pilot, "settings")
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            SpeechSettingsPane,
+        await _wait_until(
+            pilot,
+            lambda: isinstance(_stts_content_first_child(app), SpeechSettingsPane),
         )
 
         await _open_stts_view(app, pilot, "audiobook")
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            AudioBookGenerationWidget,
+        await _wait_until(
+            pilot,
+            lambda: isinstance(
+                _stts_content_first_child(app), AudioBookGenerationWidget
+            ),
         )
 
         await _open_stts_view(app, pilot, "dictation")
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            ImprovedDictationWindow,
+        await _wait_until(
+            pilot,
+            lambda: isinstance(_stts_content_first_child(app), ImprovedDictationWindow),
         )
 
         await _open_stts_view(app, pilot, "playground")
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            SpeechPlaygroundPane,
+        await _wait_until(
+            pilot,
+            lambda: (
+                isinstance(_stts_content_first_child(app), SpeechPlaygroundPane)
+                and bool(app.query("#tts-generate-btn"))
+            ),
         )
         assert app.query_one("#tts-generate-btn", Button)
+
+
+@pytest.mark.asyncio
+async def test_audiobook_kokoro_blend_group_is_not_a_keyboard_select_option(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _OptionalAudioBookWidget(Widget):
+        pass
+
+    class _AudioBookHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield AudioBookGenerationWidget()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "tldw_chatbook.Widgets.TTS.chapter_editor_widget",
+        SimpleNamespace(ChapterEditorWidget=_OptionalAudioBookWidget),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "tldw_chatbook.Widgets.TTS.character_voice_widget",
+        SimpleNamespace(CharacterVoiceWidget=_OptionalAudioBookWidget),
+    )
+    blend_file = tmp_path / "voice-blends.json"
+    blend_file.write_text(
+        json.dumps({"duet": {"description": "Two voices"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(stts_window_module, "kokoro_ui_blend_file", lambda: blend_file)
+    app = _AudioBookHost()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        widget = app.query_one(AudioBookGenerationWidget)
+        # Let `_initialize_audiobook_defaults` (armed via `set_timer(0.1, ...)`
+        # on mount) settle first -- since task-15772 fixed the
+        # audiobook-provider-select tuple order, this now actually succeeds
+        # and cascades into `_update_voice_options("openai")`. Without
+        # waiting for it, that cascade could otherwise land *after* the
+        # kokoro setup below (depending on how much the subsequent
+        # `pilot.press` calls advance the clock) and wipe out this test's
+        # kokoro voice options -- exactly the race a real user would never
+        # hit, since they can't interact with the widget before it finishes
+        # mounting.
+        #
+        # Poll on the actual condition rather than a fixed sleep: a fixed
+        # `pilot.pause(0.15)` races a *real* wall-clock 0.1s timer plus a
+        # message-pump round trip plus a reactive-watcher cascade against a
+        # hardcoded 0.05s margin -- comfortable under normal load, but a
+        # genuine flake risk under a contended runner (task-15772 review
+        # round 2). Bounded poll instead, so this settles as soon as it
+        # actually does and fails loudly (not silently, late) if it never
+        # does.
+        provider_select = app.query_one("#audiobook-provider-select", Select)
+        await _wait_until(pilot, lambda: provider_select.value == "openai")
+        # The value flip happens inside the timer callback itself, but the
+        # narrator-options rewrite rides the Select.Changed MESSAGE that the
+        # assignment posts -- still queued when the poll above returns. The
+        # openai option list is identical to the compose-time one, so the
+        # narrator select cannot witness that cascade landing; the sibling
+        # @on(Select.Changed) handler writing `provider` onto the (faked)
+        # character-voice widget runs in the same dispatch step and can.
+        # Without this settle, the queued rewrite landed AFTER the kokoro
+        # switch below and silently restored the openai options -- reproduced
+        # under 14-burner CPU load: the keyboard path then landed on
+        # 'shimmer', the LAST OPENAI option (task-19047).
+        voice_widget = app.query_one("#character-voice-widget")
+        await _wait_until(
+            pilot,
+            lambda: getattr(voice_widget, "provider", None) == "openai",
+        )
+
+        widget._update_voice_options("kokoro")
+        narrator = app.query_one("#narrator-voice-select", Select)
+        option_values = tuple(value for _label, value in narrator._options)
+        assert "_separator" not in option_values
+        assert "blend:duet" in option_values
+        grouping = app.query_one("#audiobook-voice-blends-label", Static)
+        assert grouping.display
+        assert str(grouping.render()) == "Voice Blends"
+
+        narrator.focus()
+        await pilot.press("enter")
+        await pilot.press("end")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert narrator.value == "blend:duet"
+        assert narrator.value != "_separator"
+
+
+@pytest.mark.asyncio
+async def test_legacy_default_voice_select_has_no_keyboard_separator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _DefaultVoiceWidget(SpeechSettingsMixin, Widget):
+        def __init__(self) -> None:
+            super().__init__()
+            self.init_settings_state()
+
+        def compose(self) -> ComposeResult:
+            yield Select(
+                [("Alloy", "alloy")],
+                id="default-voice-select",
+                allow_blank=False,
+            )
+
+    class _DefaultVoiceHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield _DefaultVoiceWidget()
+
+    blend_file = tmp_path / "voice-blends.json"
+    blend_file.write_text(
+        json.dumps({"duet": {"description": "Two voices"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_settings_mixin.kokoro_ui_blend_file",
+        lambda: blend_file,
+    )
+    app = _DefaultVoiceHost()
+
+    async with app.run_test() as pilot:
+        widget = app.query_one(_DefaultVoiceWidget)
+        widget._update_default_voice_options("kokoro")
+        voice = app.query_one("#default-voice-select", Select)
+        option_values = tuple(value for _label, value in voice._options)
+        assert "_separator" not in option_values
+        assert "blend:duet" in option_values
+
+        voice.focus()
+        await pilot.press("enter")
+        await pilot.press("end")
+        await pilot.press("enter")
+        assert voice.value == "blend:duet"
 
 
 @pytest.mark.asyncio
@@ -699,15 +1412,15 @@ async def test_repository_page_renders_before_availability_and_selection_arms_ac
 
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
+        await _wait_selected(app, pilot)
 
         for selector in (
-            "#stts-profile-preview-btn",
             "#stts-profile-edit-btn",
             "#stts-profile-duplicate-btn",
             "#stts-profile-delete-btn",
         ):
             assert not app.query_one(selector, Button).disabled
+        assert app.query_one("#stts-profile-preview-btn", Button).disabled
 
         assert table.row_count <= 50
         service.availability_future.set_result(
@@ -767,7 +1480,7 @@ async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24(
     ("availability_state", "expected_recovery"),
     [
         ("unavailable", "Unavailable — Refresh, then Edit."),
-        ("unverified", "Unverified — Refresh and retry."),
+        ("unverified", "Needs test — Open in Playground."),
     ],
 )
 @pytest.mark.asyncio
@@ -793,12 +1506,8 @@ async def test_profile_recovery_copy_is_visible_at_80x24(
 
 
 @pytest.mark.asyncio
-async def test_unverified_legacy_profile_never_offers_a_refresh_it_cannot_perform() -> (
-    None
-):
-    """Legacy providers skip capability preflight, so Refresh cannot change
-    "unverified" -- ADR-031 forbids a control that claims a recovery it can
-    never perform. The row must say why instead of instructing a retry."""
+async def test_unverified_legacy_profile_offers_an_exact_playground_test() -> None:
+    """A provider without catalog authority needs sample evidence, not Ready."""
 
     legacy = replace(
         _profile(0),
@@ -816,40 +1525,39 @@ async def test_unverified_legacy_profile_never_offers_a_refresh_it_cannot_perfor
 
     async with app.run_test(size=(80, 24)) as pilot:
         await _select_action_profile(app, pilot)
+        await _wait_availability_projected(app, pilot)
         status = app.query_one("#stts-profile-status")
 
         rows = _visible_content_rows(status)
         assert rows == (
-            "No catalog check — the exact selection is used as-is.",
+            "Needs test — Open in Playground.",
             "Selected: Voice 00",
             "openai / tts-1 / alloy",
         )
         assert "refresh" not in rows[0].casefold()
-        assert "retry" not in rows[0].casefold()
         assert "unverified" not in rows[0].casefold()
+        assert app.query_one("#stts-profile-preview-btn", Button).label.plain == (
+            "Test in Playground"
+        )
 
 
 @pytest.mark.parametrize(
     ("provider_id", "state", "recovery_action", "expected_cell"),
     [
-        ("openai", "unverified", "none", "No catalog check"),
-        ("audio_cpp", "unverified", "refresh", "Unverified"),
-        ("audio_cpp", "available", "none", "Available"),
+        ("openai", "unverified", "none", "Needs test"),
+        ("audio_cpp", "unverified", "refresh", "Needs test"),
+        ("audio_cpp", "available", "none", "Verified"),
         ("audio_cpp", "unavailable", "edit", "Unavailable"),
     ],
 )
 @pytest.mark.asyncio
-async def test_availability_cell_tells_no_catalog_check_story_for_legacy_permanent_unverified(
+async def test_availability_cell_uses_the_three_truthful_profile_states(
     provider_id: str,
     state: str,
     recovery_action: str,
     expected_cell: str,
 ) -> None:
-    """The DataTable "Availability" cell must never show the raw word
-    "Unverified" for a provider whose unverified state is permanent
-    (`recovery_action == "none"`) -- it must tell the honest no-catalog-check
-    story instead. audio_cpp's transient unverified/available/unavailable
-    renderings are unchanged."""
+    """Library rows map service evidence to the user-facing status contract."""
 
     profile = replace(_profile(0), provider_id=provider_id)
     service = _ActionProfileService(
@@ -869,9 +1577,7 @@ async def test_availability_cell_tells_no_catalog_check_story_for_legacy_permane
 
 
 @pytest.mark.asyncio
-async def test_publish_page_also_renders_no_catalog_check_from_preserved_legacy_availability() -> (
-    None
-):
+async def test_publish_page_preserves_needs_test_during_same_page_refresh() -> None:
     """The availability cell is filled at two sites -- `_publish_page` (from
     preserved availability across a same-page refresh) and
     `_publish_availability` (from a fresh observation) -- and both must go
@@ -901,7 +1607,7 @@ async def test_publish_page_also_renders_no_catalog_check_from_preserved_legacy_
         )
         await pilot.pause()
         table = app.query_one("#stts-profile-table", DataTable)
-        assert _table_cell(table, 0, 3) == "No catalog check"
+        assert _table_cell(table, 0, 3) == "Needs test"
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await pilot.pause()
@@ -912,7 +1618,7 @@ async def test_publish_page_also_renders_no_catalog_check_from_preserved_legacy_
         # The second availability observation has not resolved yet -- this
         # cell can only have come from `_publish_page`'s direct render of
         # the preserved availability, not from `_publish_availability`.
-        assert _table_cell(table, 0, 3) == "No catalog check"
+        assert _table_cell(table, 0, 3) == "Needs test"
 
 
 @pytest.mark.asyncio
@@ -933,6 +1639,7 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
 
     async with app.run_test(size=(80, 24)) as pilot:
         library, _selected = await _select_action_profile(app, pilot)
+        await _wait_availability_projected(app, pilot)
         status = app.query_one("#stts-profile-status")
         visible_lines = _visible_content_rows(status)
 
@@ -967,7 +1674,7 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
         assert identifiers.text == unchanged  # type: ignore[attr-defined]
 
         library._set_status(PROFILE_STORE_UNAVAILABLE_COPY)
-        await pilot.pause()
+        await _wait_focused(app, pilot, "stts-profile-table")
         assert not identifiers.display
         assert identifiers.scroll_x == 0
         assert app.focused is table
@@ -976,7 +1683,7 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
         refresh = app.query_one("#stts-profile-refresh-btn", Button)
         refresh.focus()
         library._set_status(profile_library_module.PROFILE_ACTION_FAILED_COPY)
-        await pilot.pause()
+        await _wait_focused(app, pilot, "stts-profile-refresh-btn")
         assert app.focused is refresh
 
         for selector in (
@@ -1132,7 +1839,13 @@ async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview() -> None:
         )
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: (
+                library._selected_profile is not None
+                and library._selected_profile.repository_generation == 6
+            ),
+        )
         current_loaded = library._selected_profile
         current_disabled = tuple(
             app.query_one(selector, Button).disabled for selector in action_selectors
@@ -1230,7 +1943,7 @@ async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_
             service.availability_futures[2].set_result(_availability(latest_page))
             await _wait_until(
                 pilot,
-                lambda: _table_cell(table, 0, 3) == "Available",
+                lambda: _table_cell(table, 0, 3) == "Verified",
             )
 
             assert _table_cell(table, 0, 0) == "Voice 02"
@@ -1247,7 +1960,7 @@ async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_
             assert library._active_page_task is None
             assert library._retained_cleanup_task is None
             assert _table_cell(table, 0, 0) == "Voice 02"
-            assert _table_cell(table, 0, 3) == "Available"
+        assert _table_cell(table, 0, 3) == "Verified"
     finally:
         loop.set_exception_handler(previous_handler)
 
@@ -1330,7 +2043,7 @@ async def test_availability_revisions_cannot_regress_the_rendered_page() -> None
         )
         await pilot.pause()
         table = app.query_one("#stts-profile-table", DataTable)
-        assert _table_cell(table, 0, 3) == "Available"
+        assert _table_cell(table, 0, 3) == "Verified"
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await pilot.pause()
@@ -1346,7 +2059,7 @@ async def test_availability_revisions_cannot_regress_the_rendered_page() -> None
             )
         )
         await pilot.pause(0.05)
-        assert _table_cell(table, 0, 3) == "Available"
+        assert _table_cell(table, 0, 3) == "Verified"
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await pilot.pause()
@@ -1362,7 +2075,7 @@ async def test_availability_revisions_cannot_regress_the_rendered_page() -> None
             )
         )
         await pilot.pause(0.05)
-        assert _table_cell(table, 0, 3) == "Available"
+        assert _table_cell(table, 0, 3) == "Verified"
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await pilot.pause()
@@ -1423,27 +2136,188 @@ async def test_preview_posts_the_exact_loaded_profile_and_current_availability()
             lambda: str(selected.profile.profile_id) in library._row_availability,
         )
 
-        await pilot.click("#stts-profile-preview-btn")
-        await _wait_until(pilot, lambda: len(app.preview_messages) == 1)
-
-        message = app.preview_messages[0]
-        assert isinstance(
-            message,
-            profile_library_module.ProfilePreviewRequested,
+        app.query_one("#stts-profile-preview-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: _playground_is_mounted(app),
         )
+        preset = app.query_one(SpeechPlaygroundPane)._profile_preset
+        assert type(preset) is TTSPlaygroundSelectionPreset
         current_availability = library._row_availability[
             str(selected.profile.profile_id)
         ]
         assert service.preview_preset_calls == [(selected, current_availability)]
         assert (
-            message.preset.model_id,
-            message.preset.voice_id,
-            message.preset.availability,
+            preset.model_id,
+            preset.voice_id,
+            preset.availability,
         ) == (
             selected.profile.model_id,
             selected.profile.voice_id,
             current_availability.state,
         )
+        assert preset.profile_id == selected.profile.profile_id
+        assert preset.repository_generation == selected.repository_generation
+        assert preset.profile_revision == selected.profile.revision
+        assert "endpoint" not in repr(preset).casefold()
+        assert "credential" not in repr(preset).casefold()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_profile_disables_playground_action_with_clear_recovery() -> (
+    None
+):
+    service = _ActionProfileService(
+        _profile(0),
+        availability_state="unavailable",
+    )
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _select_action_profile(app, pilot)
+        await _wait_availability_projected(app, pilot)
+        action = app.query_one("#stts-profile-preview-btn", Button)
+
+        assert action.disabled
+        assert "Unavailable" in str(action.label)
+        assert _status_copy(app).startswith("Unavailable — Refresh, then Edit.")
+
+
+@pytest.mark.asyncio
+async def test_matching_profile_sample_records_evidence_and_enables_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(
+        profile,
+        availability_state="unverified",
+        availability_recovery="none",
+    )
+    app = _ActionHost(service)
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+
+    async with app.run_test(size=(140, 50)) as pilot:
+        await _select_action_profile(app, pilot)
+        app.query_one("#stts-profile-preview-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: _playground_is_mounted(app),
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        await _wait_until(pilot, lambda: len(pane.query("#audio-play-btn")) == 1)
+        artifact = _playable_profile_artifact(tmp_path, profile)
+        pane._generation_operation_id = artifact.operation_id
+        pane._generation_complete(artifact)
+        await _wait_until(pilot, lambda: service.availability_state == "available")
+        await _wait_until(
+            pilot,
+            lambda: not app.query_one("#audio-save-profile-btn", Button).disabled,
+        )
+
+        assert service.sample_evidence_calls == [
+            (
+                LoadedTTSProfile(repository_generation=11, profile=profile),
+                artifact,
+            )
+        ]
+        assert "Verified" in str(
+            app.query_one("#tts-profile-preview-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_different_profile_sample_cannot_enable_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(
+        profile,
+        availability_state="unverified",
+        availability_recovery="none",
+    )
+    app = _ActionHost(service)
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+
+    async with app.run_test(size=(140, 50)) as pilot:
+        await _select_action_profile(app, pilot)
+        app.query_one("#stts-profile-preview-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: _playground_is_mounted(app),
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        await _wait_until(pilot, lambda: len(pane.query("#audio-play-btn")) == 1)
+        artifact = _playable_profile_artifact(
+            tmp_path,
+            profile,
+            model_id="different/model",
+        )
+        pane._generation_operation_id = artifact.operation_id
+        pane._generation_complete(artifact)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#audio-save-profile-btn", Button).disabled
+        assert "Needs test" in str(
+            app.query_one("#tts-profile-preview-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_same_page_refresh_preserves_selected_profile_focus_and_scroll() -> None:
+    profiles = tuple(_profile(index) for index in range(50))
+    service = _ControlledProfileService(profiles)
+    service.availability_future = asyncio.get_running_loop().create_future()
+    service.availability_future.set_result(
+        TTSProfileAvailabilitySnapshot(
+            repository_generation=service.page.repository_generation,
+            configuration_revision=1,
+            catalog_revision=1,
+            profiles=tuple(
+                TTSProfileAvailability(
+                    profile_id=profile.profile_id,
+                    state="unverified",
+                    recovery_action="refresh",
+                )
+                for profile in profiles
+            ),
+        )
+    )
+    app = _STTSHost(service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _open_stts_view(app, pilot, "profiles")
+        await _wait_until(pilot, lambda: len(service.availability_calls) == 1)
+        library = app.query_one(STTSProfileLibrary)
+        table = app.query_one("#stts-profile-table", DataTable)
+        table.focus()
+        table.move_cursor(row=35)
+        table.action_select_cursor()
+        table.scroll_to(y=35, animate=False)
+        selected = await _wait_selected(app, pilot)
+        selected_id = selected.profile.profile_id
+        scroll_y = table.scroll_offset.y
+
+        app.query_one("#stts-profile-refresh-btn", Button).press()
+        await _wait_until(pilot, lambda: len(service.list_calls) == 2)
+        await _wait_until(pilot, lambda: len(service.availability_calls) == 2)
+        await pilot.pause()
+
+        assert library._selected_profile is not None
+        assert library._selected_profile.profile.profile_id == selected_id
+        assert table.cursor_row == 35
+        assert table.scroll_offset.y == scroll_y
+        assert app.focused is table
 
 
 @pytest.mark.asyncio
@@ -1483,10 +2357,10 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
             lambda: str(selected.profile.profile_id) in library._row_availability,
         )
 
-        await pilot.click("#stts-profile-preview-btn")
+        app.query_one("#stts-profile-preview-btn", Button).press()
         await _wait_until(
             pilot,
-            lambda: app.query_one(STTSWindow).current_view == "playground",
+            lambda: _playground_is_mounted(app),
         )
         first_playground = app.query_one(SpeechPlaygroundPane)
         window = app.query_one(STTSWindow)
@@ -1496,6 +2370,7 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
         assert first_playground._profile_preset.voice_id == "missing/exact-voice"
         assert window._pending_playground_preset is None
 
+        await pilot.pause(0.1)
         await _open_stts_view(app, pilot, "settings")
         await _open_stts_view(app, pilot, "playground")
         second_playground = app.query_one(SpeechPlaygroundPane)
@@ -1514,7 +2389,8 @@ async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_b
             model_id="missing/exact-model",
             voice_id="missing/exact-voice",
         ),
-        availability_state="unavailable",
+        availability_state="unverified",
+        availability_recovery="none",
     )
     app = _ActionHost(service)
 
@@ -1548,19 +2424,20 @@ async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_b
         preview.press()
         await _wait_until(
             pilot,
-            lambda: app.query_one(STTSWindow).current_view == "playground",
+            lambda: _playground_is_mounted(app),
         )
         await pilot.pause()
 
         playground = app.query_one(SpeechPlaygroundPane)
         text_input = playground.query_one("#tts-text-input", TextArea)
+        await _wait_focused(app, pilot, "tts-text-input")
         banner = playground.query_one("#tts-profile-preview-status", Static)
         copy = str(banner.render())
 
         assert app.focused is text_input
         assert banner.display is True
-        assert "unavailable" in copy.lower()
-        assert "Edit" in copy
+        assert "Needs test" in copy
+        assert "exact sample" in copy
         assert banner.region.height > 0
         assert app.screen.region.contains_region(banner.region)
 
@@ -1690,6 +2567,81 @@ async def test_save_result_blank_name_uses_name_specific_not_saved_copy() -> Non
             str(modal.query_one("#stts-profile-name-error", Static).render())
             == "Enter a profile name. The result was not saved."
         )
+
+
+@pytest.mark.asyncio
+async def test_clone_profile_review_requires_name_and_returns_explicit_post_save_choice() -> (
+    None
+):
+    """Clone review distinguishes an unassigned save from a Roleplay handoff."""
+
+    modal = profile_library_module.TTSCloneProfileSaveReviewModal()
+    results: list[object] = []
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+
+        modal.query_one("#stts-clone-profile-name", Input).value = "   "
+        await pilot.click("#stts-clone-profile-save-unassigned")
+        await pilot.pause()
+        assert results == []
+        assert "Enter a profile name" in str(
+            modal.query_one("#stts-clone-profile-error", Static).render()
+        )
+
+        modal.query_one("#stts-clone-profile-name", Input).value = "  Story voice  "
+        await pilot.click("#stts-clone-profile-save-choose-character")
+        await _wait_until(pilot, lambda: len(results) == 1)
+
+    assert results == [
+        profile_library_module.TTSCloneProfileSaveReview(
+            display_name="Story voice",
+            choose_character=True,
+        )
+    ]
+
+
+@pytest.mark.parametrize("size", ((80, 24), (100, 30), (120, 35)))
+@pytest.mark.asyncio
+async def test_clone_profile_review_actions_fit_and_are_keyboard_reachable(
+    size: tuple[int, int],
+) -> None:
+    modal = profile_library_module.TTSCloneProfileSaveReviewModal()
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=size) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        dialog = modal.query_one("#stts-clone-profile-dialog")
+        controls = (
+            modal.query_one("#stts-clone-profile-name", Input),
+            modal.query_one("#stts-clone-profile-save-unassigned", Button),
+            modal.query_one("#stts-clone-profile-save-choose-character", Button),
+            modal.query_one("#stts-clone-profile-cancel", Button),
+        )
+        for control in controls:
+            assert control.region.width > 0
+            assert dialog.region.contains_region(control.region)
+            control.focus()
+            await pilot.pause()
+            assert control.has_focus
+
+        painted = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in modal._compositor.render_strips()
+        )
+        for label in ("Save unassigned", "Save & choose character", "Cancel"):
+            assert label in painted
 
 
 @pytest.mark.asyncio
@@ -1968,10 +2920,7 @@ async def test_switching_stts_view_dismisses_owned_profile_modal_and_worker(
         await _wait_until(pilot, lambda: not isinstance(app.screen, modal_type))
         await _wait_until(
             pilot,
-            lambda: isinstance(
-                app.query_one(".stts-content").children[0],
-                SpeechSettingsPane,
-            ),
+            lambda: isinstance(_stts_content_first_child(app), SpeechSettingsPane),
         )
         await _wait_until(
             pilot,
@@ -2270,7 +3219,7 @@ async def test_edit_conflict_retains_the_exact_draft_without_leaking_values(
         table = app.query_one("#stts-profile-table", DataTable)
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
+        await _wait_selected(app, pilot)
 
         await library.edit_selected_profile()
         assert dialog_calls == 3
@@ -2554,9 +3503,7 @@ async def test_refresh_and_editor_repair_keep_unavailable_persisted_values(
         table = app.query_one("#stts-profile-table", DataTable)
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
-        refreshed = library._selected_profile
-        assert refreshed is not None
+        refreshed = await _wait_selected(app, pilot)
 
         async def _repair(screen: object) -> None:
             assert isinstance(
@@ -2710,3 +3657,993 @@ async def test_profile_export_path_failure_never_logs_sensitive_destination(
 
     assert secret not in "".join(messages)
     assert status_copy == profile_library_module.PROFILE_ACTION_FAILED_COPY
+
+
+def _safe_bundle_review(
+    *,
+    dependency_state: str = "exact",
+    allowed_choices: tuple[str, ...] = ("create", "reuse", "copy"),
+    exact_private_duplicate: bool = True,
+    uuid_conflict: bool = False,
+    name_conflict: bool = False,
+) -> TTSVoiceBundleReview:
+    handle = object.__new__(TTSVoiceBundleHandle)
+    return TTSVoiceBundleReview(
+        handle=handle,
+        profile_id=uuid4(),
+        profile_name="Imported voice",
+        provider_id="audio_cpp",
+        model_id="model/a",
+        voice_id="voice/a",
+        recipe_id="recipe/a",
+        recipe_revision=2,
+        dependency_state=dependency_state,  # type: ignore[arg-type]
+        allowed_choices=allowed_choices,  # type: ignore[arg-type]
+        copy_profile_id=uuid4() if "copy" in allowed_choices else None,
+        copy_profile_name="Imported voice copy" if "copy" in allowed_choices else None,
+        exact_private_duplicate=exact_private_duplicate,
+        uuid_conflict=uuid_conflict,
+        name_conflict=name_conflict,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("uuid_conflict", "name_conflict"),
+    ((False, False), (True, False), (False, True), (True, True)),
+)
+async def test_bundle_review_renders_explicit_safe_collision_facts(
+    uuid_conflict: bool,
+    name_conflict: bool,
+) -> None:
+    review = _safe_bundle_review(
+        uuid_conflict=uuid_conflict,
+        name_conflict=name_conflict,
+    )
+
+    class _ReviewHost(App[None]):
+        def on_mount(self) -> None:
+            self.push_screen(profile_library_module.TTSVoiceBundleReviewModal(review))
+
+    app = _ReviewHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        facts = app.screen.query_one("#stts-bundle-review-facts", TextArea).text
+
+        assert f"UUID conflict: {'yes' if uuid_conflict else 'no'}" in facts
+        assert f"Name conflict: {'yes' if name_conflict else 'no'}" in facts
+
+
+@pytest.mark.parametrize(
+    ("choice", "dependency", "consent", "disabled"),
+    (
+        ("create", "exact", False, False),
+        ("create", "exact", True, False),
+        ("create", "missing", False, True),
+        ("create", "missing", True, False),
+        ("reuse", "exact", False, False),
+        ("reuse", "exact", True, False),
+        ("reuse", "missing", False, False),
+        ("reuse", "missing", True, False),
+        ("copy", "exact", False, False),
+        ("copy", "exact", True, False),
+        ("copy", "missing", False, True),
+        ("copy", "missing", True, False),
+    ),
+)
+def test_bundle_review_action_projection_is_the_single_operation_truth(
+    choice: str,
+    dependency: str,
+    consent: bool,
+    disabled: bool,
+) -> None:
+    review = _safe_bundle_review(dependency_state=dependency)
+    action = voice_bundle_review_action(
+        review,
+        choice,  # type: ignore[arg-type]
+        inactive_consent=consent,
+    )
+
+    assert action.operation == f"import_{choice}"
+    assert action.disabled is disabled
+    assert bool(action.recovery) is disabled
+
+
+def test_bundle_review_never_reuses_a_nonexact_or_migrated_candidate() -> None:
+    review = _safe_bundle_review(
+        allowed_choices=("create", "copy"),
+        exact_private_duplicate=False,
+    )
+
+    action = voice_bundle_review_action(review, "reuse", inactive_consent=False)
+
+    assert action.operation == "import_reuse"
+    assert action.disabled is True
+    assert action.recovery == "Choose an available destination."
+
+
+@pytest.mark.asyncio
+async def test_export_choice_modal_renders_and_returns_only_supplied_projection() -> (
+    None
+):
+    sanitized = VoiceBundleActionProjection(
+        operation="sanitized_export",
+        label="Safe metadata copy",
+        tooltip="No private reference material.",
+        disabled=False,
+    )
+    bundle = VoiceBundleActionProjection(
+        operation="bundle_export",
+        label="Private material bundle",
+        tooltip="Includes plaintext private material.",
+        disabled=False,
+    )
+    results: list[VoiceBundleActionProjection | None] = []
+
+    class _ExportHost(App[None]):
+        def on_mount(self) -> None:
+            self.push_screen(
+                TTSProfileExportChoiceModal(sanitized, bundle),
+                results.append,
+            )
+
+    app = _ExportHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        safe = app.screen.query_one("#stts-export-choice-sanitized", Button)
+        private = app.screen.query_one("#stts-export-choice-bundle", Button)
+        assert (str(safe.label), safe.tooltip) == (
+            sanitized.label,
+            sanitized.tooltip,
+        )
+        assert (str(private.label), private.tooltip) == (
+            bundle.label,
+            bundle.tooltip,
+        )
+
+        safe.press()
+        await pilot.pause()
+
+        assert results == [sanitized]
+        assert results[0] is not None
+        assert results[0].operation == "sanitized_export"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dependency", ("exact", "missing", "mismatch", "pending"))
+@pytest.mark.parametrize("choice", ("create", "reuse", "copy"))
+@pytest.mark.parametrize("consent", (False, True))
+async def test_bundle_review_mounted_matrix_uses_one_projection_and_service_choice(
+    dependency: str,
+    choice: str,
+    consent: bool,
+) -> None:
+    review = _safe_bundle_review(
+        dependency_state=dependency,
+        allowed_choices=("create", "reuse", "copy"),
+        exact_private_duplicate=True,
+    )
+    results: list[profile_library_module.VoiceBundleReviewDecision | None] = []
+
+    class _ReviewHost(App[None]):
+        def on_mount(self) -> None:
+            self.push_screen(
+                profile_library_module.TTSVoiceBundleReviewModal(review),
+                results.append,
+            )
+
+    app = _ReviewHost()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        select = app.screen.query_one("#stts-bundle-review-choice", Select)
+        select.value = choice
+        await pilot.pause()
+        consent_control = app.screen.query_one(
+            "#stts-bundle-inactive-consent", Checkbox
+        )
+        consent_control.value = consent
+        await pilot.pause()
+        projected = voice_bundle_review_action(
+            review,
+            choice,  # type: ignore[arg-type]
+            inactive_consent=consent,
+        )
+        allowed = choice != "reuse" or review.exact_private_duplicate
+        needs_consent = choice in {"create", "copy"} and dependency != "exact"
+        expected_recovery = (
+            "Choose an available destination."
+            if not allowed
+            else (
+                "Acknowledge that the imported profile will remain inactive."
+                if needs_consent and not consent
+                else None
+            )
+        )
+        expected_label = {
+            "create": "Create",
+            "reuse": "Reuse",
+            "copy": "Create copy",
+        }[choice]
+        expected_tooltip = (
+            expected_recovery or "Confirm the reviewed import destination."
+        )
+        confirm = app.screen.query_one("#stts-bundle-review-confirm", Button)
+        recovery = app.screen.query_one("#stts-bundle-review-recovery", Static)
+        assert (str(confirm.label), confirm.tooltip, confirm.disabled) == (
+            expected_label,
+            expected_tooltip,
+            projected.disabled,
+        )
+        assert projected.label == expected_label
+        assert projected.tooltip == expected_tooltip
+        assert projected.recovery == expected_recovery
+        assert str(recovery.renderable) == (expected_recovery or "")
+
+        confirm.press()
+        await pilot.pause()
+        if projected.disabled:
+            assert results == []
+        else:
+            assert results and results[0] is not None
+            assert results[0].choice == choice
+            service_choice = voice_bundle_import_choice(
+                projected,
+                inactive_consent=consent,
+            )
+            assert service_choice.choice == choice
+            assert service_choice.inactive_consent is consent
+
+
+def test_export_action_projection_supplies_both_visible_and_executable_truths() -> None:
+    sanitized, bundle = voice_bundle_export_actions(
+        bundle_disabled=True,
+        bundle_recovery="Use a supported platform.",
+    )
+
+    assert (
+        sanitized.operation,
+        sanitized.label,
+        sanitized.tooltip,
+        sanitized.disabled,
+    ) == (
+        "sanitized_export",
+        "Export sanitized profile",
+        "Export profile settings without voice audio or transcript.",
+        False,
+    )
+    assert (
+        bundle.operation,
+        bundle.label,
+        bundle.tooltip,
+        bundle.disabled,
+        bundle.recovery,
+    ) == (
+        "bundle_export",
+        "Export portable voice bundle",
+        "Use a supported platform.",
+        True,
+        "Use a supported platform.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_profile_export_rejects_a_hostile_non_export_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _clone_profile()
+    app = _ActionHost(_ActionProfileService(profile))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+        path_calls = 0
+        hostile = VoiceBundleActionProjection(
+            operation="import_create",
+            label="CANARY wrong operation",
+            tooltip="CANARY wrong operation",
+            disabled=False,
+        )
+
+        async def _hostile_choice(_modal: object) -> VoiceBundleActionProjection:
+            return hostile
+
+        async def _forbidden_path() -> None:
+            nonlocal path_calls
+            path_calls += 1
+            return None
+
+        monkeypatch.setattr(library, "_push_owned_modal", _hostile_choice)
+        monkeypatch.setattr(library, "_choose_profile_export_path", _forbidden_path)
+
+        assert await library.export_selected_profile() is False
+        assert path_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((80, 24), (100, 30)))
+async def test_bundle_warning_acknowledgement_has_initial_focus_at_narrow_sizes(
+    size: tuple[int, int],
+) -> None:
+    class _ConsentHost(App[None]):
+        def on_mount(self) -> None:
+            self.push_screen(TTSVoiceBundleConsentModal(mode="import"))
+
+    app = _ConsentHost()
+    async with app.run_test(size=size) as pilot:
+        await _wait_focused(app, pilot, "bundle-warning-ack")
+        assert app.focused is not None
+        assert app.focused.id == "bundle-warning-ack"
+        assert app.screen.query_one("#bundle-warning-continue", Button).disabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((80, 24), (100, 30)))
+async def test_bundle_review_focus_order_is_facts_choice_consent_confirm_cancel(
+    size: tuple[int, int],
+) -> None:
+    review = _safe_bundle_review(
+        dependency_state="missing",
+        allowed_choices=("create",),
+        exact_private_duplicate=False,
+    )
+
+    class _ReviewHost(App[None]):
+        def on_mount(self) -> None:
+            self.push_screen(profile_library_module.TTSVoiceBundleReviewModal(review))
+
+    app = _ReviewHost()
+    async with app.run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: app.focused is not None)
+        expected = (
+            "stts-bundle-review-facts",
+            "stts-bundle-review-choice",
+            "stts-bundle-inactive-consent",
+            "stts-bundle-review-confirm",
+            "stts-bundle-review-cancel",
+        )
+        observed: list[str | None] = [app.focused.id if app.focused else None]
+        await pilot.press("tab")
+        observed.append(app.focused.id if app.focused else None)
+        await pilot.press("tab")
+        observed.append(app.focused.id if app.focused else None)
+        await pilot.press("space")
+        for _ in range(2):
+            await pilot.press("tab")
+            observed.append(app.focused.id if app.focused else None)
+
+        assert tuple(observed) == expected
+
+
+@pytest.mark.asyncio
+async def test_windows_disables_bundle_import_truthfully_but_keeps_json_export() -> (
+    None
+):
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+
+    async def _profile_loader() -> object:
+        return service
+
+    async def _bundle_loader() -> object:
+        raise AssertionError("disabled import must not resolve the service")
+
+    class _WindowsHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield STTSProfileLibrary(
+                _profile_loader,
+                voice_bundle_service_loader=_bundle_loader,
+                bundle_platform_supported=False,
+            )
+
+    app = _WindowsHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: app.query_one("#stts-profile-table", DataTable).row_count == 1,
+        )
+        table = app.query_one("#stts-profile-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)
+        table.action_select_cursor()
+        await _wait_selected(app, pilot)
+
+        assert app.query_one("#stts-profile-export-btn", Button).disabled is False
+        import_button = app.query_one("#stts-profile-import-btn", Button)
+        assert import_button.disabled is True
+        assert "Windows" in str(import_button.tooltip)
+
+
+def _clone_profile(index: int = 0) -> TTSGenerationProfile:
+    profile = _profile(index)
+    timestamp = datetime(2026, 7, 27, tzinfo=UTC)
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="audio_cpp_clone_v1",
+        recipe_revision=1,
+        model_id=profile.model_id,
+    )
+    return replace(
+        profile,
+        reference=TTSCloneReferenceSummary(
+            reference_id=uuid4(),
+            byte_length=32000,
+            duration_ms=1000,
+            sample_rate_hz=16000,
+            channels=1,
+            sample_encoding="pcm_s16le",
+            created_at=timestamp,
+            updated_at=timestamp,
+            recipe_requirement=requirement,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_windows_clone_export_keeps_sanitized_default_and_disables_bundle() -> (
+    None
+):
+    profile = _clone_profile()
+    service = _ActionProfileService(profile)
+
+    async def _profile_loader() -> object:
+        return service
+
+    async def _bundle_loader() -> object:
+        raise AssertionError("disabled bundle export must not resolve the service")
+
+    class _WindowsCloneHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield STTSProfileLibrary(
+                _profile_loader,
+                voice_bundle_service_loader=_bundle_loader,
+                bundle_platform_supported=False,
+            )
+
+    app = _WindowsCloneHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: app.query_one("#stts-profile-table", DataTable).row_count == 1,
+        )
+        table = app.query_one("#stts-profile-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)
+        table.action_select_cursor()
+        await _wait_selected(app, pilot)
+        app.query_one("#stts-profile-export-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#stts-export-choice-bundle")) == 1,
+        )
+
+        sanitized = app.screen.query_one("#stts-export-choice-sanitized", Button)
+        bundle = app.screen.query_one("#stts-export-choice-bundle", Button)
+        await _wait_focused(app, pilot, "stts-export-choice-sanitized")
+        assert app.focused is sanitized
+        assert sanitized.disabled is False
+        assert bundle.disabled is True
+        assert "Windows" in str(bundle.tooltip)
+
+
+class _BundleUIService:
+    def __init__(self, profile: TTSGenerationProfile) -> None:
+        self.profile = profile
+        self.exports: list[tuple[object, ...]] = []
+        self.inspect_calls: list[Path] = []
+        self.commit_calls: list[
+            tuple[TTSVoiceBundleHandle, TTSVoiceBundleImportChoice]
+        ] = []
+        self.invalidated: list[TTSVoiceBundleHandle] = []
+        self.reviews = [self._review()]
+        self.results: list[TTSVoiceBundleImportResult] = [
+            TTSVoiceBundleImportResult(status="created", profile=profile)
+        ]
+
+    def _review(self) -> TTSVoiceBundleReview:
+        return TTSVoiceBundleReview(
+            handle=object.__new__(TTSVoiceBundleHandle),
+            profile_id=self.profile.profile_id,
+            profile_name=self.profile.display_name,
+            provider_id=self.profile.provider_id,
+            model_id=self.profile.model_id,
+            voice_id=self.profile.voice_id,
+            recipe_id="audio_cpp_clone_v1",
+            recipe_revision=1,
+            dependency_state="exact",
+            allowed_choices=("create",),
+            copy_profile_id=None,
+            copy_profile_name=None,
+            exact_private_duplicate=False,
+        )
+
+    async def export(
+        self,
+        profile_id: UUID,
+        destination: Path,
+        *,
+        expected_generation: int,
+        expected_revision: int,
+        acknowledged: bool,
+    ) -> None:
+        self.exports.append(
+            (
+                profile_id,
+                destination,
+                expected_generation,
+                expected_revision,
+                acknowledged,
+            )
+        )
+
+    async def inspect(self, source: Path) -> TTSVoiceBundleReview:
+        self.inspect_calls.append(source)
+        return self.reviews.pop(0)
+
+    async def commit(
+        self,
+        handle: TTSVoiceBundleHandle,
+        choice: TTSVoiceBundleImportChoice,
+    ) -> TTSVoiceBundleImportResult:
+        self.commit_calls.append((handle, choice))
+        return self.results.pop(0)
+
+    async def invalidate(self, handle: TTSVoiceBundleHandle) -> None:
+        self.invalidated.append(handle)
+
+
+class _BundleActionHost(_ActionHost):
+    def __init__(self, service: object, bundle_service: _BundleUIService) -> None:
+        super().__init__(service)
+        self.bundle_service = bundle_service
+        self.bundle_service_requests = 0
+
+    async def _ensure_tts_voice_bundle_service(self) -> object:
+        self.bundle_service_requests += 1
+        return self.bundle_service
+
+
+class _LateInspectBundleService(_BundleUIService):
+    def __init__(self, profile: TTSGenerationProfile) -> None:
+        super().__init__(profile)
+        self.inspect_started = asyncio.Event()
+
+    async def inspect(self, source: Path) -> TTSVoiceBundleReview:
+        self.inspect_calls.append(source)
+        self.inspect_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            return self.reviews.pop(0)
+
+
+class _ReviewPushAbort(BaseException):
+    """Non-Exception terminal used to prove finally-owned invalidation."""
+
+
+@pytest.mark.asyncio
+async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _clone_profile()
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    app = _BundleActionHost(service, bundle_service)
+    destination = tmp_path / "voice.tldw-voice.zip"
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, loaded = await _select_action_profile(app, pilot)
+
+        async def _destination() -> Path:
+            return destination
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_export_path", _destination)
+        app.query_one("#stts-profile-export-btn", Button).press()
+        await _wait_focused(app, pilot, "stts-export-choice-sanitized")
+        assert app.focused is not None
+        assert app.focused.id == "stts-export-choice-sanitized"
+        app.screen.query_one("#stts-export-choice-bundle", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(app.screen.query("#bundle-warning-ack")) == 1
+                and app.focused is not None
+                and app.focused.id == "bundle-warning-ack"
+            ),
+        )
+        assert bundle_service.exports == []
+        await _wait_focused(app, pilot, "bundle-warning-ack")
+        assert app.focused is not None and app.focused.id == "bundle-warning-ack"
+        await _acknowledge_bundle_warning(app, pilot)
+
+        await _wait_until(pilot, lambda: len(bundle_service.exports) == 1)
+        assert bundle_service.exports == [
+            (
+                profile.profile_id,
+                destination,
+                loaded.repository_generation,
+                profile.revision,
+                True,
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_bundle_export_failure_never_surfaces_private_canaries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from loguru import logger as loguru_logger
+
+    canaries = (
+        "CANARY-source-path",
+        "CANARY-destination-path",
+        "CANARY-staging-path",
+        "manifest.json",
+        "CANARY-transcript",
+        "CANARY-wav-bytes",
+        "CANARY-checksum",
+        "CANARY-provider-origin",
+        "CANARY-generated-config",
+        "CANARY-collaborator-error",
+    )
+    profile = _clone_profile()
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    app = _BundleActionHost(service, bundle_service)
+    destination = tmp_path / "voice.tldw-voice.zip"
+    messages: list[str] = []
+
+    async def _fail_export(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(" ".join(canaries))
+
+    bundle_service.export = _fail_export  # type: ignore[method-assign]
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, loaded = await _select_action_profile(app, pilot)
+
+        async def _destination() -> Path:
+            return destination
+
+        async def _acknowledge(_modal: object) -> bool:
+            return True
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_export_path", _destination)
+        monkeypatch.setattr(library, "_push_owned_modal", _acknowledge)
+        sink = loguru_logger.add(
+            lambda message: messages.append(str(message)),
+            level="DEBUG",
+        )
+        try:
+            assert await library._export_selected_voice_bundle(loaded) is False
+        finally:
+            loguru_logger.remove(sink)
+        status_copy = _status_copy(app)
+
+    rendered = "\n".join((*messages, status_copy))
+    assert status_copy == profile_library_module.PROFILE_ACTION_FAILED_COPY
+    assert all(canary not in rendered for canary in canaries)
+
+
+@pytest.mark.asyncio
+async def test_import_warns_before_picker_and_stale_successor_requires_reconfirm(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    successor = bundle_service._review()
+    bundle_service.results = [
+        TTSVoiceBundleImportResult(status="stale_inspection", review=successor),
+        TTSVoiceBundleImportResult(status="created", profile=profile),
+    ]
+    app = _BundleActionHost(service, bundle_service)
+    source = tmp_path / "voice.tldw-voice.zip"
+    picker_calls = 0
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            nonlocal picker_calls
+            picker_calls += 1
+            return source
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        app.query_one("#stts-profile-import-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+        assert picker_calls == 0
+        await _acknowledge_bundle_warning(app, pilot)
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#stts-bundle-review-confirm")) == 1,
+        )
+        assert picker_calls == 1
+        assert bundle_service.inspect_calls == [source]
+        app.screen.query_one("#stts-bundle-review-confirm", Button).press()
+        await _wait_until(pilot, lambda: len(bundle_service.commit_calls) == 1)
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(app.screen.query("#stts-bundle-review-confirm")) == 1
+                and app.screen.query_one("#stts-bundle-review-confirm", Button).disabled
+                is False
+            ),
+        )
+        assert len(bundle_service.commit_calls) == 1
+        app.screen.query_one("#stts-bundle-review-confirm", Button).press()
+
+        await _wait_until(pilot, lambda: len(bundle_service.commit_calls) == 2)
+        assert [call[1].choice for call in bundle_service.commit_calls] == [
+            "create",
+            "create",
+        ]
+        assert bundle_service.commit_calls[0][0] is not successor.handle
+        assert bundle_service.commit_calls[1][0] is successor.handle
+
+
+@pytest.mark.asyncio
+async def test_import_review_cancel_invalidates_handle_without_committing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    review_handle = bundle_service.reviews[0].handle
+    app = _BundleActionHost(service, bundle_service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            return tmp_path / "voice.tldw-voice.zip"
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        app.query_one("#stts-profile-import-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+        await _acknowledge_bundle_warning(app, pilot)
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#stts-bundle-review-cancel")) == 1,
+        )
+        app.screen.query_one("#stts-bundle-review-cancel", Button).press()
+        await _wait_until(pilot, lambda: bundle_service.invalidated == [review_handle])
+
+        assert bundle_service.commit_calls == []
+        assert library._active_bundle_handle is None
+
+
+@pytest.mark.asyncio
+async def test_repeated_import_cancels_release_completed_invalidation_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    bundle_service.reviews = [bundle_service._review() for _ in range(20)]
+    app = _BundleActionHost(service, bundle_service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            return tmp_path / "voice.tldw-voice.zip"
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        for expected in range(1, 21):
+            app.query_one("#stts-profile-import-btn", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+            )
+            await _acknowledge_bundle_warning(app, pilot)
+            await _wait_until(
+                pilot,
+                lambda: len(app.screen.query("#stts-bundle-review-cancel")) == 1,
+            )
+            app.screen.query_one("#stts-bundle-review-cancel", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: len(bundle_service.invalidated) == expected,
+            )
+
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(bundle_service.invalidated) == 20
+        assert len(set(bundle_service.invalidated)) == 20
+        assert library._bundle_invalidation_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task() -> (
+    None
+):
+    profile = _profile(0)
+    bundle_service = _BundleUIService(profile)
+    handle = bundle_service.reviews[0].handle
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _delayed_invalidate(candidate: TTSVoiceBundleHandle) -> None:
+        started.set()
+        await release.wait()
+        bundle_service.invalidated.append(candidate)
+
+    bundle_service.invalidate = _delayed_invalidate  # type: ignore[method-assign]
+    app = _BundleActionHost(_ActionProfileService(profile), bundle_service)
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+        library._voice_bundle_service = bundle_service
+        library._active_bundle_handle = handle
+        cleanup = asyncio.create_task(library._invalidate_bundle_handle(handle))
+        await wait_for_background_signal(
+            started, cleanup, what="the bundle invalidation starting"
+        )
+
+        async def _remove_library() -> None:
+            await library.remove()
+
+        removal = asyncio.create_task(_remove_library())
+        await pilot.pause()
+        release.set()
+        await asyncio.gather(cleanup, removal)
+
+        assert bundle_service.invalidated == [handle]
+        assert library._bundle_invalidation_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_completed_invalidation_cannot_clear_a_replacement_task() -> None:
+    profile = _profile(0)
+    bundle_service = _BundleUIService(profile)
+    handle = bundle_service.reviews[0].handle
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _delayed_invalidate(candidate: TTSVoiceBundleHandle) -> None:
+        started.set()
+        await release.wait()
+        bundle_service.invalidated.append(candidate)
+
+    bundle_service.invalidate = _delayed_invalidate  # type: ignore[method-assign]
+    app = _BundleActionHost(_ActionProfileService(profile), bundle_service)
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+        library._voice_bundle_service = bundle_service
+        cleanup = asyncio.create_task(library._invalidate_bundle_handle(handle))
+        await wait_for_background_signal(
+            started, cleanup, what="the bundle invalidation starting"
+        )
+        original = library._bundle_invalidation_tasks[handle]
+        replacement = asyncio.create_task(asyncio.sleep(60))
+        library._bundle_invalidation_tasks[handle] = replacement
+
+        release.set()
+        await cleanup
+        await pilot.pause()
+
+        assert library._bundle_invalidation_tasks.get(handle) is replacement
+        assert original.done()
+        replacement.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await replacement
+        library._bundle_invalidation_tasks.pop(handle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", (RuntimeError, _ReviewPushAbort))
+async def test_import_review_push_failure_invalidates_handle_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_type: type[BaseException],
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    review_handle = bundle_service.reviews[0].handle
+    app = _BundleActionHost(service, bundle_service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            return tmp_path / "voice.tldw-voice.zip"
+
+        original_push = library._push_owned_modal
+
+        async def _push(modal: object) -> object:
+            if isinstance(modal, profile_library_module.TTSVoiceBundleReviewModal):
+                raise failure_type("CANARY review push failure")
+            return await original_push(modal)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        monkeypatch.setattr(library, "_push_owned_modal", _push)
+        app.query_one("#stts-profile-import-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+        await _acknowledge_bundle_warning(app, pilot)
+        expected_failure = (
+            _ReviewPushAbort if failure_type is _ReviewPushAbort else WorkerFailed
+        )
+        with pytest.raises(expected_failure):
+            await app.workers.wait_for_complete()
+
+        assert bundle_service.invalidated == [review_handle]
+        assert library._active_bundle_handle is None
+        assert bundle_service.commit_calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_handle_cleanup_joins_without_masking_cancellation() -> None:
+    profile = _profile(0)
+    bundle_service = _BundleUIService(profile)
+    handle = bundle_service.reviews[0].handle
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _failing_invalidate(candidate: TTSVoiceBundleHandle) -> None:
+        started.set()
+        await release.wait()
+        bundle_service.invalidated.append(candidate)
+        raise RuntimeError("CANARY cleanup failure")
+
+    bundle_service.invalidate = _failing_invalidate  # type: ignore[method-assign]
+    app = _BundleActionHost(_ActionProfileService(profile), bundle_service)
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+        library._voice_bundle_service = bundle_service
+        cleanup = asyncio.create_task(library._invalidate_bundle_handle(handle))
+        await wait_for_background_signal(
+            started, cleanup, what="the bundle invalidation starting"
+        )
+        cleanup.cancel()
+        release.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await cleanup
+        await pilot.pause()
+
+        assert bundle_service.invalidated == [handle]
+
+
+@pytest.mark.asyncio
+async def test_unmount_invalidates_handle_returned_by_late_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _LateInspectBundleService(profile)
+    late_handle = bundle_service.reviews[0].handle
+    app = _BundleActionHost(service, bundle_service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            return tmp_path / "voice.tldw-voice.zip"
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        app.query_one("#stts-profile-import-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+        await _acknowledge_bundle_warning(app, pilot)
+        await asyncio.wait_for(bundle_service.inspect_started.wait(), timeout=1)
+
+        await library.remove()
+        await _wait_until(pilot, lambda: bundle_service.invalidated == [late_handle])
+
+        assert bundle_service.commit_calls == []
+        assert len(app.screen.query("#stts-bundle-review-confirm")) == 0

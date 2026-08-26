@@ -367,14 +367,16 @@ async def test_sink_open_failure_falls_through_to_the_legacy_path(handler, monke
 
 
 # ---------------------------------------------------------------------------
-# (d) TTSPlaybackEvent("stop") stops the live sink, for both the
-# message-scoped and the global/bare stop.
+# (d) A lifecycle-less stop can only stop an unowned live sink globally.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("message_id", [None, "adhoc"])
+@pytest.mark.parametrize(
+    ("message_id", "expected_stop_count"),
+    [(None, 1), ("adhoc", 0)],
+)
 async def test_stop_action_stops_whatever_sink_is_currently_registered_live(
-    handler, message_id,
+    handler, message_id, expected_stop_count,
 ):
     stop_calls: list[bool] = []
 
@@ -387,7 +389,7 @@ async def test_stop_action_stops_whatever_sink_is_currently_registered_live(
 
     await handler.handle_tts_playback(TTSPlaybackEvent(action="stop", message_id=message_id))
 
-    assert stop_calls == [True]
+    assert stop_calls == [True] * expected_stop_count
 
 
 # ---------------------------------------------------------------------------
@@ -753,21 +755,24 @@ async def test_message_scoped_stop_does_not_silence_a_different_messages_legacy_
 # untouched by this task) against a fake device stream and drives it
 # through the REAL `_register_live_sink` registry AND the REAL
 # `handle_tts_playback` -> `stop_live_sink()` -> `sink.stop()` chain --
-# proving the real registry/stop machinery interrupts a real sink
-# end-to-end (`stream.abort()`, not `.stop()`, which would drain).
+# proving the real registry/stop machinery interrupts a real sink for a
+# global stop (`stream.abort()`, not `.stop()`, which would drain), while a
+# lifecycle-less message stop cannot claim an unowned sink.
 #
 # Corrected docstring (fix-round N4, re-review): this test opens the sink
 # ITSELF, in the test body -- it does NOT drive `_generate_tts`, so it does
 # NOT prove that the CONSUMER's own opened sink is what ends up in the
 # registry (an earlier version of this comment overclaimed exactly that).
 # What it proves is narrower and still real: a sink that IS registered as
-# `_LIVE_SINK`, by whatever means, is correctly interrupted by
-# `handle_tts_playback`'s stop wiring, for both stop shapes.
+# `_LIVE_SINK`, by whatever means, is only interrupted by a global stop.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("message_id", [None, "some-other-message"])
-async def test_real_sink_end_to_end_stop_wiring(handler, message_id):
+@pytest.mark.parametrize(
+    ("message_id", "expected_stopped"),
+    [(None, True), ("some-other-message", False)],
+)
+async def test_real_sink_end_to_end_stop_wiring(handler, message_id, expected_stopped):
     events: list = []
     sink, sink_test_holder = _mk_real_sink(events)
     sink.open(sample_rate=RATE)
@@ -777,8 +782,10 @@ async def test_real_sink_end_to_end_stop_wiring(handler, message_id):
         TTSPlaybackEvent(action="stop", message_id=message_id)
     )
 
-    assert sink.terminal_reason == "stopped"
-    assert sink_test_holder["s"].aborted is True
+    assert (sink.terminal_reason == "stopped") is expected_stopped
+    assert sink_test_holder["s"].aborted is expected_stopped
+    if not expected_stopped:
+        sink.stop()
 
 
 # ---------------------------------------------------------------------------

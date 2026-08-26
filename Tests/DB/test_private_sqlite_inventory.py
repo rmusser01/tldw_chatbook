@@ -95,11 +95,6 @@ EXPECTED_PARENT_CREATORS = {
         "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "tldw_chatbook/DB/search_history_db",
-        "SearchHistoryDB.__init__",
-        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
         "tldw_chatbook/Kanban_Interop/local_kanban_db",
         "open_connection",
         "Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)",
@@ -148,11 +143,6 @@ EXPECTED_PARENT_CREATORS = {
         "tldw_chatbook/Notes/Notes_Library",
         "NotesInteropService.__init__",
         "self.base_db_directory.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
-        "tldw_chatbook/DB/Sync_Client",
-        "<module>",
-        "os.makedirs(os.path.dirname(DATABASE_PATH) or '.', exist_ok=True)",
     ),
     (
         "tldw_chatbook/runtime_policy/server_parity_state",
@@ -370,8 +360,13 @@ def _dotted_name(expression: ast.expr) -> str | None:
 _PUBLIC_PRIVATE_SQLITE_SEAMS = {
     "backup_connection_to_private",
     "backup_open_connections_to_private",
+    "backup_profile_migration_boundary",
+    "close_profile_migration_destination",
     "connect_private_sqlite",
     "copy_private_sqlite",
+    "discard_profile_migration_destination",
+    "migrate_profile_store_to_candidate",
+    "open_canonical_profile_migration_destination",
     "restore_private_sqlite",
 }
 
@@ -488,6 +483,14 @@ def _private_sqlite_seam_violations(
     calls = _qualified_private_sqlite_calls(source_path)
     violations: list[str] = []
     for symbol, seam_name, call in calls:
+        if seam_name in {
+            "backup_profile_migration_boundary",
+            "close_profile_migration_destination",
+            "discard_profile_migration_destination",
+            "migrate_profile_store_to_candidate",
+            "open_canonical_profile_migration_destination",
+        }:
+            continue
         owner_arguments = [(0, "owner_id")]
         if seam_name == "restore_private_sqlite":
             owner_arguments.append((1, "pre_restore_owner_id"))
@@ -556,8 +559,10 @@ def _assert_raw_connection_census(
         assert current == documented_legacy
         return
 
-    assert current[seam_site] == 1
-    assert current == Counter({seam_site: 1})
+    # The seam owns one ordinary path connection and one descriptor-bound
+    # immutable connection; no raw SQLite open exists outside this function.
+    assert current[seam_site] == 2
+    assert current == Counter({seam_site: 2})
 
 
 def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
@@ -567,17 +572,37 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
     assert [row["id"] for row in connection_rows] == [
         # Extending this range is the deliberate step the inventory exists to
         # force -- a new connection site must be documented and
-        # owner-registered, not merely written. C37 is the File Notes recovery
-        # replica, which stores exact private note bytes. C38 is candidate
+        # owner-registered, not merely written. C36 is the File Notes recovery
+        # replica, which stores exact private note bytes. C37 is candidate
         # validation's brief read-write reopen of its own disposable snapshot
         # to run the in-place schema upgrade before immutable revalidation.
-        # C39 is the lease orchestration's read-only schema-version peek used
-        # to route a needed upgrade to the exclusive-lease path first.
+        # C38 is the lease orchestration's read-only schema-version peek used
+        # to route a needed upgrade to the exclusive-lease path first. C39 is
+        # the RAG hybrid keyword leg's read-only read of the live ChaChaNotes
+        # database for its notes/conversation sub-legs (TASK-3996). C40 is
+        # the retained exact-v2 TTS migration source/backup boundary. C41 is
+        # the keyword leg's read-only read of the live Prompts database for
+        # its prompts sub-leg (TASK-15020/B2). C42 is the isolated TTS
+        # migration-boundary memory snapshot and opaque private destination.
+        # C43 is immutable validation of exact migration-publication
+        # candidates, rollback identities, active state, and backups. C44
+        # is immutable validation of journal-classified startup recovery
+        # authority before any profile-store open. C45/C46 are descriptor-bound
+        # publisher/recovery validation through the centralized SQLite seam;
+        # C47 is the exact admitted restore source retained during canonical
+        # candidate preparation. C48 is the descriptor-bound exact-current
+        # proof retained through shared live-store use. C49 is the external
+        # Watchlists agent's non-mutating view of existing subscription data.
+        # C50 is the device-private Notes import receipt and future lasting-sync
+        # state owner. C51 is the pre-boot "upgrading database..." notice's
+        # read-only schema-version probe (task-21100). (task-15481 retired
+        # the dead db.search_history owner, formerly C16; every id from C16
+        # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 40)
+        for number in range(1, 52)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 17)
+        f"B{number:02d}" for number in range(1, 18)
     ]
 
 
@@ -622,19 +647,19 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 1}),
+        Counter({seam_site: 2}),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 1}),
+            Counter({legacy_site: 7, seam_site: 2}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 2}),
+            Counter({legacy_site: 7, seam_site: 3}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
@@ -903,6 +928,40 @@ def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
         assert row["disposition"].strip()
 
 
+def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
+    # Selected by id, not by position: this row was the newest when the test
+    # was written, but the inventory keeps growing (C51, task-21100) and the
+    # subject here is C50's exact content, not its place in the table.
+    row = next(r for r in _inventory_rows("C") if r["id"] == "C50")
+
+    assert row == {
+        "id": "C50",
+        "module": "tldw_chatbook/Notes/notes_device_state_store",
+        "symbol": "NotesDeviceStateStore._connect",
+        "owner_id": "notes.sync_state",
+        "classification": "private_file, read_only_uri",
+        "intent": "device-private import receipts and lasting-sync state",
+        "disposition": (
+            "Migrated via `connect_private_sqlite`. The profile-local owner stores "
+            "private import receipts plus bounded roots, bindings, cursors, journals, "
+            "recovery, migration, and settings; public projections omit paths, "
+            "content, hashes, recovery bytes, cursors, and exception text, read-only "
+            "planning cannot create or migrate the owner, and it is excluded from "
+            "portable export and centralized backup."
+        ),
+    }
+    policy = SQLITE_OWNER_REGISTRY["notes.sync_state"]
+    assert {kind.value for kind in policy.allowed_target_kinds} == {
+        "private_file",
+        "read_only_uri",
+    }
+    assert policy.centralized_backup_allowed is False
+    assert policy.preserve_read_only_source_mode is False
+    assert "notes.sync_state" not in {
+        backup_row["owner_id"] for backup_row in _inventory_rows("B")
+    }
+
+
 def test_connection_and_backup_rows_record_completed_helper_migrations() -> None:
     connection_rows = _inventory_rows("C")
     backup_rows = _inventory_rows("B")
@@ -914,8 +973,16 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
     for row in connection_rows:
         helper = (
             "backup_connection_to_private"
-            if row["id"] in {"C13", "C18", "C21"}
-            else "connect_private_sqlite"
+            if row["id"] in {"C13", "C17", "C20"}
+            else (
+                "open_profile_migration_boundary_destination"
+                if row["id"] == "C42"
+                else (
+                    "connect_private_sqlite_descriptor"
+                    if row["id"] in {"C45", "C46", "C48"}
+                    else "connect_private_sqlite"
+                )
+            )
         )
         assert row["disposition"].startswith(f"Migrated via `{helper}`.")
     for row in backup_rows:
@@ -964,6 +1031,14 @@ def test_registry_is_immutable_complete_and_points_to_production_modules() -> No
             policy.reason = "mutated"  # type: ignore[misc]
 
 
+def test_subscriptions_agent_reader_is_read_only_and_preserves_source_mode() -> None:
+    policy = SQLITE_OWNER_REGISTRY["db.subscriptions.agent_read"]
+
+    assert policy.production_module == "tldw_chatbook/DB/Subscriptions_DB"
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.READ_ONLY_URI})
+    assert policy.preserve_read_only_source_mode is True
+
+
 def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> None:
     backup_rows = _inventory_rows("B")
 
@@ -971,7 +1046,9 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
         {
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 1,
-            "copy_private_sqlite": 9,
+            "backup_profile_migration_boundary": 1,
+            "copy_private_sqlite": 8,
+            "migrate_profile_store_to_candidate": 1,
             "restore_private_sqlite": 2,
         }
     )
@@ -1027,13 +1104,18 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             ): 1,
             (
                 "tldw_chatbook/TTS/profile_repository",
-                "TTSProfileRepository._worker_stage_candidate",
-                "copy_private_sqlite",
+                "TTSProfileRepository._worker_publish_migrated_store",
+                "migrate_profile_store_to_candidate",
             ): 1,
             (
                 "tldw_chatbook/TTS/profile_repository",
                 "TTSProfileRepository._worker_create_recovery_backup",
                 "backup_connection_to_private",
+            ): 1,
+            (
+                "tldw_chatbook/TTS/profile_migration_candidate",
+                "ProfileMigrationBoundarySnapshot.backup_to",
+                "backup_profile_migration_boundary",
             ): 1,
             (
                 "tldw_chatbook/UI/Tools_Settings_Window",
@@ -1064,7 +1146,9 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             if seam_name in {
                 "backup_connection_to_private",
                 "backup_open_connections_to_private",
+                "backup_profile_migration_boundary",
                 "copy_private_sqlite",
+                "migrate_profile_store_to_candidate",
                 "restore_private_sqlite",
             }:
                 actual_calls[(module, symbol, seam_name)] += 1
@@ -1118,7 +1202,6 @@ def test_task_three_parent_creators_are_recorded_as_migrated() -> None:
             "P23",
             "P25",
             "P26",
-            "P27",
             "P28",
         )
     } == {
@@ -1128,7 +1211,6 @@ def test_task_three_parent_creators_are_recorded_as_migrated() -> None:
         "P23": "migrated",
         "P25": "migrated",
         "P26": "migrated",
-        "P27": "migrated",
         "P28": "migrated",
     }
 
@@ -1148,7 +1230,6 @@ def test_task_four_parent_creators_are_recorded_as_migrated() -> None:
             "P12",
             "P13",
             "P14",
-            "P15",
         )
     } == {
         "P06": "migrated",
@@ -1160,7 +1241,6 @@ def test_task_four_parent_creators_are_recorded_as_migrated() -> None:
         "P12": "migrated",
         "P13": "migrated",
         "P14": "migrated",
-        "P15": "migrated",
     }
 
 
@@ -1196,7 +1276,7 @@ def test_legacy_memory_and_parent_semantics_are_preserved_explicitly() -> None:
     connection_rows = {row["id"]: row for row in _inventory_rows("C")}
     parent_rows = {row["id"]: row for row in _inventory_rows("P")}
 
-    for connection_id in ("C01", "C02", "C24", "C25", "C26", "C27", "C28", "C29"):
+    for connection_id in ("C01", "C02", "C23", "C24", "C25", "C26", "C27", "C28"):
         assert "memory" in _classifications(connection_rows[connection_id])
         owner_id = connection_rows[connection_id]["owner_id"]
         assert SQLiteTargetKind.MEMORY in (
@@ -1206,7 +1286,6 @@ def test_legacy_memory_and_parent_semantics_are_preserved_explicitly() -> None:
     assert parent_rows["P02"]["disposition"] == "remove_obsolete_creation"
     assert parent_rows["P03"]["disposition"] == "remove_obsolete_creation"
     assert parent_rows["P05"]["disposition"] == "remove_obsolete_creation"
-    assert parent_rows["P27"]["disposition"] == "secure_default"
     assert parent_rows["P28"]["disposition"] == "secure_default"
     assert SQLITE_OWNER_REGISTRY[
         "runtime.server_parity_parent"

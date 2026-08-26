@@ -35,6 +35,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from textual.app import App
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -72,6 +73,7 @@ from tldw_chatbook.TTS.profile_service import TTSProfileService
 from tldw_chatbook.TTS.profile_types import CharacterRef, TTSProfileDraft
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.Widgets import enhanced_file_picker as efp
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 from Tests.Character_Chat.test_character_card_lenient_import import (
@@ -115,6 +117,32 @@ UAT_COMPLETE_WAV = (
     b"\x10\x00\x00\x00\x01\x00\x01\x00"
     b"\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
 )
+
+
+async def test_roleplay_greeting_is_not_a_live_completion_but_new_reply_is() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(
+        assistant_kind="character",
+        character_name="Alba",
+    )
+    completions: list[tuple[str, str]] = []
+    store.subscribe_message_completed(completions.append)
+
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Welcome, traveler.",
+    )
+    reply = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(reply.id, "I can hear you.")
+    store.mark_message_complete(reply.id)
+
+    assert greeting.id not in {message_id for _, message_id in completions}
+    assert completions == [(session.id, reply.id)]
 
 
 class _AvailableAudioCppCapabilities:
@@ -177,6 +205,11 @@ class _AvailableAudioCppCapabilities:
         expected_revision: int,
     ) -> None:
         assert (provider_id, expected_revision) == ("audio_cpp", self.revision)
+
+    async def audio_cpp_guided_dependency_snapshot(self, _requirement):
+        raise AssertionError(
+            "reference-free profile portability must not inspect clone dependencies"
+        )
 
 
 class _CompleteWAVSpeechService:
@@ -299,6 +332,37 @@ async def _wait_for(pilot, condition, timeout: float = 15.0, interval: float = 0
         await pilot.pause(interval)
         elapsed += interval
     raise TimeoutError("condition not met within timeout")
+
+
+async def test_first_time_character_import_picker_starts_in_documents(
+    tmp_path, monkeypatch
+):
+    """A clean profile opens character import somewhere useful and stable."""
+    home = tmp_path / "home"
+    documents = home / "Documents"
+    process_directory = tmp_path / "checkout"
+    documents.mkdir(parents=True)
+    process_directory.mkdir()
+    monkeypatch.chdir(process_directory)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        efp,
+        "get_cli_setting",
+        lambda _section, _key, default=None: default,
+    )
+    monkeypatch.setattr(efp, "save_setting_to_cli_config", lambda *_args: None)
+
+    picker = efp.EnhancedFileOpen(context="character_import")
+    app = App()
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        nav_type = efp.EnhancedDirectoryNavigation
+        navigation = picker.query_one(nav_type)
+        assert picker._location == documents
+        assert navigation.location == documents
+        assert navigation.location != process_directory
 
 
 def _resolve_uat_card_path(tmp_path: Path) -> Path:
@@ -533,6 +597,20 @@ async def test_first_time_user_character_chat_journey(
         await _wait_for(pilot, console_mounted, timeout=30.0)
         chat_screen = app.screen
 
+        from textual.widgets import Switch as _Switch
+        from textual.widgets import Static as _Static
+
+        auto_speak = chat_screen.query_one("#console-auto-speak", _Switch)
+        auto_speak_label = chat_screen.query_one(
+            "#console-auto-speak-label", _Static
+        )
+        assert str(auto_speak_label.renderable) == "Speak replies"
+        assert auto_speak.name == "Speak replies"
+        assert auto_speak.value is False
+        assert auto_speak.disabled is False
+        rendered_frame = app.export_screenshot()
+        assert "Speak&#160;replies" in rendered_frame
+
         # -- 7. Type and send a message (native Console composer) ------------
         from textual.widgets import Input as _Input
 
@@ -584,6 +662,10 @@ async def test_first_time_user_character_chat_journey(
             )
             print("screen is_mounted:", chat_screen.is_mounted)
             raise AssertionError("handoff was not consumed by the Console")
+
+        clean_profile_sessions = chat_screen._ensure_console_chat_store().sessions()
+        assert len(clean_profile_sessions) == 1
+        assert clean_profile_sessions[0].title == "Chat with UAT Ann"
 
         # Load the draft through the composer's public API: the composer
         # treats its paste-aware segments as canonical (``draft_text()``
@@ -844,3 +926,16 @@ async def test_character_voice_portability_round_trip_to_complete_wav(
     assert handler is not None
     assert artifact is not None
     assert not artifact.exists()
+
+
+async def test_uat_adjacent_roleplay_pastes_keep_a_visible_and_canonical_boundary():
+    first = "First roleplay block " * 8
+    second = "Second roleplay block " * 8
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first + "\n" + second
+    assert composer._display_draft_text().count("Pasted text |") == 2
+    assert "Unfurl" not in composer._display_draft_text()

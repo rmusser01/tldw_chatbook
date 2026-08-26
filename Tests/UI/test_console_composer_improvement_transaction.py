@@ -113,6 +113,70 @@ def test_restore_snapshot_round_trips_exact_semantic_state_without_legacy_load(
     assert composer._pending_attachment_label == pending_before
 
 
+def test_prompt_replacement_consumes_all_segments_as_one_paste_and_undo_restores_exactly():
+    composer = _mixed_composer()
+    composer._segments[1].collapse_state = "expanded"
+    composer._segments[2].collapse_state = "confirm"
+    composer.select_all_draft()
+    before = composer.capture_draft_snapshot()
+    composer.set_pending_attachment_label("photo.png · 240 KB")
+    replacement = "replacement material " * 8
+
+    applied = composer.replace_snapshot_as_paste(before, replacement)
+
+    assert applied == before
+    assert composer.draft_text() == replacement
+    after = composer.capture_draft_snapshot()
+    assert [(segment.origin, segment.collapse_state) for segment in after.segments] == [
+        ("paste", "collapsed")
+    ]
+    assert after.selection is None
+    assert after.cursor_index == len(replacement)
+    assert composer._pending_attachment_label == "photo.png · 240 KB"
+    assert composer.improvement_undo_available is True
+
+    assert composer.undo_improvement() is True
+    assert _semantic_snapshot(composer.capture_draft_snapshot()) == _semantic_snapshot(
+        before
+    )
+    assert composer._pending_attachment_label == "photo.png · 240 KB"
+
+
+def test_prompt_replacement_can_clear_an_exact_nonempty_snapshot():
+    composer = _mixed_composer()
+    before = composer.capture_draft_snapshot()
+
+    assert composer.replace_snapshot_as_paste(before, "") == before
+    assert composer.capture_draft_snapshot().segments == ()
+    assert composer.draft_text() == ""
+    assert composer.undo_improvement() is True
+    assert _semantic_snapshot(composer.capture_draft_snapshot()) == _semantic_snapshot(
+        before
+    )
+
+
+def test_prompt_replacement_empty_to_empty_is_a_noop_without_consuming_prior_undo():
+    composer = ConsoleComposerBar()
+    original = composer.capture_draft_snapshot()
+
+    assert composer.replace_snapshot_as_paste(original, "") is None
+    assert composer.capture_draft_snapshot() == original
+    assert composer.improvement_undo_available is False
+
+
+def test_prompt_replacement_rejects_a_stale_complete_snapshot_without_mutation():
+    composer = _mixed_composer()
+    stale = composer.capture_draft_snapshot()
+    composer.insert_text(" changed")
+    live = composer.capture_draft_snapshot()
+
+    with pytest.raises(ComposerTransactionValidationError, match="stale"):
+        composer.replace_snapshot_as_paste(stale, "replacement")
+
+    assert composer.capture_draft_snapshot() == live
+    assert composer.improvement_undo_available is False
+
+
 def test_same_text_load_invalidates_snapshot_by_generation():
     composer = ConsoleComposerBar()
     composer.load_draft("same bytes")
@@ -410,6 +474,24 @@ def test_improvement_undo_restores_exact_state_and_preserves_attachment():
     assert composer._pending_attachment_label == "photo.png · 240 KB"
     assert composer.improvement_undo_available is False
     assert composer.undo_improvement() is False
+
+
+def test_improvement_comparison_masks_inline_file_bytes_but_keeps_labels():
+    composer = _mixed_composer()
+    before = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(before, request_nonce="review-1")
+
+    composer.apply_improvement(before, projection.text.replace("Draft", "Better"))
+
+    comparison = composer.improvement_comparison()
+    assert comparison is not None
+    original, improved = comparison
+    assert INLINE_BODY not in original
+    assert INLINE_BODY not in improved
+    assert INLINE_LABEL in original
+    assert INLINE_LABEL in improved
+    assert "Draft" in original
+    assert "Better" in improved
 
 
 @pytest.mark.parametrize("event", ["manual_edit", "send", "load"])

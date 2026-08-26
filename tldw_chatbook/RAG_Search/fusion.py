@@ -261,27 +261,110 @@ def resolve_hybrid_alpha(explicit: Optional[float] = None) -> float:
     return alpha
 
 
+def _shipped_rrf_k() -> int:
+    """The app's shipped RRF constant, for every fallback in ``resolve_rrf_k``.
+
+    ``DEFAULT_RRF_K`` (60) is deliberately NOT used as a fallback by the
+    config resolver (TASK-4110 Task 5, review round 2). Every input this
+    resolver sanitizes is reachable from user configuration --
+    ``pipeline_builder_simple`` passes a TOML pipeline's
+    ``steps[].config.rrf_k`` and ``RAGService`` passes
+    ``config.search.rrf_k``, either of which a hand-edited or
+    round-tripped config can turn into ``"oops"``, ``-1`` or ``None`` --
+    so falling back to the server-parity 60 would silently revert THAT path
+    to the weighting TASK-4110 measured away from, while every other path
+    stayed at 5. One resolver, one fallback.
+
+    ``DEFAULT_RRF_K`` remains the no-config fallback of the pure function
+    (``reciprocal_rank_fusion``'s own signature default and its
+    negative-``rrf_k`` sanitization). That is a different thing: a library
+    invariant for a caller who supplied nothing, not an app-config decision,
+    and it is unreachable from the live call sites, which always resolve
+    through here first.
+
+    Returns:
+        ``config.DEFAULT_HYBRID_RRF_K``. Imported lazily -- this module must
+        not depend on the config package at import time, since
+        ``simplified.config`` imports ``DEFAULT_HYBRID_ALPHA`` from here --
+        and defensively: a last resort must itself be total, so an import
+        failure degrades to ``DEFAULT_RRF_K`` rather than raising out of a
+        function whose whole contract is that it never breaks search.
+    """
+    try:
+        from .simplified.config import DEFAULT_HYBRID_RRF_K
+
+        return DEFAULT_HYBRID_RRF_K
+    except Exception:  # pragma: no cover - importing a module constant
+        return DEFAULT_RRF_K
+
+
 def resolve_rrf_k(value: Optional[Any] = None) -> int:
     """Resolve the RRF constant k from an untrusted (config) value.
 
+    Precedence: explicit value -> the active profile's ``search.rrf_k``
+    (via ``resolve_active_rag_config``) -> the shipped default
+    (``_shipped_rrf_k()``, i.e. ``config.DEFAULT_HYBRID_RRF_K`` = 5).
+    Mirrors ``resolve_hybrid_alpha``'s precedence exactly (TASK-4110
+    review): the two live fusion call sites --
+    ``RAGService._fuse_hybrid_results`` (Library hybrid) and
+    ``pipeline_builder_simple._rrf_merge_parallel_results`` (Chat RAG
+    hybrid) -- must resolve k the same way they already resolve alpha, or a
+    default change moves one live path and silently strands the other.
+
+    THIS IS LOAD-BEARING (TASK-4110 Task 5): the shipped default moved to
+    ``SearchConfig.rrf_k = DEFAULT_HYBRID_RRF_K`` (5, measured for
+    chatbook's ~20-row candidate window), so the profile fallback is what
+    carries the measured value into the legacy pipeline path as well --
+    **both live fusion paths moved together**. Unifying or consciously
+    diverging the two paths belongs to TASK-3501.
+
+    ``DEFAULT_RRF_K`` (60) is NOT part of this resolver's fallback chain --
+    see ``_shipped_rrf_k`` for why. It survives only as
+    ``reciprocal_rank_fusion``'s own signature default and that function's
+    negative-``rrf_k`` sanitization: a pure-library invariant for a caller
+    who supplied nothing, unreachable from the live call sites, which
+    always resolve through here first.
+
     Args:
         value: Caller/config-supplied k, if any (e.g. a TOML pipeline's
-            ``steps[].config.rrf_k``).
+            ``steps[].config.rrf_k``). ``None`` means "no explicit
+            override" -- the active profile is consulted next, exactly as
+            for alpha.
 
     Returns:
-        A non-negative int; ``DEFAULT_RRF_K`` (60, server parity) when the
-        value is missing, non-numeric, or negative. Invalid values are
-        logged, never raised: a misconfigured pipeline must not abort
-        search at merge time.
+        A non-negative int. **Every** fallback in this resolver is the app's
+        shipped default (``config.DEFAULT_HYBRID_RRF_K``, 5): a profile that
+        cannot be read, a profile with nothing to say, a non-numeric value
+        and a negative value all land there. ``DEFAULT_RRF_K`` (60) is NOT a
+        fallback here -- see ``_shipped_rrf_k`` for why. Invalid values are
+        logged, never raised: a misconfigured pipeline must not abort search
+        at merge time.
     """
+    shipped_k = _shipped_rrf_k()
     if value is None:
-        return DEFAULT_RRF_K
+        try:
+            from .simplified.active_config import resolve_active_rag_config
+
+            value = resolve_active_rag_config().search.rrf_k
+        except Exception:  # config loading must never break search
+            logger.warning(
+                "Could not read rrf_k from active profile; using shipped default"
+            )
+            return shipped_k
+    if value is None:
+        return shipped_k
     try:
         k = int(float(value))
-    except (TypeError, ValueError):
-        logger.warning(f"Invalid rrf_k {value!r}; falling back to {DEFAULT_RRF_K}")
-        return DEFAULT_RRF_K
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: `float(value)` can itself land on an infinite
+        # float ("1e309" overflows float's range, and TOML accepts a
+        # literal `inf`/`-inf`), and `int()` on an infinite float raises
+        # OverflowError rather than ValueError -- Qodo PR-1487. Reachable
+        # straight from a hand-edited config's `rrf_k`, so it must fall
+        # back like every other invalid value, not crash hybrid search.
+        logger.warning("Invalid rrf_k; using shipped default")
+        return shipped_k
     if k < 0:
-        logger.warning(f"rrf_k {k} is negative; falling back to {DEFAULT_RRF_K}")
-        return DEFAULT_RRF_K
+        logger.warning(f"rrf_k {k} is negative; falling back to {shipped_k}")
+        return shipped_k
     return k

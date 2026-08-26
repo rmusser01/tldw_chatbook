@@ -15,11 +15,12 @@ wrong:
 1. **The composed block** -- the ``#console-main-column`` >
    ``#console-transcript-region`` > ``#console-session-surface`` >
    ``#console-native-transcript`` chain, the inline sizing the workspace
-   grid depends on, and the deliberately top-less frame on
-   ``#console-transcript-region`` (``_frame_console_region(..., top=False)``,
-   which is what makes the transcript read as continuous with the control
-   bar above it). Ids and nesting are the extraction's stated contract, so
-   they are asserted as a parent/child chain rather than by bare presence:
+   grid depends on, and the then-deliberately top-less frame on
+   ``#console-transcript-region`` (``_frame_console_region(..., top=False)``),
+   which made the transcript read as continuous with the control bar above it.
+   This is the historical pre-extraction shape, not the current borderless
+   ``edges=()`` contract. Ids and nesting are the extraction's stated contract,
+   so they are asserted as a parent/child chain rather than by bare presence:
    a region widget that mounted the right ids in the wrong place would pass
    a presence check.
 
@@ -35,15 +36,94 @@ wrong:
    the delegation table works.
 """
 
+import inspect
+from pathlib import Path
+
 import pytest
+from textual.app import App, ComposeResult
+from textual.containers import Vertical
+from textual.css.query import NoMatches
+from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleMarkdownMessage
+from tldw_chatbook.UI.Console_Modules.frame import frame_console_region
+from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+    ProviderContinuationTranscriptRegion,
+)
+from tldw_chatbook.UI.Console_Modules.transcript import ConsoleTranscriptRegion
+
+
+class _SpeechHeaderHarness(App):
+    """Mount completed assistant rows without selecting either one."""
+
+    CSS_PATH = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages = [
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="First answer.",
+                status="complete",
+                id="speech-a",
+            ),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="Second answer.",
+                status="complete",
+                id="speech-b",
+            ),
+        ]
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+    def on_mount(self) -> None:
+        transcript = self.query_one(ConsoleTranscript)
+        transcript.set_messages(self.messages)
+        self.call_later(transcript.refresh_messages)
+
+
+class _TranscriptRegionHarness(App):
+    def __init__(self, region_type: type[ConsoleTranscriptRegion]) -> None:
+        super().__init__()
+        self.region_type = region_type
+
+    def compose(self) -> ComposeResult:
+        kwargs = {
+            "session_surface_builder": lambda: Static("Visible transcript"),
+        }
+        if self.region_type is ProviderContinuationTranscriptRegion:
+            kwargs.update(
+                recovery_message_builder=lambda: None,
+                on_recovery_action=lambda *_args: True,
+            )
+        yield self.region_type(**kwargs)
+
+
+def _speech_status(transcript: ConsoleTranscript, message_id: str) -> str:
+    try:
+        label = transcript.query_one(
+            f"#console-message-speech-status-{message_id}", Static
+        )
+    except NoMatches:
+        return ""  # no speech presentation mounted = no status
+    return str(label.renderable)
 
 
 def _ready_console_host() -> ConsoleHarness:
@@ -120,6 +200,46 @@ async def _seed_transcript(console, pilot):
     return transcript, selected_message_id
 
 
+def test_frame_helper_keeps_legacy_side_edges_when_top_and_bottom_are_false():
+    region = frame_console_region(Vertical(), top=False, bottom=False)
+
+    assert region.styles.border_top[0] in {"", "none"}
+    assert region.styles.border_right[0] == "solid"
+    assert region.styles.border_bottom[0] in {"", "none"}
+    assert region.styles.border_left[0] == "solid"
+
+
+@pytest.mark.parametrize(
+    "region_type",
+    [ConsoleTranscriptRegion, ProviderContinuationTranscriptRegion],
+)
+def test_both_transcript_compose_paths_request_explicitly_borderless_edges(
+    region_type: type[ConsoleTranscriptRegion],
+):
+    source = inspect.getsource(region_type.compose)
+
+    assert "edges=()," in source
+    assert "top=False" not in source
+    assert "bottom=False" not in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "region_type",
+    [ConsoleTranscriptRegion, ProviderContinuationTranscriptRegion],
+)
+async def test_both_transcript_compose_paths_are_borderless_at_runtime(
+    region_type: type[ConsoleTranscriptRegion],
+):
+    app = _TranscriptRegionHarness(region_type)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        border = app.screen.query_one("#console-transcript-region").styles.border
+
+        assert all(edge[0] in {"", "none"} for edge in border)
+
+
 @pytest.mark.asyncio
 async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
     host = _ready_console_host()
@@ -145,7 +265,7 @@ async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
 
 
 @pytest.mark.asyncio
-async def test_transcript_region_keeps_its_inline_sizing_and_topless_frame():
+async def test_transcript_region_keeps_inline_sizing_without_owning_frame_edges():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -166,12 +286,13 @@ async def test_transcript_region_keeps_its_inline_sizing_and_topless_frame():
         # The main column really is the dominant pane at this width.
         assert main_column.region.width > left_rail.region.width
 
-        # `_frame_console_region(..., top=False)`: three solid edges, no top.
+        # TASK-20937.3: the transcript keeps its sizing role but owns no
+        # frame edge; the grid and rails own the surrounding separators.
         border = transcript_region.styles.border
         assert border.top[0] in {"", "none"}
-        assert border.right[0] == "solid"
-        assert border.bottom[0] == "solid"
-        assert border.left[0] == "solid"
+        assert border.right[0] in {"", "none"}
+        assert border.bottom[0] in {"", "none"}
+        assert border.left[0] in {"", "none"}
         assert transcript_region.has_class("console-frame-solid")
 
 
@@ -274,3 +395,115 @@ async def test_note_follow_intent_stamps_the_mounted_transcript():
         # user scroll) wins", so the stamp must land AFTER the release above.
         assert transcript._follow_intent_time > before
         assert transcript._follow_intent_time >= transcript._user_scroll_time
+
+
+@pytest.mark.asyncio
+async def test_idle_speech_lives_in_selected_action_row_not_header():
+    app = _SpeechHeaderHarness()
+    async with app.run_test(size=(140, 32)) as pilot:
+        await _wait_for_selector(app, pilot, "#console-message-speech-a")
+        transcript = app.query_one(ConsoleTranscript)
+
+        # Unselected: no header speech action anywhere (idle Speak is not
+        # part of the normal per-message chrome).
+        assert transcript.selected_message_id is None
+        assert len(app.query("#console-message-speech-action-speech-a")) == 0
+        assert len(app.query("#console-message-speech-action-speech-b")) == 0
+
+        transcript.select_message("speech-a")
+        await pilot.pause()
+
+        # Selected: Speak appears in the ACTION ROW with the other
+        # per-message options, on that message only.
+        action_row = app.query_one("#console-message-actions-speech-a")
+        action_ids = {child.id for child in action_row.children}
+        assert "console-message-action-copy-speech-a" in action_ids
+        assert "console-message-action-edit-speech-a" in action_ids
+        assert "console-message-action-speak-speech-a" in action_ids
+        assert len(app.query("#console-message-action-speak-speech-b")) == 0
+        # The header still hosts no speech control while idle.
+        assert len(app.query("#console-message-speech-action-speech-a")) == 0
+
+
+@pytest.mark.asyncio
+async def test_message_header_tracks_speech_lifecycle_without_recreating_row():
+    app = _SpeechHeaderHarness()
+    async with app.run_test(size=(140, 32)) as pilot:
+        await _wait_for_selector(app, pilot, "#console-message-speech-a")
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-speech-a", ConsoleMarkdownMessage)
+
+        assert transcript.set_speech_state("speech-a", "generating") is True
+        await pilot.pause()
+        action = app.query_one("#console-message-speech-action-speech-a", Button)
+        assert app.query_one("#console-message-speech-a") is row
+        assert action.disabled is True
+        assert _speech_status(transcript, "speech-a") == "Generating"
+
+        assert transcript.set_speech_state("speech-a", "playing") is True
+        await pilot.pause()
+        playing = app.query_one("#console-message-speech-action-speech-a", Button)
+        assert app.query_one("#console-message-speech-a") is row
+        assert playing is action
+        assert playing.disabled is False
+        assert _speech_status(transcript, "speech-a") == "Playing"
+
+        assert transcript.set_speech_state("speech-a", "stopped") is True
+        await pilot.pause()
+        stopped = app.query_one("#console-message-speech-action-speech-a", Button)
+        assert stopped is action
+        assert _speech_status(transcript, "speech-a") == "Stopped"
+
+        assert transcript.set_speech_state("speech-a", "playing") is False
+        await pilot.pause()
+        assert app.query_one("#console-message-speech-action-speech-a", Button) is action
+        assert _speech_status(transcript, "speech-a") == "Stopped"
+
+
+@pytest.mark.asyncio
+async def test_new_active_speech_stops_prior_header_and_failure_clears_on_selection():
+    app = _SpeechHeaderHarness()
+    async with app.run_test(size=(140, 32)) as pilot:
+        await _wait_for_selector(app, pilot, "#console-message-speech-a")
+        transcript = app.query_one(ConsoleTranscript)
+
+        assert transcript.set_speech_state("speech-a", "generating") is True
+        assert transcript.set_speech_state("speech-a", "playing") is True
+        assert transcript.set_speech_state("speech-b", "generating") is True
+        await pilot.pause()
+
+        assert _speech_status(transcript, "speech-a") == "Stopped"
+        assert len(app.query("#console-message-speech-action-speech-a")) == 1
+        assert _speech_status(transcript, "speech-b") == "Generating"
+
+        assert transcript.set_speech_state("speech-b", "failed") is True
+        await pilot.pause()
+        assert _speech_status(transcript, "speech-b") == "Failed"
+
+        transcript.select_message("speech-a")
+        await pilot.pause()
+        assert _speech_status(transcript, "speech-b") == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [90, 140])
+async def test_speech_header_reserves_nonoverlapping_space(width: int):
+    app = _SpeechHeaderHarness()
+    async with app.run_test(size=(width, 32)) as pilot:
+        await _wait_for_selector(app, pilot, "#console-message-speech-a")
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_speech_state("speech-a", "generating")
+        await pilot.pause()
+
+        row = app.query_one("#console-message-speech-a")
+        header = app.query_one("#console-message-header-speech-a")
+        speaker = header.query_one(".console-transcript-speaker-label")
+        speech = header.query_one(".console-message-speech-presentation")
+        status = header.query_one(".console-message-speech-status")
+        action = header.query_one(".console-message-speech-action")
+
+        assert header.region.width <= row.region.width
+        assert speaker.region.x + speaker.region.width <= speech.region.x
+        assert status.region.x + status.region.width <= action.region.x
+        assert action.region.x + action.region.width <= row.region.x + row.region.width
+        assert header.region.height == 1

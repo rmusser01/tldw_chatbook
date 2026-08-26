@@ -24,6 +24,10 @@ stubs - the character the UI selects is the one
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import DataTable
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
@@ -296,7 +300,7 @@ class TestCharacterWorldBookAttachDetach:
 # ===================================================================
 
 
-class _EditorHost(App):
+class _EditorHost(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield PersonasCharacterEditorWidget()
 

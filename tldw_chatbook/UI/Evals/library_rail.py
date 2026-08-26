@@ -76,6 +76,7 @@ from typing import Any, Callable, Optional
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static
 
@@ -309,11 +310,28 @@ class LibraryRail(NotifyMixin, Vertical):
     """Left rail: Benches, Datasets, Runs -- each collapsible, with counts."""
 
     class EvalsSelectionChanged(Message, namespace="library_rail"):
-        """Posted when the user presses a selectable row."""
+        """Posted when this rail changes the screen's selection.
 
-        def __init__(self, selection: EvalsSelection) -> None:
+        Two very different situations post this: a plain row press (the rows
+        on screen are exactly the rows that exist -- only the active marker
+        moves) and a rail-initiated MUTATION that selects what it just made
+        (dataset import, "+ New bench", "+ New dataset", probe-set import),
+        after which the rows on screen are stale.
+
+        ``rail_dirty`` tells them apart so the screen can skip rebuilding the
+        rail for the common case (task-15475). It defaults to ``True``, the
+        answer that is never wrong -- only ``on_button_pressed``'s row-press
+        path opts out. Getting this backwards leaves a rail missing the row
+        the user just created, which is exactly what a first draft of this
+        change did.
+        """
+
+        def __init__(
+            self, selection: EvalsSelection, *, rail_dirty: bool = True
+        ) -> None:
             super().__init__()
             self.selection = selection
+            self.rail_dirty = rail_dirty
 
     class SampleBenchRequested(Message, namespace="library_rail"):
         """Posted when "Create sample bench" is pressed.
@@ -390,6 +408,35 @@ class LibraryRail(NotifyMixin, Vertical):
             open_sections if open_sections is not None else _default_open_sections()
         )
         self._row_targets: dict[str, EvalsSelection] = {}
+
+    def apply_selection(self, selection: EvalsSelection) -> None:
+        """Re-mark the active row in place, without rebuilding the rail.
+
+        task-15475. A rail click cannot change which ROWS exist -- this
+        widget is what posted the selection -- only which one is marked
+        active, so the screen no longer rebuilds the rail for it. The marking
+        rule is the same one ``_row_button`` applies at compose time, read off
+        the same ``_row_targets`` map, so a re-marked rail and a
+        freshly-composed one agree by construction.
+
+        Callers whose rows genuinely changed (a save, a finished run, a
+        delete) must rebuild the rail instead -- see ``EvalsScreen.select``'s
+        ``rail_dirty``.
+
+        Args:
+            selection: The screen's new selection.
+
+        Returns:
+            None.
+        """
+        self.selection = selection
+        for button_id, target in self._row_targets.items():
+            try:
+                button = self.query_one(f"#{button_id}", Button)
+            except NoMatches:
+                # A collapsed/removed section's row; nothing to mark.
+                continue
+            button.set_class(target == selection, "is-active")
 
     def compose(self) -> ComposeResult:
         self._row_targets = {}
@@ -933,7 +980,10 @@ class LibraryRail(NotifyMixin, Vertical):
         if selection is None:
             return
         event.stop()
-        self.post_message(self.EvalsSelectionChanged(selection))
+        # The ONE opt-out (task-15475): a row press changes nothing about
+        # which rows exist -- this rail composed them -- so the screen
+        # re-marks the active row in place instead of rebuilding the rail.
+        self.post_message(self.EvalsSelectionChanged(selection, rail_dirty=False))
 
     def _create_new_dataset(self) -> None:
         db = self.view_model.db

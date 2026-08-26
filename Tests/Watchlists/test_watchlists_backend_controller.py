@@ -5,11 +5,43 @@ from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import Wa
 
 
 class FakeScopeService:
+    def __init__(self):
+        self.calls = []
+
+    def create_form_source_types(self, *, runtime_backend):
+        self.calls.append(("create_form_source_types", runtime_backend))
+        if runtime_backend == "server":
+            return ("rss", "site", "forum")
+        return ("rss", "atom", "url")
+
     async def list_watch_items(self, *, runtime_backend, **kwargs):
         return [{"id": 1, "title": "Source"}]
 
     async def create_watch_item(self, *, runtime_backend, payload):
         return {"id": 1, **payload}
+
+
+@pytest.mark.parametrize(
+    ("runtime_backend", "expected_backend", "expected_types"),
+    [
+        (None, "local", ("rss", "atom", "url")),
+        (" SERVER ", "server", ("rss", "site", "forum")),
+    ],
+)
+def test_create_form_source_types_routes_to_normalized_backend(
+    runtime_backend, expected_backend, expected_types
+):
+    scope = FakeScopeService()
+    ctrl = WatchlistsBackendController(
+        app_instance=None,
+        scope_service=scope,
+        server_service=None,
+    )
+
+    assert (
+        ctrl.create_form_source_types(runtime_backend=runtime_backend) == expected_types
+    )
+    assert scope.calls == [("create_form_source_types", expected_backend)]
 
 
 def test_controller_normalizes_backend():
@@ -226,3 +258,40 @@ async def test_an_unwired_scope_service_reports_its_own_status_not_no_runs_yet()
         "an unwired scope_service must not read identically to a healthy "
         "watchlist that simply has zero runs"
     )
+
+
+@pytest.mark.asyncio
+async def test_check_all_checks_each_source_and_soft_fails():
+    """TASK-3791 plan task 5: refresh-all iterates the eligible ids in
+    order, a failing source never stops the batch, and the result carries
+    the per-source outcome for the aggregate toast."""
+    ctrl = WatchlistsBackendController(
+        app_instance=None, scope_service=AsyncMock(), server_service=None
+    )
+    seen: list[str] = []
+
+    async def _check(*, runtime_backend=None, source_id):
+        seen.append(source_id)
+        if source_id == "2":
+            raise RuntimeError("boom")
+        return {"status": "completed"}
+
+    ctrl.check_now = _check
+
+    result = await ctrl.check_all(runtime_backend="local", source_ids=["1", "2", "3"])
+
+    assert seen == ["1", "2", "3"], "one failure must not stop the batch"
+    assert result["checked"] == 2
+    assert result["failed"] == ["2"]
+
+
+@pytest.mark.asyncio
+async def test_check_all_with_no_sources_is_a_noop():
+    ctrl = WatchlistsBackendController(
+        app_instance=None, scope_service=AsyncMock(), server_service=None
+    )
+    ctrl.check_now = AsyncMock(side_effect=AssertionError("must not be called"))
+
+    result = await ctrl.check_all(runtime_backend="local", source_ids=[])
+
+    assert result == {"checked": 0, "failed": []}

@@ -99,6 +99,9 @@ def test_loop_deps_review_tool_calls_defaults_to_none():
         clock=lambda: 0.0,
     )
     assert deps.review_tool_calls is None
+    assert deps.prepare_tool_calls is None
+    assert deps.project_instruction_payload_state is None
+    assert deps.on_ephemeral_runtime_warning is None
 
 
 # --- hook receives the full batch before any dispatch ------------------
@@ -437,8 +440,14 @@ def _registry():
 def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
     seen_batches = []
 
-    def review(batch):
+    # PR2a Task 5: an `AgentService`-wired hook takes `(batch, run_id)` --
+    # the service binds ITS run id in, which is how the review hook knows
+    # which run's gate slice to stamp. (`LoopDeps.review_tool_calls` itself
+    # is unchanged and still 1-arg; the tests above drive that shape
+    # directly.)
+    def review(batch, run_id):
         seen_batches.append([c.name for c in batch])
+        assert run_id, "the service must bind a real run id into the hook"
         return {"calculator": "Blocked by policy"}
 
     chat = ScriptedChat(

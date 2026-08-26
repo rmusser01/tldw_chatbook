@@ -3,6 +3,7 @@ import asyncio
 
 import pytest
 
+import tldw_chatbook.DB.Client_Media_DB_v2 as media_db_module
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import (
     ALLOWED_SERVER_CREATE_SOURCE_TYPES,
@@ -10,6 +11,8 @@ from tldw_chatbook.Media.media_reading_scope_service import (
     MediaReadingScopeService,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     AddMediaRequest,
@@ -403,56 +406,12 @@ class FakeLocalMediaService:
         self.calls.append(("delete_reading_progress", media_id))
         return True
 
-    def create_reading_highlight(self, item_id, **kwargs):
-        self.calls.append(("create_reading_highlight", item_id, kwargs))
-        return {
-            "id": 5,
-            "item_id": item_id,
-            "quote": kwargs["quote"],
-            "start_offset": kwargs.get("start_offset"),
-            "end_offset": kwargs.get("end_offset"),
-            "color": kwargs.get("color"),
-            "note": kwargs.get("note"),
-            "created_at": "2026-04-22T12:00:00Z",
-            "anchor_strategy": kwargs.get("anchor_strategy", "fuzzy_quote"),
-            "state": "active",
-        }
-
-    def list_reading_highlights(self, item_id):
-        self.calls.append(("list_reading_highlights", item_id))
-        return [
-            {
-                "id": 5,
-                "item_id": item_id,
-                "quote": "Important sentence",
-                "start_offset": 10,
-                "end_offset": 28,
-                "color": "yellow",
-                "note": "Check this",
-                "created_at": "2026-04-22T12:00:00Z",
-                "anchor_strategy": "fuzzy_quote",
-                "state": "active",
-            }
-        ]
-
-    def update_reading_highlight(self, highlight_id, **changes):
-        self.calls.append(("update_reading_highlight", highlight_id, changes))
-        return {
-            "id": highlight_id,
-            "item_id": 12,
-            "quote": "Important sentence",
-            "start_offset": 10,
-            "end_offset": 28,
-            "color": changes.get("color"),
-            "note": changes.get("note"),
-            "created_at": "2026-04-22T12:00:00Z",
-            "anchor_strategy": "fuzzy_quote",
-            "state": changes.get("state", "active"),
-        }
-
-    def delete_reading_highlight(self, highlight_id):
-        self.calls.append(("delete_reading_highlight", highlight_id))
-        return True
+    # task-15768: this fake deliberately implements ONLY the unprefixed
+    # highlight methods (create_highlight/list_highlights/update_highlight/
+    # delete_highlight, further down) -- the real LocalMediaReadingService has
+    # no reading_-prefixed highlight methods, and a fake that grows them hides
+    # exactly the AttributeError that broke every local-mode Media hub
+    # highlight operation.
 
     def create_reading_saved_search(self, **kwargs):
         self.calls.append(("create_reading_saved_search", kwargs))
@@ -2743,8 +2702,9 @@ class FakeSyncScopeService:
 
 @pytest.mark.asyncio
 async def test_scope_service_normalizes_local_media_search_results():
+    local = FakeLocalMediaService()
     scope_service = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
     )
 
@@ -2759,6 +2719,403 @@ async def test_scope_service_normalizes_local_media_search_results():
     assert result["items"][0]["id"] == "local:media:12"
     assert result["items"][0]["backing_media_id"] == 12
     assert result["items"][0]["reading_progress"] is None
+    assert local.calls == [("search_media", "pdf", 5, 0, {})]
+
+
+class LibrarySummaryLocalService:
+    def __init__(self, payload=None):
+        self.calls = []
+        self.payload = payload or {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "Summary title",
+                    "type": "article",
+                    "last_modified": "2026-08-16T12:00:00Z",
+                    "content": "PRIVATE_BODY",
+                    "path": "/private/media/path",
+                }
+            ],
+            "total": 45,
+            "offset": 40,
+            "limit": 20,
+            "private_envelope": "PRIVATE_ENVELOPE_VALUE",
+        }
+
+    def search_media(self, *, query=None, limit=20, offset=0, **kwargs):
+        self.calls.append(("search_media", query, limit, offset, kwargs))
+        return self.payload
+
+    def list_library_media_types(self):
+        self.calls.append(("list_library_media_types",))
+        return [f"type-{index:02}" for index in range(61)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_library_media_summary_preserves_envelope_and_five_keys():
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    result = await scope_service.search_media(
+        mode="local",
+        query="summary query",
+        limit=20,
+        offset=40,
+        id_allowlist=[41],
+        library_summary=True,
+    )
+
+    assert local.calls == [
+        (
+            "search_media",
+            "summary query",
+            20,
+            40,
+            {"media_ids_filter": [41], "library_summary": True},
+        )
+    ]
+    assert result == {
+        "items": [
+            {
+                "id": "local:media:41",
+                "backing_media_id": 41,
+                "title": "Summary title",
+                "media_type": "article",
+                "updated_at": "2026-08-16T12:00:00Z",
+            }
+        ],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_uses_active_complete_local_summary():
+    class LocalEvidenceService:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        def search_media(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.payload
+
+    local = LocalEvidenceService(
+        {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "Summary title",
+                    "type": "article",
+                    "last_modified": "2026-08-20T00:00:00Z",
+                }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    evidence = await scope_service.get_library_user_content_evidence(mode="local")
+
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+    assert local.calls == [
+        {
+            "query": None,
+            "limit": 1,
+            "offset": 0,
+            "library_summary": True,
+            "include_deleted": False,
+            "include_trash": False,
+            "chunking_status": "completed",
+        }
+    ]
+
+    excluded = LocalEvidenceService({"items": [], "total": 0, "offset": 0, "limit": 1})
+    scope_service = MediaReadingScopeService(
+        local_service=excluded, server_service=None
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_filters_completed_real_local_population():
+    db = Database(db_path=":memory:", client_id="library-evidence")
+    try:
+        completed_id, _, _ = db.add_media_with_keywords(
+            title="Older completed",
+            content="completed body",
+            media_type="article",
+            keywords=[],
+            chunks=[],
+        )
+        db.add_media_with_keywords(
+            title="Newer pending",
+            content="pending body",
+            media_type="article",
+            keywords=[],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        assert (
+            await scope_service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.HAS_USER_CONTENT
+        )
+
+        assert db.soft_delete_media(completed_id)
+        assert (
+            await scope_service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.EMPTY
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_media_evidence_uses_bounded_summary_without_private_enrichment_or_logs(
+    tmp_path, monkeypatch
+):
+    db = Database(db_path=tmp_path / "media.db", client_id="private-client-sentinel")
+    private_title = "PRIVATE_TITLE_SENTINEL"
+    db.add_media_with_keywords(
+        title=private_title,
+        content="PRIVATE_BODY_SENTINEL",
+        media_type="article",
+        keywords=[],
+        chunks=[],
+    )
+    local = LocalMediaReadingService(db)
+    enriched = []
+    monkeypatch.setattr(
+        local,
+        "_enrich_rows_with_read_it_later_state",
+        lambda rows: (enriched.append(rows), rows)[1],
+    )
+    logs = []
+    monkeypatch.setattr(
+        media_db_module.logger,
+        "info",
+        lambda template, *args, **_kwargs: logs.append((template, args)),
+    )
+    service = MediaReadingScopeService(local_service=local, server_service=None)
+    try:
+        assert (
+            await service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.HAS_USER_CONTENT
+        )
+        assert enriched == []
+        rendered_logs = repr(logs)
+        for private_value in (
+            private_title,
+            "PRIVATE_BODY_SENTINEL",
+            "private-client-sentinel",
+            str(tmp_path),
+            "result_count",
+            "total=",
+        ):
+            assert private_value not in rendered_logs
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_accepts_exact_server_summary_only():
+    class StrictReadingClient:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        async def list_reading_items(
+            self,
+            *,
+            status=None,
+            tags=None,
+            q=None,
+            domain=None,
+            favorite=None,
+            date_from=None,
+            date_to=None,
+            page=1,
+            size=20,
+            offset=None,
+            limit=None,
+            sort=None,
+        ):
+            self.calls.append({"q": q, "limit": limit, "offset": offset})
+            return self.payload
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 41, "processing_status": "completed"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    server = ServerMediaReadingService(client=client)
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert client.calls == [{"q": None, "limit": 1, "offset": 0}]
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 42, "processing_status": "incomplete"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 43, "processing_status": "future-state"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    client = StrictReadingClient(
+        {"items": [{"id": 44}], "total": 1, "offset": 0, "limit": 1}
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    class AmbiguousServer:
+        async def search_media(self, **kwargs):
+            return {"items": []}
+
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=AmbiguousServer()
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_key", ["items", "total", "offset", "limit"])
+async def test_scope_service_library_media_summary_does_not_fill_missing_envelope_keys(
+    missing_key,
+):
+    payload = {
+        "items": [],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+    payload.pop(missing_key)
+    scope_service = MediaReadingScopeService(
+        local_service=LibrarySummaryLocalService(payload),
+        server_service=None,
+    )
+
+    result = await scope_service.search_media(
+        mode="local", limit=20, offset=40, library_summary=True
+    )
+
+    assert missing_key not in result
+
+
+@pytest.mark.asyncio
+async def test_scope_service_library_media_summary_preserves_malformed_envelope_values():
+    payload = {"items": None, "total": "45", "offset": 39, "limit": 21}
+    scope_service = MediaReadingScopeService(
+        local_service=LibrarySummaryLocalService(payload),
+        server_service=None,
+    )
+
+    result = await scope_service.search_media(
+        mode="local", limit=20, offset=40, library_summary=True
+    )
+
+    assert result == payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("limit", "offset"),
+    [
+        (True, 0),
+        (0, 0),
+        (2**63, 0),
+        (20, True),
+        (20, -1),
+        (20, 2**63),
+    ],
+)
+async def test_scope_service_library_media_summary_rejects_invalid_coordinates(
+    limit, offset
+):
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    with pytest.raises(ValueError):
+        await scope_service.search_media(
+            mode="local",
+            limit=limit,
+            offset=offset,
+            library_summary=True,
+        )
+
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_library_media_summary_for_server():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+
+    with pytest.raises(ValueError, match="local"):
+        await scope_service.search_media(mode="server", library_summary=True)
+
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_lists_complete_local_library_media_types():
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    media_types = await scope_service.list_library_media_types(mode="local")
+
+    assert len(media_types) == 61
+    assert media_types[-1] == "type-60"
+    assert local.calls == [("list_library_media_types",)]
+
+    with pytest.raises(ValueError, match="local"):
+        await scope_service.list_library_media_types(mode="server")
 
 
 @pytest.mark.asyncio
@@ -3821,11 +4178,14 @@ async def test_scope_service_routes_reading_highlights_and_enforces_actions():
     ]
     assert created["id"] == "server:reading_highlight:5"
     assert created["item_id"] == "41"
-    assert listed[0]["quote"] == "Important sentence"
+    assert listed[0]["quote"] == "important"
     assert updated["color"] == "blue"
     assert deleted == {"success": True}
+    # task-15768: the scope service dispatches the unprefixed leaf contract
+    # (the server service's primary methods; its reading_-prefixed names are
+    # back-compat aliases the local service never had).
     assert (
-        "create_reading_highlight",
+        "create_highlight",
         41,
         {
             "quote": "Important sentence",
@@ -5437,6 +5797,82 @@ async def test_scope_service_routes_local_highlights_with_media_reading_actions(
         ("update_highlight", 5, {"color": None, "note": "recheck", "state": None}),
         ("delete_highlight", 5),
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reading_highlight_crud_reaches_real_local_service():
+    """task-15768: the Media hub bridge must reach the REAL local leaf methods.
+
+    ``MediaWindow_v2`` drives highlights through the scope service's
+    ``*_reading_highlight*`` methods. Those must dispatch the leaf names the
+    real ``LocalMediaReadingService`` actually implements
+    (``create_highlight``/``list_highlights``/``update_highlight``/
+    ``delete_highlight``) -- the fakes in this file previously implemented the
+    ``reading_``-prefixed names the real local service never had, hiding an
+    ``AttributeError`` that every local-mode Media hub highlight operation hit
+    in production.
+    """
+    db = Database(db_path=":memory:", client_id="scope_hub_highlights")
+    try:
+        media_id, _, _ = db.add_media_with_keywords(
+            title="Hub Highlighted",
+            content="Important local content for the media hub.",
+            media_type="article",
+            keywords=[],
+        )
+        local_service = LocalMediaReadingService(db)
+        seeded = local_service.create_highlight(
+            media_id, quote="Important", start_offset=0, end_offset=9
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=local_service,
+            server_service=None,
+        )
+        record = {
+            "id": f"local:media:{media_id}",
+            "backend": "local",
+            "source_id": str(media_id),
+            "backing_media_id": media_id,
+        }
+
+        listed = await scope_service.list_reading_highlights(
+            mode="local", record=record
+        )
+        assert [h["source_id"] for h in listed] == [str(seeded["id"])]
+        assert listed[0]["quote"] == "Important"
+        assert listed[0]["backend"] == "local"
+
+        created = await scope_service.create_reading_highlight(
+            mode="local",
+            record=record,
+            quote="local content",
+            color="yellow",
+            note="revisit",
+        )
+        assert created["quote"] == "local content"
+        assert created["color"] == "yellow"
+        assert len(local_service.list_highlights(media_id)) == 2
+
+        updated = await scope_service.update_reading_highlight(
+            mode="local",
+            highlight_id=created["source_id"],
+            color="blue",
+            note="done",
+            state="stale",
+        )
+        assert updated["color"] == "blue"
+        assert updated["note"] == "done"
+        assert updated["state"] == "stale"
+
+        await scope_service.delete_reading_highlight(
+            mode="local", highlight_id=created["source_id"]
+        )
+        remaining = await scope_service.list_reading_highlights(
+            mode="local", record=record
+        )
+        assert [h["source_id"] for h in remaining] == [str(seeded["id"])]
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio

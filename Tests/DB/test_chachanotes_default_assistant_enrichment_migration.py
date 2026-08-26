@@ -28,6 +28,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -98,7 +102,9 @@ def _force_row1_bare(connection) -> None:
     connection.commit()
 
 
-def _seed_v31_database_with_bare_row(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _seed_v31_database_with_bare_row(
+    path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with monkeypatch.context() as v31_patch:
         v31_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 31)
         db = CharactersRAGDB(path, client_id="migration-seed")
@@ -134,7 +140,7 @@ def test_fresh_database_seeds_rich_content(tmp_path):
     assert row["alternate_greetings"] != BARE_ALTERNATE_GREETINGS
 
     connection = db.get_connection()
-    assert _version(connection) == 32
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     db.close_connection()
 
 
@@ -159,9 +165,11 @@ def test_migration_enriches_untouched_bare_row_and_bumps_version(tmp_path, monke
     db_path = tmp_path / "chachanotes.db"
     _seed_v31_database_with_bare_row(db_path, monkeypatch)
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     connection = db.get_connection()
-    assert _version(connection) == 32
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
     row = db.get_character_card_by_id(1)
     assert row["name"] == BARE_NAME
@@ -184,7 +192,9 @@ def test_migration_untouched_fields_not_written_stay_bare(tmp_path, monkeypatch)
     db_path = tmp_path / "chachanotes.db"
     _seed_v31_database_with_bare_row(db_path, monkeypatch)
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     row = db.get_character_card_by_id(1)
     assert row["scenario"] is None
     assert row["message_example"] is None
@@ -227,7 +237,9 @@ _EDIT_CASES = [
 _JSON_FIELDS = {"alternate_greetings", "tags", "extensions"}
 
 
-@pytest.mark.parametrize("field, edited_value", _EDIT_CASES, ids=[c[0] for c in _EDIT_CASES])
+@pytest.mark.parametrize(
+    "field, edited_value", _EDIT_CASES, ids=[c[0] for c in _EDIT_CASES]
+)
 def test_migration_preserves_row_with_single_field_edited(
     tmp_path, monkeypatch, field, edited_value
 ):
@@ -262,9 +274,11 @@ def test_migration_preserves_row_with_single_field_edited(
         pre_migration_version = pre_migration_row["version"]
         db.close_connection()
 
-    db2 = CharactersRAGDB(db_path, client_id="migration-test")
+    db2 = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     connection2 = db2.get_connection()
-    assert _version(connection2) == 32  # migration still runs (DDL/version bump)
+    assert _version(connection2) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
     post_migration_row = db2.get_character_card_by_id(1)
     # The edited field survives untouched.
@@ -296,9 +310,11 @@ def test_migration_preserves_deleted_row(tmp_path, monkeypatch):
         connection.commit()
         db.close_connection()
 
-    db2 = CharactersRAGDB(db_path, client_id="migration-test")
+    db2 = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     connection2 = db2.get_connection()
-    assert _version(connection2) == 32
+    assert _version(connection2) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     row = connection2.execute(
         "SELECT description, deleted FROM character_cards WHERE id = 1"
     ).fetchone()
@@ -313,7 +329,7 @@ def test_migration_preserves_deleted_row(tmp_path, monkeypatch):
 
 
 def test_migration_is_idempotent_on_already_rich_row(tmp_path):
-    """A fresh database is already rich by the time it reaches v32 (the
+    """A fresh database is already rich by the time it reaches current schema (the
     enrichment happens at seed time, not via the migration). Re-running the
     same conditional UPDATE (as a second migration attempt would) must be a
     no-op: the WHERE clause no longer matches an enriched row."""
@@ -333,7 +349,9 @@ def test_reopening_a_migrated_database_does_not_touch_row_again(tmp_path, monkey
     db_path = tmp_path / "chachanotes.db"
     _seed_v31_database_with_bare_row(db_path, monkeypatch)
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     row_after_migration = db.get_character_card_by_id(1)
     db.close_connection()
 
@@ -371,11 +389,15 @@ def test_first_edit_of_row_1_succeeds_on_a_migrated_pre_existing_database(
     db_path = tmp_path / "chachanotes.db"
     _seed_v31_database_with_bare_row(db_path, monkeypatch)
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     row = db.get_character_card_by_id(1)
 
     result = db.update_character_card(
-        1, {"description": "second edit after migration"}, expected_version=row["version"]
+        1,
+        {"description": "second edit after migration"},
+        expected_version=row["version"],
     )
     assert result is True
     db.close_connection()
@@ -396,7 +418,9 @@ def test_fts_search_finds_row_1_after_migration_from_bare(tmp_path, monkeypatch)
     db_path = tmp_path / "chachanotes.db"
     _seed_v31_database_with_bare_row(db_path, monkeypatch)
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     hits = db.search_character_cards("worked example")
     assert hits
     assert any(hit["id"] == 1 for hit in hits)
@@ -419,7 +443,9 @@ def test_fts_rebuild_does_not_disturb_other_character_cards(tmp_path, monkeypatc
         assert new_id is not None
         db.close_connection()
 
-    db2 = CharactersRAGDB(db_path, client_id="migration-test")
+    db2 = open_current_chachanotes_from_legacy(
+        db_path, client_id="migration-test"
+    )
     hits = db2.search_character_cards("space pirate")
     assert any(hit["id"] == new_id for hit in hits)
     db2.close_connection()
@@ -449,8 +475,11 @@ def test_conversation_and_message_against_character_id_1_still_works(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_current_schema_version_is_32():
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 32
+def test_current_schema_version_is_current():
+    # Pinned dynamically: this sibling test exists to catch an accidental
+    # DOWNGRADE, not to be re-edited on every legitimate bump (it has been
+    # re-hardcoded at 35, 39, 40, 41 ...).
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 41
 
 
 def test_migrate_from_v31_to_v32_requires_version_31(tmp_path):

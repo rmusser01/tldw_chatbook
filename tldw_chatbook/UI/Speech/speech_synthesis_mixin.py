@@ -22,16 +22,22 @@ A host must provide, beyond the controls themselves:
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 from uuid import uuid4
 
 from loguru import logger
+from textual.css.query import NoMatches
 from textual.widgets import Button, Input, RichLog, Select, Switch, TextArea
 
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
 )
-from tldw_chatbook.TTS import STTSPlaygroundRequest
+from tldw_chatbook.TTS import (
+    STTSPlaygroundProfilePreview,
+    STTSPlaygroundRequest,
+    TTSPlaygroundSelectionPreset,
+)
 from tldw_chatbook.TTS.adapter_types import TTSRegistryClosedError
 from tldw_chatbook.TTS.effective_settings import (
     TTS_REQUEST_OPTION_KEYS,
@@ -67,6 +73,62 @@ class SpeechSynthesisMixin:
         #: The in-flight generation, or None when idle.
         self._generation_operation_id: Any = None
 
+    def _profile_preview_for_request(self) -> STTSPlaygroundProfilePreview | None:
+        """Project only bounded identity for a reference-bearing preview."""
+
+        preset = self._profile_preset
+        if type(preset) is not TTSPlaygroundSelectionPreset:
+            return None
+        if (
+            preset.profile_id is None
+            or preset.repository_generation is None
+            or preset.profile_revision is None
+        ):
+            return None
+        return STTSPlaygroundProfilePreview(
+            profile_id=preset.profile_id,
+            repository_generation=preset.repository_generation,
+            profile_revision=preset.profile_revision,
+        )
+
+    def _build_playground_request(
+        self,
+        *,
+        operation_id: str,
+        provider: str,
+        model: str,
+        text: str,
+        voice_id: str | None,
+        response_format: str,
+        speed: float,
+        options: Mapping[str, Any],
+        studio_draft: TTSStudioDraftSelection | None,
+        studio_preferences: StudioTTSPreferencesSnapshot | None,
+    ) -> STTSPlaygroundRequest:
+        """Build one immutable request without exposing profile reference data."""
+
+        clone_snapshot = None
+        clone_snapshot_factory = getattr(self, "_clone_audition_for_request", None)
+        if callable(clone_snapshot_factory):
+            clone_snapshot = clone_snapshot_factory(provider, model)
+
+        return STTSPlaygroundRequest(
+            operation_id=operation_id,
+            provider_id=provider,
+            model_id=model,
+            text=text,
+            voice_id=voice_id,
+            response_format=response_format,
+            speed=speed,
+            options=options,
+            studio_draft=studio_draft,
+            studio_preferences=(
+                studio_preferences if studio_draft is not None else None
+            ),
+            clone_audition=clone_snapshot,
+            profile_preview=self._profile_preview_for_request(),
+        )
+
     def _effective_generation_selection(self) -> tuple[object, object]:
         """The (provider_id, model_id) pair the readiness gate should judge.
 
@@ -99,16 +161,47 @@ class SpeechSynthesisMixin:
         """
         text_present = bool(self.query_one("#tts-text-input", TextArea).text.strip())
         provider_id, model_id = self._effective_generation_selection()
-        self.query_one("#tts-generate-btn", Button).disabled = not (
-            text_present
-            and self._generation_readiness_error(provider_id, model_id) is None
-            and not getattr(self.app, "_is_generating", False)
+        readiness_error = (
+            self._generation_readiness_error(provider_id, model_id)
+            if text_present
+            else "Enter text before generating speech"
         )
+        if (
+            provider_id == "audio_cpp"
+            and getattr(self, "_audio_cpp_lifecycle_busy", None) is not None
+        ):
+            readiness_error = "An audio.cpp operation is in progress."
+        elif getattr(self.app, "_is_generating", False):
+            readiness_error = "TTS generation is already in progress"
+        generation_disabled = readiness_error is not None
+        generate = self.query_one("#tts-generate-btn", Button)
+        generate.disabled = generation_disabled
+        generate.tooltip = (
+            readiness_error
+            if readiness_error is not None
+            else "Generate speech with the current Speech Lab controls"
+        )
+        try:
+            repeat = self.query_one("#audio-generate-again-btn", Button)
+        except NoMatches:
+            pass
+        else:
+            artifact_missing = getattr(self, "current_audio_artifact", None) is None
+            repeat.disabled = bool(generation_disabled or artifact_missing)
+            repeat.tooltip = (
+                "Generate audio before generating another result"
+                if artifact_missing
+                else readiness_error
+                if readiness_error is not None
+                else "Generate another result with the current Speech Lab controls"
+            )
 
     def _generation_readiness_error(
         self,
         provider_id: object,
         model_id: object,
+        *,
+        clone_action: bool = False,
     ) -> str | None:
         """Return fixed UI copy when a generation snapshot is not authoritative.
 
@@ -190,8 +283,14 @@ class SpeechSynthesisMixin:
         revision_matches = self._catalog_configuration_revisions.get(
             provider_id
         ) == service.configuration_revision(provider_id)
+        reference_only_clone = self._is_reference_only_clone_action(
+            provider_id,
+            model_id,
+            clone_action=clone_action,
+        )
         if (
             provider_id in self._pending_voice_selections
+            and not reference_only_clone
             and provider_id not in self._stale_providers
             and catalog.health.state == "available"
             and catalog.health.fresh
@@ -200,15 +299,52 @@ class SpeechSynthesisMixin:
             return "Voices are still loading; wait before generating"
         if (
             provider_id in self._stale_providers
-            or not self._catalog_generation_allowed
+            or (
+                not reference_only_clone
+                and not self._catalog_generation_allowed
+            )
             or catalog.health.state != "available"
             or not catalog.health.fresh
             or not revision_matches
         ):
             return "The selected provider catalog is stale; refresh models"
-        if not any(model.model_id == model_id for model in catalog.models):
+        # An OpenAI model outside the static official catalog is a pinned
+        # custom-endpoint id ("no catalog check", TASK-15421) — there is
+        # nothing to verify it against, and nothing can "disappear" from a
+        # static catalog, so the staleness copy would be false here.
+        if provider_id != "openai" and not any(
+            model.model_id == model_id for model in catalog.models
+        ):
             return "The selected model is no longer available; refresh models"
+        clone_readiness = getattr(self, "_clone_setup_generation_error", None)
+        if callable(clone_readiness):
+            clone_error = clone_readiness(
+                provider_id,
+                model_id,
+                clone_action=clone_action,
+            )
+            if clone_error is not None:
+                return clone_error
         return None
+
+    def _is_reference_only_clone_action(
+        self,
+        provider_id: object,
+        model_id: object,
+        *,
+        clone_action: bool,
+    ) -> bool:
+        """Return whether the exact visible action forbids a catalog voice."""
+
+        if not clone_action or provider_id != AUDIO_CPP_PROVIDER_ID:
+            return False
+        observation = getattr(self, "_audio_cpp_runtime_observation", None)
+        projection = None if observation is None else observation.clone_setup
+        return bool(
+            projection is not None
+            and projection.model_id == model_id
+            and projection.voice_reference_policy == "reference_only"
+        )
 
     def _get_select_key(self, select_widget: Select) -> SelectValue | None:
         """Return exact canonical values for catalog-driven controls."""
@@ -229,7 +365,7 @@ class SpeechSynthesisMixin:
         """Check if a voice value is valid (not a separator)."""
         return bool(voice) and not str(voice).startswith("_separator")
 
-    def _generate_tts(self) -> None:
+    def _generate_tts(self, *, clone_action: bool = False) -> None:
         """Generate TTS audio"""
         if self._generation_operation_id is not None:
             self.app.notify(
@@ -263,8 +399,20 @@ class SpeechSynthesisMixin:
             voice = (
                 SERVER_DEFAULT_VOICE_ID if preset.voice_id is None else preset.voice_id
             )
+        elif self._is_reference_only_clone_action(
+            provider,
+            model,
+            clone_action=clone_action,
+        ):
+            # A reference-only recipe rejects any native voice at adapter
+            # admission. Ignore a stale/loading catalog selection entirely.
+            voice = SERVER_DEFAULT_VOICE_ID
 
-        readiness_error = self._generation_readiness_error(provider, model)
+        readiness_error = self._generation_readiness_error(
+            provider,
+            model,
+            clone_action=clone_action,
+        )
         if readiness_error is not None:
             self._sync_generate_enabled()
             self.app.notify(readiness_error, severity="warning")
@@ -460,6 +608,10 @@ class SpeechSynthesisMixin:
         studio_preferences = getattr(self, "studio_preferences", None)
         studio_draft = None
         if type(studio_preferences) is StudioTTSPreferencesSnapshot:
+            canonical_studio_preferences = cast(
+                StudioTTSPreferencesSnapshot,
+                studio_preferences,
+            )
             allowed_options = TTS_REQUEST_OPTION_KEYS[provider]
             studio_options = {
                 key: value
@@ -477,26 +629,28 @@ class SpeechSynthesisMixin:
                     speed=speed,
                     provider_options=studio_options,
                 ),
-                base_revision=studio_preferences.revision,
+                base_revision=canonical_studio_preferences.revision,
                 preview=bool(getattr(self, "_profile_preset", None)),
             )
 
         # Disable generate button
         self.query_one("#tts-generate-btn", Button).disabled = True
+        try:
+            self.query_one("#audio-generate-again-btn", Button).disabled = True
+        except NoMatches:
+            pass
 
-        request = STTSPlaygroundRequest(
+        request = self._build_playground_request(
             operation_id=str(uuid4()),
-            provider_id=provider,
-            model_id=model,
+            provider=provider,
+            model=model,
             text=text,
             voice_id=voice_id,
             response_format=format,
             speed=speed,
             options=extra_params,
             studio_draft=studio_draft,
-            studio_preferences=(
-                studio_preferences if studio_draft is not None else None
-            ),
+            studio_preferences=studio_preferences,
         )
         self._generation_operation_id = request.operation_id
         self._profile_save_suppressed = True

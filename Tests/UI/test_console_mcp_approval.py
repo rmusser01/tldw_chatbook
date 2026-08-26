@@ -21,11 +21,16 @@ from unittest.mock import Mock, patch
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -34,6 +39,12 @@ from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 
 from Tests.UI.app_factory import _build_test_app
+
+#: PR2a Task 5: the review hook takes the id of the run whose batch it is
+#: reviewing (both gates key their per-turn verdicts by run). These
+#: hook-level tests drive ONE run each, so they name it once here; every
+#: assertion below is unchanged.
+RUN = "run-1"
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
@@ -70,7 +81,7 @@ def _assert_rule_pinned_in_bundle_source_and_bundle(
             )
 
 
-class _CardHarnessApp(App[None]):
+class _CardHarnessApp(ConsolidatedCSSApp):
     """Minimal host for `ChatApprovalCard` that records `ApprovalDecided`."""
 
     def __init__(self) -> None:
@@ -1040,7 +1051,7 @@ def test_approval_row_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     claim a `1fr` share of its `#approval-batch-rows` parent's remaining
     space instead of hugging its own single-line content, the same
     fr-inside-auto-parent collapse class documented on
-    `MCPAuditMode.DEFAULT_CSS`'s Findings-view comment."""
+    `MCPAuditMode.BUNDLED_CSS`'s Findings-view comment."""
     _assert_rule_pinned_in_bundle_source_and_bundle(
         ".approval-row {", ("height: auto;", "width: 1fr;")
     )
@@ -1182,8 +1193,11 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
     `_stop_requested` flag to exercise that; F5 removed `_stop_requested`
     from the bridge's poll (a single session's Stop must not cross-cancel
     an unrelated session's approval round any more), so the equivalent
-    "global" signal is now the never-reset `_shutdown_requested` (set only
-    by `shutdown()`)."""
+    "global" signal is the production app-exit path `begin_shutdown()`, which
+    sets the visit Event AND cancels headless-bound rounds -- a raw
+    `_shutdown_requested.set()` poke stopped reaching never-visited
+    controllers' rounds when the Qodo-S2 fix (PR #1799) made those bind the
+    headless cancel signal. Drive the seam, not the flag."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
     controller.app = _FakeApp()
@@ -1192,7 +1206,7 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
-        controller._shutdown_requested.set()
+        controller.begin_shutdown()
 
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()
@@ -1320,7 +1334,7 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
-        controller._shutdown_requested.set()
+        controller.begin_shutdown()
 
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()
@@ -1507,7 +1521,9 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     time.sleep(0.1)
     assert background in controller._pending_approvals
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
-    mcp_round_id = controller._parked_approval_payloads[background]["round_id"]
+    mcp_round_id = controller._head_round_payload(
+        controller._parked_approval_payloads, background
+    )["round_id"]
     # (Minor, review) Data-level check: after just the MCP round has
     # parked, the round-keyed set for this session is EXACTLY the
     # singleton of its own round id -- locks in that arming never
@@ -1518,9 +1534,9 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     install_worker = threading.Thread(target=_run_install)
     install_worker.start()
     time.sleep(0.1)
-    install_request_id = controller._parked_skill_install_payloads[background][
-        "request_id"
-    ]
+    install_request_id = controller._head_round_payload(
+        controller._parked_skill_install_payloads, background
+    )["request_id"]
     # Both rounds' ids are now tracked, still with no double-count.
     assert controller._pending_approvals[background] == {
         mcp_round_id,
@@ -1537,14 +1553,20 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     assert mcp_result["decisions"] == {"mcp__srv__tool": "deny"}
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
     assert background in controller._pending_approvals
-    assert background in controller._parked_skill_install_payloads
     assert (
-        controller._parked_skill_install_payloads[background]["request_id"]
+        controller._head_round_payload(
+            controller._parked_skill_install_payloads, background
+        )["request_id"]
         == install_request_id
     )
     # The MCP bridge's OWN payload map is cleared (it was the last MCP
     # round for this session).
-    assert background not in controller._parked_approval_payloads
+    assert (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, background
+        )
+        is None
+    )
 
     # The skill-install round resolves LAST -- only now does the badge
     # fully clear.
@@ -1553,7 +1575,12 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     assert install_result["allowed"] is True
     assert controller.run_marker_for(background) is ConsoleRunMarker.NONE
     assert background not in controller._pending_approvals
-    assert background not in controller._parked_skill_install_payloads
+    assert (
+        controller._head_round_payload(
+            controller._parked_skill_install_payloads, background
+        )
+        is None
+    )
 
 
 def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_round():
@@ -1567,6 +1594,12 @@ def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_ro
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     session_b = store.create_session(title="B").id
+    # ADR-067: an app-less controller now fails closed before arming (see
+    # `request_mcp_approvals`' no-app guard), so wire the usual fake
+    # bridge -- this test's subject is cross-session cancel isolation, not
+    # the no-app path.
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
     # A short deadline: if A's cancel event wrongly denied this round, the
     # cancellation branch would fire first (`_record_cancelled_approval_
     # decisions` aside) -- observing "timeout" instead of "deny" proves the
@@ -1648,7 +1681,9 @@ def test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_swit
     worker_b = threading.Thread(target=_run_round_b)
     worker_b.start()
     time.sleep(0.1)
-    round_id_b = controller._parked_approval_payloads[session_b]["round_id"]
+    round_id_b = controller._head_round_payload(
+        controller._parked_approval_payloads, session_b
+    )["round_id"]
     assert round_id_b != round_id_a
 
     # The user clicked "Submit" on A's card, but before the resulting
@@ -1673,19 +1708,34 @@ def test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_swit
     assert result_b["decisions"] == {"mcp__b__tool": "deny"}
 
 
+def _other_round_id(controller, session_id: str, not_this_one: str) -> str:
+    """The session's OTHER retained round id (PR0: one key per round)."""
+    return [
+        payload["round_id"]
+        for payload in controller._session_round_payloads(
+            controller._parked_approval_payloads, session_id
+        )
+        if payload["round_id"] != not_this_one
+    ][0]
+
+
 def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_evict_the_newer_ones_payload():
-    """TASK-1050 (Defect B): `_parked_approval_payloads` is keyed by
-    session id ALONE, not by round id -- arming a SECOND MCP round for
-    the SAME session overwrites the first round's retained payload under
-    that key. If the FIRST (now-superseded) round's teardown pops that
-    key unconditionally, it silently discards the SECOND round's own,
-    still-live payload -- a switch-away/back would then remount `None`
-    and the second round would sit unresolvable until its timeout. The
-    teardown must only pop when it is the LAST armed round for the
-    session (fix round 1, review: an earlier draft also popped whenever
-    the stored payload was still "its own" id, but that condition is
-    true exactly for the newest-armed round -- see the reverse-ordering
-    sibling test below for why that reintroduced the same eviction)."""
+    """One round's teardown must never discard a sibling's retained payload.
+
+    TASK-1050 (Defect B) originally: `_parked_approval_payloads` was keyed
+    by session id ALONE, so arming a SECOND round for the SAME session
+    overwrote the first's payload and an unconditional pop in either
+    teardown discarded the survivor's only copy -- a switch-away/back
+    remounted `None` and the survivor sat unresolvable until its timeout.
+    That was patched with an order-dependent "only pop when this is the
+    LAST armed round" guard.
+
+    PR0 (task-15661) removes the shared slot entirely: the map is keyed by
+    ROUND, so each teardown drops exactly its own key and the guard is
+    gone. The CONTRACT this test pins is unchanged and now holds by
+    construction rather than by a guard -- the earlier round resolving
+    first leaves the later round's payload intact, and the session's card
+    re-derives to it."""
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
@@ -1704,7 +1754,9 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     worker_1 = threading.Thread(target=_run_round_1)
     worker_1.start()
     time.sleep(0.1)
-    round_id_1 = controller._parked_approval_payloads[session_a]["round_id"]
+    round_id_1 = controller._head_round_payload(
+        controller._parked_approval_payloads, session_a
+    )["round_id"]
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
 
     def _run_round_2() -> None:
@@ -1715,9 +1767,16 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     worker_2 = threading.Thread(target=_run_round_2)
     worker_2.start()
     time.sleep(0.1)
-    # Round 2 overwrote round 1's stored payload under the same session key.
-    round_id_2 = controller._parked_approval_payloads[session_a]["round_id"]
+    # PR0: round 2 keeps its OWN key rather than overwriting round 1's --
+    # round 1 is still the session's head and still owns the card.
+    round_id_2 = _other_round_id(controller, session_a, round_id_1)
     assert round_id_2 != round_id_1
+    assert (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )["round_id"]
+        == round_id_1
+    ), "arming round 2 must not evict round 1's card"
 
     # Round 1 (the EARLIER, now-superseded round) resolves first -- its
     # teardown must not discard round 2's still-armed, newer payload, nor
@@ -1729,7 +1788,12 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     assert result_1["decisions"] == {"mcp__one__tool": "deny"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
     assert session_a in controller._pending_approvals
-    assert controller._parked_approval_payloads[session_a]["round_id"] == round_id_2
+    assert (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )["round_id"]
+        == round_id_2
+    ), "round 1 resolving must promote round 2, not discard it"
 
     # Round 2 (the LAST remaining round) resolves -- now everything clears.
     controller.resolve_pending_approval(
@@ -1739,47 +1803,37 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     assert result_2["decisions"] == {"mcp__two__tool": "approve_once"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
-    assert session_a not in controller._parked_approval_payloads
+    assert (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )
+        is None
+    )
 
 
 def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated():
-    """TASK-1050 fix round 1 (review): reverse-ordering counterpart to the
-    sibling test above. `_parked_approval_payloads` is a SINGLE
-    per-session slot always holding whichever round's payload was LAST
-    WRITTEN (arming overwrites it) -- so "the stored payload is still
-    this round's own id" is true exactly when THIS round is the
-    newest-armed one, which is also the common case where an OLDER
-    sibling round is still outstanding (arming a round re-mounts its
-    card, which typically gets decided before an already-waiting sibling
-    does -- this is the NATURAL live ordering, not an edge case). An
-    earlier draft of the Defect B fix popped the slot whenever that
-    condition held, which discarded the still-armed OLDER round's only
-    remaining payload the moment the NEWER round resolved first -- a
-    switch-away/back would then re-derive from the now-empty map and
-    mount `None`, leaving the older round unresolvable until its
-    timeout. The fix now pops ONLY when no armed round remains for the
-    session at all (order-independent), so resolving the newer round
-    first must leave the slot populated (remount still works) and the
-    badge up; only resolving the older (now last) round clears both.
+    """Reverse ordering: the newer round resolving first must not strand
+    the older one card-less with the badge still lit.
 
-    Fix round 3 (re-review) EXTENSION: pins the CARD-CLEAR seam itself,
-    not just the payload map -- the round-identity-guarded clear
-    (`_clear_pending_approval_if_round_is_current`) introduced in fix
-    round 2 initially checked ONLY "has a newer round overwritten the
-    payload slot", which is trivially false when round 2 (the newest)
-    resolves first, so it cleared the card anyway even though round 1
-    was still armed -- card gone, badge still lit, round 1 undecidable
-    through the UI until timeout. The ORIGINAL version of this test used
-    `controller.set_pending_approval = lambda payload: None` (a
-    discarding no-op), which could not have caught that regression: a
-    stray `set_pending_approval(None)` call is silently indistinguishable
-    from no call at all through a no-op. Now records every call via
-    `mounted.append` (mirrors every other test in this module) and
-    asserts directly on it at each step: no NEW clear call reaches the
-    seam while round 1 is still armed, and the OLDER round remains
-    resolvable (decidable) through its own `round_id` the whole time;
-    only once round 1 (the last remaining round) resolves does the clear
-    actually fire."""
+    This is the NATURAL live ordering, not an edge case -- pre-PR0, arming
+    a round re-mounted its card, so the newest round was typically decided
+    before an already-waiting sibling. Two successive TASK-1050 fix rounds
+    were needed to stop the newer round's teardown from popping the SHARED
+    per-session payload slot (fix round 1) and then from firing the
+    card-clear seam (fix round 3) while the older round was still armed.
+
+    PR0 (task-15661) makes both hazards structural non-events: each round
+    owns its own key, and the card is always the session's FIFO HEAD.
+    Round 1 is therefore the round that MOUNTS (round 2 queues silently
+    behind it), and round 2 resolving re-derives the head -- which is
+    still round 1's own payload, so the card the user is looking at does
+    not change and is certainly never cleared. That last point is what the
+    fix-round-3 assertion below now checks: it asserts on the card's
+    CONTENT rather than on whether the seam was called, because under
+    FIFO the seam legitimately fires (re-deriving to the same head) where
+    pre-PR0 it had to stay silent. Recording every call through
+    `mounted.append` (rather than a discarding no-op) is what makes that
+    distinction observable at all."""
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
@@ -1810,18 +1864,18 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     worker_2 = threading.Thread(target=_run_round_2)
     worker_2.start()
     time.sleep(0.1)
+    # PR0: round 2 does NOT mount -- round 1 is the head and keeps the card.
     assert mounted[-1] is not None
-    round_id_2 = mounted[-1]["round_id"]
+    assert mounted[-1]["round_id"] == round_id_1, (
+        "arming round 2 must not evict the head round's card"
+    )
+    round_id_2 = _other_round_id(controller, session_a, round_id_1)
     assert round_id_2 != round_id_1
-    calls_after_both_armed = len(mounted)  # 2: round 1's mount, round 2's mount
 
-    # Round 2 (the NEWER, newest-armed round) resolves FIRST -- round 1 is
-    # still outstanding, so the badge must stay up, the parked slot must
-    # still hold a payload (not popped to `None`, even though it is --
-    # per the accepted single-slot scope -- round 2's own now-stale
-    # payload rather than round 1's), and -- the regression this test now
-    # pins -- the CARD-CLEAR seam must NOT be invoked at all: no new
-    # entry (`None` or otherwise) reaches `mounted`.
+    # Round 2 (the NEWER, queued round) resolves FIRST -- round 1 is still
+    # outstanding, so the badge must stay up, round 1 must keep its own
+    # retained payload, and the card the user is looking at must still be
+    # round 1's own (PR0: the head re-derive resolves back to it).
     controller.resolve_pending_approval(
         {"mcp__two__tool": "approve_once"}, round_id=round_id_2
     )
@@ -1829,15 +1883,15 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     assert result_2["decisions"] == {"mcp__two__tool": "approve_once"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
     assert session_a in controller._pending_approvals
-    assert session_a in controller._parked_approval_payloads, (
-        "the parked slot must still hold a payload -- popping it here "
+    assert round_id_1 in controller._parked_approval_payloads, (
+        "round 1 must keep its own retained payload -- dropping it here "
         "would strand the still-armed older round unresolvable on the "
         "next switch-away/back"
     )
-    assert len(mounted) == calls_after_both_armed, (
-        "round 2 resolving must NOT invoke the card-clear seam while "
-        "round 1 is still armed -- doing so strands round 1 card-less "
-        "with the badge still lit"
+    assert mounted[-1] is not None and mounted[-1]["round_id"] == round_id_1, (
+        "round 2 resolving must leave round 1's card on screen -- clearing "
+        "it (or swapping in anything else) strands round 1 card-less with "
+        f"the badge still lit; got {mounted[-1]}"
     )
 
     # Round 1 (the OLDER round) remains fully decidable through the UI
@@ -1850,9 +1904,13 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     assert result_1["decisions"] == {"mcp__one__tool": "deny"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
-    assert session_a not in controller._parked_approval_payloads
-    # Round 1 (now the LAST remaining round) resolving DOES fire the clear.
-    assert len(mounted) == calls_after_both_armed + 1
+    assert (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )
+        is None
+    )
+    # Round 1 (now the LAST remaining round) resolving DOES clear the card.
     assert mounted[-1] is None
 
 
@@ -1890,7 +1948,7 @@ class _DeferredClearApp:
         return fn(*args, **kwargs)
 
 
-def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown():
+def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_teardown():
     """TASK-1050 fix round 2 (review, Qodo PR #1041, CRITICAL): `request_
     mcp_approvals`'s teardown used to decide whether to clear the mounted
     card via a boolean snapshot (`still_active`/`still_armed_same_
@@ -1905,9 +1963,13 @@ def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_r
     BLOCKS mid-flight (right where the race window used to be); round 2
     arms and mounts for the SAME session while round 1's clear is still
     blocked; only then is round 1's clear released to actually run.
-    `_clear_pending_approval_if_round_is_current`'s round-identity check
-    (re-read live at that exact moment, never from a stale snapshot) must
-    make it a no-op, leaving round 2's freshly-mounted card intact."""
+    PR0 (task-15661) replaced that round-identity guard with a FIFO-head
+    re-derive (`_remount_head`), which closes the same race by the same
+    principle -- the decision is computed INSIDE the callable, on the UI
+    thread, never from a worker-thread snapshot -- and is order-
+    independent besides. Released here, round 1's deferred callable must
+    re-derive to round 2 (the session's head by then) and leave round 2's
+    freshly-mounted card intact."""
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
@@ -1943,7 +2005,12 @@ def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_r
     # entirely independent of whether its still-blocked UI-thread clear
     # has run yet.
     assert session_a not in controller._pending_approvals
-    assert session_a not in controller._parked_approval_payloads
+    assert (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )
+        is None
+    )
 
     # Round 2 arms for the SAME session WHILE round 1's clear is still
     # blocked -- it mounts its own card immediately (session_a is active).
@@ -1963,9 +2030,9 @@ def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_r
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
 
     # NOW release round 1's blocked clear. A snapshot-guarded clear would
-    # unconditionally wipe round 2's just-mounted card here; the
-    # round-identity guard must instead see round 2 has since claimed the
-    # slot and no-op.
+    # unconditionally wipe round 2's just-mounted card here; `_remount_head`'s
+    # FIFO head re-derive must instead see round 2 is now the session's head
+    # and leave its card mounted.
     app.release_clear.set()
     worker_1.join(timeout=2.0)
     assert result_1["decisions"] == {"mcp__one__tool": "deny"}
@@ -1988,7 +2055,12 @@ def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_r
     assert result_2["decisions"] == {"mcp__two__tool": "approve_once"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
-    assert session_a not in controller._parked_approval_payloads
+    assert (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )
+        is None
+    )
     assert mounted[-1] is None
 
 
@@ -2213,11 +2285,11 @@ def test_request_mcp_approvals_survives_marshal_failure_during_teardown():
                 # round_id off of.
                 calls.append(args[0] if args else None)
                 return fn(*args, **kwargs)
-            # TASK-1050 fix round 2: the teardown-time clear is now a
-            # zero-arg, round-identity-guarded wrapper closure
-            # (`_clear_pending_approval_if_round_is_current`) rather than
-            # a direct `call_from_thread(setter, None)` call, so it can no
-            # longer be identified by inspecting `args[0] is None`.
+            # TASK-1050 fix round 2 / PR0: the teardown-time card update
+            # is a zero-arg wrapper closure (`_remount_head`'s `_apply`)
+            # rather than a direct `call_from_thread(setter, None)` call,
+            # so it can no longer be identified by inspecting
+            # `args[0] is None`.
             # Simulate the app having stopped by the time this (second)
             # `call_from_thread` invocation happens, regardless of what
             # it was called with.
@@ -2266,13 +2338,13 @@ def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self):
+        def begin_turn(self, run_id):
             pass
 
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
 
-        def stamp(self, name, decision):
+        def stamp(self, run_id, name, decision):
             stamped.append((name, decision))
 
         def is_session_approved(self, name):
@@ -2293,7 +2365,7 @@ def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    hook([ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-1")])
+    hook([ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-1")], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         f"the call-id-keyed decision never reached the gate: {stamped}"
@@ -2396,10 +2468,10 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2424,7 +2496,7 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     verdicts = hook([
         ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
         ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
-    ])
+    ], RUN)
 
     refusal = verdicts.get("call-1")
     assert refusal and refusal != "proceed", (
@@ -2499,10 +2571,10 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2525,7 +2597,7 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     verdicts = hook([
         ToolCall(name="read_file", args={"path": "spec.md"}, call_id="c-ok"),
         ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="c-no"),
-    ])
+    ], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         "the refusal was stamped against the tool NAME, which also blocks "
@@ -2558,10 +2630,10 @@ def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id): pass
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): stamped.append((name, decision))
+        def stamp(self, run_id, name, decision): stamped.append((name, decision))
         def is_session_approved(self, name): return False
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
@@ -2584,9 +2656,652 @@ def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
     hook([
         ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
         ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
-    ])
+    ], RUN)
 
     assert stamped == [("read_file", "approve_session")], (
         "the session grant the user chose was downgraded to approve_once, so "
         f"the next call re-prompts: {stamped}"
     )
+
+
+# -- PR2a Task 7: cancellation revokes a child's pending approval cards ----
+#
+# The hazard: the approval wait blocks inside `_call_with_timeout`'s per-call
+# daemon thread. When the fleet cancels or abandons a child while its card is
+# still on screen, the user can still press Approve -- and the tool would
+# EXECUTE FOR REAL (file written, message sent) for a run that already reads
+# `cancelled`. `revoke_approval_rounds_for_run` is the fail-closed answer.
+
+#: Two concurrent children of one turn. They share the console SESSION (the
+#: fleet's children all run under the parent's session) and differ only by
+#: run id -- which is exactly why round ownership had to become run-keyed.
+RUN_A = "run-child-a"
+RUN_B = "run-child-b"
+
+
+def _arm_round(controller, *, run_id, session_id, llm_name, results):
+    """Arm one approval round on a worker thread, owned by ``run_id``.
+
+    Mirrors production: `request_mcp_approvals` runs on the agent bridge's
+    worker thread, and the dispatching run's id reaches it through the
+    `run_context` ContextVar that `AgentService` binds around the review
+    hook and around each tool invocation.
+    """
+
+    def _run() -> None:
+        with use_run_id(run_id):
+            results[run_id] = controller.request_mcp_approvals(
+                [_pending(llm_name=llm_name)], session_id=session_id
+            )
+
+    thread = threading.Thread(target=_run)
+    thread.start()
+    return thread
+
+
+def _round_id_for(controller, run_id: str) -> str:
+    rounds = [
+        rid
+        for rid, state in controller._pending_approval_rounds.items()
+        if state.get("run_id") == run_id
+    ]
+    assert len(rounds) == 1, f"expected exactly one armed round for {run_id}: {rounds}"
+    return rounds[0]
+
+
+def test_revoking_a_run_denies_its_rounds_and_leaves_another_runs_untouched():
+    """Two concurrent children, one cancelled: only its own card is revoked.
+
+    Both rounds belong to the SAME console session, so nothing session-keyed
+    could tell them apart -- the round has to record which RUN armed it.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Fleet").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    results: dict[str, dict[str, str]] = {}
+    worker_a = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__a",
+        results=results,
+    )
+    worker_b = _arm_round(
+        controller,
+        run_id=RUN_B,
+        session_id=session_id,
+        llm_name="mcp__srv__b",
+        results=results,
+    )
+    time.sleep(0.15)
+
+    round_a = _round_id_for(controller, RUN_A)
+    round_b = _round_id_for(controller, RUN_B)
+    assert controller._pending_approvals[session_id] == {round_a, round_b}
+
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+
+    worker_a.join(timeout=3.0)
+    assert not worker_a.is_alive(), "the revoked round never released its thread"
+    assert results[RUN_A] == {"mcp__srv__a": "deny"}
+
+    # The sibling child is mid-approval and must be completely undisturbed:
+    # still armed, still counted for the badge, still blocking its thread.
+    assert worker_b.is_alive()
+    assert round_a not in controller._pending_approval_rounds
+    assert round_b in controller._pending_approval_rounds
+    assert controller._pending_approvals[session_id] == {round_b}
+    assert controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    controller.resolve_pending_approval(
+        {"mcp__srv__b": "approve_once"}, round_id=round_b
+    )
+    worker_b.join(timeout=3.0)
+    assert results[RUN_B] == {"mcp__srv__b": "approve_once"}
+    assert session_id not in controller._pending_approvals
+
+
+def test_revoking_a_run_unblocks_its_waiting_thread_and_clears_the_card():
+    """Revocation resolves the round NOW -- not at the 120s auto-deny -- and
+    takes the card down through the same clear a resolved card uses."""
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Child").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__tool",
+        results=results,
+    )
+    time.sleep(0.15)
+    assert mounted and mounted[-1] is not None, "precondition: the card is on screen"
+
+    started = time.monotonic()
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+    worker.join(timeout=3.0)
+    elapsed = time.monotonic() - started
+
+    assert not worker.is_alive()
+    assert results[RUN_A] == {"mcp__srv__tool": "deny"}
+    # Nowhere near the 30s deadline: the Event was set, not waited out.
+    assert elapsed < 2.5
+    assert mounted[-1] is None, "the revoked card was left on screen"
+    assert session_id not in controller._pending_approvals
+    assert (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, session_id
+        )
+        is None
+    )
+
+
+def test_revoking_an_unknown_run_is_a_zero_return_noop():
+    """Safe for a run that never armed a card (the overwhelmingly common
+    case: every cancelled child with no approval outstanding)."""
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Child").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    # Nothing armed at all.
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 0
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__tool",
+        results=results,
+    )
+    time.sleep(0.15)
+    round_a = _round_id_for(controller, RUN_A)
+
+    assert controller.revoke_approval_rounds_for_run("run-nobody") == 0
+    # An empty/absent run id must never match the rounds armed outside any
+    # run (a direct provider call) -- fail closed by refusing to sweep.
+    assert controller.revoke_approval_rounds_for_run("") == 0
+
+    assert round_a in controller._pending_approval_rounds
+    assert controller._pending_approvals[session_id] == {round_a}
+    assert worker.is_alive()
+
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "approve_once"}, round_id=round_a
+    )
+    worker.join(timeout=3.0)
+    assert results[RUN_A] == {"mcp__srv__tool": "approve_once"}
+
+
+def test_a_decision_landing_after_a_revoke_cannot_reopen_the_round():
+    """The in-flight-click race, pinned deterministically.
+
+    `ApprovalDecided` travels as an async Textual message, so a user click
+    can be delivered AFTER the fleet cancelled the child -- and
+    `resolve_pending_approval` snapshots the round's shared decisions dict,
+    so a write can even land in that dict after the round was torn down.
+    The waiting thread must still return "deny".
+
+    The worker is held inside its own mount callback (which runs on the
+    worker thread, after the round is registered and before the wait loop),
+    which makes the ordering exact rather than hopeful.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Child").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    release = threading.Event()
+
+    def _mount(payload):
+        mounted.append(payload)
+        if payload is not None:
+            # Park the worker just before it enters the wait loop.
+            release.wait(5.0)
+
+    controller.set_pending_approval = _mount
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__tool",
+        results=results,
+    )
+    try:
+        deadline = time.monotonic() + 3.0
+        while not mounted and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert mounted and mounted[0] is not None
+        round_a = _round_id_for(controller, RUN_A)
+        decisions_box = controller._pending_approval_rounds[round_a]["decisions"]
+
+        assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+        # The stale click is delivered now: by round id (a no-op, the round
+        # is gone) AND straight into the shared box a pre-revoke snapshot
+        # would still hold. Neither may resurrect the approval.
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "approve_once"}, round_id=round_a
+        )
+        decisions_box["mcp__srv__tool"] = "approve_once"
+    finally:
+        release.set()
+
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert results[RUN_A] == {"mcp__srv__tool": "deny"}, (
+        "a click that landed after cancellation re-opened a revoked round"
+    )
+
+
+@pytest.mark.unit
+def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypatch):
+    """End to end, with the real gate, the real provider and a real file.
+
+    The whole point of the task: a child cancelled mid-approval must not be
+    able to write to disk when the user presses Approve afterwards. Drives
+    the production chain -- `build_tool_review_hook` -> `request_mcp_
+    approvals` -> `BuiltinToolGate` stamp -> `BuiltinToolProvider.invoke`.
+    """
+    import tldw_chatbook.config as config_module
+    import tldw_chatbook.Tools.file_operation_tools as fot
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    from Tests.Agents.test_builtin_tool_gate import _FakeService
+
+    def _tools_setting(section, key=None, default=None):
+        if section == "tools" and key == "write_file_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _tools_setting)
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(tmp_path))
+
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Child").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    gate = BuiltinToolGate(service=_FakeService())
+    provider = BuiltinToolProvider(gate=gate)
+    hook = build_tool_review_hook(
+        gate,
+        provider,
+        None,
+        lambda pending: controller.request_mcp_approvals(
+            pending, session_id=session_id
+        ),
+        workspace_id=None,
+    )
+    args = {"file_path": "owned.txt", "content": "written by a cancelled child"}
+    target = tmp_path / "owned.txt"
+
+    verdicts: dict[str, str] = {}
+
+    def _review() -> None:
+        with use_run_id(RUN_A):
+            verdicts.update(
+                hook([ToolCall(name="write_file", args=args, call_id="call-1")], RUN_A)
+            )
+
+    worker = threading.Thread(target=_review)
+    worker.start()
+    time.sleep(0.2)
+    assert mounted and mounted[-1] is not None, "precondition: the card is on screen"
+    round_a = mounted[-1]["round_id"]
+
+    # The fleet cancels/abandons this child while its card is still up.
+    assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+
+    # ... and the user presses Approve anyway.
+    controller.resolve_pending_approval(
+        {"call-1": "approve_once", "write_file": "approve_once"}, round_id=round_a
+    )
+
+    with use_run_id(RUN_A):
+        result = provider.invoke("builtin:write_file", args)
+
+    assert verdicts["call-1"] != "proceed", (
+        f"the revoked call was cleared for dispatch: {verdicts}"
+    )
+    assert result.ok is False
+    assert not target.exists(), (
+        "a revoked approval executed the tool for real -- the file was written"
+    )
+
+
+# -- PR3a-1 Task 6b (audit F4): a survivor's round binds ITS OWN cancel signal
+#
+# `_is_session_cancelled` used to resolve `_active_cancel_events[session_id]`
+# at POLL time, once a second, for the whole life of an approval round. That
+# is correct only while the round's own turn is the turn that owns the
+# session's entry. A fleet child that outlives its turn (PR3a-1's whole
+# point) breaks the assumption in two directions, both silent:
+#
+#   * between turns the entry is gone, so `.get()` returns None; and
+#   * DURING THE NEXT TURN the entry is the NEXT turn's Event, so pressing
+#     Stop on turn 2 denies turn 1's survivor's still-open card and fails a
+#     legitimate tool call closed with nothing saying why.
+#
+# The audit labelled the second direction INFERENCE FROM STRUCTURE, NOT
+# EXECUTION. These tests execute it. The fix binds the Event BY VALUE at arm
+# time, which is what `revoke_approval_rounds_for_run`'s run-keyed sweep
+# already does for the push side.
+
+#: The child of turn 1 that is still running when turn 2 begins.
+RUN_SURVIVOR = "run-turn1-survivor"
+
+
+def _begin_turn(controller, session_id: str) -> threading.Event:
+    """Register one turn's own per-run cancel Event, as `_run_agent_reply` does."""
+    cancel_event = threading.Event()
+    controller._active_cancel_events[session_id] = cancel_event
+    return cancel_event
+
+
+def _end_turn(controller, session_id: str) -> None:
+    """Drop the turn's per-session entry, as `_stream_assistant_response_inner`
+    does once the turn (not its surviving children) has finished."""
+    controller._active_cancel_events.pop(session_id, None)
+
+
+def test_the_next_turns_stop_does_not_deny_an_earlier_turns_survivors_card():
+    """Stop on turn 2 must not fail turn 1's survivor's tool call closed."""
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Fleet").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    turn_one_cancel = _begin_turn(controller, session_id)
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_SURVIVOR,
+        session_id=session_id,
+        llm_name="mcp__srv__write",
+        results=results,
+    )
+    time.sleep(0.15)
+    survivor_round = _round_id_for(controller, RUN_SURVIVOR)
+
+    # Turn 1 returns; its child (and the child's card) outlive it.
+    _end_turn(controller, session_id)
+    # Turn 2 starts with its OWN Event, and the user presses Stop on IT.
+    _begin_turn(controller, session_id)
+    controller._signal_stop(session_id=session_id)
+
+    # More than one poll interval (`_MCP_APPROVAL_POLL_SECONDS` = 1.0s).
+    worker.join(timeout=2.5)
+
+    assert worker.is_alive(), (
+        "turn 2's Stop denied turn 1's survivor's still-open card: "
+        f"{results}"
+    )
+    assert survivor_round in controller._pending_approval_rounds
+    assert results == {}
+    assert not turn_one_cancel.is_set(), (
+        "turn 2's Stop reached back into turn 1's own cancel Event"
+    )
+
+    # The survivor IS still stoppable -- through its own run-keyed revoke,
+    # which is what the fleet panel's Cancel presses.
+    assert controller.revoke_approval_rounds_for_run(RUN_SURVIVOR) == 1
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert results[RUN_SURVIVOR] == {"mcp__srv__write": "deny"}
+
+
+def test_a_round_armed_between_turns_is_not_deniable_by_a_later_turns_stop():
+    """The other direction: a survivor arms a card with NO turn in flight.
+
+    At poll time `_active_cancel_events.get(session_id)` was None -- and
+    then became the NEXT turn's Event the moment the user sent again, so a
+    Stop on that unrelated turn denied this card too.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Fleet").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    # No turn in flight: turn 1 has returned, turn 2 has not begun.
+    assert session_id not in controller._active_cancel_events
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_SURVIVOR,
+        session_id=session_id,
+        llm_name="mcp__srv__write",
+        results=results,
+    )
+    time.sleep(0.15)
+    survivor_round = _round_id_for(controller, RUN_SURVIVOR)
+
+    _begin_turn(controller, session_id)
+    controller._signal_stop(session_id=session_id)
+    worker.join(timeout=2.5)
+
+    assert worker.is_alive(), (
+        f"a later turn's Stop denied a between-turns round: {results}"
+    )
+    assert survivor_round in controller._pending_approval_rounds
+
+    assert controller.revoke_approval_rounds_for_run(RUN_SURVIVOR) == 1
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert results[RUN_SURVIVOR] == {"mcp__srv__write": "deny"}
+
+
+def test_the_owning_turns_own_stop_still_denies_its_round():
+    """The control: binding by value must not make Stop stop working.
+
+    A round armed by the turn that owns the session's Event is denied by
+    that turn's Stop, exactly as before -- the fix narrows WHICH Event a
+    round listens to, it does not remove the signal.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Owner").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    _begin_turn(controller, session_id)
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__tool",
+        results=results,
+    )
+    time.sleep(0.15)
+    assert _round_id_for(controller, RUN_A)
+
+    controller._signal_stop(session_id=session_id)
+    worker.join(timeout=3.0)
+
+    assert not worker.is_alive(), "the owning turn's Stop no longer reaches its round"
+    assert results[RUN_A] == {"mcp__srv__tool": "deny"}
+
+
+def test_shutdown_still_denies_a_survivors_round():
+    """Teardown is the one signal that legitimately reaches every round.
+
+    `shutdown()` sets `_shutdown_requested`, which is never reset for this
+    controller instance -- a survivor whose bound Event is None must still
+    fail closed when the Console screen it is attached to goes away.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Fleet").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_SURVIVOR,
+        session_id=session_id,
+        llm_name="mcp__srv__write",
+        results=results,
+    )
+    time.sleep(0.15)
+
+    controller.begin_shutdown()
+    worker.join(timeout=3.0)
+
+    assert not worker.is_alive(), "teardown left a survivor's round parked"
+    assert results[RUN_SURVIVOR] == {"mcp__srv__write": "deny"}
+
+
+# -- ADR-067: no-deadline approval rounds --------------------------------
+#
+# The shipped default is now 0 = "no auto-deny": a round stays armed until
+# the user answers or the run is stopped. A positive timeout still denies
+# undecided calls (the existing expiry tests above, via seam values like
+# 0.05, pin that). The pre-ADR code computed `deadline = now + 0` for a
+# zero timeout and stamped "timeout" at the first 1s poll -- every test
+# below asserts the round survives past that point.
+
+
+def test_request_mcp_approvals_zero_timeout_keeps_round_armed_for_late_decision():
+    """Timeout 0 means NO deadline: the round survives the first 1s poll
+    and resolves only on the user's decision."""
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 0.0
+
+    def _decide_late() -> None:
+        time.sleep(1.6)  # beyond the first poll where the old code bailed
+        assert received and received[0] is not None
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "approve_once"}, round_id=received[0]["round_id"]
+        )
+
+    decider = threading.Thread(target=_decide_late)
+    decider.start()
+    started = time.monotonic()
+    decisions = controller.request_mcp_approvals([_pending()])
+    elapsed = time.monotonic() - started
+    decider.join()
+
+    assert decisions == {"mcp__srv__tool": "approve_once"}
+    # The round was still armed past the old first-poll bail point.
+    assert elapsed >= 1.5
+    # The card was told no deadline exists (countdown copy hidden).
+    assert received[0]["timeout_seconds"] == 0.0
+    assert received[-1] is None
+
+
+def test_request_mcp_approvals_marks_human_input_wait_while_round_armed():
+    """While a round waits, its OWNING run is marked in the human-input
+    wait registry so `_call_with_timeout` pauses the per-call clock --
+    keyed by the round's `use_run_id` binding, cleared when it resolves."""
+    from tldw_chatbook.Agents.human_input_wait import human_input_wait_active
+
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result: dict[str, object] = {}
+
+    def _run_round() -> None:
+        with use_run_id("run-approval-wait"):
+            result["decisions"] = controller.request_mcp_approvals([_pending()])
+
+    def _sample_then_decide() -> None:
+        # Wait for the round to arm, sample the mark from THIS thread (the
+        # wrapper's vantage point -- the mark must be process state, not
+        # worker-thread-local), then resolve the round.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not received:
+            time.sleep(0.01)
+        assert received, "round never armed"
+        result["marked_while_armed"] = human_input_wait_active("run-approval-wait")
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "deny"}, round_id=received[0]["round_id"]
+        )
+
+    worker = threading.Thread(target=_run_round)
+    decider = threading.Thread(target=_sample_then_decide)
+    worker.start()
+    decider.start()
+    worker.join(timeout=10.0)
+    decider.join(timeout=10.0)
+
+    assert result["decisions"] == {"mcp__srv__tool": "deny"}
+    assert result["marked_while_armed"] is True
+    assert human_input_wait_active("run-approval-wait") is False
+
+
+def test_request_mcp_approvals_without_ui_fails_closed_immediately():
+    """With no UI bridge wired nothing can EVER resolve the round, and the
+    no-deadline default means the poll loop would never end -- so the
+    bridge must fail closed on the spot, mirroring the skill confirms'
+    own no-app guards."""
+    controller, _ = _build_controller()
+    assert controller.app is None
+    controller.mcp_approval_timeout_seconds = lambda: 0.05
+
+    started = time.monotonic()
+    decisions = controller.request_mcp_approvals([_pending()])
+    elapsed = time.monotonic() - started
+
+    assert decisions == {"mcp__srv__tool": "deny"}
+    assert elapsed < 2.5
+
+
+def test_mcp_approval_timeout_default_is_no_deadline(monkeypatch):
+    """ADR-067: the shipped default flips 120 -> 0 (armed until answered);
+    auto-deny is opt-in via [mcp] approval_timeout_seconds."""
+    import tldw_chatbook.Chat.console_chat_controller as cc_module
+
+    controller, _ = _build_controller()
+    assert controller.mcp_approval_timeout_seconds is None  # no seam wired
+    monkeypatch.setattr(
+        cc_module, "get_cli_setting", lambda section, key, default: default
+    )
+    assert controller._resolve_mcp_approval_timeout_seconds() == 0.0
+
+
+def test_human_prompt_defaults_pin_no_deadline():
+    """ADR-067 contract pin: every blocking human prompt defaults to 0
+    (wait indefinitely). Flip any of these and this test must fail."""
+    import tldw_chatbook.Chat.console_chat_controller as cc_module
+
+    assert cc_module._DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS == 0.0
+    assert cc_module._DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS == 0.0
+    assert cc_module._DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS == 0.0

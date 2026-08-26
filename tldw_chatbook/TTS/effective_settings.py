@@ -13,6 +13,7 @@ from numbers import Real
 from types import MappingProxyType
 from typing import Any, Literal, TypeAlias, cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
@@ -27,6 +28,7 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_REQUEST_OPTION_KEYS,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
@@ -73,7 +75,13 @@ _SOURCE_AXES = frozenset(
     }
 )
 _ERROR_AXES = _SOURCE_AXES | frozenset(
-    {"provider_catalog", "provider_configuration", "studio_preferences"}
+    {
+        "clone_audition",
+        "profile_reference",
+        "provider_catalog",
+        "provider_configuration",
+        "studio_preferences",
+    }
 )
 _ERROR_CODES = frozenset(
     {
@@ -182,6 +190,8 @@ class TTSCharacterProfileSelection:
     selection: TTSSelectionOverrides
     repository_generation: int
     profile_revision: int
+    profile_id: UUID
+    reference: TTSCloneReference | None = None
 
     def __post_init__(self) -> None:
         if type(self.selection) is not TTSSelectionOverrides:
@@ -194,6 +204,10 @@ class TTSCharacterProfileSelection:
             raise TypeError("Character TTS profile revision must be an integer")
         if self.profile_revision < 1:
             raise ValueError("Character TTS profile revision must be positive")
+        if type(self.profile_id) is not UUID:
+            raise TypeError("Character TTS profile ID must be a UUID")
+        if self.reference is not None and type(self.reference) is not TTSCloneReference:
+            raise TypeError("Character TTS clone reference is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +217,8 @@ class TTSDefaultProfileSelection:
     selection: TTSSelectionOverrides
     repository_generation: int
     profile_revision: int
+    profile_id: UUID
+    reference: TTSCloneReference | None = None
 
     def __post_init__(self) -> None:
         if type(self.selection) is not TTSSelectionOverrides:
@@ -215,6 +231,10 @@ class TTSDefaultProfileSelection:
             raise TypeError("Default-profile TTS profile revision must be an integer")
         if self.profile_revision < 1:
             raise ValueError("Default-profile TTS profile revision must be positive")
+        if type(self.profile_id) is not UUID:
+            raise TypeError("Default-profile TTS profile ID must be a UUID")
+        if self.reference is not None and type(self.reference) is not TTSCloneReference:
+            raise TypeError("Default-profile TTS clone reference is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +268,8 @@ class TTSEffectiveSelectionRevisions:
     default_profile_revision: int | None
     provider_configuration: int
     provider_catalog: int | None
+    provider_saved: int | None = None
+    provider_applied: int | None = None
 
     def __post_init__(self) -> None:
         _validate_nonnegative_revision(
@@ -266,6 +288,8 @@ class TTSEffectiveSelectionRevisions:
                 self.default_profile_repository,
             ),
             ("TTS provider catalog revision", self.provider_catalog),
+            ("Saved TTS provider publication generation", self.provider_saved),
+            ("Applied TTS provider publication generation", self.provider_applied),
         ):
             if value is not None:
                 _validate_nonnegative_revision(value, label)
@@ -289,6 +313,74 @@ class TTSEffectiveSelectionRevisions:
             self.default_profile_revision is None
         ):
             raise ValueError("Default-profile TTS revisions must be recorded together")
+
+    @property
+    def provider_active(self) -> int:
+        """Return the active registry revision used for runtime freshness.
+
+        ``provider_configuration`` remains the compatibility name for this
+        registry identity. It is intentionally distinct from saved/applied
+        publication generations.
+        """
+
+        return self.provider_configuration
+
+
+def tts_configuration_is_active(
+    service: object,
+    provider_id: str,
+    saved_revision: int,
+) -> bool:
+    """Return whether one saved provider generation is applied at runtime."""
+
+    if (
+        not isinstance(provider_id, str)
+        or not provider_id
+        or type(saved_revision) is not int
+        or saved_revision < 1
+    ):
+        return False
+    saved_reader = getattr(service, "saved_configuration_revision", None)
+    applied_reader = getattr(service, "applied_configuration_revision", None)
+    active_reader = getattr(service, "configuration_revision", None)
+    if not all(
+        callable(reader) for reader in (saved_reader, applied_reader, active_reader)
+    ):
+        return False
+    try:
+        saved = saved_reader(provider_id)
+        applied = applied_reader(provider_id)
+        active = active_reader(provider_id)
+    except Exception:
+        return False
+    return bool(
+        type(saved) is int
+        and type(applied) is int
+        and type(active) is int
+        and active >= 0
+        and saved == saved_revision
+        and applied == saved_revision
+    )
+
+
+def _provider_publication_generation(
+    provider_revision_reader: Callable[[str], int],
+    provider_id: str,
+    method_name: str,
+) -> int | None:
+    """Read publication provenance from a bound service reader when available."""
+
+    owner = getattr(provider_revision_reader, "__self__", None)
+    reader = getattr(owner, method_name, None)
+    if not callable(reader):
+        return None
+    try:
+        revision = reader(provider_id)
+    except Exception:
+        return None
+    if type(revision) is not int or revision < 0:
+        return None
+    return revision
 
 
 @dataclass(frozen=True, slots=True)
@@ -1218,6 +1310,16 @@ async def _resolve_layers(
         ),
         provider_configuration=provider_revision,
         provider_catalog=catalog_revision,
+        provider_saved=_provider_publication_generation(
+            provider_revision_reader,
+            provider_id,
+            "saved_configuration_revision",
+        ),
+        provider_applied=_provider_publication_generation(
+            provider_revision_reader,
+            provider_id,
+            "applied_configuration_revision",
+        ),
     )
     return TTSEffectiveSelectionSnapshot(
         provider_id=provider_id,
@@ -1247,41 +1349,50 @@ async def _resolve_layers(
 class TTSEffectiveSettingsResolver:
     """Resolve immutable owner snapshots without reading or mutating storage."""
 
-    async def resolve_non_studio(
+    def project_provider(
         self,
         *,
         global_preferences: TTSPreferencesSnapshot | None,
-        global_preferences_revision: int,
-        provider_revision_reader: Callable[[str], int],
-        catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
-        native_capability_reader: NativeCapabilityReader | None = None,
         explicit: TTSSelectionOverrides | None = None,
         character_profile: TTSCharacterProfileSelection | None = None,
         default_profile: TTSDefaultProfileSelection | None = None,
-    ) -> TTSEffectiveSelectionSnapshot:
-        """Resolve explicit, character, default-profile, global, and fallback layers.
+        studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        studio_draft: TTSStudioDraftSelection | None = None,
+    ) -> str:
+        """Synchronously project the provider from the canonical layer order."""
+        studio_request = studio_preferences is not None or studio_draft is not None
+        if studio_request:
+            if (
+                explicit is not None
+                or character_profile is not None
+                or default_profile is not None
+            ):
+                raise TypeError("Studio TTS resolution cannot use non-Studio layers")
+            if studio_preferences is None:
+                raise TypeError("Studio TTS resolution requires saved preferences")
+            layers, _preview = self._studio_layers(
+                studio_preferences=studio_preferences,
+                studio_draft=studio_draft,
+                global_preferences=global_preferences,
+            )
+        else:
+            layers = self._non_studio_layers(
+                explicit=explicit,
+                character_profile=character_profile,
+                default_profile=default_profile,
+                global_preferences=global_preferences,
+            )
+        provider_id, _source = _provider_for_layers(layers)
+        return provider_id
 
-        Args:
-            global_preferences: Persisted global selection, when configured.
-            global_preferences_revision: Revision of the global selection snapshot.
-            provider_revision_reader: Reader for current provider configuration revisions.
-            catalog_reader: Asynchronous reader for provider model and voice catalogs.
-            native_capability_reader: Optional reader for observed native capabilities.
-            explicit: Optional request-scoped selection overrides.
-            character_profile: Optional authoritative character-owned selection.
-            default_profile: Optional app-wide default-voice profile selection,
-                consulted only when no character profile supplies an axis.
-
-        Returns:
-            The immutable effective selection and its provenance.
-
-        Raises:
-            TypeError: If a supplied selection object has an invalid type.
-            ValueError: If an authoritative character or default-profile selection
-                is incomplete.
-            TTSEffectiveResolutionError: If the layers cannot produce a valid selection.
-        """
-
+    @staticmethod
+    def _non_studio_layers(
+        *,
+        explicit: TTSSelectionOverrides | None,
+        character_profile: TTSCharacterProfileSelection | None,
+        default_profile: TTSDefaultProfileSelection | None,
+        global_preferences: TTSPreferencesSnapshot | None,
+    ) -> tuple[_SelectionLayer, ...]:
         if explicit is not None and type(explicit) is not TTSSelectionOverrides:
             raise TypeError("Explicit TTS selection is invalid")
         if character_profile is not None and (
@@ -1296,7 +1407,8 @@ class TTSEffectiveSettingsResolver:
             raise TypeError("Default-profile TTS selection is invalid")
         if default_profile is not None:
             _require_complete_profile_selection(
-                default_profile, source=TTSSelectionSource.DEFAULT_PROFILE
+                default_profile,
+                source=TTSSelectionSource.DEFAULT_PROFILE,
             )
         if global_preferences is not None and (
             type(global_preferences) is not TTSPreferencesSnapshot
@@ -1321,31 +1433,15 @@ class TTSEffectiveSettingsResolver:
             )
         if global_preferences is not None:
             layers.append(_global_layer(global_preferences))
-        return await _resolve_layers(
-            layers_without_fallback=tuple(layers),
-            global_preferences_revision=global_preferences_revision,
-            studio_preferences_revision=None,
-            character_profile=character_profile,
-            default_profile=default_profile,
-            provider_revision_reader=provider_revision_reader,
-            catalog_reader=catalog_reader,
-            native_capability_reader=native_capability_reader,
-            studio_preview=False,
-        )
+        return tuple(layers)
 
-    async def resolve_studio(
-        self,
+    @staticmethod
+    def _studio_layers(
         *,
         studio_preferences: StudioTTSPreferencesSnapshot,
+        studio_draft: TTSStudioDraftSelection | None,
         global_preferences: TTSPreferencesSnapshot | None,
-        global_preferences_revision: int,
-        provider_revision_reader: Callable[[str], int],
-        catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
-        native_capability_reader: NativeCapabilityReader | None = None,
-        studio_draft: TTSStudioDraftSelection | None = None,
-    ) -> TTSEffectiveSelectionSnapshot:
-        """Resolve Studio draft/preview, saved, global, and fallback layers."""
-
+    ) -> tuple[tuple[_SelectionLayer, ...], bool]:
         if type(studio_preferences) is not StudioTTSPreferencesSnapshot:
             raise TypeError("Saved Studio TTS preferences are invalid")
         if global_preferences is not None and (
@@ -1386,8 +1482,81 @@ class TTSEffectiveSettingsResolver:
         layers.append(_studio_saved_layer(studio_preferences, provider_id))
         if global_preferences is not None:
             layers.append(_global_layer(global_preferences))
+        return tuple(layers), bool(studio_draft and studio_draft.preview)
+
+    async def resolve_non_studio(
+        self,
+        *,
+        global_preferences: TTSPreferencesSnapshot | None,
+        global_preferences_revision: int,
+        provider_revision_reader: Callable[[str], int],
+        catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
+        native_capability_reader: NativeCapabilityReader | None = None,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
+    ) -> TTSEffectiveSelectionSnapshot:
+        """Resolve explicit, character, default-profile, global, and fallback layers.
+
+        Args:
+            global_preferences: Persisted global selection, when configured.
+            global_preferences_revision: Revision of the global selection snapshot.
+            provider_revision_reader: Reader for current provider configuration revisions.
+            catalog_reader: Asynchronous reader for provider model and voice catalogs.
+            native_capability_reader: Optional reader for observed native capabilities.
+            explicit: Optional request-scoped selection overrides.
+            character_profile: Optional authoritative character-owned selection.
+            default_profile: Optional app-wide default-voice profile selection,
+                consulted only when no character profile supplies an axis.
+
+        Returns:
+            The immutable effective selection and its provenance.
+
+        Raises:
+            TypeError: If a supplied selection object has an invalid type.
+            ValueError: If an authoritative character or default-profile selection
+                is incomplete.
+            TTSEffectiveResolutionError: If the layers cannot produce a valid selection.
+        """
+
+        layers = self._non_studio_layers(
+            explicit=explicit,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            global_preferences=global_preferences,
+        )
         return await _resolve_layers(
-            layers_without_fallback=tuple(layers),
+            layers_without_fallback=layers,
+            global_preferences_revision=global_preferences_revision,
+            studio_preferences_revision=None,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            provider_revision_reader=provider_revision_reader,
+            catalog_reader=catalog_reader,
+            native_capability_reader=native_capability_reader,
+            studio_preview=False,
+        )
+
+    async def resolve_studio(
+        self,
+        *,
+        studio_preferences: StudioTTSPreferencesSnapshot,
+        global_preferences: TTSPreferencesSnapshot | None,
+        global_preferences_revision: int,
+        provider_revision_reader: Callable[[str], int],
+        catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
+        native_capability_reader: NativeCapabilityReader | None = None,
+        studio_draft: TTSStudioDraftSelection | None = None,
+    ) -> TTSEffectiveSelectionSnapshot:
+        """Resolve Studio draft/preview, saved, global, and fallback layers."""
+
+        layers, studio_preview = self._studio_layers(
+            studio_preferences=studio_preferences,
+            studio_draft=studio_draft,
+            global_preferences=global_preferences,
+        )
+        return await _resolve_layers(
+            layers_without_fallback=layers,
             global_preferences_revision=global_preferences_revision,
             studio_preferences_revision=studio_preferences.revision,
             character_profile=None,
@@ -1395,7 +1564,7 @@ class TTSEffectiveSettingsResolver:
             provider_revision_reader=provider_revision_reader,
             catalog_reader=catalog_reader,
             native_capability_reader=native_capability_reader,
-            studio_preview=bool(studio_draft and studio_draft.preview),
+            studio_preview=studio_preview,
         )
 
 
@@ -1410,4 +1579,5 @@ __all__ = [
     "TTSSelectionSource",
     "TTSStudioDraftSelection",
     "TTS_REQUEST_OPTION_KEYS",
+    "tts_configuration_is_active",
 ]

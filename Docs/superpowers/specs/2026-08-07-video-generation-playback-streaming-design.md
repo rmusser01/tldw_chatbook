@@ -6,6 +6,11 @@ Scope: Expand the existing image-generation feature to video (MiniMax H3 officia
 
 Revision 1 (same-day review): corrected the metadata store (v31 `messages.metadata_json`, no migration — not a v26 sidecar extension), re-keyed the video store by `message_id` (not console session id), added store size-cap/LRU, closed the ffmpeg/yt-dlp redirect egress hole, scoped streaming v1 to progressive streams, added MiniMax cancel-on-stop, paused-by-default previews, in-flight guard, and single-demux audio. See §10.
 
+ComfyUI workflow supersession (2026-08-09): the workflow-asset examples and
+output assumptions in §3.2 are superseded by the approved
+[ComfyUI MiniMax H3 design](2026-08-09-comfyui-minimax-h3-video-workflows-design.md).
+TASK-3401.6 ships Base and Spectrum H3 text-to-video graphs, not Wan/SVD.
+
 ---
 
 ## 1. Context and goals
@@ -77,8 +82,13 @@ Facts verified against platform.minimax.io docs (2026-08-07):
   - `WS /ws?clientId=…` for progress events (or poll `GET /history/{prompt_id}` — prefer polling v1 to avoid a new `websockets` dependency; WS is an optimization)
   - Outputs enumerated from history (`filename`, `subfolder`, `type`); bytes via `GET /view?...`
   - Local input images via `POST /upload/image`
-- Workflows ship as **parameterized JSON assets** (e.g. `Video_Generation/workflows/svd_xt_i2v.json`, `wan22_t2v.json` with placeholder nodes for prompt/seed/frames/size). Users can drop in their own workflow JSON — the adapter injects prompt/seed/size by node title convention.
-- Video output nodes: `VHS_VideoCombine` (ComfyUI-VideoHelperSuite → mp4/h264) or `SaveAnimatedWEBP`; adapter must handle missing VHS with a clear error.
+- TASK-3401.6 ships exactly the Base and opt-in Spectrum MiniMax H3 API graphs
+  described by the superseding H3 design. Users can still drop in their own
+  confined workflow JSON; exact title conventions remain the generic control
+  seam.
+- The H3 assets terminate at `SaveVideo` and return MP4 descriptors under the
+  live-observed history shape. Generic workflows may still use the other
+  output classes supported by the adapter.
 - Config mirrors SwarmUI's (`base_url`, optional auth header, `timeout_seconds`, `default_workflow`, `allowed_extra_params`). The SwarmUI adapter is the closest in-repo cousin — reuse its session/retry structure.
 - Egress: ComfyUI base URL is a user-configured trusted origin (same treatment as SwarmUI today).
 

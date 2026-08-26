@@ -7,6 +7,7 @@ existing system-prompt editor modal via ``ConsoleSystemPromptChip.OpenRequested`
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
+from textual.containers import HorizontalScroll
 
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_SYSTEM_PROMPT_LABEL_SET,
@@ -54,8 +55,8 @@ class StatusChipsHarness(App):
 async def test_system_prompt_chip_mounted_between_model_and_assistant_chips():
     app = StatusChipsHarness(ConsoleControlState.from_values())
     async with app.run_test():
-        strip = app.query_one(ConsoleStatusChips)
-        chip_ids = [child.id for child in strip.children]
+        scroller = app.query_one("#console-status-chip-scroll", HorizontalScroll)
+        chip_ids = [child.id for child in scroller.children]
 
         model_index = chip_ids.index("console-model-chip")
         assistant_index = chip_ids.index("console-assistant-chip")

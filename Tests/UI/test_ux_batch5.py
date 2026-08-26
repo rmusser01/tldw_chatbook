@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 
@@ -24,7 +27,9 @@ def test_queue_keyboard_ops_bound_and_implemented() -> None:
 def test_footer_hints_cover_queue_keyboard_ops() -> None:
     hint_keys = {key for key, _label in SchedulesWorkbench.SCHEDULES_SHORTCUTS}
     binding_keys = {
-        binding.key for binding in SchedulesWorkbench.BINDINGS if binding.key != "escape"
+        binding.key
+        for binding in SchedulesWorkbench.BINDINGS
+        if binding.key != "escape"
     }
     assert hint_keys == binding_keys
 
@@ -34,7 +39,7 @@ def test_footer_hints_cover_queue_keyboard_ops() -> None:
 async def test_recovery_callout_shows_when_service_unavailable() -> None:
     from tldw_chatbook.UI.Workbench.workbench_widgets import RecoveryCallout
 
-    class Harness(App[None]):
+    class Harness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield Static()
 
@@ -62,39 +67,23 @@ def test_writing_window_has_vertical_override_in_bundle() -> None:
 @pytest.mark.asyncio
 async def test_llamacpp_actions_above_the_fold() -> None:
     """Start/Stop appear before the path inputs in the llama.cpp view."""
-    from textual.containers import Container as _Container
-
-    import tldw_chatbook.Widgets.HuggingFace as hf
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 
-    class _StubWidget(_Container):
-        def __init__(self, *args, **kwargs):
-            super().__init__(**{k: v for k, v in kwargs.items() if k == "id"})
-
-    class Harness(App[None]):
+    class Harness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LLMManagementWindow(None)
 
-    # The library views need a full app instance; stub them like the sidebar test.
-    import pytest as _pytest  # noqa: F401  (clarity for future readers)
-
-    monkey = _pytest.MonkeyPatch()
-    monkey.setattr(hf, "LocalModelsWidget", _StubWidget)
-    monkey.setattr(hf, "HuggingFaceModelBrowser", _StubWidget)
-    try:
-        app = Harness()
-        async with app.run_test(size=(140, 42)) as pilot:
-            await pilot.pause()
-            view = app.query_one("#llm-view-llama-cpp")
-            children = list(view.children)
-            button_row = next(
-                i for i, w in enumerate(children) if w.has_class("button_container")
-            )
-            first_input_row = next(
-                i for i, w in enumerate(children) if w.has_class("input_container")
-            )
-            assert button_row < first_input_row, (
-                "Start/Stop must precede the path fields so they render above the fold"
-            )
-    finally:
-        monkey.undo()
+    app = Harness()
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        view = app.query_one("#llm-view-llama-cpp")
+        children = list(view.children)
+        button_row = next(
+            i for i, w in enumerate(children) if w.has_class("button_container")
+        )
+        first_input_row = next(
+            i for i, w in enumerate(children) if w.has_class("input_container")
+        )
+        assert button_row < first_input_row, (
+            "Start/Stop must precede the path fields so they render above the fold"
+        )

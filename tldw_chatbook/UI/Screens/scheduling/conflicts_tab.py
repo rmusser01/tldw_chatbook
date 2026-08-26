@@ -33,7 +33,7 @@ def _conflict_type_label(conflict: dict[str, Any]) -> str:
 class ConflictsTab(Vertical):
     """DataTable of unresolved sync conflicts with per-row actions."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConflictsTab {
         height: 1fr;
     }

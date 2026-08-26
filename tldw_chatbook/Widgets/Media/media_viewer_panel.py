@@ -8,11 +8,13 @@ This component provides:
 - Analysis display
 """
 
+from functools import partial
 from typing import TYPE_CHECKING, Dict, Optional, List, Tuple, Any
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widgets import (
     Static,
     Button,
@@ -65,6 +67,7 @@ ANALYSIS_NAV_PREVIOUS_ENABLED_TOOLTIP = "Show the previous analysis version."
 ANALYSIS_NAV_PREVIOUS_DISABLED_TOOLTIP = "Already viewing the first analysis version."
 ANALYSIS_NAV_NEXT_ENABLED_TOOLTIP = "Show the next analysis version."
 ANALYSIS_NAV_NEXT_DISABLED_TOOLTIP = "Already viewing the last analysis version."
+MEDIA_CONTENT_SEARCH_DEBOUNCE_SECONDS = 0.25
 READING_HIGHLIGHT_ADD_TOOLTIP = "Add a reading highlight to this media item."
 READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP = (
     "Select a reading highlight before updating it."
@@ -569,14 +572,14 @@ class MediaViewerPanel(Container):
     media_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
     edit_mode: reactive[bool] = reactive(False)
     format_for_reading: reactive[bool] = reactive(False)
-    search_matches: reactive[List[Tuple[int, int]]] = reactive([])
+    search_matches: reactive[List[Tuple[int, int]]] = reactive(list)
     current_match: reactive[int] = reactive(-1)
     current_analysis: reactive[Optional[str]] = reactive(None)
     has_existing_analysis: reactive[bool] = reactive(False)
     analysis_edit_mode: reactive[bool] = reactive(False)
 
     # Multiple analyses support
-    all_analyses: reactive[List[Dict[str, Any]]] = reactive([])
+    all_analyses: reactive[List[Dict[str, Any]]] = reactive(list)
     current_analysis_index: reactive[int] = reactive(0)
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
@@ -584,11 +587,19 @@ class MediaViewerPanel(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._original_data = None
+        self._content_search_timer: Timer | None = None
+        self._content_search_generation = 0
+        self._content_search_query = ""
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         # Populate providers on mount
         self.populate_providers()
+
+    def on_unmount(self) -> None:
+        """Cancel deferred content searches before the panel is detached."""
+        self._invalidate_content_search_timer()
+        self._content_search_query = ""
 
     def compose(self) -> ComposeResult:
         """Compose the viewer panel UI."""
@@ -777,25 +788,6 @@ class MediaViewerPanel(Container):
                                     id="analysis-max-tokens",
                                     value="4096",
                                 )
-
-                    # Prompt search and filtering
-                    yield Label("Search Prompts:", classes="prompt-label")
-                    yield Input(
-                        placeholder="Search for prompts...", id="prompt-search-input"
-                    )
-
-                    yield Label("Filter by Keywords:", classes="prompt-label")
-                    yield Input(
-                        placeholder="Enter keywords separated by commas...",
-                        id="prompt-keyword-input",
-                    )
-
-                    # Prompt selection dropdown
-                    yield Select(
-                        [],  # Will be populated by search results
-                        prompt="Select a prompt",
-                        id="prompt-select",
-                    )
 
                     # System prompt
                     yield Label("System Prompt:", classes="prompt-label")
@@ -1020,8 +1012,6 @@ class MediaViewerPanel(Container):
                 # Update search status
                 self._update_search_status()
 
-            # Clear and update to ensure proper refresh
-            content_display.update("")
             content_display.update(content)
         except Exception as e:
             logger.error(f"Error updating content display: {e}")
@@ -1062,6 +1052,8 @@ class MediaViewerPanel(Container):
     def clear_display(self) -> None:
         """Clear all displays when no item is selected."""
         try:
+            self._invalidate_content_search_timer()
+            self._content_search_query = ""
             self.media_data = None
             self.all_analyses = []
             self.current_analysis = None
@@ -1224,9 +1216,33 @@ class MediaViewerPanel(Container):
     def handle_content_search(self, event: Input.Changed) -> None:
         """Handle content search input."""
         if event.value:
-            self.search_content(event.value)
+            generation = self._invalidate_content_search_timer()
+            self._content_search_query = event.value
+            self._content_search_timer = self.set_timer(
+                MEDIA_CONTENT_SEARCH_DEBOUNCE_SECONDS,
+                partial(self._apply_debounced_content_search, generation, event.value),
+            )
         else:
+            self._invalidate_content_search_timer()
+            self._content_search_query = ""
             self.clear_search()
+
+    def _invalidate_content_search_timer(self) -> int:
+        """Stop a pending content search and advance its lifecycle generation."""
+        if self._content_search_timer is not None:
+            self._content_search_timer.stop()
+            self._content_search_timer = None
+        self._content_search_generation += 1
+        return self._content_search_generation
+
+    def _apply_debounced_content_search(self, generation: int, query: str) -> None:
+        """Run a delayed content search only if its lifecycle is still current."""
+        if generation != self._content_search_generation:
+            return
+        if query != self._content_search_query or not self.is_mounted:
+            return
+        self._content_search_timer = None
+        self.search_content(query)
 
     @on(Button.Pressed, "#prev-match")
     def handle_prev_match(self) -> None:
@@ -1320,6 +1336,7 @@ class MediaViewerPanel(Container):
 
     def load_media(self, media_data: Dict[str, Any]) -> None:
         """Load new media data into the viewer."""
+        self._invalidate_content_search_timer()
         self.media_data = media_data
         self.edit_mode = False
         self.clear_search()
@@ -1525,24 +1542,44 @@ class MediaViewerPanel(Container):
                     provider_select.value = provider_options[0][0]
                     self.update_models_for_provider(provider_options[0][0])
 
-            # Set default temperature, top_p, min_p, max_tokens
+            # Set default temperature, top_p, min_p, max_tokens. The
+            # fallbacks are the SHARED analysis defaults (task-3301 xhigh
+            # review round, F10): the Library ingest's Analyze-after-import
+            # resolution uses the same constants, so an ingest analysis and
+            # a viewer analysis can never diverge under identical config.
+            from ...Library.ingest_analysis import (
+                ANALYSIS_DEFAULT_MAX_TOKENS,
+                ANALYSIS_DEFAULT_MIN_P,
+                ANALYSIS_DEFAULT_SYSTEM_PROMPT,
+                ANALYSIS_DEFAULT_TEMPERATURE,
+                ANALYSIS_DEFAULT_TOP_P,
+            )
+
             temp_input = self.query_one("#analysis-temperature", Input)
-            temp_input.value = str(analysis_defaults.get("temperature", "0.7"))
+            temp_input.value = str(
+                analysis_defaults.get("temperature", ANALYSIS_DEFAULT_TEMPERATURE)
+            )
 
             top_p_input = self.query_one("#analysis-top-p", Input)
-            top_p_input.value = str(analysis_defaults.get("top_p", "0.95"))
+            top_p_input.value = str(
+                analysis_defaults.get("top_p", ANALYSIS_DEFAULT_TOP_P)
+            )
 
             min_p_input = self.query_one("#analysis-min-p", Input)
-            min_p_input.value = str(analysis_defaults.get("min_p", "0.05"))
+            min_p_input.value = str(
+                analysis_defaults.get("min_p", ANALYSIS_DEFAULT_MIN_P)
+            )
 
             max_tokens_input = self.query_one("#analysis-max-tokens", Input)
-            max_tokens_input.value = str(analysis_defaults.get("max_tokens", "4096"))
+            max_tokens_input.value = str(
+                analysis_defaults.get("max_tokens", ANALYSIS_DEFAULT_MAX_TOKENS)
+            )
 
             # Set default system prompt
             system_prompt_area = self.query_one("#system-prompt-area", TextArea)
             system_prompt_area.text = analysis_defaults.get(
                 "system_prompt",
-                "You are an AI assistant specialized in analyzing media content.",
+                ANALYSIS_DEFAULT_SYSTEM_PROMPT,
             )
 
         except Exception as e:
@@ -1581,79 +1618,6 @@ class MediaViewerPanel(Container):
 
         except Exception as e:
             logger.error(f"Error updating models for provider {provider}: {e}")
-
-    @work(thread=True)
-    def search_prompts(self, search_term: str, keywords: str = "") -> None:
-        """Search for prompts in the database."""
-        try:
-            from ...DB.Prompts_DB import get_prompts_db
-
-            prompts_db = get_prompts_db()
-            if not prompts_db:
-                return
-
-            # Parse keywords
-            keyword_list = (
-                [k.strip() for k in keywords.split(",") if k.strip()]
-                if keywords
-                else []
-            )
-
-            # Search prompts
-            if keyword_list:
-                results = prompts_db.search_prompts_by_keyword(
-                    keyword_list, search_term
-                )
-            else:
-                results = (
-                    prompts_db.search_prompts(search_term)
-                    if search_term
-                    else prompts_db.get_all_prompts()
-                )
-
-            # Format results for Select widget
-            options = [
-                (str(p["id"]), f"{p['name']} - {p['description'][:50]}...")
-                for p in results
-            ]
-
-            # Update select widget from thread
-            self.app.call_from_thread(self._update_prompt_select, options)
-
-        except Exception as e:
-            logger.error(f"Error searching prompts: {e}")
-
-    def _update_prompt_select(self, options: List[Tuple[str, str]]) -> None:
-        """Update prompt select options from thread."""
-        try:
-            prompt_select = self.query_one("#prompt-select", Select)
-            prompt_select.set_options(options)
-        except Exception:
-            pass
-
-    def load_prompt_details(self, prompt_id: str) -> None:
-        """Load selected prompt into text areas."""
-        try:
-            from ...DB.Prompts_DB import get_prompts_db
-
-            prompts_db = get_prompts_db()
-            if not prompts_db:
-                return
-
-            # Get prompt details
-            prompt = prompts_db.get_prompt_details(int(prompt_id))
-            if not prompt:
-                return
-
-            # Update text areas
-            system_area = self.query_one("#system-prompt-area", TextArea)
-            user_area = self.query_one("#user-prompt-area", TextArea)
-
-            system_area.text = prompt.get("system_prompt", "")
-            user_area.text = prompt.get("user_prompt", "")
-
-        except Exception as e:
-            logger.error(f"Error loading prompt details: {e}")
 
     def prepare_analysis_messages(self) -> Tuple[str, str]:
         """Prepare system and user prompts with media content."""
@@ -1782,38 +1746,6 @@ class MediaViewerPanel(Container):
         """Handle model selection change."""
         # Just store the selection, no additional action needed
         pass
-
-    @on(Input.Changed, "#prompt-search-input")
-    def handle_prompt_search(self, event: Input.Changed) -> None:
-        """Handle prompt search input with debouncing."""
-        # Get keyword filter value
-        try:
-            keyword_input = self.query_one("#prompt-keyword-input", Input)
-            keywords = keyword_input.value
-        except Exception:
-            keywords = ""
-
-        # Trigger search
-        self.search_prompts(event.value, keywords)
-
-    @on(Input.Changed, "#prompt-keyword-input")
-    def handle_prompt_keyword_change(self, event: Input.Changed) -> None:
-        """Handle prompt keyword filter change."""
-        # Get search term
-        try:
-            search_input = self.query_one("#prompt-search-input", Input)
-            search_term = search_input.value
-        except Exception:
-            search_term = ""
-
-        # Trigger search
-        self.search_prompts(search_term, event.value)
-
-    @on(Select.Changed, "#prompt-select")
-    def handle_prompt_selection(self, event: Select.Changed) -> None:
-        """Handle prompt selection."""
-        if event.value and event.value != Select.BLANK:
-            self.load_prompt_details(event.value)
 
     @on(Button.Pressed, "#generate-analysis-btn")
     def handle_generate_analysis(self) -> None:
@@ -2083,7 +2015,7 @@ class MediaViewerPanel(Container):
         if 0 <= self.current_analysis_index < len(self.all_analyses):
             self._run_delete_confirmation()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="media-viewer-delete-confirmation")
     async def _run_delete_confirmation(self) -> None:
         """Show confirmation dialog and handle deletion."""
         if not self.media_data or len(self.all_analyses) == 0:

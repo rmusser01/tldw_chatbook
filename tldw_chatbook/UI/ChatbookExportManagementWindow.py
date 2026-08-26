@@ -12,6 +12,7 @@ Provides interface for:
 - Sharing chatbooks
 """
 
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
@@ -486,30 +487,46 @@ class ChatbookExportManagementWindow(ModalScreen):
         await self.refresh_chatbook_list()
         await self.refresh_server_job_list()
 
+    def _scan_chatbook_files(self) -> List[Dict[str, Any]]:
+        """Glob + stat the export directory. Runs on a pool thread.
+
+        task-15471: the scan ran synchronously in `refresh_chatbook_list`
+        -- a directory walk on the event loop per refresh press (and after
+        every delete/export). Filesystem-only; no widget access.
+        """
+        scanned: List[Dict[str, Any]] = []
+        if self.chatbooks_dir.exists():
+            for file_path in self.chatbooks_dir.glob("*.zip"):
+                try:
+                    stat = file_path.stat()
+                    scanned.append(
+                        {
+                            "name": file_path.stem,
+                            "path": file_path,
+                            "size": stat.st_size,
+                            "modified": datetime.fromtimestamp(stat.st_mtime),
+                            "created": datetime.fromtimestamp(stat.st_ctime),
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error reading file {file_path}: {e}")
+
+        # Sort by modification time (newest first)
+        scanned.sort(key=lambda x: x["modified"], reverse=True)
+        return scanned
+
     async def refresh_chatbook_list(self) -> None:
         """Refresh the list of chatbooks."""
-        self.chatbook_files.clear()
-
         try:
-            # Find all chatbook files
-            if self.chatbooks_dir.exists():
-                for file_path in self.chatbooks_dir.glob("*.zip"):
-                    try:
-                        stat = file_path.stat()
-                        self.chatbook_files.append(
-                            {
-                                "name": file_path.stem,
-                                "path": file_path,
-                                "size": stat.st_size,
-                                "modified": datetime.fromtimestamp(stat.st_mtime),
-                                "created": datetime.fromtimestamp(stat.st_ctime),
-                            }
-                        )
-                    except Exception as e:
-                        logger.error(f"Error reading file {file_path}: {e}")
-
-            # Sort by modification time (newest first)
-            self.chatbook_files.sort(key=lambda x: x["modified"], reverse=True)
+            # Find all chatbook files, off the loop. The clear happens
+            # AFTER the scan returns (review minor 6): clearing before the
+            # await left `chatbook_files` empty-but-listed if the scan
+            # raised, and a later selection would IndexError. `clear()` +
+            # `extend` (not reassignment) keeps the list identity other
+            # readers hold.
+            scanned = await asyncio.to_thread(self._scan_chatbook_files)
+            self.chatbook_files.clear()
+            self.chatbook_files.extend(scanned)
 
             # Update the list widget
             option_list = self.query_one("#chatbook-list", OptionList)
@@ -959,11 +976,19 @@ class ChatbookExportManagementWindow(ModalScreen):
 
         # Try to load manifest
         try:
-            # Create importer to preview
-            db_paths = get_chatbook_database_paths()
 
-            importer = ChatbookImporter(db_paths)
-            manifest, error = importer.preview_chatbook(chatbook["path"])
+            def _preview_manifest() -> tuple:
+                """Open the archive and parse its manifest, off the loop.
+
+                task-15471: this runs per list-selection click and reads
+                inside the zip -- the exact per-click archive-read shape
+                TASK-1320 measured at 1030ms on the mount path.
+                """
+                db_paths = get_chatbook_database_paths()
+                importer = ChatbookImporter(db_paths)
+                return importer.preview_chatbook(chatbook["path"])
+
+            manifest, error = await asyncio.to_thread(_preview_manifest)
 
             if manifest and not error:
                 self.current_manifest = manifest

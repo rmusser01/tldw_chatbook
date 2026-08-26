@@ -9755,11 +9755,14 @@ class FileNotesGitService:
                 reference,
                 "Git HEAD reference lookup failed",
             )
-        if (
-            reference.returncode == 2
-            and reference.stdout == b""
-            and reference.stderr == b""
-        ):
+        if reference.returncode == 2 and reference.stdout == b"":
+            # TASK-18610: `show-ref --exists` documents rc 2 as "missing"
+            # without specifying stderr. Newer git (observed on hosted
+            # runners, 2.4x+) prints "error: reference does not exist"
+            # there; older git printed nothing. Either way rc 2 means the
+            # reference is absent, so treat it as unborn regardless of
+            # stderr -- the previous empty-stderr requirement made every
+            # unborn-branch lookup on newer git a hard failure.
             return HeadIdentity.unborn(branch)
         if (
             reference.returncode == 0

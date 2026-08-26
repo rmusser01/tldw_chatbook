@@ -14,7 +14,10 @@ from tldw_chatbook.UI.Screens.model_browser_state import format_mib
 
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
-    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Model_Artifacts.service import (
+        ArtifactRef,
+        LocalGGUFImportProgress,
+    )
 
 
 class InstallProgressed(Message):
@@ -74,7 +77,7 @@ def make_progress_callback(
 class ModelInstallProgress(Widget):
     """Show the current phase and determinate transfer/hash progress."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ModelInstallProgress {
         height: auto;
     }
@@ -89,11 +92,15 @@ class ModelInstallProgress(Widget):
         "pre-verify": "Checking download",
         "verify-install": "Verifying and installing model",
         "activate": "Activating model",
+        "copy": "Copying model into Chatbook",
+        "inspect": "Checking GGUF structure",
+        "verify": "Verifying managed copy",
+        "finalize": "Finalizing managed model",
     }
 
     def __init__(
         self,
-        initial: AcquisitionProgress | None = None,
+        initial: AcquisitionProgress | LocalGGUFImportProgress | None = None,
         *,
         id: str | None = None,
     ) -> None:
@@ -110,20 +117,23 @@ class ModelInstallProgress(Widget):
         """Compose the stable progress display."""
         yield Static("Waiting to install", id="model-install-progress-phase")
         yield Static("", id="model-install-progress-detail", markup=False)
-        yield ProgressBar(
+        bar = ProgressBar(
             total=None,
             show_eta=False,
             id="model-install-progress-bar",
         )
+        bar.display = False
+        yield bar
 
     def on_mount(self) -> None:
         """Restore retained progress or hide the idle determinate bar."""
         if self._initial is not None:
             self.update_progress(self._initial)
-            return
-        self.query_one("#model-install-progress-bar", ProgressBar).display = False
 
-    def update_progress(self, event: AcquisitionProgress) -> None:
+    def update_progress(
+        self,
+        event: AcquisitionProgress | LocalGGUFImportProgress,
+    ) -> None:
         """Render one acquisition progress event on the event loop.
 
         Args:
@@ -134,7 +144,7 @@ class ModelInstallProgress(Widget):
         )
         detail = self.query_one("#model-install-progress-detail", Static)
         bar = self.query_one("#model-install-progress-bar", ProgressBar)
-        byte_phase = event.phase in {"fetch", "pre-verify"}
+        byte_phase = event.phase in {"fetch", "pre-verify", "copy"}
         if byte_phase:
             filename = event.file or "Model files"
             detail.update(

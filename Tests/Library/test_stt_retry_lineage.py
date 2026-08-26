@@ -104,7 +104,7 @@ def _successful_retry_result(job_id: str) -> TranscriptionResult:
 
 def test_mark_failed_validates_and_requeue_carries_separate_source_snapshot() -> None:
     registry = LibraryIngestJobRegistry()
-    job = registry.submit(source_path="/tmp/audio.wav")
+    job = registry.submit(source_path="/tmp/audio.wav", batch_id="batch-1")
     failed_document = _failed_document()
 
     failed = registry.mark_failed(
@@ -117,6 +117,7 @@ def test_mark_failed_validates_and_requeue_carries_separate_source_snapshot() ->
     assert failed.stt_failure_provenance == failed_document
     assert failed.retry_of_job_id is None
     assert retried.retry_of_job_id == failed.job_id
+    assert retried.batch_id == "batch-1"
     assert retried.stt_failure_provenance is None
     assert retried.retry_source_failure_provenance == failed_document
 

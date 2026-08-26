@@ -22,7 +22,7 @@ class ChatbooksScreen(BaseAppScreen):
 
     # Screen-specific state
     current_chatbook: reactive[Optional[Dict[str, Any]]] = reactive(None)
-    chatbook_list: reactive[List[Dict[str, Any]]] = reactive([])
+    chatbook_list: reactive[List[Dict[str, Any]]] = reactive(list)
     is_editing: reactive[bool] = reactive(False)
     selected_chatbook_id: reactive[Optional[int]] = reactive(None)
 

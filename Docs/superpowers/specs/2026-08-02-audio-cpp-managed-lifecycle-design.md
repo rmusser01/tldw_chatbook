@@ -1,6 +1,12 @@
 # audio.cpp Managed Lifecycle — Product Requirements and Design
 
-Status: Approved design; independent specification review passed; pending user artifact approval
+Status: Approved by the user on 2026-08-02 after independent specification review
+
+Partially superseded: 2026-08-09 by the
+[guided model setup design](2026-08-09-audio-cpp-guided-model-setup-design.md),
+only for the additional generated-configuration source, auto-selected loopback
+port, recipe-driven model setup, and Windows target. Its user-provided
+`server.json` lifecycle remains normative.
 
 Date: 2026-08-02
 

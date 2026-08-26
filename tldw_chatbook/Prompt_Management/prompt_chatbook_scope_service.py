@@ -314,14 +314,24 @@ class PromptChatbookScopeService:
         *,
         mode: PromptChatbookBackend | str | None = None,
         prompt_id: int | str,
+        page_size: int = 25,
+        before_change_id: int | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._prompt_version_action_id("list", normalized_mode))
-        result = await self._call_service(
-            self._service_for_mode("prompts", normalized_mode),
-            "list_prompt_versions",
-            prompt_id,
-        )
+        service = self._service_for_mode("prompts", normalized_mode)
+        if normalized_mode == PromptChatbookBackend.LOCAL:
+            result = await self._call_service(
+                service,
+                "list_prompt_versions",
+                prompt_id,
+                page_size=page_size,
+                before_change_id=before_change_id,
+            )
+        else:
+            result = await self._call_service(
+                service, "list_prompt_versions", prompt_id
+            )
         return normalize_prompt_version_result(normalized_mode.value, result)
 
     async def restore_prompt_version(
@@ -330,15 +340,29 @@ class PromptChatbookScopeService:
         mode: PromptChatbookBackend | str | None = None,
         prompt_id: int | str,
         version: int,
+        change_id: int | None = None,
+        expected_version: int | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._prompt_version_action_id("restore", normalized_mode))
-        result = await self._call_service(
-            self._service_for_mode("prompts", normalized_mode),
-            "restore_prompt_version",
-            prompt_id,
-            version,
-        )
+        service = self._service_for_mode("prompts", normalized_mode)
+        if normalized_mode == PromptChatbookBackend.LOCAL:
+            if change_id is None or expected_version is None:
+                raise ValueError(
+                    "Local retained restore requires change_id and expected_version."
+                )
+            result = await self._call_service(
+                service,
+                "restore_prompt_version",
+                prompt_id,
+                change_id=change_id,
+                version=version,
+                expected_version=expected_version,
+            )
+        else:
+            result = await self._call_service(
+                service, "restore_prompt_version", prompt_id, version
+            )
         return normalize_prompt_result(normalized_mode.value, result)
 
     async def get_prompts_health(

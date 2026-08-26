@@ -13,6 +13,11 @@ import pytest
 
 import tldw_chatbook.Notes.file_notes_git_network as git_network
 import tldw_chatbook.Notes.file_notes_git_push as push_contracts
+
+# Same-package helper (rootdir-relative import under --import-mode=importlib).
+from Tests.Notes.test_file_notes_git_push_service import (  # noqa: E402
+    _pinnable_python_executable,
+)
 from tldw_chatbook.Notes.file_notes_git_push import (
     PushAuthorizationHandle,
     PushAuthorizationProjection,
@@ -208,6 +213,10 @@ def _issued_network_context(
         temporary_parent=context_parent,
         git_executable=git_executable,
         git_exec_path=git_exec_path,
+        # TASK-18610: hosted runners install Python under /opt/hostedtoolcache,
+        # which fails the pin predicates; use a pinnable interpreter (see
+        # test_file_notes_git_push_service._pinnable_python_executable).
+        python_executable=str(_pinnable_python_executable()),
         allow_ssh_agent=destination.scheme == "ssh",
     ).create(
         repository=repository,
@@ -773,6 +782,43 @@ def test_endpoint_parser_rejects_scoped_ipv6_hosts(endpoint: str) -> None:
         "https://example.com/team/\x85notes.git",
         "https://\ud800.example/team/notes.git",
     ],
+    ids=(
+        "https-user",
+        "https-password",
+        "ssh-password",
+        "ssh-option-userinfo",
+        "scp-option-user",
+        "token-query",
+        "token-fragment",
+        "empty-query",
+        "empty-fragment",
+        "https-empty-port",
+        "ssh-empty-port",
+        "http-transport",
+        "git-transport",
+        "file-private-uri",
+        "ssh-host-only",
+        "posix-private-path",
+        "relative-dot",
+        "relative-parent",
+        "relative-bare",
+        "windows-backslash-path",
+        "windows-slash-path",
+        "unc-path",
+        "remote-helper-ext",
+        "remote-helper-hg",
+        "git-plus-ssh",
+        "scp-without-user",
+        "scp-extra-colon",
+        "rich-markup-path",
+        "parent-traversal",
+        "tilde-path",
+        "host-whitespace",
+        "bidi-hostname",
+        "rtl-hostname",
+        "nel-path",
+        "surrogate-host",
+    ),
 )
 def test_endpoint_parser_rejects_credentials_ambiguity_and_unsafe_transports(
     endpoint: str,

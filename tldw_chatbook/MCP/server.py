@@ -9,10 +9,10 @@ through the Model Context Protocol.
 ## Exposed local agent tools (opt-in)
 
 When `[mcp] expose_local_tools = true` is set in config.toml, the server also
-exposes the workspace-local agent tools (`fs_*`, `fs_patch`, `git_*`,
-`web_fetch`, `web_search`, `web_crawl`, and `web_deep_search`) to external
-MCP clients -- `web_deep_search` is opt-in (see below). Invocation is routed
-through
+exposes workspace, web, and Watchlists agent tools (`fs_*`, `fs_patch`,
+`git_*`, `web_fetch`, `web_search`, `web_crawl`, `web_deep_search`,
+`watchlists_search_items`, and `watchlists_get_item`) to external MCP clients
+-- `web_deep_search` is opt-in (see below). Invocation is routed through
 `Agents/local_tool_provider.LocalToolProvider`'s permission gate
 (`MCP/local_server_tools.py`) — never by wrapping the tool cores directly.
 `web_deep_search` needs its OWN gate on top of this one: it is absent from
@@ -28,28 +28,52 @@ permission store under `local:__local__`) or by editing
 `<user_data_dir>/mcp_permissions.json` directly. `mutates`-tagged tools
 (writes, edits, patches) are therefore effectively denied to external clients
 by default. The kill switch and `deny` states are honored identically to the
-Console path. `todo_write` is Console-session-scoped and intentionally not
-exposed.
+Console path. The standalone server supplies no Console `SessionTodoStore`, so
+`todo_create`, `todo_update`, `todo_get`, and `todo_list` are not registered;
+the retired `todo_write` tool is also absent.
+
+## Exposed local Library tools (task-1337)
+
+The 24 descriptor-backed `library_*` tools (media/notes/prompts/skills/
+conversations/collections list+get+search, plus the chunking-agent-tools
+siblings: structure/chunk/spec-list/spec-save/re-chunk, and the note WRITE
+tool `library_save_note`) are part of the
+local MCP surface: they are locally served and contract-governed by
+`Library/library_tool_contract.py`. The capability manifest appends them from
+the descriptor table (`_describe_local_library_tools`), and the in-app direct
+runtime (`local_runtime_delegate.LocalMCPRuntimeDelegate`) dispatches them to
+one shared `LocalLibraryToolService` (composed by
+`build_local_library_tool_service`) via `asyncio.to_thread`. The WRITING
+chunk tools are service-level policy-gated: the factory threads the
+runtime-policy enforcer into the chunk tool service (chunking-agent-tools
+Task 5, spec §6), on top of the always-on MCP action mapping. The standalone
+`TldwMCPServer` below uses `mcp-unified` and deliberately does not publish
+these in-process Library tools. The Console-only
+`[console].direct_library_tools` retrieval-mode toggle has no effect on this
+surface.
 """
 
 import asyncio  # noqa: E402
 import ast  # noqa: E402
+import copy  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Dict, List, Optional, Any  # noqa: E402
 from datetime import datetime  # noqa: E402
 
-# Import MCP server components conditionally
+# Import the standalone MCP runtime conditionally.
 try:
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.models import InitializationOptions
-    from mcp.types import Tool, Resource, Prompt, TextContent, ImageContent  # noqa: F401
+    from mcp_unified.gateway import serve_stdio
 
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-    FastMCP = None
+    serve_stdio = None  # type: ignore[assignment]
 
 from loguru import logger  # noqa: E402
+
+from tldw_chatbook.Library.library_tool_contract import (  # noqa: E402
+    LIBRARY_TOOL_DESCRIPTORS,
+)
 
 
 #: Matches ``Tools/note_management_tools.py``'s ``_DEFAULT_USER_ID`` /
@@ -93,7 +117,17 @@ def _load_server_module_ast() -> ast.Module:
     return ast.parse(Path(__file__).read_text(encoding="utf-8"))
 
 
-_AST_SIMPLE_TYPES = {"str": "string", "int": "integer", "float": "number", "bool": "boolean"}
+_AST_SIMPLE_TYPES = {
+    "str": "string",
+    "int": "integer",
+    "float": "number",
+    "bool": "boolean",
+}
+
+_SEARCH_RAG_USE_SEMANTIC_DESCRIPTION = (
+    "False forces media keyword search; true or omission follows the active RAG "
+    "profile's plain, semantic, or hybrid search mode."
+)
 
 
 def _annotation_to_property(node: ast.expr | None) -> dict:
@@ -122,7 +156,7 @@ def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> di
     """Synthesize a JSON-schema ``inputSchema`` fragment from a tool function's AST signature.
 
     Keyword-only args (``fn.args.kwonlyargs``/``kw_defaults``) are
-    intentionally unhandled: none of the ten built-in ``@self.mcp.tool()``
+    intentionally unhandled: none of the nine built-in ``@self.mcp.tool()``
     registrations in this module use them (verified by reading
     ``server.py``'s ``_register_tools`` body), so there is nothing to map
     yet -- add support here if a future tool introduces one.
@@ -147,7 +181,30 @@ def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> di
         else:
             required.append(arg.arg)
         properties[arg.arg] = prop
-    return {"type": "object", "properties": properties, "required": required}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _signature_to_prompt_arguments(
+    fn: ast.AsyncFunctionDef | ast.FunctionDef,
+) -> list[dict[str, Any]]:
+    """Describe prompt arguments without exposing Python annotations."""
+    positional = [*fn.args.posonlyargs, *fn.args.args]
+    first_default_index = len(positional) - len(fn.args.defaults)
+    arguments = [
+        {"name": arg.arg, "required": index < first_default_index}
+        for index, arg in enumerate(positional)
+        if arg.arg not in ("self", "cls")
+    ]
+    arguments.extend(
+        {"name": arg.arg, "required": default is None}
+        for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults)
+    )
+    return arguments
 
 
 def _extract_registered_entries(
@@ -173,7 +230,7 @@ def _extract_registered_entries(
                         or func.attr != decorator_name
                     ):
                         continue
-                    entry = {
+                    entry: dict[str, Any] = {
                         "name": nested.name,
                         "description": _first_doc_line(ast.get_docstring(nested)),
                     }
@@ -184,7 +241,14 @@ def _extract_registered_entries(
                         ):
                             entry["uri"] = first_arg.value
                     if decorator_name == "tool":
-                        entry["inputSchema"] = _signature_to_input_schema(nested)
+                        input_schema = _signature_to_input_schema(nested)
+                        if nested.name == "search_rag":
+                            input_schema["properties"]["use_semantic"][
+                                "description"
+                            ] = _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION
+                        entry["inputSchema"] = input_schema
+                    elif decorator_name == "prompt":
+                        entry["arguments"] = _signature_to_prompt_arguments(nested)
                     entries.append(entry)
                     break
             return entries
@@ -203,15 +267,215 @@ def _describe_local_tools() -> list[dict[str, Any]]:
     return _extract_registered_entries("_register_tools", "tool")
 
 
+def _describe_local_library_tools() -> list[dict[str, Any]]:
+    """Manifest entries for the descriptor-backed Library tools (task-1337).
+
+    Derived from ``LIBRARY_TOOL_DESCRIPTORS`` -- never hand-maintained here --
+    so the local MCP capability manifest can never drift from the contract the
+    Console provider exposes. ``inputSchema`` is deep-copied so manifest
+    consumers can never mutate the shared descriptor table.
+    """
+    return [
+        {
+            "name": descriptor.name,
+            "description": descriptor.description,
+            "inputSchema": copy.deepcopy(descriptor.input_schema),
+        }
+        for descriptor in LIBRARY_TOOL_DESCRIPTORS.values()
+    ]
+
+
 def describe_local_mcp_capabilities() -> dict[str, Any]:
     """Return a stable local MCP capability manifest without opening a loopback connection."""
     return {
         "server_id": "local:tldw_chatbook",
         "server_label": "tldw_chatbook local MCP",
-        "tools": _describe_local_tools(),
+        "tools": _describe_local_tools() + _describe_local_library_tools(),
         "resources": _describe_local_resources(),
         "prompts": _describe_local_prompts(),
     }
+
+
+def build_local_library_tool_service(
+    *,
+    chachanotes_db: Any,
+    media_db: Any,
+    notes_service: Any = None,
+    notes_scope_service: Any = None,
+    policy_enforcer: Any = None,
+) -> Any:
+    """Compose the six local Library backends into one shared synchronous service.
+
+    Single construction site for ``LocalLibraryToolService`` on the local MCP
+    surface (task-1337, plan Task 9): ``LocalMCPRuntimeDelegate`` calls this
+    lazily on first Library dispatch, so every in-process consumer of the
+    direct runtime shares identical backend wiring. The ``mcp-unified``
+    standalone ``TldwMCPServer`` deliberately does NOT use this; Library
+    tools remain available only through the in-process direct runtime.
+
+    Every backend is best-effort: a construction failure degrades that item
+    type's tools to the service's structured ``feature_unavailable`` payload
+    instead of sinking the MCP surface. The skills backend is built WITHOUT a
+    trust service, which fails closed by design: skill list/search expose
+    safe metadata only and skill bodies/supporting files stay restricted.
+
+    Args:
+        chachanotes_db: Open ``CharactersRAGDB`` handle (conversations, and
+            the notes backend's ``global_db_to_use``).
+        media_db: Open ``MediaDatabase`` handle.
+        notes_service: Optional pre-built ``NotesInteropService``; when
+            omitted, one is constructed with the canonical signature off
+            ``get_chachanotes_db_path()`` and ``chachanotes_db``.
+        notes_scope_service: Optional pre-built ``NotesScopeService``
+            (student-workflow spec §4.3): the note-save tool's folder seam.
+            When omitted, one is composed over ``chachanotes_db`` with the
+            app builder's own shape (shared local folder repository); a
+            construction failure degrades folder requests to
+            ``feature_unavailable`` rather than sinking the surface.
+        policy_enforcer: Optional runtime-policy enforcer
+            (``require_allowed(action_id=...)`` seam) threaded into the
+            media chunk tool service and the note-save path, whose WRITING
+            tools (``library_save_chunk_spec``, ``library_rechunk_media``,
+            ``library_save_note``) are service-level gated
+            (chunking-agent-tools Tasks 4-5 + student-workflow Task 1,
+            spec §6); ``None`` leaves the always-on MCP action mapping as
+            the outer gate.
+
+    Returns:
+        The shared ``LocalLibraryToolService``.
+    """
+    from ..config import (
+        CLI_APP_CLIENT_ID,
+        get_chachanotes_db_path,
+        get_library_collections_db_path,
+        get_user_data_dir,
+    )
+    from ..Library.local_library_tool_service import LocalLibraryToolService
+
+    backends: dict[str, Any] = {}
+
+    def _build(key: str, builder) -> None:
+        try:
+            backends[key] = builder()
+        except Exception:  # noqa: BLE001 - degrade, never sink the surface
+            logger.exception(
+                f"Local Library {key} backend unavailable; "
+                "its tools will report feature_unavailable"
+            )
+            backends[key] = None
+
+    if notes_service is not None:
+        backends["note"] = notes_service
+    else:
+
+        def _build_notes():
+            from ..Notes.Notes_Library import NotesInteropService
+
+            return NotesInteropService(
+                base_db_directory=get_chachanotes_db_path().parent,
+                api_client_id=CLI_APP_CLIENT_ID,
+                global_db_to_use=chachanotes_db,
+            )
+
+        _build("note", _build_notes)
+
+    def _build_media():
+        from ..Media.local_media_reading_service import LocalMediaReadingService
+
+        return LocalMediaReadingService(media_db)
+
+    _build("media", _build_media)
+
+    def _build_prompts():
+        from ..Prompt_Management.local_prompt_service import LocalPromptService
+
+        return LocalPromptService()
+
+    _build("prompt", _build_prompts)
+
+    def _build_skills():
+        from ..Skills_Interop.local_skills_service import (
+            LocalSkillsService,
+            default_local_skills_store_dir,
+        )
+
+        return LocalSkillsService(
+            store_dir=default_local_skills_store_dir(get_user_data_dir())
+        )
+
+    _build("skill", _build_skills)
+
+    def _build_conversations():
+        from ..Chat.chat_conversation_service import ChatConversationService
+
+        return ChatConversationService(chachanotes_db)
+
+    _build("conversation", _build_conversations)
+
+    def _build_collections():
+        from ..DB.Library_Collections_DB import LibraryCollectionsDB
+        from ..Library.library_collections_service import (
+            LocalLibraryCollectionsService,
+        )
+
+        return LocalLibraryCollectionsService(
+            LibraryCollectionsDB(get_library_collections_db_path(), CLI_APP_CLIENT_ID)
+        )
+
+    _build("collection", _build_collections)
+
+    def _build_media_chunk():
+        from ..Chunking.chunking_interop_library import get_chunking_service
+        from ..Library.local_media_chunk_tool_service import (
+            LocalMediaChunkToolService,
+        )
+
+        return LocalMediaChunkToolService(
+            media_db,
+            backends["media"],
+            template_interop=get_chunking_service(media_db),
+            # chunking-agent-tools (Task 5, spec §6): the writing chunk
+            # tools are service-level gated here too -- the delegate
+            # threads the runtime-policy enforcer through (the Console
+            # construction site passes the same app handle).
+            policy_enforcer=policy_enforcer,
+        )
+
+    _build("media_chunk", _build_media_chunk)
+
+    if notes_scope_service is not None:
+        backends["notes_scope"] = notes_scope_service
+    else:
+
+        def _build_notes_scope():
+            # student-workflow (spec §4.3): the note-save folder seam, built
+            # with the app builder's own shape -- the scope facade over one
+            # shared local folder repository (the notes UI's own scope, so
+            # folders saved here are visible there).
+            from ..Notes.note_folder_repository import LocalNoteFolderRepository
+            from ..Notes.notes_scope_service import NotesScopeService
+
+            return NotesScopeService(
+                local_notes_service=backends["note"],
+                server_service=None,
+                folder_repository=LocalNoteFolderRepository(chachanotes_db),
+            )
+
+        _build("notes_scope", _build_notes_scope)
+
+    return LocalLibraryToolService(
+        media_service=backends["media"],
+        notes_service=backends["note"],
+        prompt_service=backends["prompt"],
+        skills_service=backends["skill"],
+        conversation_service=backends["conversation"],
+        collections_service=backends["collection"],
+        media_chunk_service=backends["media_chunk"],
+        # student-workflow (spec §4.3/§6): the note-save folder seam and the
+        # writing note tool's service-level gate (the chunk-tools pattern).
+        notes_scope_service=backends.get("notes_scope"),
+        policy_enforcer=policy_enforcer,
+    )
 
 
 class TldwMCPServer:
@@ -226,7 +490,14 @@ class TldwMCPServer:
 
         self.name = name
         self.version = version
-        self.mcp = FastMCP(name)
+        # Defer this import: local-tool provider modules refer back to server helpers.
+        from .gateway_runtime import ChatbookGatewayRuntime
+
+        self.mcp = ChatbookGatewayRuntime(
+            name=name,
+            version=version,
+            tool_descriptors=_describe_local_tools(),
+        )
 
         # Initialize databases
         self._init_databases()
@@ -245,6 +516,7 @@ class TldwMCPServer:
         self._register_resources()
         self._register_prompts()
         self._register_local_agent_tools()
+        self.mcp.finalize()
 
         logger.info(f"MCP Server '{name}' initialized")
 
@@ -255,6 +527,7 @@ class TldwMCPServer:
                 get_chachanotes_db_path,
                 get_media_db_path,
                 CLI_APP_CLIENT_ID,
+                load_console_library_migration_seed,
             )
             from ..DB.ChaChaNotes_DB import CharactersRAGDB
             from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -262,7 +535,9 @@ class TldwMCPServer:
 
             # Initialize character/chat/notes database
             self.chachanotes_db = CharactersRAGDB(
-                db_path=get_chachanotes_db_path(), client_id=CLI_APP_CLIENT_ID
+                db_path=get_chachanotes_db_path(),
+                client_id=CLI_APP_CLIENT_ID,
+                console_library_migration_seed=load_console_library_migration_seed(),
             )
 
             # Initialize media database. Uses the same resolver the rest of
@@ -309,8 +584,10 @@ class TldwMCPServer:
             )
 
             logger.info("Databases initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize databases: {e}")
+        except Exception:
+            logger.bind(operation="initialize_standalone_mcp_databases").error(
+                "Standalone MCP database initialization failed."
+            )
             raise
 
     def _register_tools(self):
@@ -397,7 +674,18 @@ class TldwMCPServer:
             media_types: Optional[List[str]] = None,
             use_semantic: bool = True,
         ) -> List[Dict[str, Any]]:
-            """Search the RAG database for relevant content."""
+            """Search media using the active RAG profile unless keyword search is forced.
+
+            Args:
+                query: Search query.
+                limit: Maximum number of results.
+                media_types: Optional media types to include.
+                use_semantic: Follow the active profile when true; force keyword
+                    search when false.
+
+            Returns:
+                Media search results.
+            """
             return await self.tools.perform_rag_search(
                 query=query,
                 limit=limit,
@@ -517,52 +805,72 @@ class TldwMCPServer:
                 conversation_id=conversation_id, format=format
             )
 
-        # Media ingestion tool (placeholder)
-        @self.mcp.tool()
-        async def ingest_media(
-            url: Optional[str] = None,
-            file_path: Optional[str] = None,
-            media_type: str = "auto",
-            title: Optional[str] = None,
-            tags: Optional[List[str]] = None,
-        ) -> Dict[str, Any]:
-            """Ingest media from URL or file path."""
-            try:
-                if not url and not file_path:
-                    return {"error": "Either url or file_path must be provided"}
-
-                # TODO: Implement actual media ingestion
-                return {
-                    "status": "queued",
-                    "media_id": "placeholder_id",
-                    "message": "Media ingestion queued",
-                }
-            except Exception as e:
-                logger.error(f"Error in ingest_media: {e}")
-                return {"error": str(e)}
-
     def _register_resources(self):
         """Register MCP resources."""
+        from urllib.parse import quote
+
+        def json_metadata(
+            resource: Dict[str, Any], scheme: str, identifier: str
+        ) -> Dict[str, Any]:
+            """Normalize trusted legacy URI spelling and SQLite metadata."""
+
+            def normalize(value: Any) -> Any:
+                if isinstance(value, datetime):
+                    return value.isoformat()
+                if isinstance(value, dict):
+                    return {key: normalize(item) for key, item in value.items()}
+                if isinstance(value, list):
+                    return [normalize(item) for item in value]
+                return value
+
+            expected_legacy_uri = f"{scheme}://{identifier}"
+            if resource.get("uri") == expected_legacy_uri:
+                canonical_identifier = quote(
+                    identifier,
+                    safe="-._~",
+                )
+                resource = {
+                    **resource,
+                    "uri": f"{scheme}://{canonical_identifier}",
+                }
+            metadata = resource.get("metadata")
+            return (
+                {**resource, "metadata": normalize(metadata)}
+                if isinstance(metadata, dict)
+                else resource
+            )
 
         @self.mcp.resource("conversation://{conversation_id}")
         async def get_conversation(conversation_id: str) -> Dict[str, Any]:
             """Get a conversation by ID."""
-            return await self.resources.get_conversation_resource(conversation_id)
+            return json_metadata(
+                await self.resources.get_conversation_resource(conversation_id),
+                "conversation",
+                conversation_id,
+            )
 
         @self.mcp.resource("note://{note_id}")
         async def get_note(note_id: str) -> Dict[str, Any]:
             """Get a note by ID."""
-            return await self.resources.get_note_resource(note_id)
+            return json_metadata(
+                await self.resources.get_note_resource(note_id), "note", note_id
+            )
 
         @self.mcp.resource("character://{character_id}")
         async def get_character(character_id: str) -> Dict[str, Any]:
             """Get a character profile by ID."""
-            return await self.resources.get_character_resource(character_id)
+            return json_metadata(
+                await self.resources.get_character_resource(character_id),
+                "character",
+                character_id,
+            )
 
         @self.mcp.resource("media://{media_id}")
         async def get_media(media_id: str) -> Dict[str, Any]:
             """Get media content by ID."""
-            return await self.resources.get_media_resource(media_id)
+            return json_metadata(
+                await self.resources.get_media_resource(media_id), "media", media_id
+            )
 
         @self.mcp.resource("rag-chunk://{chunk_uuid}")
         async def get_rag_chunk(chunk_uuid: str) -> Dict[str, Any]:
@@ -572,7 +880,11 @@ class TldwMCPServer:
             an integer id -- see `MCPResources.get_rag_chunk_resource` for
             why (TASK-985).
             """
-            return await self.resources.get_rag_chunk_resource(chunk_uuid)
+            return json_metadata(
+                await self.resources.get_rag_chunk_resource(chunk_uuid),
+                "rag-chunk",
+                chunk_uuid,
+            )
 
         # List resources
         @self.mcp.list_resources()
@@ -647,7 +959,7 @@ class TldwMCPServer:
             )
 
     def _register_local_agent_tools(self):
-        """Register workspace-local agent tools (fs_*/git_*/web_*) when enabled.
+        """Register workspace, web, and Watchlists agent tools when enabled.
 
         Gated behind ``[mcp] expose_local_tools`` (default false); a no-op
         when the flag is off. Called from ``__init__`` -- deliberately NOT
@@ -661,15 +973,12 @@ class TldwMCPServer:
         ``get_user_data_dir() / "mcp_permissions.json"`` so Console
         "Always allow" grants apply here.
 
-        FastMCP derives input schemas from Python type annotations (not
-        JSON schema), so each tool is bound with a generic
-        ``arguments: dict`` signature; the provider's JSON schema travels
-        on the registration for introspection/future SDK use.
+        The provider's exact JSON schemas and ``ToolResult`` handlers are
+        staged together and published only after the full set validates.
         """
         from ..config import get_user_data_dir
         from .local_server_tools import (
             _local_agent_tool_registrations,
-            _parameter_summary,
             build_server_local_provider,
             local_tools_exposure_enabled,
             resolve_server_workspace_root,
@@ -685,59 +994,36 @@ class TldwMCPServer:
         # operator the built-in tools — log and start without local tools.
         try:
             workspace_root = resolve_server_workspace_root()
-            store = MCPPermissionStore(
-                get_user_data_dir() / "mcp_permissions.json"
-            )
+            store = MCPPermissionStore(get_user_data_dir() / "mcp_permissions.json")
             provider = build_server_local_provider(workspace_root, store)
 
             registrations = _local_agent_tool_registrations(provider)
-            for registration in registrations:
-                # The handler's signature IS the generic `arguments: dict`
-                # surface; invoke() is sync and worker-thread safe. FastMCP
-                # can't consume the JSON schema, so append a compact
-                # parameter summary to the description — otherwise external
-                # clients get zero parameter documentation.
-                description = registration.description + _parameter_summary(
-                    registration.parameters
-                )
-                self.mcp.tool(
-                    name=registration.name,
-                    description=description,
-                )(registration.handler)
-            logger.info(
-                f"Registered {len(registrations)} local agent tools (permission-gated)"
-            )
+            self.mcp.register_local_tools(registrations)
         except Exception:  # noqa: BLE001 — never sink the whole server for this
-            logger.exception("Failed to register local agent tools; continuing without them")
+            import sys
 
-    async def run(self, transport: str = "stdio"):
+            print(
+                "Local MCP tools unavailable; continuing with built-in tools.",
+                file=sys.stderr,
+            )
+
+    async def run(self, transport: str = "stdio") -> int:
         """Run the MCP server.
 
         Args:
-            transport: Transport type (stdio, http)
+            transport: Transport name; only ``stdio`` is supported.
         """
-        if transport == "stdio":
-            # Run with stdio transport (for Claude Desktop)
-            from mcp.server.stdio import stdio_server
-
-            async with stdio_server() as (read_stream, write_stream):
-                await self.mcp.run(
-                    read_stream=read_stream,
-                    write_stream=write_stream,
-                    initialization_options=InitializationOptions(
-                        server_name=self.name, server_version=self.version
-                    ),
-                )
-        else:
-            # TODO: Implement HTTP transport
-            raise NotImplementedError(f"Transport {transport} not implemented yet")
+        if transport != "stdio":
+            raise NotImplementedError("Only stdio transport is supported")
+        if serve_stdio is None:
+            raise RuntimeError("MCP stdio runtime is unavailable")
+        return await serve_stdio(self.mcp)
 
 
-async def main():
+async def main() -> int:
     """Main entry point for running the MCP server."""
-    server = TldwMCPServer()
-    await server.run()
+    return await TldwMCPServer().run("stdio")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

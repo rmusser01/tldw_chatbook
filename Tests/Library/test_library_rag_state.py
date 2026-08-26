@@ -8,10 +8,13 @@ from tldw_chatbook.Library import library_local_rag_search_service as _semantic_
 from tldw_chatbook.Library import library_rag_state as _rag_state_module
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
+    LIBRARY_RAG_FALLBACK_TOP_K,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
+    LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
     LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS,
+    LIBRARY_RAG_TOP_K_MAX,
     LibraryRagPanelState,
     LibraryRagQueryState,
     LibraryRagResultRow,
@@ -20,6 +23,8 @@ from tldw_chatbook.Library.library_rag_state import (
     library_rag_coverage_note,
     library_rag_empty_state_quiet_copy,
     library_rag_paid_mode_notice,
+    library_rag_profile_top_k,
+    library_rag_results_count_line,
     library_rag_score_suffix,
     library_rag_scope_summary,
     searching_status_line,
@@ -162,7 +167,7 @@ class TestLibraryRagScopeSummary:
         assert library_rag_scope_summary(scope) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
 
-def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
+def test_query_state_blocks_empty_query_and_runtime_blockers(monkeypatch) -> None:
     empty_query = LibraryRagQueryState.from_values(query="", mode="rag")
 
     assert empty_query.mode == "rag"
@@ -186,6 +191,10 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
         "Index selected Library sources before querying."
     )
 
+    # An unparseable count resolves to the ACTIVE PROFILE's depth since
+    # TASK-15020/B3 (it was the literal 5 before); pinned against a patched
+    # profile so this stays about coercion, not about which profile ships.
+    _patch_profile_depth(monkeypatch, 15)
     ready_query = LibraryRagQueryState.from_values(
         query="summarize the policy",
         mode="unknown",
@@ -194,7 +203,7 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
     )
 
     assert ready_query.mode == "rag"
-    assert ready_query.top_k == 5
+    assert ready_query.top_k == 15
     assert ready_query.status == "ready"
     assert ready_query.run_action.enabled is True
 
@@ -417,7 +426,10 @@ def test_query_state_blocked_is_empty_query_and_no_scope_properties() -> None:
     assert ready.blocked_is_no_scope is False
 
 
-def test_query_state_validates_and_sanitizes_external_values() -> None:
+def test_query_state_validates_and_sanitizes_external_values(monkeypatch) -> None:
+    # 500 is out of `LIBRARY_RAG_TOP_K_MAX` range, so it falls back -- to the
+    # active profile's depth since TASK-15020/B3, not the old literal 5.
+    _patch_profile_depth(monkeypatch, 15)
     unsafe_query = LibraryRagQueryState.from_values(
         query="<script>alert('x')</script>",
         mode="<b>rag</b>",
@@ -430,7 +442,7 @@ def test_query_state_validates_and_sanitizes_external_values() -> None:
         "Enter a safe question or search query."
     )
     assert unsafe_query.mode == "rag"
-    assert unsafe_query.top_k == 5
+    assert unsafe_query.top_k == 15
 
     bounded_query = LibraryRagQueryState.from_values(
         query="Find policy evidence",
@@ -1397,6 +1409,296 @@ class TestLibraryRagAllMatchesWeak:
         assert library_rag_all_matches_weak(rows) is False
 
 
+class TestLibraryRagScoreKindAwareBands:
+    """(RAG-port P0/Task 6) The match band is a claim about *cosine
+    similarity*. Hybrid retrieval replaces every row's score with an
+    RRF-fused number whose theoretical maximum is `1/(rrf_k + 1)` -- ~0.016
+    at the `rrf_k=60` these fixtures were written against, ~0.167 at the
+    shipped k of 5 (TASK-4110). Both are below the 0.2 weak boundary, but
+    the disqualifier is the KIND, not the magnitude: banding a fused score
+    on cosine thresholds renders a wall of "match: weak (0.02)" on results
+    that are in fact excellent.
+    Reranker scores are worse still: an LLM 0-10 scale or a raw
+    cross-encoder logit is not on the unit interval at all.
+
+    The band must therefore be computed from the score kind's own honest
+    similarity input -- the preserved vector leg for hybrid rows (Task 2's
+    `hybrid_fusion.vector_score`) -- and must disclose the kind instead of
+    inventing a similarity when there is none.
+    """
+
+    def test_fused_score_never_bands_on_cosine_thresholds(self):
+        """A fused RRF score (~0.016) with a strong vector leg bands strong."""
+        assert (
+            library_rag_score_suffix(
+                0.016, score_kind="hybrid_fusion", vector_score=0.83
+            )
+            == " | match: strong"
+        )
+
+    def test_fts_only_hybrid_row_reads_keyword_match(self):
+        """No vector leg means no similarity exists -- say "keyword match",
+        never a fabricated band and never the fused 0.0x number."""
+        assert (
+            library_rag_score_suffix(
+                0.0161, score_kind="hybrid_fusion", vector_score=None
+            )
+            == " | keyword match"
+        )
+
+    def test_reranker_scores_disclose_kind_not_band(self):
+        """Reranker scores are unbounded (logits, 0-10 LLM scales): the kind
+        is disclosed, the number is never banded as a cosine."""
+        assert library_rag_score_suffix(-3.2, score_kind="reranker") == " | reranked"
+
+    def test_hybrid_row_with_weak_vector_leg_still_bands_weak_on_the_leg(self):
+        """The converse pin: hybrid banding reads the VECTOR leg, not the
+        fused score -- a genuinely weak vector leg must still render weak,
+        with the leg's own number, not the fused one."""
+        assert (
+            library_rag_score_suffix(
+                0.0159, score_kind="hybrid_fusion", vector_score=0.09
+            )
+            == " | match: weak (0.09)"
+        )
+
+    def test_default_kind_preserves_the_legacy_similarity_contract(self):
+        """Every pre-existing call site passes a cosine similarity and no
+        kind -- the default must keep banding exactly as before."""
+        assert library_rag_score_suffix(0.93) == " | match: strong"
+        assert library_rag_score_suffix(None) == ""
+        assert (
+            library_rag_score_suffix(0.93, score_kind="vector_similarity")
+            == " | match: strong"
+        )
+
+    def test_reranked_row_discloses_kind_even_without_a_score(self):
+        """`None` means "unscored" for a similarity row, but a reranked row
+        was scored by definition -- the kind stays disclosed."""
+        assert library_rag_score_suffix(None, score_kind="reranker") == " | reranked"
+
+
+class TestLibraryRagAllMatchesWeakScoreKinds:
+    """(RAG-port P0/Task 6) The all-weak coverage note is a claim about
+    semantic similarity ("No strong semantic matches"), so only rows whose
+    effective banding input IS a similarity may participate. Keyword-only
+    hybrid rows and reranked rows neither trigger it nor suppress it."""
+
+    def test_all_matches_weak_ignores_non_similarity_kinds(self):
+        keyword_only = LibraryRagResultRow.from_result(
+            {
+                "title": "Keyword only",
+                "score": 0.0161,
+                "provenance": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": None,
+                                      "fts_score": 0.001, "vector_score": None},
+                },
+            }
+        )
+        weak_vector = LibraryRagResultRow.from_result({"title": "Weak", "score": 0.09})
+        assert library_rag_all_matches_weak((keyword_only, weak_vector)) is True
+        assert library_rag_all_matches_weak((keyword_only,)) is False
+
+    def test_hybrid_rows_are_judged_on_their_vector_leg(self):
+        """A fused 0.016 must not read as a weak similarity -- the row's
+        strong vector leg makes the whole set non-weak."""
+        strong_hybrid = LibraryRagResultRow.from_result(
+            {
+                "title": "Strong hybrid",
+                "score": 0.0161,
+                "provenance": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
+                                      "fts_score": 0.001, "vector_score": 0.83},
+                },
+            }
+        )
+        assert library_rag_all_matches_weak((strong_hybrid,)) is False
+
+    def test_reranked_rows_never_participate(self):
+        reranked = LibraryRagResultRow.from_result(
+            {
+                "title": "Reranked",
+                "score": 0.0,
+                "provenance": {"_final_score_kind": "reranker"},
+            }
+        )
+        # Alone: no similarity row exists at all, so no all-weak claim.
+        assert library_rag_all_matches_weak((reranked,)) is False
+        # Alongside a weak similarity row: does not suppress the claim.
+        weak_vector = LibraryRagResultRow.from_result({"title": "Weak", "score": 0.09})
+        assert library_rag_all_matches_weak((reranked, weak_vector)) is True
+        # Alongside a strong similarity row: does not create one either.
+        strong_vector = LibraryRagResultRow.from_result(
+            {"title": "Strong", "score": 0.83}
+        )
+        assert library_rag_all_matches_weak((reranked, strong_vector)) is False
+
+    def test_duck_typed_rows_without_the_new_fields_still_work(self):
+        """`mcp_inspector._ScoredRow` is a `__slots__ = ("score",)` shim that
+        feeds this same canonical check -- reading the new fields must be
+        `getattr`-tolerant or the MCP Test Tool interpretation line breaks."""
+
+        class _ScoreOnly:
+            __slots__ = ("score",)
+
+            def __init__(self, score):
+                self.score = score
+
+        assert library_rag_all_matches_weak((_ScoreOnly(0.09),)) is True
+        assert library_rag_all_matches_weak((_ScoreOnly(0.83),)) is False
+
+
+class TestLibraryRagResultRowScoreKind:
+    """(RAG-port P0/Task 6) The row is where the service's score provenance
+    becomes display state: `provenance["hybrid_fusion"]` (Task 2 preserves
+    the per-leg scores there) and the `_final_score_kind` reranker channel
+    are normalized once, on the row, so the band and the Console evidence
+    bundle cannot disagree."""
+
+    def test_plain_semantic_row_defaults_to_vector_similarity(self):
+        row = LibraryRagResultRow.from_result({"title": "A", "score": 0.83})
+        assert row.score_kind == "vector_similarity"
+        assert row.vector_score is None
+
+    def test_hybrid_row_carries_the_preserved_vector_leg(self):
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "provenance": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
+                                      "fts_score": 0.001, "vector_score": 0.83},
+                },
+            }
+        )
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score == pytest.approx(0.83)
+        assert row.score == pytest.approx(0.0161)
+
+    def test_fts_only_hybrid_row_has_no_vector_leg(self):
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "provenance": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": None,
+                                      "fts_score": 0.001, "vector_score": None},
+                },
+            }
+        )
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score is None
+
+    @pytest.mark.parametrize(
+        "vector_score",
+        (True, False, float("nan"), float("inf"), float("-inf"), 10**309, -(10**309)),
+    )
+    def test_hybrid_row_rejects_untrusted_vector_score(self, vector_score):
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "provenance": {"hybrid_fusion": {"vector_score": vector_score}},
+            }
+        )
+
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score is None
+        assert library_rag_all_matches_weak((row,)) is False
+
+    def test_reranker_channel_is_read_from_provenance(self):
+        row = LibraryRagResultRow.from_result(
+            {"title": "A", "score": 7.5, "provenance": {"_final_score_kind": "reranker"}}
+        )
+        assert row.score_kind == "reranker"
+
+    def test_the_rerank_score_stamp_is_the_production_marker(self):
+        """`_final_score_kind` is READ by `local_citation_capture` but written
+        by nothing in the app; what a real reranked row actually carries is
+        `metadata["rerank_score"]`, stamped by
+        `PointwiseReranker._apply_scores` as it replaces the score. Keying
+        on that is what makes the reranked band reachable in production."""
+        row = LibraryRagResultRow.from_result(
+            {"title": "A", "score": 7.5, "provenance": {"rerank_score": 7.5}}
+        )
+        assert row.score_kind == "reranker"
+        assert (
+            library_rag_score_suffix(
+                row.score, score_kind=row.score_kind, vector_score=row.vector_score
+            )
+            == " | reranked"
+        )
+
+    def test_a_reranked_score_inside_the_band_range_never_reads_as_strong(self):
+        """The load-bearing case. `RerankingConfig.score_scale` defaults to
+        (0.0, 1.0), so a default-configured pointwise reranker emits scores
+        INSIDE the similarity band range -- 0.83 would have rendered
+        "match: strong", a cosine claim about an LLM relevance score."""
+        row = LibraryRagResultRow.from_result(
+            {"title": "A", "score": 0.83, "provenance": {"rerank_score": 0.95}}
+        )
+        suffix = library_rag_score_suffix(
+            row.score, score_kind=row.score_kind, vector_score=row.vector_score
+        )
+        assert suffix == " | reranked"
+        assert "match:" not in suffix
+
+    def test_reranking_wins_over_a_prior_fusion_block(self):
+        """Reranking runs AFTER fusion, so a hybrid row that was then
+        reranked carries both blocks -- the later stage owns what the final
+        score means, and the row must not band on the stale vector leg."""
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.95,
+                "provenance": {
+                    "rerank_score": 0.95,
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
+                                      "fts_score": 0.001, "vector_score": 0.83},
+                },
+            }
+        )
+        assert row.score_kind == "reranker"
+        assert row.vector_score is None
+        assert (
+            library_rag_score_suffix(
+                row.score, score_kind=row.score_kind, vector_score=row.vector_score
+            )
+            == " | reranked"
+        )
+
+    def test_reranking_skipped_tag_is_not_a_score_kind_signal(self):
+        """Task 4's `reranking_skipped`/`reranking_degraded` tags disclose
+        that reranking FAILED -- the scores on those rows are the base
+        retrieval scores, so treating the tag as a reranker score kind would
+        hide a real similarity behind " | reranked"."""
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.83,
+                "provenance": {"reranking_skipped": "no credentials"},
+            }
+        )
+        assert row.score_kind == "vector_similarity"
+
+    def test_kind_also_resolves_from_engine_metadata(self):
+        """Not every producer folds engine metadata into `provenance` --
+        a top-level `metadata` block carrying the fusion provenance must
+        resolve identically."""
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "metadata": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
+                                      "fts_score": 0.001, "vector_score": 0.51},
+                },
+            }
+        )
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score == pytest.approx(0.51)
+
+
 class TestLibraryRagCoverageNote:
     """(Task 8) `library_rag_coverage_note` builds the Evidence region's
     one-line semantic-coverage note from `_search_semantic`'s
@@ -1495,6 +1797,85 @@ class TestLibraryRagCoverageNote:
             "Semantic search found nothing from: Notes."
         )
 
+    # --- TASK-14752: keyword-sourced evidence is not "found nothing" -------
+
+    def test_keyword_only_types_render_their_own_sentence(self):
+        """(TASK-14752 AC#1/#2) A type whose rows came from the FTS leg has
+        evidence ON SCREEN; the bare "Semantic search found nothing from:
+        Notes." sentence, while literally true of the semantic leg, reads as
+        "Notes produced nothing" to a user looking at note rows."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": ["media"],
+                "uncovered": [],
+                "keyword_only": ["notes"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Keyword matches only from: Notes."
+        )
+
+    def test_keyword_only_and_absent_types_are_two_separate_sentences(self):
+        """The mixed case is the whole point: one type matched on keywords
+        alone, another produced nothing at all, and collapsing them into one
+        list is what made the old sentence ambiguous."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": ["conversations"],
+                "keyword_only": ["notes", "media"],
+            }
+        }
+        assert library_rag_coverage_note(diagnostics, rows) == (
+            "Semantic search found nothing from: Conversations. "
+            "Keyword matches only from: Notes, Media."
+        )
+
+    def test_keyword_only_labels_route_through_the_display_label_table(self):
+        """Same vocabulary rule as the uncovered sentence -- and the same
+        escaping, since these labels are service-supplied and reach a
+        `Static`."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": [],
+                "keyword_only": ["media", "mystery_source"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Keyword matches only from: Media, mystery_source."
+        )
+
+    def test_absent_keyword_only_key_leaves_the_note_exactly_as_before(self):
+        """(TASK-14752 AC#3) The semantic and plain profiles never produce
+        this key; their copy must be byte-identical to what it was."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": ["media"], "uncovered": ["notes"]}
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: Notes."
+        )
+
+    def test_keyword_only_claims_stay_suppressed_at_zero_rows(self):
+        """A "Keyword matches only from: X" sentence is a claim about rows on
+        screen; with no rows it would be self-contradicting, so it obeys the
+        same zero-row suppression the uncovered sentence does."""
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": ["media"],
+                "keyword_only": ["notes"],
+            }
+        }
+        assert library_rag_coverage_note(diagnostics, ()) == ""
+
     def test_empty_rows_never_render_a_coverage_note(self):
         """Edge case (c): zero results overall is the no-match state's
         territory (Task 11), not a coverage note listing every requested
@@ -1504,6 +1885,136 @@ class TestLibraryRagCoverageNote:
             "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]}
         }
         assert library_rag_coverage_note(diagnostics, ()) == ""
+
+    # (RAG-port P0, Workstream A) The service now also reports how the
+    # retrieval was ROUTED when it could not run the active profile's
+    # configured mode -- a hybrid profile diverted to semantic because no
+    # selected source has a keyword leg, a plain profile routed to the
+    # keyword seams. Those disclosures share this one quiet line rather than
+    # opening a second note channel on the same screen. (The scope divert
+    # that used to head this list retired with TASK-15020/B1: a scoped
+    # hybrid search now runs hybrid, so there is nothing to disclose.)
+
+    def test_route_note_renders_as_a_sentence_when_nothing_else_to_say(self):
+        rows = (self._row(0.6),)
+        diagnostics = {
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "no keyword leg for the selected sources — semantic only"
+            ]
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "No keyword leg for the selected sources — semantic only."
+        )
+
+    def test_route_note_renders_without_any_coverage_diagnostic(self):
+        """The plain-profile route returns the KEYWORD payload, which carries
+        no `semantic_scope_coverage` at all -- the disclosure must still
+        reach the line (this is the only thing telling the user their rag
+        query ran as keyword search)."""
+        rows = (self._row(score=None),)
+        diagnostics = {
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "Profile 'BM25 Only': keyword search (no vectors)"
+            ]
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Profile 'BM25 Only': keyword search (no vectors)."
+        )
+
+    def test_route_notes_follow_the_weak_prefix_and_coverage_sentence(self):
+        rows = (self._row(0.09),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]},
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "no keyword leg for the selected sources — semantic only"
+            ],
+        }
+        assert library_rag_coverage_note(diagnostics, rows) == (
+            "No strong semantic matches — results below are weak. "
+            "Semantic search found nothing from: Notes. "
+            "No keyword leg for the selected sources — semantic only."
+        )
+
+    def test_route_notes_survive_the_zero_row_outcome(self):
+        """(RAG-port P0 review, I2) The empty-rows guard exists so a
+        no-match search does not enumerate every requested source as
+        "uncovered" -- a claim about coverage. A ROUTING disclosure is a
+        different fact ("vectors were never consulted"), and zero rows is
+        exactly when it is most diagnostic: a plain-profile query that
+        matched nothing must still say the profile ran keyword-only, or the
+        user reads the empty result as "the vector index has nothing"."""
+        assert library_rag_coverage_note(
+            {
+                LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                    "Profile 'BM25 Only': keyword search (no vectors)"
+                ]
+            },
+            (),
+        ) == "Profile 'BM25 Only': keyword search (no vectors)."
+
+    def test_zero_row_coverage_claims_stay_suppressed_alongside_a_route_note(self):
+        """Only the routing fact survives zero rows -- the "found nothing
+        from: …" coverage sentence stays suppressed exactly as before."""
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]},
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "no keyword leg for the selected sources — semantic only"
+            ],
+        }
+        assert library_rag_coverage_note(diagnostics, ()) == (
+            "No keyword leg for the selected sources — semantic only."
+        )
+
+    def test_blank_route_notes_render_nothing(self):
+        rows = (self._row(0.6),)
+        diagnostics = {"semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}}
+        assert library_rag_coverage_note(diagnostics, rows) == ""
+        assert (
+            library_rag_coverage_note(
+                {**diagnostics, LIBRARY_RAG_ROUTE_NOTES_KEY: ["", "   "]}, rows
+            )
+            == ""
+        )
+
+
+class TestLibraryRagResultsCountLine:
+    """(task-2859 item 10) `library_rag_results_count_line` builds the
+    Evidence region's "N results for 'query'" headline -- previously
+    missing entirely, so the row cards had no line naming how many landed
+    or what query produced them."""
+
+    @staticmethod
+    def _row(title: str = "A") -> LibraryRagResultRow:
+        return LibraryRagResultRow.from_result({"title": title})
+
+    def test_empty_results_render_no_line(self):
+        assert library_rag_results_count_line((), "cats") == ""
+
+    def test_singular_noun_for_exactly_one_result(self):
+        rows = (self._row(),)
+        assert library_rag_results_count_line(rows, "cats") == "1 result for 'cats'."
+
+    def test_plural_noun_for_multiple_results(self):
+        rows = (self._row("A"), self._row("B"), self._row("C"))
+        assert (
+            library_rag_results_count_line(rows, "cats")
+            == "3 results for 'cats'."
+        )
+
+    def test_query_is_markup_escaped(self):
+        rows = (self._row(),)
+        line = library_rag_results_count_line(rows, "[bold]cats[/bold]")
+        # Rich's escape_markup only needs to escape the opening bracket.
+        assert "\\[bold]cats\\[/bold]" in line
+
+    def test_long_query_is_clamped(self):
+        rows = (self._row(),)
+        long_query = "x" * 500
+        line = library_rag_results_count_line(rows, long_query)
+        # Same clamp budget `library_rag_empty_state_quiet_copy` uses.
+        assert len(line) < len(long_query)
 
 
 class TestLibraryRagEmptyStateQuietCopy:
@@ -1748,3 +2259,315 @@ def test_panel_state_threads_the_credential_remedy_into_query_state() -> None:
     )
 
     assert "ANTHROPIC_API_KEY" in panel.query_state.run_action.disabled_reason
+
+
+# --------------------------------------------------------------------------
+# B3 (TASK-15020): the Search/RAG window's DEPTH follows the active profile.
+#
+# Before B3 the window's evidence depth was the literal
+# `LIBRARY_RAG_DEFAULT_TOP_K = 5` -- a number nothing in Settings could move,
+# while the Console's own Library RAG entry points had already been taught to
+# read the active RAG profile's `search.default_top_k` (TASK-406/TASK-3170,
+# `_console_library_rag_profile_top_k`). Two surfaces over the same retrieval
+# stack disagreed about how deep "a search" goes, and only one of them could
+# be configured. B3 makes the DEFAULT profile-resolved on both; an explicit
+# caller-supplied count still wins, unchanged.
+# --------------------------------------------------------------------------
+
+
+class _CountingResolver:
+    """A stand-in for `resolve_active_rag_top_k` that records its calls."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __call__(self) -> int:
+        self.calls += 1
+        return self.value
+
+
+def _patch_profile_depth(monkeypatch, value: int) -> _CountingResolver:
+    """Patch what `library_rag_profile_top_k` actually reads, not the seam.
+
+    Mirrors the Console suite's discipline: patching the resolver the seam
+    calls (imported lazily inside it, so the module attribute is what gets
+    read at call time) exercises the real seam -- including its try/except
+    and its own non-positive guard -- instead of mocking it away.
+    """
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    resolver = _CountingResolver(value)
+    monkeypatch.setattr(active_config, "resolve_active_rag_top_k", resolver)
+    return resolver
+
+
+def test_query_state_depth_defaults_to_the_active_profile_top_k(monkeypatch) -> None:
+    """Unset depth resolves to the profile, not to the literal 5."""
+    _patch_profile_depth(monkeypatch, 15)
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+
+    assert state.top_k == 15
+    assert state.status == "ready"
+
+
+def test_panel_state_depth_defaults_to_the_active_profile_top_k(monkeypatch) -> None:
+    """The screen builds the PANEL state, so the default has to survive that
+    layer too -- and the Evidence heading is where a user reads it.
+    """
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        results_heading_text,
+    )
+
+    _patch_profile_depth(monkeypatch, 15)
+
+    panel = LibraryRagPanelState.from_values(
+        source_counts={"notes": 2},
+        query="summarize the policy",
+        mode="rag",
+        provider_name="openai",
+    )
+
+    assert panel.query_state.top_k == 15
+    assert results_heading_text(panel) == "Evidence · top 15"
+
+
+def test_query_state_depth_keeps_an_explicit_caller_value(monkeypatch) -> None:
+    """B3 changes the DEFAULT only. An explicit in-range count still wins --
+    and the profile is not even consulted, so "the user wins" holds by
+    construction rather than by the two numbers happening to match.
+    """
+    resolver = _patch_profile_depth(monkeypatch, 15)
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", top_k=7, provider_name="openai"
+    )
+
+    assert state.top_k == 7
+    assert resolver.calls == 0
+
+
+@pytest.mark.parametrize("bad_value", ["bad", "", None, 0, -3, 51, 500])
+def test_query_state_depth_falls_back_to_the_profile_for_invalid_values(
+    monkeypatch, bad_value
+) -> None:
+    """Out-of-range/unparseable counts resolve to the profile, not to 5."""
+    _patch_profile_depth(monkeypatch, 15)
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", top_k=bad_value, provider_name="openai"
+    )
+
+    assert state.top_k == 15
+
+
+def test_query_state_depth_falls_back_to_five_when_the_profile_is_unresolvable(
+    monkeypatch,
+) -> None:
+    """A broken/absent profile must degrade to searching, never to raising
+    inside a render -- the same contract the Console seam carries.
+    """
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    def _raise_profile_unavailable() -> int:
+        raise RuntimeError("simulated: active RAG profile unresolvable")
+
+    monkeypatch.setattr(
+        active_config, "resolve_active_rag_top_k", _raise_profile_unavailable
+    )
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+
+    assert state.top_k == LIBRARY_RAG_FALLBACK_TOP_K == 5
+
+
+@pytest.mark.parametrize("profile_value", [0, -1])
+def test_profile_depth_seam_rejects_a_non_positive_profile_value(
+    monkeypatch, profile_value
+) -> None:
+    """A profile that resolves to a useless count is treated as unresolvable."""
+    _patch_profile_depth(monkeypatch, profile_value)
+
+    assert library_rag_profile_top_k() == LIBRARY_RAG_FALLBACK_TOP_K
+
+
+def test_query_state_clamps_a_profile_deeper_than_the_window_bound(
+    monkeypatch,
+) -> None:
+    """Settings accepts a profile depth up to 100; this window's own bound is
+    `LIBRARY_RAG_TOP_K_MAX` (50). Clamp rather than discard: a 100-deep
+    profile means "as deep as you can", and falling back to 5 -- the pre-B3
+    coercion's answer for an out-of-range value -- would invert it.
+    """
+    _patch_profile_depth(monkeypatch, 100)
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+
+    assert state.top_k == LIBRARY_RAG_TOP_K_MAX == 50
+
+
+def test_console_and_library_share_one_profile_depth_seam(monkeypatch) -> None:
+    """The coupling pin: the Console chip and this window must never drift.
+
+    `chat_screen._console_library_rag_profile_top_k` is a thin delegation to
+    `library_rag_profile_top_k` (one definition, three call sites), so this
+    asserts they agree on BOTH branches -- resolved and unresolvable -- and
+    that the two fallback constants are the same number.
+    """
+    from tldw_chatbook.RAG_Search.simplified import active_config
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+
+    _patch_profile_depth(monkeypatch, 23)
+    assert (
+        chat_screen_module._console_library_rag_profile_top_k()
+        == library_rag_profile_top_k()
+        == 23
+    )
+
+    def _raise_profile_unavailable() -> int:
+        raise RuntimeError("simulated: active RAG profile unresolvable")
+
+    monkeypatch.setattr(
+        active_config, "resolve_active_rag_top_k", _raise_profile_unavailable
+    )
+    assert (
+        chat_screen_module._console_library_rag_profile_top_k()
+        == library_rag_profile_top_k()
+        == LIBRARY_RAG_FALLBACK_TOP_K
+    )
+    assert (
+        chat_screen_module.CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K
+        == LIBRARY_RAG_FALLBACK_TOP_K
+    )
+
+
+def test_clamp_divergence_is_pinned_as_a_pair(monkeypatch) -> None:
+    """The window clamps a >50 profile; the Console seam deliberately does NOT.
+
+    Task-8 review, minor 1: the clamp was only half-pinned. The window arm
+    (profile 100 -> 50) had a test, but nothing exercised the UNCAPPED
+    direction, so silently capping the SHARED seam -- `min(value,
+    LIBRARY_RAG_TOP_K_MAX)` inside `library_rag_profile_top_k` -- left 199
+    tests green while erasing a divergence that had been declared
+    deliberate. A declared difference that no test can tell from its own
+    removal is not a decision, it is a comment.
+
+    Both arms live in ONE test on purpose: they are a pair, and the whole
+    claim is that the same profile reads differently on the two surfaces.
+    `LIBRARY_RAG_TOP_K_MAX` is this window's bound (the evidence list's own
+    limit); the Console chip's request has no such list and honors whatever
+    depth the user configured, up to Settings' own 100 ceiling.
+    """
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+
+    _patch_profile_depth(monkeypatch, 100)
+
+    # Uncapped arm: the shared seam and its Console delegation report the
+    # profile's real depth.
+    assert library_rag_profile_top_k() == 100
+    assert chat_screen_module._console_library_rag_profile_top_k() == 100
+
+    # Capped arm: the Library window's own display state trims to its bound.
+    window = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+    assert window.top_k == LIBRARY_RAG_TOP_K_MAX == 50
+
+
+class TestLibraryRagRerankingNotice:
+    """(TASK-3502 note-(a)) The reranker's `reranking_skipped` /
+    `reranking_degraded` disclosure tags had ZERO UI consumers: a Hybrid
+    Full user whose reranking credential was dead saw normal-looking,
+    silently unreranked results. The tags ride the first result's
+    provenance all the way to the panel (traced in
+    `Tests/Library/test_library_local_rag_search_service.py`), so the
+    Evidence region's existing one quiet note channel discloses them.
+    """
+
+    @staticmethod
+    def _row(**provenance) -> LibraryRagResultRow:
+        return LibraryRagResultRow.from_result(
+            {"title": "A", "score": 0.6, "provenance": provenance}
+        )
+
+    def test_untagged_rows_say_nothing(self):
+        rows = (self._row(source_type="note"), self._row(source_type="media"))
+        assert library_rag_coverage_note({}, rows) == ""
+
+    def test_skipped_tag_names_the_stage_and_the_detail(self):
+        rows = (
+            self._row(
+                source_type="note",
+                reranking_skipped="provider call failed (fake)",
+            ),
+        )
+        assert library_rag_coverage_note({}, rows) == (
+            "Reranking was skipped (provider call failed (fake)) "
+            "— these results are in their original retrieval order."
+        )
+
+    def test_degraded_tag_names_the_stage_and_the_detail(self):
+        rows = (self._row(source_type="note", reranking_degraded="3/5 scorings failed"),)
+        assert library_rag_coverage_note({}, rows) == (
+            "Reranking was degraded (3/5 scorings failed) — these results "
+            "are in their original retrieval order."
+        )
+
+    def test_the_tag_is_found_wherever_the_tagged_row_landed(self):
+        """The engine tags its FIRST result, but scope post-filtering and
+        the panel's own count-intersected filter can move or drop rows --
+        the disclosure keys off the tag being present at all, not off
+        position 0."""
+        rows = (self._row(source_type="media"), self._row(reranking_degraded="1/2"))
+        assert "Reranking was degraded (1/2)" in library_rag_coverage_note({}, rows)
+
+    def test_it_joins_the_existing_note_channel_rather_than_competing(self):
+        weak = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.09,
+                "provenance": {"reranking_degraded": "2/2 scorings failed"},
+            }
+        )
+        note = library_rag_coverage_note(
+            {"semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]}},
+            (weak,),
+        )
+        assert note == (
+            "No strong semantic matches — results below are weak. "
+            "Semantic search found nothing from: Notes. "
+            "Reranking was degraded (2/2 scorings failed) — these results "
+            "are in their original retrieval order."
+        )
+
+    def test_a_hostile_detail_string_is_escaped_and_clamped(self):
+        """The detail is `str(exc)` from a provider call -- unsanitized text
+        reaching a `Static`, exactly what every other service-supplied
+        string in this module is escaped for."""
+        rows = (self._row(reranking_skipped="[bold]boom[/] " + "x" * 400),)
+        note = library_rag_coverage_note({}, rows)
+        assert "\\[bold]" in note
+        assert "…" in note
+        assert len(note) < 300
+
+    def test_skipped_wins_when_a_row_somehow_carries_both(self):
+        """The service's two tag sites are mutually exclusive branches, but
+        nothing enforces that here -- one sentence, deterministically."""
+        rows = (self._row(reranking_skipped="dead credential", reranking_degraded="1/2"),)
+        note = library_rag_coverage_note({}, rows)
+        assert note.startswith("Reranking was skipped (dead credential)")
+        assert "degraded" not in note
+
+    def test_a_blank_detail_still_discloses_the_stage(self):
+        rows = (self._row(reranking_skipped=""),)
+        assert library_rag_coverage_note({}, rows) == (
+            "Reranking was skipped — these results are in their original "
+            "retrieval order."
+        )

@@ -8,6 +8,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 import tldw_chatbook
@@ -110,7 +114,7 @@ class FakeAdvService:
         return {"ok": True}
 
 
-class InspectorApp(App):
+class InspectorApp(ConsolidatedCSSApp):
     def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
         self.service = FakeAdvService(error=error)
@@ -280,7 +284,7 @@ async def test_readiness_badge_carries_and_swaps_state_css_class():
 # -- A2: disabled action buttons must stay legible ---------------------------
 
 
-class InspectorAppWithBundledCSS(App):
+class InspectorAppWithBundledCSS(ConsolidatedCSSApp):
     """Mounts MCPInspector under `#mcp-hub-inspector` (the id the real MCP
     workbench uses) and loads the actual bundled stylesheet, so
     `#mcp-hub-inspector Button.mcp-inspector-action:disabled` resolves
@@ -393,7 +397,7 @@ async def test_advanced_reveal_button_renders_with_bundled_css(monkeypatch):
 async def test_inspector_action_buttons_are_left_aligned_with_bundled_css():
     """A3: Button defaults BOTH `text-align` and `content-align` to center
     (see Textual's own Button.DEFAULT_CSS -- the same lesson already
-    documented on `Button.mcp-rail-row` in MCPRail.DEFAULT_CSS and
+    documented on `Button.mcp-rail-row` in MCPRail.BUNDLED_CSS and
     `Button.mcp-callout` in _agentic_terminal.tcss). `Button.mcp-inspector-
     action` must override both, or the inspector's action stack (Connect/
     Check readiness/Edit config/... and the lone Cancel button during an
@@ -570,7 +574,7 @@ class GatedAdvService(FakeAdvService):
         return object()  # the gate fakes below ignore the value
 
 
-class GatedInspectorApp(App):
+class GatedInspectorApp(ConsolidatedCSSApp):
     """Like InspectorApp, but with a real (callable) policy-gate seam.
 
     `gate` is invoked as `gate(action_id, runtime_state_override)` in place of
@@ -658,7 +662,7 @@ class SectionAwareFakeService:
         return {"ok": True}
 
 
-class SectionAwareInspectorApp(App):
+class SectionAwareInspectorApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.service = SectionAwareFakeService()
@@ -823,7 +827,7 @@ class OverlappingActionsService:
         return {"ok": True}
 
 
-class OverlappingActionsApp(App):
+class OverlappingActionsApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.service = OverlappingActionsService()
@@ -1815,6 +1819,200 @@ async def test_show_tool_result_raw_body_truncated_over_20000_chars():
 class TestSummarizeToolResultAllWeakNotice:
     """Pure, UI-harness-free coverage of `_summarize_tool_result()` --
     mirrors `test_error_shape_detection()`'s pattern below."""
+
+    def test_extract_scored_rows_reads_nested_hybrid_vector_score(self):
+        """Fusion's RRF score is not a vector-similarity value."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _extract_scored_rows,
+            _summarize_tool_result,
+        )
+
+        rows = [
+            {
+                "id": 1,
+                "score": 0.016,
+                "metadata": {
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": 0.8,
+                    },
+                },
+            }
+        ]
+
+        extracted = _extract_scored_rows(rows)
+
+        assert extracted is not None
+        assert extracted[0].score_kind == "hybrid_fusion"
+        assert extracted[0].vector_score == pytest.approx(0.8)
+        _, interpretation = _summarize_tool_result(
+            ok=True,
+            duration_ms=50,
+            source="local",
+            result=rows,
+        )
+        assert interpretation is None
+
+    def test_score_provenance_controls_all_weak_notice(self):
+        """Only actual vector similarities participate in weak-match bands."""
+        from tldw_chatbook.Library.library_rag_state import (
+            LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+        )
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _extract_scored_rows,
+            _summarize_tool_result,
+        )
+
+        cases = (
+            (
+                {"id": "vector", "score": 0.1, "metadata": {}},
+                "vector_similarity",
+                None,
+                True,
+            ),
+            (
+                {
+                    "id": "hybrid-strong-vector",
+                    "score": 0.016,
+                    "metadata": {
+                        "hybrid_fusion": {
+                            "fts_rank": 1,
+                            "vector_rank": 1,
+                            "fts_score": 0.001,
+                            "vector_score": 0.8,
+                        },
+                    },
+                },
+                "hybrid_fusion",
+                0.8,
+                False,
+            ),
+            (
+                {
+                    "id": "hybrid-weak-vector",
+                    "score": 0.016,
+                    "metadata": {
+                        "hybrid_fusion": {
+                            "fts_rank": 1,
+                            "vector_rank": 1,
+                            "fts_score": 0.001,
+                            "vector_score": 0.1,
+                        },
+                    },
+                },
+                "hybrid_fusion",
+                0.1,
+                True,
+            ),
+            (
+                {
+                    "id": "fts-only-hybrid",
+                    "score": 0.016,
+                    "metadata": {
+                        "hybrid_fusion": {
+                            "fts_rank": 1,
+                            "vector_rank": None,
+                            "fts_score": 0.001,
+                            "vector_score": None,
+                        },
+                    },
+                },
+                "hybrid_fusion",
+                None,
+                False,
+            ),
+            (
+                {
+                    "id": "reranked",
+                    "score": 7.5,
+                    "metadata": {"rerank_score": 7.5},
+                },
+                "reranker",
+                None,
+                False,
+            ),
+            (
+                {"id": "keyword", "score": None, "metadata": {}},
+                "vector_similarity",
+                None,
+                False,
+            ),
+            (
+                {
+                    "id": "reranking-skipped",
+                    "score": 0.1,
+                    "metadata": {"reranking_skipped": "no credentials"},
+                },
+                "vector_similarity",
+                None,
+                True,
+            ),
+        )
+
+        for row, score_kind, vector_score, expects_weak_notice in cases:
+            extracted = _extract_scored_rows([row])
+
+            assert extracted is not None
+            assert extracted[0].score_kind == score_kind
+            assert extracted[0].vector_score == vector_score
+            _, interpretation = _summarize_tool_result(
+                ok=True,
+                duration_ms=50,
+                source="local",
+                result=[row],
+            )
+            assert interpretation == (
+                LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX if expects_weak_notice else None
+            )
+
+    def test_malformed_scores_are_unscored_and_never_reported_weak(self):
+        """Untrusted booleans and non-finite values are not similarities."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _extract_scored_rows,
+            _summarize_tool_result,
+        )
+
+        invalid_scores = (
+            True,
+            False,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            10**309,
+            -(10**309),
+        )
+        for score in invalid_scores:
+            vector_row = {"id": "vector", "score": score, "metadata": {}}
+            hybrid_row = {
+                "id": "hybrid",
+                "score": 0.016,
+                "metadata": {
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": score,
+                    },
+                },
+            }
+
+            for row, score_field in (
+                (vector_row, "score"),
+                (hybrid_row, "vector_score"),
+            ):
+                extracted = _extract_scored_rows([row])
+
+                assert extracted is not None
+                assert getattr(extracted[0], score_field) is None
+                _, interpretation = _summarize_tool_result(
+                    ok=True,
+                    duration_ms=50,
+                    source="local",
+                    result=[row],
+                )
+                assert interpretation is None
 
     def test_all_rows_scoring_below_moderate_threshold_adds_all_weak_notice(self):
         from tldw_chatbook.Library.library_rag_state import (
@@ -4065,7 +4263,7 @@ class ToolExecuteAdvService(FakeAdvService):
         return {"ok": True}
 
 
-class ToolExecuteInspectorApp(App):
+class ToolExecuteInspectorApp(ConsolidatedCSSApp):
     def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
         self.service = ToolExecuteAdvService(error=error)
@@ -4105,7 +4303,7 @@ class ToolExecuteAndReadAdvService(ToolExecuteAdvService):
         return {"ok": True, "action": action_name}
 
 
-class ToolExecuteAndReadInspectorApp(App):
+class ToolExecuteAndReadInspectorApp(ConsolidatedCSSApp):
     def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
         self.service = ToolExecuteAndReadAdvService(error=error)
@@ -4630,7 +4828,7 @@ class _TallSectionAdvService(ToolExecuteAdvService):
         }
 
 
-class _TallSectionInspectorApp(App):
+class _TallSectionInspectorApp(ConsolidatedCSSApp):
     """Bundled CSS + real workbench id, like `InspectorAppWithBundledCSS`
     above -- geometry claims are meaningless against Textual's defaults."""
 

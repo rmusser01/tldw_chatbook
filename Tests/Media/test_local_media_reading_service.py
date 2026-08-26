@@ -6,6 +6,7 @@ from pathlib import Path
 import zipfile
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
@@ -142,6 +143,99 @@ class OverrideRecordingDb:
     def search_media_db(self, **kwargs):
         self.search_calls.append(kwargs)
         return [], 0
+
+
+class LibrarySummaryRecordingDb:
+    def __init__(self):
+        self.search_calls = []
+        self.type_calls = 0
+
+    def search_media_db(self, **kwargs):
+        self.search_calls.append(kwargs)
+        return [
+            {
+                "id": 41,
+                "title": "Summary title",
+                "type": "article",
+                "last_modified": "2026-08-16T12:00:00Z",
+            }
+        ], 45
+
+    def get_distinct_media_types(self):
+        self.type_calls += 1
+        return [f"private-type-{index:02}" for index in range(61)]
+
+
+def test_local_service_library_media_summary_uses_exact_db_offset_and_projection():
+    db = LibrarySummaryRecordingDb()
+
+    payload = LocalMediaReadingService(db).search_media(
+        query="summary query",
+        limit=20,
+        offset=40,
+        library_summary=True,
+        media_types=["article"],
+    )
+
+    assert db.search_calls[0]["results_per_page"] == 20
+    assert db.search_calls[0]["offset"] == 40
+    assert db.search_calls[0]["library_summary"] is True
+    assert payload == {
+        "items": [
+            {
+                "id": 41,
+                "title": "Summary title",
+                "type": "article",
+                "last_modified": "2026-08-16T12:00:00Z",
+            }
+        ],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+
+
+@pytest.mark.parametrize(
+    ("limit", "offset"),
+    [
+        (True, 0),
+        (0, 0),
+        (2**63, 0),
+        (20, True),
+        (20, -1),
+        (20, 2**63),
+    ],
+)
+def test_local_service_library_media_summary_rejects_invalid_coordinates(
+    limit, offset
+):
+    db = LibrarySummaryRecordingDb()
+
+    with pytest.raises(ValueError):
+        LocalMediaReadingService(db).search_media(
+            limit=limit,
+            offset=offset,
+            library_summary=True,
+        )
+
+    assert db.search_calls == []
+
+
+def test_local_service_lists_complete_media_types_without_logging_values(caplog):
+    db = LibrarySummaryRecordingDb()
+    caplog.set_level("DEBUG")
+    loguru_output = io.StringIO()
+    sink_id = logger.add(loguru_output, level="DEBUG")
+    try:
+        media_types = LocalMediaReadingService(db).list_library_media_types()
+    finally:
+        logger.remove(sink_id)
+
+    assert len(media_types) == 61
+    assert media_types[-1] == "private-type-60"
+    assert db.type_calls == 1
+    assert "private-type" not in loguru_output.getvalue()
+    assert "private-type" not in caplog.text
 
 
 def test_local_service_search_media_uses_db_backed_saved_filter_spy():
@@ -372,6 +466,41 @@ def test_local_service_list_media_items_carries_last_modified_for_list_card_age(
     row = next(row for row in state.rows if row.media_id == str(media_id))
     assert row.secondary != "document"
     assert row.secondary.startswith("document · ")
+
+
+def test_local_service_list_media_trash_carries_trash_date_for_trashed_age(
+    memory_db_factory,
+):
+    """task-4025: the Library media Trash view shows "trashed <age>" per row.
+
+    ``list_media_trash`` already ORDERs BY ``trash_date`` but did not SELECT
+    it, so the Trash view would have had no timestamp to render. Pins the
+    seam extension end-to-end into the pure state builder the screen uses.
+    """
+    from tldw_chatbook.Library.library_media_state import (
+        build_library_media_trash_state,
+    )
+
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Trashed Doc",
+        content="Body text",
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+    service.delete_media_item(media_id)
+
+    trash = service.list_media_trash(page=1, results_per_page=10)
+
+    item = next(entry for entry in trash["items"] if entry["id"] == media_id)
+    assert item["trash_date"]
+
+    state = build_library_media_trash_state(
+        trash["items"], total=trash["pagination"]["total_items"]
+    )
+    row = next(row for row in state.rows if row.media_id == str(media_id))
+    assert row.secondary.startswith("document · trashed ")
 
 
 def test_local_service_update_media_item_persists_library_edit_fields_without_version(
@@ -797,20 +926,18 @@ def test_scope_service_local_highlight_seam_persists_against_real_db(memory_db_f
     The Library viewer (``LibraryScreen._add_library_media_highlight`` /
     ``_fetch_library_media_highlights`` / ``_delete_library_media_highlight``)
     calls ``media_reading_scope_service.create_highlight``/``list_highlights``/
-    ``delete_highlight`` with ``mode="local"`` -- NOT the ``reading_``-prefixed
-    ``create_reading_highlight``/``list_reading_highlights``/
-    ``delete_reading_highlight`` methods, which ``MediaReadingScopeService``
-    only ever forwards to ``ServerMediaReadingService`` (see
-    ``Tests/Media/test_media_reading_scope_service.py``'s
-    ``test_scope_service_routes_reading_highlights_and_enforces_actions``,
-    which only exercises ``mode="server"``); calling those against a local
-    service raises ``AttributeError`` because ``LocalMediaReadingService``
-    only implements the non-prefixed names. This test drives the actual
-    working seam through ``MediaReadingScopeService`` against a real
-    ``LocalMediaReadingService`` backed by a real in-memory ``MediaDatabase``,
-    proving the UI's create/list/delete round-trip persists for real (a fake
-    scope service could hide a signature/field-name mismatch that this test
-    would catch).
+    ``delete_highlight`` with ``mode="local"`` -- the unprefixed scope
+    methods, distinct from the ``reading_``-prefixed scope methods the Media
+    hub uses (those historically dispatched leaf names only
+    ``ServerMediaReadingService`` had and AttributeError'd against a local
+    service; task-15768 fixed their dispatch to the unprefixed leaf contract,
+    covered by ``Tests/Media/test_media_reading_scope_service.py``'s
+    ``test_scope_service_reading_highlight_crud_reaches_real_local_service``).
+    This test drives the Library seam through ``MediaReadingScopeService``
+    against a real ``LocalMediaReadingService`` backed by a real in-memory
+    ``MediaDatabase``, proving the UI's create/list/delete round-trip
+    persists for real (a fake scope service could hide a signature/field-name
+    mismatch that this test would catch).
     """
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(
@@ -1163,10 +1290,11 @@ def test_local_service_processes_text_like_files_without_persisting(
     assert plaintext["processed_count"] == 1
     assert plaintext["results"][0]["media_type"] == "plaintext"
     assert plaintext["results"][0]["content"] == "Plain text body"
+    # task 9 (chunking-engine-parity): _chunk_text now routes through the
+    # engine (words method), so chunks are whole-word slices of the original
+    # text instead of the legacy raw-char slices ("Plain ", "text b", "ody").
     assert [chunk["text"] for chunk in plaintext["results"][0]["chunks"]] == [
-        "Plain ",
-        "text b",
-        "ody",
+        "Plain text body",
     ]
     assert document["results"][0]["title"] == "doc.md"
     assert document["results"][0]["media_type"] == "document"
@@ -1198,9 +1326,11 @@ def test_local_service_processes_pdf_and_ebook_files_without_persisting(
     assert pdf["processed_count"] == 1
     assert pdf["results"][0]["media_type"] == "pdf"
     assert "PDF body text" in pdf["results"][0]["content"]
+    # task 9 (chunking-engine-parity): engine (words method) yields one
+    # whole-text chunk here instead of the legacy raw-char slices
+    # ("PDF body", " text\n").
     assert [chunk["text"] for chunk in pdf["results"][0]["chunks"][:2]] == [
-        "PDF body",
-        " text\n",
+        "PDF body text",
     ]
     assert ebook["processed_count"] == 1
     assert ebook["results"][0]["media_type"] == "ebook"
@@ -2302,3 +2432,364 @@ def test_local_service_dispatches_cancelled_ingest_job_notifications(memory_db_f
             },
         }
     ]
+
+
+
+# ---------------------------------------------------------------------------
+# Library query seams (task-1337 plan Task 2)
+# ---------------------------------------------------------------------------
+
+
+def _set_media_timestamps(db, media_id, last_modified):
+    # Media sync triggers require version to increment by exactly 1 per UPDATE.
+    db.execute_query(
+        "UPDATE Media SET last_modified = ?, version = version + 1 WHERE id = ?",
+        (last_modified, media_id),
+    )
+
+
+def _seed_active_media(
+    db,
+    *,
+    title,
+    content=None,
+    keywords=None,
+    media_type="article",
+    author="author",
+    last_modified="2026-01-01 00:00:00",
+):
+    # add_media_with_keywords dedups on identical content, so default to a
+    # title-derived body to keep every seeded row distinct.
+    media_id, media_uuid, _ = db.add_media_with_keywords(
+        title=title,
+        media_type=media_type,
+        content=content if content is not None else f"body for {title}",
+        keywords=keywords or [],
+        author=author,
+    )
+    assert media_id is not None, f"seed for {title!r} collided with existing media"
+    _set_media_timestamps(db, media_id, last_modified)
+    return media_id, media_uuid
+
+
+def _walk_values(node):
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _walk_values(value)
+    elif isinstance(node, (list, tuple)):
+        for value in node:
+            yield from _walk_values(value)
+    else:
+        yield node
+
+
+def test_library_media_page_lists_active_only_with_stable_order(memory_db_factory):
+    db = memory_db_factory()
+    first_id, _ = _seed_active_media(
+        db, title="First", last_modified="2026-01-01 00:00:00"
+    )
+    second_id, _ = _seed_active_media(
+        db, title="Second", last_modified="2026-01-03 00:00:00"
+    )
+    third_id, _ = _seed_active_media(
+        db, title="Third", last_modified="2026-01-02 00:00:00"
+    )
+    deleted_id, _ = _seed_active_media(
+        db, title="Deleted", last_modified="2026-01-04 00:00:00"
+    )
+    trashed_id, _ = _seed_active_media(
+        db, title="Trashed", last_modified="2026-01-05 00:00:00"
+    )
+    db.soft_delete_media(deleted_id)
+    db.mark_as_trash(trashed_id)
+
+    service = LocalMediaReadingService(db)
+    page_one = service.list_library_media(limit=2, offset=0)
+
+    assert page_one["total"] == 3
+    assert page_one["limit"] == 2
+    assert page_one["offset"] == 0
+    assert [item["id"] for item in page_one["items"]] == [second_id, third_id]
+
+    page_two = service.list_library_media(limit=2, offset=2)
+    assert page_two["total"] == 3
+    assert [item["id"] for item in page_two["items"]] == [first_id]
+
+    beyond = service.list_library_media(limit=10, offset=50)
+    assert beyond["total"] == 3
+    assert beyond["items"] == []
+
+
+def test_library_media_page_projection_is_safe_and_bounded(memory_db_factory):
+    db = memory_db_factory()
+    media_id, media_uuid = _seed_active_media(
+        db,
+        title="Projected",
+        content="secret body " * 100,
+        keywords=["alpha", "beta"],
+    )
+    db.execute_query(
+        "UPDATE Media SET vector_embedding = ?, version = version + 1 WHERE id = ?",
+        (b"\x00\x01\x02\x03" * 256, media_id),
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.list_library_media(limit=10, offset=0)
+    item = payload["items"][0]
+
+    assert item["uuid"] == media_uuid
+    assert item["title"] == "Projected"
+    assert len(item["preview"]) <= 241
+    assert item["keywords"] == ["alpha", "beta"]
+    assert item["keyword_total"] == 2
+    assert item["keywords_truncated"] is False
+    for forbidden in ("content", "vector_embedding", "url", "path", "file_path"):
+        assert forbidden not in item
+    assert all(not isinstance(value, (bytes, bytearray)) for value in _walk_values(payload))
+
+
+def test_library_media_page_keywords_capped_with_exact_total(memory_db_factory):
+    db = memory_db_factory()
+    keywords = [f"kw{index:02d}" for index in range(25)]
+    _seed_active_media(db, title="Keyword heavy", keywords=keywords)
+
+    service = LocalMediaReadingService(db)
+    item = service.list_library_media(limit=10, offset=0)["items"][0]
+
+    assert len(item["keywords"]) == 20
+    assert item["keyword_total"] == 25
+    assert item["keywords_truncated"] is True
+
+
+def test_library_media_search_exact_title_first_and_distinct_total(memory_db_factory):
+    db = memory_db_factory()
+    exact_id, _ = _seed_active_media(
+        db,
+        title="Quarterly",
+        content="nothing relevant here",
+        keywords=["quarterly", "quarterly-finance"],
+        last_modified="2026-01-01 00:00:00",
+    )
+    content_id, _ = _seed_active_media(
+        db,
+        title="Other",
+        content="a quarterly deep dive",
+        last_modified="2026-02-01 00:00:00",
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.search_library_media(query="quarterly", limit=10, offset=0)
+
+    # The exact-title item has two keyword hits but must be counted once.
+    assert payload["total"] == 2
+    assert [item["id"] for item in payload["items"]] == [exact_id, content_id]
+    exact_item, content_item = payload["items"]
+    assert "title" in exact_item["matched_fields"]
+    assert "keywords" in exact_item["matched_fields"]
+    assert "quarterly" in exact_item["matched_keywords"]
+    assert "quarterly-finance" in exact_item["matched_keywords"]
+    assert "content" in content_item["matched_fields"]
+
+
+def test_library_media_search_treats_wildcards_and_operators_literally(memory_db_factory):
+    db = memory_db_factory()
+    target_id, _ = _seed_active_media(db, title="100% ready_now", content="plain")
+    _seed_active_media(db, title="readyXnow decoy", content="plain decoy body")
+
+    service = LocalMediaReadingService(db)
+    percent = service.search_library_media(query="100%", limit=10, offset=0)
+    assert [item["id"] for item in percent["items"]] == [target_id]
+
+    underscore = service.search_library_media(query="ready_now", limit=10, offset=0)
+    assert [item["id"] for item in underscore["items"]] == [target_id]
+
+    # FTS operator syntax in the raw query must never raise or change semantics.
+    for hostile in ('"unclosed', "ready OR", "AND )(", "ready*", "NEAR/1"):
+        result = service.search_library_media(query=hostile, limit=10, offset=0)
+        assert isinstance(result["total"], int)
+        assert isinstance(result["items"], list)
+
+
+def test_library_media_search_matches_quotes_in_content(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _ = _seed_active_media(
+        db, title="Quotes", content="it's a test body"
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.search_library_media(query="it's", limit=10, offset=0)
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == media_id
+
+
+def test_library_media_detail_windows_text_and_hides_blobs(memory_db_factory):
+    db = memory_db_factory()
+    content = "abcdef" * 900  # 5400 chars
+    media_id, media_uuid = _seed_active_media(
+        db, title="Long read", content=content, media_type="document"
+    )
+    db.execute_query(
+        "UPDATE Media SET vector_embedding = ?, version = version + 1 WHERE id = ?",
+        (b"\xff" * 1024, media_id),
+    )
+
+    service = LocalMediaReadingService(db)
+    detail = service.get_library_media_text(media_uuid, start=1200, max_chars=2000)
+
+    assert detail is not None
+    assert detail["uuid"] == media_uuid
+    assert detail["title"] == "Long read"
+    assert detail["media_type"] == "document"
+    assert detail["total_chars"] == len(content)
+    assert detail["start"] == 1200
+    assert detail["returned_chars"] == 2000
+    assert detail["has_more"] is True
+    assert detail["text"] == content[1200:3200]
+    for forbidden in ("content", "vector_embedding", "url", "path", "file_path"):
+        assert forbidden not in detail
+    assert all(not isinstance(value, (bytes, bytearray)) for value in _walk_values(detail))
+
+    tail = service.get_library_media_text(media_uuid, start=5000, max_chars=2000)
+    assert tail["text"] == content[5000:]
+    assert tail["returned_chars"] == len(content) - 5000
+    assert tail["has_more"] is False
+
+
+def test_library_media_detail_returns_none_for_missing_uuid(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    assert service.get_library_media_text("no-such-uuid", start=0, max_chars=100) is None
+
+
+def test_library_media_detail_read_runs_inside_transaction(memory_db_factory):
+    db = memory_db_factory()
+    _, media_uuid = _seed_active_media(db, title="Transactional", content="body")
+    conn = db.get_connection()
+    conn.commit()
+    observed: list[bool] = []
+
+    def record_transaction_state(sql: str) -> None:
+        if "FROM Media" in sql and "AS total_chars" in sql:
+            observed.append(conn.in_transaction)
+
+    conn.set_trace_callback(record_transaction_state)
+    try:
+        assert db.get_library_media_text(media_uuid, start=0, max_chars=20) is not None
+    finally:
+        conn.set_trace_callback(None)
+
+    assert observed == [True]
+
+
+# ---------------------------------------------------------------------------
+# task-4022 (review round 2, I1b): the trash-restore fix
+# (Client_Media_DB_v2.add_media_with_keywords) made restoring a trashed
+# match opt-in (``restore_trashed=True``). ``_materialize_reading_import_row``
+# guards its OWN existing-check on the url leg only
+# (``db.get_media_by_url(url)``, which excludes trashed rows by default),
+# but its fallback ``add_media_with_keywords`` call can still match a
+# trashed row via the content-hash leg (a different url, identical bytes).
+# Since this caller never passes ``restore_trashed=True``, that match must
+# stay untouched -- not silently resurrected. Real file-backed
+# ``MediaDatabase`` (not ``memory_db_factory``'s ``:memory:`` instance),
+# per this programme's DB-layer testing requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_reading_import_content_hash_match_does_not_resurrect_trashed_row(tmp_path):
+    db_path = tmp_path / "reading_import.sqlite"
+    db = Database(db_path=str(db_path), client_id="reading_import_test")
+    service = LocalMediaReadingService(db)
+
+    content = "identical body text, different saved url"
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Saved A",
+        media_type="article",
+        content=content,
+        keywords=["kept"],
+        url="https://example.com/a",
+    )
+    assert db.mark_as_trash(media_id) is True
+
+    import_path = tmp_path / "reading.jsonl"
+    import_path.write_text(
+        json.dumps(
+            {
+                # A DIFFERENT url -- the url-leg existing-check
+                # (get_media_by_url) will find nothing, so this falls
+                # through to add_media_with_keywords, which then matches
+                # the trashed row via the content-hash fallback leg.
+                "title": "Saved A (re-saved)",
+                "url": "https://example.com/a-mirror",
+                "text": content,
+                "tags": ["new-tag"],
+                "status": "saved",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = service.import_reading_items(str(import_path), source="jsonl")
+    assert result["status"] == "completed"
+    assert result["result"]["skipped"] == 1, result["result"]
+    assert result["result"]["imported"] == 0
+    assert result["result"]["updated"] == 0
+
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 1, "content-hash match must not resurrect a trashed row"
+    assert row["url"] == "https://example.com/a"
+    # No second row was created for the mirror url either.
+    cursor = db.execute_query("SELECT COUNT(*) FROM Media")
+    assert cursor.fetchone()[0] == 1
+    db.close_connection()
+
+
+# ---------------------------------------------------------------------------
+# task-4026: ``save_reading_item`` is an explicit user action naming one
+# exact URL ("save this for me"), so re-saving something previously moved
+# to Trash is an explicit restore decision -- the ONE reading-service
+# caller that opts into ``restore_trashed=True`` (mirroring the Library
+# ingest writer, ``persist_parsed_media``). Without the opt-in the DB
+# layer now skips trashed matches even with ``overwrite=True`` (the
+# task-4026 contract), which would leave this action failing with
+# "did not produce a media record" and no remedy. Real file-backed
+# ``MediaDatabase`` per this programme's DB-layer testing requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_save_reading_item_restores_trashed_match(tmp_path):
+    db_path = tmp_path / "save_reading_item.sqlite"
+    db = Database(db_path=str(db_path), client_id="save_reading_item_test")
+    service = LocalMediaReadingService(db)
+
+    url = "https://example.com/saved-then-trashed"
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Saved once",
+        media_type="article",
+        content="the first saved body",
+        keywords=["kept"],
+        url=url,
+    )
+    assert db.mark_as_trash(media_id) is True
+
+    # Content supplied -> no scraping. The user is explicitly re-saving
+    # the same URL with fresh content.
+    detail = service.save_reading_item(
+        url=url,
+        title="Saved again",
+        content="the freshly saved body",
+        status="saved",
+    )
+
+    assert int(detail["id"]) == media_id, (
+        "re-saving a trashed URL must restore the SAME row, not fail or fork"
+    )
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 0, "explicit re-save must restore the trashed row"
+    assert row["trash_date"] is None
+    assert row["content"] == "the freshly saved body"
+    assert detail.get("is_read_it_later") is True
+    cursor = db.execute_query("SELECT COUNT(*) FROM Media")
+    assert cursor.fetchone()[0] == 1
+    db.close_connection()

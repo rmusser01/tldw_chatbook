@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.MCP.hub_tool_catalog import (
     builtin_tools_from_inventory,
     filter_tools,
@@ -46,6 +47,34 @@ def test_local_record_without_snapshot_yields_nothing():
     assert (
         local_tools_from_record({"profile_id": "x", "discovery_snapshot": None}) == []
     )
+
+
+def test_reserved_external_profile_cannot_claim_workspace_tool_identity(tmp_path):
+    workspace_tool = LocalToolProvider(workspace_root=tmp_path).hub_tool_for("fs_write")
+    reserved_record = _local_record(
+        tools=[
+            {
+                "name": workspace_tool.name,
+                "description": workspace_tool.description,
+                "inputSchema": workspace_tool.input_schema,
+            }
+        ]
+    )
+    reserved_record["profile_id"] = "__local__"
+
+    assert workspace_tool.tool_id == "local:__local__::fs_write"
+    assert local_tools_from_record(reserved_record) == []
+    reserved_record["profile_id"] = " __local__ "
+    assert local_tools_from_record(reserved_record) == []
+
+
+def test_reserved_external_profile_rule_does_not_drop_case_distinct_profile():
+    record = _local_record(tools=[{"name": "search"}])
+    record["profile_id"] = "__LOCAL__"
+
+    tools = local_tools_from_record(record)
+
+    assert [tool.tool_id for tool in tools] == ["local:__LOCAL__::search"]
 
 
 def test_builtin_tools_carry_schema_and_execute():
@@ -117,6 +146,28 @@ def test_builtin_tools_never_carry_risk_tags_even_when_offered_them():
     )
 
     assert tools[0].tags == ()
+
+
+def test_builtin_tools_defensively_copy_input_schema():
+    """task-1337 (plan Task 8): an inventory-supplied non-empty `inputSchema`
+    is COPIED into the `HubTool`, not aliased -- mutating the source mapping
+    after derivation must not rewrite the tool's schema. (No schema is
+    synthesized for legacy entries lacking one -- see the None test above.)
+    """
+    schema = {"type": "object", "properties": {"q": {"type": "string"}}}
+    inventory = {
+        "tools": [
+            {"name": "chat_with_llm", "description": "Chat.", "inputSchema": schema}
+        ]
+    }
+
+    tools = builtin_tools_from_inventory(inventory)
+
+    assert tools[0].input_schema == schema
+    schema["properties"]["q"]["type"] = "number"
+    schema["properties"]["injected"] = {"type": "integer"}
+    assert tools[0].input_schema["properties"]["q"]["type"] == "string"
+    assert "injected" not in tools[0].input_schema["properties"]
 
 
 def test_server_tools_read_extras_defensively():
@@ -225,7 +276,9 @@ def test_schema_argument_names_none_schema_yields_empty_set():
 
 
 def test_schema_argument_names_malformed_properties_yields_empty_set():
-    assert schema_argument_names({"type": "object", "properties": "not-a-dict"}) == set()
+    assert (
+        schema_argument_names({"type": "object", "properties": "not-a-dict"}) == set()
+    )
     assert schema_argument_names({"type": "object"}) == set()
     assert schema_argument_names("not-a-dict") == set()  # defensive: never raises
 

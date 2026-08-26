@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -171,18 +172,38 @@ class GatedRepositoryError(AcquisitionError):
     pass
 
 
+class TransferFailureCode(StrEnum):
+    """Stable acquisition-owned reason for bounded transfer recovery copy."""
+
+    UNKNOWN = "unknown"
+    SOURCE_UNAVAILABLE = "source-unavailable"
+    VERIFICATION_FAILED = "verification-failed"
+    SOURCE_BLOCKED = "source-blocked"
+    LOCAL_STATE = "local-state"
+
+
 class TransferError(AcquisitionError):
     """Network or transfer error with optional retry flag."""
 
-    def __init__(self, message: str, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        retryable: bool = False,
+        *,
+        code: TransferFailureCode = TransferFailureCode.UNKNOWN,
+    ) -> None:
         """Initialize TransferError with retryable flag.
 
         Args:
             message: The error message.
             retryable: Whether this error is retryable.
+            code: Typed bounded recovery reason.
         """
+        if type(code) is not TransferFailureCode:
+            raise TypeError("code must be a TransferFailureCode")
         super().__init__(message)
         self.retryable = retryable
+        self.code = code
 
 
 # Protocol for catalog descriptors
@@ -513,7 +534,9 @@ def resolve_catalog_closure(
         try:
             descriptor = catalog.descriptor(ref)
         except Exception as exc:
-            raise CatalogError(f"unknown artifact {ref.artifact_id}@{ref.revision}") from exc
+            raise CatalogError(
+                f"unknown artifact {ref.artifact_id}@{ref.revision}"
+            ) from exc
         revisions[ref.artifact_id] = ref
         for dep in descriptor.dependencies:
             visit(dep)
@@ -893,7 +916,9 @@ class ArtifactAcquisitionService:
 
         installed = self._core.list_installed()
         installed_refs = {
-            item.descriptor.reference for item in installed if item.descriptor is not None
+            item.descriptor.reference
+            for item in installed
+            if item.descriptor is not None
         }
         # The prior active version of THIS artifact_id, only when an upgrade
         # would leave it behind under a different reference than root (the
@@ -918,7 +943,9 @@ class ArtifactAcquisitionService:
         # installed entry, in stable closure order -- bounded (one probe
         # per distinct source, per spec) without probing the descriptor's
         # own source_url when nothing will ever be fetched from it.
-        gating_targets: dict[tuple[str, tuple[str, str, int] | None], _GatingTarget] = {}
+        gating_targets: dict[
+            tuple[str, tuple[str, str, int] | None], _GatingTarget
+        ] = {}
         # TASK-1695: resolved per-file source URLs, not-yet-installed
         # entries only -- see _aggregate_closure's Returns docstring.
         resolved_sources: dict[ArtifactRef, dict[str, str]] = {}
@@ -940,6 +967,14 @@ class ArtifactAcquisitionService:
             )
             entries.append(entry)
             if not already_installed:
+                if (
+                    descriptor.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+                    and descriptor.source_url == ""
+                ):
+                    raise CatalogError(
+                        f"{ref.artifact_id}@{ref.revision} local integrity "
+                        "descriptors cannot be acquired"
+                    )
                 # Fail loudly here, not just later in _fetch_artifact: a
                 # not-yet-installed descriptor whose files don't fully
                 # resolve to credential-free URLs is a catalog-contract
@@ -949,7 +984,9 @@ class ArtifactAcquisitionService:
                 # descriptor never reaches provision()'s fetch phase (the
                 # per-artifact loop skips installed entries outright), so
                 # its source map entry is deliberately not resolved here.
-                resolved_sources[ref] = _resolve_file_sources(descriptor, source_map.get(ref))
+                resolved_sources[ref] = _resolve_file_sources(
+                    descriptor, source_map.get(ref)
+                )
                 # Clamp per entry: a stale/corrupt sidecar claiming more
                 # bytes than this artifact's own declared total must not
                 # inflate the credit shown on the consent screen.
@@ -999,7 +1036,9 @@ class ArtifactAcquisitionService:
         staging_overhead_bytes = 0
 
         retained_bytes = (
-            retained_descriptor.expected_installed_bytes if retained_descriptor is not None else 0
+            retained_descriptor.expected_installed_bytes
+            if retained_descriptor is not None
+            else 0
         )
 
         required_bytes = (
@@ -1161,8 +1200,8 @@ class ArtifactAcquisitionService:
                         await acquire_future
                     raise
 
-                closure, report, _gating_targets, resolved_sources = self._aggregate_closure(
-                    root, catalog, sources
+                closure, report, _gating_targets, resolved_sources = (
+                    self._aggregate_closure(root, catalog, sources)
                 )
                 if report.closure_fingerprint != consent.closure_fingerprint:
                     raise ConsentMismatchError(
@@ -1521,7 +1560,9 @@ class ArtifactAcquisitionService:
                 etag=entry.get("etag"), last_modified=entry.get("last_modified")
             )
         resume_from = (
-            recorded_done if recorded_done and validators is not None and validators.strong else 0
+            recorded_done
+            if recorded_done and validators is not None and validators.strong
+            else 0
         )
 
         url = self._file_url(resolved_sources, file)
@@ -1557,16 +1598,21 @@ class ArtifactAcquisitionService:
             )
         except OSError as exc:
             raise TransferError(
-                f"I/O error fetching '{file.path}': {exc}", retryable=True
+                f"I/O error fetching '{file.path}': {exc}",
+                retryable=True,
+                code=TransferFailureCode.LOCAL_STATE,
             ) from exc
         except FetchTooLargeError as exc:
             raise TransferError(
                 f"upstream body exceeds declared size for '{file.path}': {exc}",
                 retryable=False,
+                code=TransferFailureCode.VERIFICATION_FAILED,
             ) from exc
         except FetchTransportError as exc:
             raise TransferError(
-                f"transport error fetching '{file.path}': {exc}", retryable=True
+                f"transport error fetching '{file.path}': {exc}",
+                retryable=True,
+                code=TransferFailureCode.SOURCE_UNAVAILABLE,
             ) from exc
         except EgressBlockedError as exc:
             # Never a raw exception mid-provision (spec's never-trap rule):
@@ -1576,7 +1622,9 @@ class ArtifactAcquisitionService:
             # genuinely cannot be retrieved. Not retryable: it's a policy
             # decision on this URL, not a transient network condition.
             raise TransferError(
-                f"egress policy blocked fetching '{file.path}': {exc}", retryable=False
+                f"egress policy blocked fetching '{file.path}': {exc}",
+                retryable=False,
+                code=TransferFailureCode.SOURCE_BLOCKED,
             ) from exc
 
         total_done = used_resume_from + result.bytes_written
@@ -1734,7 +1782,12 @@ class ArtifactAcquisitionService:
             digest = await loop.run_in_executor(
                 None,
                 functools.partial(
-                    self._hash_staged_file, destination, descriptor, file, progress_state, loop
+                    self._hash_staged_file,
+                    destination,
+                    descriptor,
+                    file,
+                    progress_state,
+                    loop,
                 ),
             )
             if digest == file.sha256:
@@ -1744,6 +1797,7 @@ class ArtifactAcquisitionService:
                     f"staged file '{file.path}' still fails SHA-256 verification "
                     f"after {MAX_FILE_REFETCHES} refetch(es)",
                     retryable=True,
+                    code=TransferFailureCode.VERIFICATION_FAILED,
                 )
             attempts_used += 1
             try:
@@ -1753,7 +1807,9 @@ class ArtifactAcquisitionService:
             sidecar = self._load_fetch_sidecar(sidecar_path)
             if sidecar["files"].pop(file.path, None) is not None:
                 atomic_write_json(sidecar_path, sidecar)
-            await self._fetch_artifact(descriptor, staging_dir, progress_state, resolved_sources)
+            await self._fetch_artifact(
+                descriptor, staging_dir, progress_state, resolved_sources
+            )
 
     @staticmethod
     def _hash_staged_file(
@@ -1925,15 +1981,23 @@ class ArtifactAcquisitionService:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(None, func)
-        except (ArtifactIntegrityError, ArtifactConflictError, ArtifactPathError) as exc:
+        except ArtifactIntegrityError as exc:
             raise TransferError(
                 f"{operation} failed for {ref.artifact_id}@{ref.revision}: {exc}",
                 retryable=False,
+                code=TransferFailureCode.VERIFICATION_FAILED,
+            ) from exc
+        except (ArtifactConflictError, ArtifactPathError) as exc:
+            raise TransferError(
+                f"{operation} failed for {ref.artifact_id}@{ref.revision}: {exc}",
+                retryable=False,
+                code=TransferFailureCode.LOCAL_STATE,
             ) from exc
         except ArtifactStateError as exc:
             raise TransferError(
                 f"{operation} failed for {ref.artifact_id}@{ref.revision}: {exc}",
                 retryable=True,
+                code=TransferFailureCode.LOCAL_STATE,
             ) from exc
 
     @staticmethod

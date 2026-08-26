@@ -721,24 +721,23 @@ async def test_legacy_path_provider_failure_is_wrapped_naming_speaker_and_index(
     assert "turn 10" in message
 
 
-async def test_legacy_path_unmapped_openai_model_raises_a_wrapped_unknown_legacy_model_error() -> (
-    None
-):
-    """A realistic failure, not a hand-rolled test double.
+async def test_legacy_path_unknown_legacy_model_error_is_wrapped() -> None:
+    """`UnknownLegacyModelError` from the stream is wrapped like any failure.
 
-    An OpenAI TTS profile whose model id is not one of the four the
-    compatibility bridge enumerates (`legacy_bridge.py`'s
-    `OPENAI_INTERNAL_IDS`) -- for example `"gpt-4o-mini-tts"` -- makes
-    `build_legacy_speech_request` emit an internal model id
-    (`"openai_official_gpt-4o-mini-tts"`) that `resolve_legacy_route` does
-    not recognize, raising a genuine `UnknownLegacyModelError` from inside
-    `generate_audio_stream` itself (the fake reproduces that same first
-    step -- see `_FakeTTSService`'s docstring).
+    This used to arise genuinely from an OpenAI profile whose model id was
+    outside the four the bridge enumerated. Since TASK-15420 custom OpenAI
+    model ids route by prefix (so OpenAI-compatible servers' own model
+    names pass through), and every other selection `synthesize_turn`
+    admits maps to a fixed enumerated internal id, no in-tree selection
+    reaches the error through `build_legacy_speech_request` any more --
+    so it is injected at the same seam other adapter failures use, to keep
+    the wrapping contract (cause preserved, speaker and turn named) pinned
+    should the bridge ever reject an id again.
     """
-    selection = _legacy_selection(
-        speaker="Narrator", provider_id="openai", model_id="gpt-4o-mini-tts"
+    selection = _legacy_selection(speaker="Narrator", provider_id="kokoro")
+    service = _FakeTTSService(
+        legacy_error=UnknownLegacyModelError("The selected TTS model is not available")
     )
-    service = _FakeTTSService()
 
     with pytest.raises(TurnSynthesisError) as caught:
         await synthesize_turn(service, selection, "hello", turn_index=2)

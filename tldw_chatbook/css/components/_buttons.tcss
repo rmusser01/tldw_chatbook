@@ -45,6 +45,17 @@ Button:disabled:hover {
     text-style: none;
 }
 
+/* Local GGUF import must remain readable while a prior import owns the lane.
+   This app-tier selector deliberately beats the generic disabled dimmer without
+   affecting other disabled actions. */
+Button.model-import:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    background: $surface-darken-1;
+    color: $text-muted;
+}
+
 .sidebar-toggle {
     width: 1fr;              /* Equal flexible width */
     height: 3;

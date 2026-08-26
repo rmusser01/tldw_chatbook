@@ -39,6 +39,7 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSWriteStatus,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
 
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
@@ -89,20 +90,33 @@ STUDIO_ACTIONS: tuple[WorkbenchAction, ...] = (
     ),
 )
 
-VOICE_PROFILE_ACTIONS: tuple[WorkbenchAction, ...] = (
+VOICE_DESTINATION_ACTIONS: tuple[WorkbenchAction, ...] = (
+    WorkbenchAction(
+        id="voice-profiles",
+        label="Voice Profiles",
+        tooltip="Open provider-neutral saved voice profiles",
+    ),
+    WorkbenchAction(
+        id="voice-blends",
+        label="Voice Blends",
+        tooltip="Open Kokoro voice blending",
+    ),
+)
+
+VOICE_BLEND_ACTIONS: tuple[WorkbenchAction, ...] = (
     WorkbenchAction(
         id="add-voice-blend-btn",
-        label="Add voice profile",
+        label="Add Voice Blend",
         tooltip="Create a reusable Kokoro voice blend",
     ),
     WorkbenchAction(
         id="import-blends-btn",
-        label="Import voice profiles",
+        label="Import Voice Blends",
         tooltip="Import Kokoro voice blends",
     ),
     WorkbenchAction(
         id="export-blends-btn",
-        label="Export voice profiles",
+        label="Export Voice Blends",
         tooltip="Export Kokoro voice blends",
     ),
 )
@@ -126,6 +140,20 @@ class StudioPreferencesSaved(Message):
             raise TypeError("reset_to_global must be a bool")
         self.snapshot = snapshot
         self.reset_to_global = reset_to_global
+
+
+class SpeechDestinationRequested(Message):
+    """Request one exact Speech Lab destination from a child pane."""
+
+    def __init__(self, destination_id: str) -> None:
+        super().__init__()
+        if destination_id not in {"voice-profiles", "voice-blends"}:
+            raise ValueError("unknown Speech destination")
+        self.destination_id = destination_id
+
+
+class SpeechDestinationBackRequested(Message):
+    """Return from a voice tool to its originating Speech view."""
 
 
 class StudioTTSLeaveModal(ModalScreen[LeaveChoice]):
@@ -201,6 +229,47 @@ def _field_row(
     )
 
 
+class VoiceBlendsPane(SpeechSettingsMixin, Vertical):
+    """Manage Kokoro-only voice blends without presenting them as profiles."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        classes = kwargs.pop("classes", "")
+        super().__init__(classes=f"speech-settings-pane {classes}".strip(), **kwargs)
+        self.init_settings_state()
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "Voice Blends",
+            id="voice-blends-heading",
+            classes="speech-pane-title",
+            markup=False,
+        )
+        yield Static(
+            "Kokoro only. Blend IDs are available only while Kokoro is selected.",
+            id="voice-blends-scope",
+            classes="studio-tts-scope",
+            markup=False,
+        )
+        yield SpeechActionStrip(VOICE_BLEND_ACTIONS, id="voice-blends-actions")
+        yield Static(
+            "Loading Kokoro voice blends…",
+            id="kokoro-voice-blends-list",
+            classes="studio-tts-helper",
+        )
+        yield Button(
+            "Back to previous Speech view",
+            id="speech-destination-back",
+        )
+
+    def on_mount(self) -> None:
+        self._load_kokoro_voice_blends()
+
+    @on(Button.Pressed, "#speech-destination-back")
+    def _request_back(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(SpeechDestinationBackRequested())
+
+
 class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
     """Edit sparse Speech Studio preferences without touching global setup."""
 
@@ -241,6 +310,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         self._adoption_pending = False
         self._busy = False
         self._load_applied = False
+        self._forced_global_provider_draft: StudioTTSPreferencesSnapshot | None = None
 
     @property
     def saved_snapshot(self) -> StudioTTSPreferencesSnapshot:
@@ -313,6 +383,53 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             return TTSPreferencesSnapshot.from_settings({})
 
+    def refresh_global_preferences(self, snapshot: TTSPreferencesSnapshot) -> None:
+        """Refresh inherited source truth without disturbing Studio edits."""
+
+        if type(snapshot) is not TTSPreferencesSnapshot:
+            raise TypeError("global preferences must be a TTS preferences snapshot")
+        if not self.is_mounted:
+            self._global_preferences = snapshot
+            return
+
+        provider_value = self.query_one("#studio-tts-provider", Select).value
+        previous_effective_provider = self._effective_provider()
+        draft = self._collect_candidate(show_errors=False)
+        self._global_preferences = snapshot
+        provider_changed = (
+            provider_value == _INHERIT
+            and previous_effective_provider != snapshot.provider_id
+        )
+        if provider_changed:
+            retained_draft = self._forced_global_provider_draft
+            if (
+                previous_effective_provider == "audio_cpp"
+                and retained_draft is not None
+                and draft is not None
+            ):
+                draft = replace(
+                    draft,
+                    selection=replace(
+                        draft.selection,
+                        response_format=retained_draft.selection.response_format,
+                        speed=retained_draft.selection.speed,
+                    ),
+                )
+            draft = draft or retained_draft or self._saved_snapshot
+            self._forced_global_provider_draft = (
+                draft if snapshot.provider_id == "audio_cpp" else None
+            )
+            self._applying_controls = True
+            try:
+                self._populate_provider_controls(
+                    _INHERIT,
+                    draft,
+                )
+            finally:
+                self._applying_controls = False
+        self._sync_source_copy()
+        self._sync_dirty_state()
+
     def compose(self) -> ComposeResult:
         yield Static(
             "Studio TTS Preferences",
@@ -344,7 +461,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             yield _field_row(
                 "Provider override",
-                Select(
+                PruneSafeSelect(
                     (("Inherit global", _INHERIT), *_PROVIDER_OPTIONS),
                     id="studio-tts-provider",
                     allow_blank=False,
@@ -355,7 +472,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             yield _field_row(
                 "Model policy",
-                Select(
+                PruneSafeSelect(
                     (
                         ("Inherit", _INHERIT),
                         ("Exact", "exact"),
@@ -380,7 +497,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             yield _field_row(
                 "Voice policy",
-                Select(
+                PruneSafeSelect(
                     (
                         ("Inherit", _INHERIT),
                         ("Exact", "exact"),
@@ -405,7 +522,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             yield _field_row(
                 "Output format",
-                Select(
+                PruneSafeSelect(
                     (
                         ("Inherit", _INHERIT),
                         *((value.upper(), value) for value in _FORMATS),
@@ -466,25 +583,19 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
                 )
 
             yield Static(
-                "Voice Profile library",
-                id="studio-tts-voice-profile-heading",
+                "Voice tools",
+                id="studio-tts-voice-tools-heading",
                 classes="speech-section-head",
                 markup=False,
             )
             yield Static(
-                "Voice blends are reusable library entries, not global or Studio "
-                "preference fields.",
+                "Open provider-neutral Voice Profiles or Kokoro-only Voice Blends.",
                 classes="studio-tts-helper",
                 markup=False,
             )
             yield SpeechActionStrip(
-                VOICE_PROFILE_ACTIONS,
-                id="studio-tts-voice-profile-actions",
-            )
-            yield Static(
-                "Voice profiles are loaded on demand.",
-                id="kokoro-voice-blends-list",
-                classes="studio-tts-helper",
+                VOICE_DESTINATION_ACTIONS,
+                id="studio-tts-voice-destination-actions",
             )
 
     def on_mount(self) -> None:
@@ -608,6 +719,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
 
     def _apply_snapshot(self, snapshot: StudioTTSPreferencesSnapshot) -> None:
+        self._forced_global_provider_draft = None
         selection = snapshot.selection
         provider_value = selection.provider_id or _INHERIT
         self._applying_controls = True
@@ -937,6 +1049,17 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             if show_errors:
                 self._set_error("voice-id", "Exact voice ID is required")
             return None
+        if (
+            voice_mode == "exact"
+            and voice_id.startswith("blend:")
+            and effective_provider != "kokoro"
+        ):
+            if show_errors:
+                self._set_error(
+                    "voice-id",
+                    "Voice Blends are available only with Kokoro",
+                )
+            return None
         if voice_mode != "exact":
             voice_id = None
 
@@ -1114,6 +1237,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         ):
             self._set_error("provider", "Choose a supported provider or Inherit")
             return
+        self._forced_global_provider_draft = None
         self._applying_controls = True
         try:
             self.query_one("#studio-tts-provider", Select).value = provider_value
@@ -1408,13 +1532,21 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
                 exclusive=True,
                 exit_on_error=False,
             )
+        elif button_id in {"voice-profiles", "voice-blends"}:
+            event.stop()
+            self.post_message(SpeechDestinationRequested(button_id))
         # Voice blend ids are handled once by the inherited legacy operation
         # handler.  Textual dispatches that handler separately through the MRO;
         # calling it here as well would open two file pickers or dialogs.
 
 
 __all__ = [
+    "SpeechDestinationBackRequested",
+    "SpeechDestinationRequested",
     "SpeechSettingsPane",
     "StudioPreferencesSaved",
     "StudioTTSLeaveModal",
+    "VOICE_BLEND_ACTIONS",
+    "VOICE_DESTINATION_ACTIONS",
+    "VoiceBlendsPane",
 ]

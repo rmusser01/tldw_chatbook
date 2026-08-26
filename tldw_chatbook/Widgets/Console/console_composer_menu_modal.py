@@ -14,11 +14,11 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 #: Action ids returned by the menu. Stable strings, not indexes: the
 #: screen's dispatch table keys off these and tests pin them.
@@ -38,6 +38,7 @@ ACTION_ATTACH_CONTEXT = "attach-context"
 #: temporary-chat block needs no translation layer.
 ACTION_SAVE_CHATBOOK = "save-chatbook"
 ACTION_PROMPTS = "prompts"
+ACTION_IMPROVE_CURRENT_DRAFT = "improve-current-draft"
 ACTION_UNDO_PROMPT_IMPROVEMENT = "undo-prompt-improvement"
 
 
@@ -56,6 +57,7 @@ def build_composer_menu_entries(
     attachment_kind: str = "none",
     ephemeral: bool = False,
     can_save_chatbook: bool = False,
+    draft_available: bool = False,
     improvement_undo_available: bool = False,
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
@@ -79,6 +81,7 @@ def build_composer_menu_entries(
         attachment_kind: ``"image"``, ``"other"``, or ``"none"``.
         ephemeral: Whether the active session is temporary.
         can_save_chatbook: Whether a Chatbook artifact is available to save.
+        draft_available: Whether a nonblank unsent message can be improved.
 
     Returns:
         The menu entries in display order.
@@ -99,10 +102,21 @@ def build_composer_menu_entries(
         else "No Chatbook artifact is available to save yet"
     )
     entries = (
+        *(
+            (
+                ComposerMenuEntry(
+                    ACTION_IMPROVE_CURRENT_DRAFT,
+                    "Improve current draft…",
+                    "Improve the unsent message with the current provider and model",
+                ),
+            )
+            if draft_available
+            else ()
+        ),
         ComposerMenuEntry(
             ACTION_PROMPTS,
-            "Prompts",
-            "Browse, improve, or build reusable prompts",
+            "Browse Prompt Library…",
+            "Browse saved Prompts and Recipes",
         ),
         ComposerMenuEntry(
             # CN-03 (TASK-2154.13): this entry opens the file picker
@@ -123,8 +137,8 @@ def build_composer_menu_entries(
             (
                 ComposerMenuEntry(
                     ACTION_UNDO_PROMPT_IMPROVEMENT,
-                    "Undo prompt improvement",
-                    "Restore the draft captured before the latest prompt improvement",
+                    "Undo Prompt change",
+                    "Restore the draft captured before the latest Prompt change.",
                 ),
             )
             if improvement_undo_available
@@ -160,7 +174,7 @@ def build_composer_menu_entries(
     )
 
 
-class ConsoleComposerMenuModal(ModalScreen["str | None"]):
+class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"]):
     """Pick one composer action; dismisses with its action id."""
 
     DEFAULT_CSS = """
@@ -197,7 +211,8 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss_menu", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-composer-menu"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     def __init__(
         self,
@@ -205,6 +220,7 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
         attachment_kind: str = "none",
         ephemeral: bool = False,
         can_save_chatbook: bool = False,
+        draft_available: bool = False,
         improvement_undo_available: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -218,6 +234,7 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
                 decides whether "Save this chat" is offered at all.
             can_save_chatbook: Whether a Chatbook artifact is available,
                 which decides whether the Save as Chatbook row is actionable.
+            draft_available: Whether the active composer has a nonblank draft.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -225,6 +242,7 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
             attachment_kind=attachment_kind,
             ephemeral=ephemeral,
             can_save_chatbook=can_save_chatbook,
+            draft_available=draft_available,
             improvement_undo_available=improvement_undo_available,
         )
 
@@ -265,32 +283,3 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
             return
         event.stop()
         self.dismiss(button_id[len(prefix) :])
-
-    def on_click(self, event: Click) -> None:
-        """Dismiss with no action when a click lands on the backdrop.
-
-        Mouse-first users expect a click outside a popup to close it, the
-        same no-action exit Escape already provides. Clicks anywhere inside
-        the menu box (rows, header, padding, the disabled-reason lines) are
-        not exits, so containment is tested against the box's region rather
-        than the clicked widget's identity. A click that carries no screen
-        coordinates (synthesized clicks under textual-web arrive that way)
-        cannot be located, so it keeps the menu open rather than guessing:
-        a wrong dismissal would eat a click aimed at a menu row, while a
-        kept-open menu still has Escape and the backdrop as exits.
-
-        Args:
-            event: The screen-level click, carrying absolute coordinates.
-        """
-        screen_x = getattr(event, "screen_x", None)
-        screen_y = getattr(event, "screen_y", None)
-        if screen_x is None or screen_y is None:
-            return
-        menu = self.query_one("#console-composer-menu")
-        if menu.region.contains(screen_x, screen_y):
-            return
-        event.stop()
-        self.dismiss(None)
-
-    def action_dismiss_menu(self) -> None:
-        self.dismiss(None)

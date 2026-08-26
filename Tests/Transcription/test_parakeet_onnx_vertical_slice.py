@@ -5,7 +5,6 @@ import sys
 import wave
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 from tldw_chatbook.Local_Ingestion import transcription_service as service_module
@@ -51,9 +50,7 @@ def _known_v2_receipt() -> dict[str, object]:
     }
 
 
-def test_parakeet_onnx_transcribes_with_local_v2_int8_model(
-    tmp_path, monkeypatch
-) -> None:
+def test_parakeet_onnx_reuses_local_v2_int8_model(tmp_path, monkeypatch) -> None:
     audio_path = tmp_path / "speech.wav"
     model_dir = tmp_path / "model"
     _write_model_bundle(model_dir)
@@ -78,6 +75,10 @@ def test_parakeet_onnx_transcribes_with_local_v2_int8_model(
     service = TranscriptionService()
     service.config["parakeet_onnx_model_dir"] = str(model_dir)
     result = service.transcribe(
+        str(audio_path),
+        provider="parakeet-onnx",
+    )
+    reused_result = service.transcribe(
         str(audio_path),
         provider="parakeet-onnx",
     )
@@ -116,6 +117,7 @@ def test_parakeet_onnx_transcribes_with_local_v2_int8_model(
         "provider": "parakeet-onnx",
         "model": PARAKEET_V2_MODEL,
     }
+    assert reused_result == result
 
 
 def test_parakeet_onnx_non_english_selects_v3_without_decoder_language(
@@ -496,148 +498,6 @@ def test_parakeet_onnx_rejects_model_directory_that_fails_central_path_validatio
     assert load_calls == []
 
 
-def test_parakeet_onnx_transcribes_pcm_buffer_without_staging_a_file(
-    tmp_path, monkeypatch
-) -> None:
-    model_dir = tmp_path / "model"
-    _write_model_bundle(model_dir)
-
-    recognized = []
-
-    class FakeModel:
-        def recognize(self, waveform, *, sample_rate):
-            recognized.append((waveform, sample_rate))
-            return "  Memory only.  "
-
-    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
-    monkeypatch.setitem(
-        sys.modules,
-        "onnx_asr",
-        SimpleNamespace(load_model=lambda *args, **kwargs: FakeModel()),
-    )
-
-    def reject_temp_file(*args, **kwargs):
-        raise AssertionError("Parakeet buffer transcription must not stage a file")
-
-    monkeypatch.setattr(service_module.tempfile, "NamedTemporaryFile", reject_temp_file)
-
-    pcm = np.array([-32768, 0, 16384, 32767], dtype=np.int16)
-    result = TranscriptionService().transcribe_buffer(
-        pcm.tobytes(),
-        sample_rate=8_000,
-        channels=1,
-        sample_width=2,
-        provider="parakeet-onnx",
-        model=PARAKEET_V2_MODEL,
-        language="en",
-        model_dir=str(model_dir),
-    )
-
-    assert len(recognized) == 1
-    waveform, sample_rate = recognized[0]
-    assert sample_rate == 8_000
-    np.testing.assert_allclose(
-        waveform,
-        np.array([-1.0, 0.0, 0.5, 32767 / 32768], dtype=np.float32),
-    )
-    assert result["text"] == "Memory only."
-    assert result["segments"][0]["end"] == pytest.approx(4 / 8_000)
-
-
-def test_parakeet_onnx_buffer_target_lang_wins_over_alias(
-    tmp_path, monkeypatch
-) -> None:
-    model_dir = tmp_path / "model"
-    _write_model_bundle(model_dir)
-    load_calls = []
-
-    class FakeModel:
-        def recognize(self, waveform, *, sample_rate):
-            return "Memory only."
-
-    def fake_load_model(name, **kwargs):
-        load_calls.append((name, kwargs))
-        return FakeModel()
-
-    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
-    monkeypatch.setitem(
-        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
-    )
-
-    result = TranscriptionService().transcribe_buffer(
-        np.array([0, 16384], dtype=np.int16).tobytes(),
-        sample_rate=16_000,
-        channels=1,
-        sample_width=2,
-        provider="parakeet-onnx",
-        model=PARAKEET_V2_MODEL,
-        language="en",
-        target_lang="",
-        target_language="fr",
-        model_dir=str(model_dir),
-    )
-
-    assert load_calls[0][0] == PARAKEET_V2_MODEL
-    assert result["requested_language"] == "en"
-
-
-def test_parakeet_onnx_v3_transcribes_pcm_buffer_with_transparent_language_result(
-    tmp_path, monkeypatch
-) -> None:
-    model_dir = tmp_path / "model"
-    _write_model_bundle(model_dir)
-    load_calls = []
-
-    class FakeModel:
-        def recognize(self, waveform, *, sample_rate):
-            assert waveform.dtype == np.float32
-            assert sample_rate == 16_000
-            return " Deutsche Aufnahme. "
-
-    def fake_load_model(name, **kwargs):
-        load_calls.append((name, kwargs))
-        return FakeModel()
-
-    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
-    monkeypatch.setitem(
-        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
-    )
-
-    result = TranscriptionService().transcribe_buffer(
-        np.array([0, 16384], dtype=np.int16).tobytes(),
-        sample_rate=16_000,
-        channels=1,
-        sample_width=2,
-        provider="parakeet-onnx",
-        language="de",
-        model_dir=str(model_dir),
-    )
-
-    assert load_calls == [
-        (
-            PARAKEET_V3_MODEL,
-            {
-                "path": str(model_dir),
-                "quantization": "int8",
-                "providers": ["CPUExecutionProvider"],
-                "preprocessor_config": {
-                    "use_numpy_preprocessors": True,
-                    "max_concurrent_workers": 1,
-                },
-            },
-        )
-    ]
-    assert result["text"] == "Deutsche Aufnahme."
-    assert result["language"] is None
-    assert result["requested_language"] == "de"
-    assert result["effective_language"] == "auto"
-    assert result["detected_language"] is None
-    assert result["warnings"] == ["requested_language_not_enforced"]
-    assert result["model"] == PARAKEET_V3_MODEL
-    assert result["segments"][0]["text"] == "Deutsche Aufnahme."
-    assert result["segments"][0]["end"] == pytest.approx(2 / 16_000)
-
-
 # ---------------------------------------------------------------------------
 # TASK-1696: managed-first resolver for the batch path, when neither an
 # explicit model_dir argument nor transcription.parakeet_onnx_model_dir is
@@ -710,9 +570,7 @@ def test_parakeet_onnx_batch_falls_back_to_verified_legacy_bundle(
     monkeypatch.setitem(
         sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
     )
-    monkeypatch.setattr(
-        service_module, "active_managed_parakeet_v2_dir", lambda: None
-    )
+    monkeypatch.setattr(service_module, "active_managed_parakeet_v2_dir", lambda: None)
     monkeypatch.setattr(service_module, "parakeet_v2_install_dir", lambda: legacy_dir)
     monkeypatch.setattr(
         service_module,
@@ -735,13 +593,13 @@ def test_parakeet_onnx_batch_reports_missing_model_when_nothing_resolves(
     _write_silent_wav(audio_path)
 
     monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
-    monkeypatch.setattr(
-        service_module, "active_managed_parakeet_v2_dir", lambda: None
-    )
+    monkeypatch.setattr(service_module, "active_managed_parakeet_v2_dir", lambda: None)
     monkeypatch.setattr(
         service_module, "parakeet_v2_install_dir", lambda: tmp_path / "no-legacy"
     )
-    monkeypatch.setattr(service_module, "verify_parakeet_v2_bundle", lambda directory: False)
+    monkeypatch.setattr(
+        service_module, "verify_parakeet_v2_bundle", lambda directory: False
+    )
 
     service = TranscriptionService()
     assert not service.config["parakeet_onnx_model_dir"]

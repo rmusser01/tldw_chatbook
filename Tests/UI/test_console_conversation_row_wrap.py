@@ -100,6 +100,15 @@ def test_blank_title_falls_back_to_untitled() -> None:
     assert wrap_console_conversation_title("   ", 30) == ("Untitled conversation",)
 
 
+def test_raw_title_controls_cannot_forge_conversation_browser_rows() -> None:
+    raw_title = "Chat with Nyx\n\tAdmin\x00[/bold]"
+
+    lines = wrap_console_conversation_title(raw_title, 40)
+
+    assert lines == ("Chat with Nyx Admin?[/bold]",)
+    assert all("\n" not in line and "\t" not in line for line in lines)
+
+
 def test_truncate_returns_short_text_unchanged() -> None:
     assert truncate_console_row_cells("saved - 2d", 20) == "saved - 2d"
 

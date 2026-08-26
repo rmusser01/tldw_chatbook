@@ -34,7 +34,7 @@ class NoteItem(Container):
 class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
     """Dialog for selecting notes to convert to audio"""
 
-    CSS = """
+    BUNDLED_SCREEN_CSS = """
     NoteSelectionDialog {
         align: center middle;
     }
@@ -97,7 +97,6 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
     
     .note-date {
         color: $text-disabled;
-        font-size: 10;
     }
     
     .selection-info {
@@ -174,7 +173,7 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
     def load_notes(self, notes: List[Dict[str, Any]]) -> None:
         """Load notes into the list"""
         notes_list = self.query_one("#notes-list", Vertical)
-        notes_list.clear()
+        notes_list.remove_children()
         self.note_items.clear()
 
         for note in notes:

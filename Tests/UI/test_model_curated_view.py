@@ -32,15 +32,23 @@ against them) moved to ``test_llm_screen_lab_adoption.py``, against
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
-from textual.widgets import Button, Static
+from textual.widgets import Button, Collapsible, Static
+from textual.widgets._collapsible import CollapsibleTitle
 
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Model_Artifacts import (
     ArtifactDescriptor,
     ArtifactFile,
@@ -54,13 +62,40 @@ from tldw_chatbook.Model_Artifacts.curated_registry import CuratedRegistry
 from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
 
-class _ViewApp(App):
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "model_library_focus_locator",
+        "restore_model_library_focus",
+        "project_audio_cpp_observation",
+        "clear_audio_cpp_observation",
+        "audio_cpp_package_projection",
+    ],
+)
+def test_public_audio_cpp_projection_helpers_document_arguments_and_returns(
+    function_name: str,
+) -> None:
+    from tldw_chatbook.UI.Screens import model_curated_view as module
+
+    docstring = getattr(module, function_name).__doc__ or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+
+
+class _ViewApp(ConsolidatedCSSApp):
     def __init__(self, view: CuratedView) -> None:
         self.view = view
         super().__init__()
 
     def compose(self) -> ComposeResult:
         yield self.view
+
+
+class _StyledViewApp(_ViewApp):
+    """Curated harness using the exact production stylesheet bundle."""
+
+    CSS_PATH = TldwCli.CSS_PATH
 
 
 async def _wait_until(condition, *, pilot, attempts: int = 100) -> bool:
@@ -75,14 +110,19 @@ def _artifact_file(content: bytes, path: str = "model.bin") -> ArtifactFile:
     return ArtifactFile(path, len(content), hashlib.sha256(content).hexdigest())
 
 
-def _descriptor(reference: ArtifactRef, content: bytes = b"payload") -> ArtifactDescriptor:
+def _descriptor(
+    reference: ArtifactRef,
+    content: bytes = b"payload",
+    *,
+    consumer: str = "stt",
+) -> ArtifactDescriptor:
     files = (_artifact_file(content),)
     return ArtifactDescriptor(
         reference=reference,
         model_id=f"example/{reference.artifact_id}",
         role=ArtifactRole.ROOT,
         format=ArtifactFormat.GGUF,
-        consumer="stt",
+        consumer=consumer,
         model_family=reference.artifact_id,
         upstream_repository=f"example/{reference.artifact_id}",
         upstream_revision="main",
@@ -95,7 +135,10 @@ def _descriptor(reference: ArtifactRef, content: bytes = b"payload") -> Artifact
         runtime_version_constraint="==0.12.0",
         supported_os=("linux", "macos", "windows"),
         supported_architectures=("x86-64", "arm64"),
-        provenance=(ProvenanceClass.CHATBOOK_CURATED, ProvenanceClass.LOCAL_INTEGRITY_RECORDED),
+        provenance=(
+            ProvenanceClass.CHATBOOK_CURATED,
+            ProvenanceClass.LOCAL_INTEGRITY_RECORDED,
+        ),
         files=files,
         dependencies=(),
         expected_installed_bytes=sum(f.size_bytes for f in files),
@@ -107,7 +150,10 @@ def _registry_with(*descriptors: ArtifactDescriptor) -> CuratedRegistry:
     for descriptor in descriptors:
         registry.register(
             descriptor,
-            sources={file.path: f"https://example.test/{file.path}" for file in descriptor.files},
+            sources={
+                file.path: f"https://example.test/{file.path}"
+                for file in descriptor.files
+            },
         )
     return registry
 
@@ -118,6 +164,42 @@ def _all_text(app: App) -> str:
 
 def _install_buttons(app: App) -> list[Button]:
     return list(app.screen.query(".curated-install").results(Button))
+
+
+def _painted_style_of_text(app: App, region, needle: str):
+    """Return the compositor style carrying one visible label glyph."""
+    strips = app.screen._compositor.render_strips()
+    for y in range(region.y, region.bottom):
+        cursor = 0
+        for segment in strips[y]:
+            next_cursor = cursor + segment.cell_length
+            start = max(cursor, region.x)
+            end = min(next_cursor, region.right)
+            if start < end and needle in segment.text:
+                return segment.style
+            cursor = next_cursor
+    return None
+
+
+def _relative_luminance(color) -> float:
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _contrast(first, second) -> float:
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +256,32 @@ async def test_ensure_loaded_triggers_the_catalog_load_and_marks_installed_rows(
 
 
 @pytest.mark.asyncio
+async def test_dependency_descriptors_do_not_render_as_standalone_models(
+    tmp_path: Path,
+) -> None:
+    root = _descriptor(ArtifactRef("model-root", "a" * 40, "int8"))
+    dependency = ArtifactDescriptor(
+        **{
+            **_descriptor(ArtifactRef("model-vad", "b" * 40, "f32")).__dict__,
+            "role": ArtifactRole.DEPENDENCY,
+        }
+    )
+    registry = _registry_with(root, dependency)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    app = _ViewApp(view)
+
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        assert "example/model-root" in _all_text(app)
+        assert "example/model-vad" not in _all_text(app)
+        assert len(_install_buttons(app)) == 1
+
+
+@pytest.mark.asyncio
 async def test_ensure_loaded_without_force_does_not_rerun_the_expensive_reads(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -196,7 +304,9 @@ async def test_ensure_loaded_without_force_does_not_rerun_the_expensive_reads(
     registry = _registry_with(_descriptor(ArtifactRef("model-a", "a" * 40, "int8")))
     service = ModelArtifactService(tmp_path / "store")
 
-    view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
+    view = CuratedView(
+        service_factory=lambda: service, registry_factory=lambda: registry
+    )
     app = _ViewApp(view)
     async with app.run_test() as pilot:
         view.ensure_loaded()
@@ -228,7 +338,9 @@ async def test_no_user_visible_string_contains_artifact(tmp_path: Path) -> None:
     """
     registry = _registry_with(_descriptor(ArtifactRef("model-a", "a" * 40, "int8")))
     service = ModelArtifactService(tmp_path / "store")
-    view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
+    view = CuratedView(
+        service_factory=lambda: service, registry_factory=lambda: registry
+    )
     app = _ViewApp(view)
     async with app.run_test() as pilot:
         view.ensure_loaded()
@@ -264,9 +376,11 @@ async def test_install_click_posts_install_requested_with_the_resolved_service_a
     registry = _registry_with(descriptor)
     service = ModelArtifactService(tmp_path / "store")
 
-    view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
+    view = CuratedView(
+        service_factory=lambda: service, registry_factory=lambda: registry
+    )
 
-    class _CapturingApp(App):
+    class _CapturingApp(ConsolidatedCSSApp):
         def __init__(self, view: CuratedView) -> None:
             self.view = view
             self.requests: list[CuratedView.InstallRequested] = []
@@ -305,6 +419,71 @@ async def test_install_click_posts_install_requested_with_the_resolved_service_a
         assert refreshed_button.disabled is True
 
 
+@pytest.mark.asyncio
+async def test_install_press_during_observation_refresh_is_not_swallowed(
+    tmp_path: Path,
+) -> None:
+    """Refreshing evidence cannot unmount an enabled Install before delivery."""
+    import asyncio
+
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        audio_cpp_curated_entries,
+    )
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    refresh_entered = asyncio.Event()
+    release_refresh = asyncio.Event()
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            refresh_entered.set()
+            await release_refresh.wait()
+        return AudioCppModelLibraryObservationSnapshot(
+            (AudioCppArtifactRemovalEvidence(references[0]),)
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+
+    class _CapturingApp(_StyledViewApp):
+        def __init__(self) -> None:
+            self.requests: list[CuratedView.InstallRequested] = []
+            super().__init__(view)
+
+        @on(CuratedView.InstallRequested)
+        def _capture(self, event: CuratedView.InstallRequested) -> None:
+            self.requests.append(event)
+
+    app = _CapturingApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: calls == 1, pilot=pilot)
+        install = view.query_one(".curated-install", Button)
+        assert install.disabled is False
+
+        view.refresh_observations()
+        assert install.is_attached
+        install.press()
+
+        assert await _wait_until(refresh_entered.is_set, pilot=pilot)
+        assert await _wait_until(lambda: len(app.requests) == 1, pilot=pilot)
+        assert app.requests[0].reference == descriptor.reference
+        release_refresh.set()
+
+
 # ---------------------------------------------------------------------------
 # Render-only outcomes: cancel_pending_install() / finish_install().
 #
@@ -333,7 +512,9 @@ def test_cancel_pending_install_clears_the_indicator_without_reloading() -> None
     view.ensure_loaded.assert_not_called()
 
 
-def test_finish_install_clears_the_indicator_and_reloads_despite_a_missing_progress_widget() -> None:
+def test_finish_install_clears_the_indicator_and_reloads_despite_a_missing_progress_widget() -> (
+    None
+):
     """``finish_install()`` always reloads (a just-installed row must stop
     offering a redundant Install), and tolerates the progress widget being
     momentarily unfindable mid-recompose -- the same tolerance
@@ -349,6 +530,52 @@ def test_finish_install_clears_the_indicator_and_reloads_despite_a_missing_progr
     assert view._operation_reference is None
     assert view._progress is None
     view.ensure_loaded.assert_called_once_with(force=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal",
+    ("cancel", "finish"),
+)
+async def test_curated_terminal_failure_persists_bounded_inline_recovery(
+    tmp_path: Path,
+    terminal: str,
+) -> None:
+    """Host-terminal failures remain visible after the operation recomposes."""
+    reference = ArtifactRef("model-a", "a" * 40, "int8")
+    descriptor = _descriptor(reference)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: _registry_with(descriptor),
+    )
+    app = _StyledViewApp(view)
+    recovery = (
+        "Pinned source unavailable — the app may be offline. "
+        "Select Retry install when connectivity returns."
+        if terminal == "cancel"
+        else "Package verification failed (size or SHA-256). No package was "
+        "promoted. Select Retry install."
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        view._operation_reference = reference
+        if terminal == "cancel":
+            view.cancel_pending_install(recovery)
+        else:
+            view.finish_install(recovery)
+        assert await _wait_until(
+            lambda: (
+                recovery in _all_text(app)
+                and view.query_one(".curated-install", Button).has_focus
+            ),
+            pilot=pilot,
+        )
+        retry = view.query_one(".curated-install", Button)
+        assert str(retry.label) == "Retry install…"
+        assert retry.has_focus
+        assert retry in app.screen._compositor.visible_widgets
 
 
 # ---------------------------------------------------------------------------
@@ -387,3 +614,836 @@ def test_curated_view_does_not_import_acquisition_at_module_scope() -> None:
     assert findings == [], (
         f"model_curated_view.py imports acquisition/fetch at module scope: {findings}"
     )
+
+
+@pytest.mark.asyncio
+async def test_every_exact_parakeet_root_posts_use_from_disk_with_its_catalog_ref(
+    tmp_path: Path,
+) -> None:
+    """The disk action carries the immutable catalog ref, never parsed row copy."""
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        PARAKEET_PRECISIONS,
+        parakeet_descriptor,
+        parakeet_reference,
+        parakeet_source_map,
+        parakeet_vad_descriptor,
+        parakeet_vad_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+        PARAKEET_V2_MODEL,
+        PARAKEET_V3_MODEL,
+    )
+
+    registry = CuratedRegistry()
+    source_map = parakeet_source_map()
+    expected = []
+    for model in (PARAKEET_V2_MODEL, PARAKEET_V3_MODEL):
+        for precision in PARAKEET_PRECISIONS:
+            reference = parakeet_reference(model, precision)
+            expected.append(reference)
+            registry.register(
+                parakeet_descriptor(model, precision),
+                sources=source_map[reference],
+            )
+    vad_reference = parakeet_vad_reference()
+    registry.register(
+        parakeet_vad_descriptor(),
+        sources=source_map[vad_reference],
+    )
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+
+    class _CapturingApp(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            self.requests: list[CuratedView.UseFromDiskRequested] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield view
+
+        @on(CuratedView.UseFromDiskRequested)
+        def _capture(self, event: CuratedView.UseFromDiskRequested) -> None:
+            self.requests.append(event)
+
+    app = _CapturingApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        buttons = list(app.query(".curated-use-from-disk").results(Button))
+        assert [button.reference for button in buttons] == expected
+        for button in buttons:
+            button.press()
+            await pilot.pause()
+
+        assert [request.reference for request in app.requests] == expected
+        assert all(button.reference != vad_reference for button in buttons)
+        view._operation_reference = expected[0]
+        view.refresh(recompose=True)
+        await pilot.pause()
+        use_from_disk = view.query_one(".curated-use-from-disk", Button)
+        assert use_from_disk.disabled is True
+        assert use_from_disk.tooltip == (
+            "Use from disk unavailable — another model package operation is in progress."
+        )
+        assert (
+            "Use from disk unavailable — another model package operation is in progress."
+            in _all_text(app)
+        )
+
+
+@pytest.mark.asyncio
+async def test_non_parakeet_root_has_no_use_from_disk_action(tmp_path: Path) -> None:
+    descriptor = _descriptor(ArtifactRef("ordinary-model", "a" * 40, "int8"))
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: _registry_with(descriptor),
+    )
+    app = _ViewApp(view)
+
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        assert not app.query(".curated-use-from-disk")
+
+
+@pytest.mark.asyncio
+async def test_pending_curated_actions_expose_adjacent_reasons_to_tab_only_user_at_80x24(
+    tmp_path: Path,
+) -> None:
+    """Tab skips inert actions while both reasons remain painted beside them."""
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_descriptor,
+        parakeet_reference,
+        parakeet_source_map,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+
+    reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
+    registry = CuratedRegistry()
+    registry.register(
+        parakeet_descriptor(PARAKEET_V2_MODEL, "int8"),
+        sources=parakeet_source_map()[reference],
+    )
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    view._operation_reference = reference
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        refresh = view.query_one("#curated-models-refresh", Button)
+        refresh.focus()
+        await pilot.press("tab")
+
+        assert app.focused is refresh
+        assert view.query_one(".curated-install", Button).disabled is True
+        assert view.query_one(".curated-use-from-disk", Button).disabled is True
+        reasons = list(view.query(".curated-disabled-reason").results(Static))
+        assert {str(reason.renderable) for reason in reasons} == {
+            "Install unavailable — another model package operation is in progress.",
+            "Use from disk unavailable — another model package operation is in progress.",
+        }
+        assert all(
+            reason in app.screen._compositor.visible_widgets for reason in reasons
+        )
+        assert all(reason.region.right <= view.region.right for reason in reasons)
+        assert all(reason.region.bottom <= view.region.bottom for reason in reasons)
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_mode_filters_catalog_and_exposes_joined_recipe_facts(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+
+    audio_descriptor, audio_sources = audio_cpp_curated_entries()[0]
+    ordinary = _descriptor(ArtifactRef("ordinary-model", "a" * 40, "int8"))
+    registry = _registry_with(ordinary)
+    registry.register(audio_descriptor, sources=audio_sources)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _ViewApp(view)
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        text = _all_text(app)
+        assert ordinary.model_id not in text
+        assert audio_descriptor.model_id in text
+        assert audio_descriptor.model_family in text
+        assert (
+            "Available: Complete pinned source recorded; live reachability not checked"
+            in text
+        )
+        assert "Integrity: Not checked — package is not installed" in text
+        assert "Recipe: audio-cpp-" in text
+        assert "installed scan not checked" in text
+        assert "Compatibility:" in text
+        assert "Configured: Unknown — Settings state was not checked" in text
+        assert "Running: Unknown — supervisor state was not checked" in text
+        assert "Speech tasks:" in text
+        assert "Required package files:" in text
+        assert "Pinned source:" in text
+        assert "Manifest authority: Pinned sizes and SHA-256 digests recorded" in text
+        assert "Package size:" in text
+        assert view.query_one(".audio-cpp-companions", Collapsible)
+        assert "audiocpp_server is not included" in text
+        assert "Available: Downloadable" not in text
+        assert "Integrity: Verified" not in text
+        assert "Recipe: Matched" not in text
+
+
+@pytest.mark.parametrize("mismatch", ("revision", "repository"))
+def test_audio_cpp_projection_rejects_mismatched_static_catalog_facts(
+    mismatch: str,
+) -> None:
+    """Persisted descriptor drift cannot inherit canonical package claims."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.UI.Screens.model_curated_view import (
+        audio_cpp_package_projection,
+    )
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    mismatched = (
+        replace(
+            descriptor,
+            reference=ArtifactRef(
+                descriptor.reference.artifact_id,
+                "0" * 40,
+                descriptor.reference.variant,
+            ),
+        )
+        if mismatch == "revision"
+        else replace(descriptor, upstream_repository="attacker/repository")
+    )
+
+    projection = audio_cpp_package_projection(mismatched)
+
+    assert projection is not None
+    assert projection.availability.startswith("Unknown")
+    assert projection.recipe.startswith("Unknown")
+    assert projection.pinned_source.startswith("Unknown")
+    assert "attacker/repository" not in projection.pinned_source
+
+
+@pytest.mark.parametrize("mismatch", ("revision", "repository"))
+@pytest.mark.asyncio
+async def test_curated_audio_cpp_mismatch_is_review_required_when_mounted(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    """Curated rows render mismatch truth without canonical source claims."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    mismatched = (
+        replace(
+            descriptor,
+            reference=ArtifactRef(
+                descriptor.reference.artifact_id,
+                "0" * 40,
+                descriptor.reference.variant,
+            ),
+        )
+        if mismatch == "revision"
+        else replace(descriptor, upstream_repository="attacker/repository")
+    )
+    registry = CuratedRegistry()
+    registry.register(mismatched, sources=sources)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        text = _all_text(app)
+
+    assert "Available: Unknown" in text
+    assert "review required" in text
+    assert "Recipe: Unknown" in text
+    assert "Pinned source: Unknown" in text
+    assert "Complete pinned source recorded" not in text
+    assert "exact manifest mapping recorded" not in text
+    assert "attacker/repository" not in text
+
+
+@pytest.mark.asyncio
+async def test_installed_audio_cpp_row_uses_shared_install_message_for_return(
+    tmp_path: Path,
+) -> None:
+    descriptor = _descriptor(
+        ArtifactRef("audio-cpp-model", "a" * 40, "f16"),
+        b"audio-package",
+        consumer="audio_cpp",
+    )
+    registry = _registry_with(descriptor)
+    service = ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.bin").write_bytes(b"audio-package")
+    service.install(descriptor, source)
+    view = CuratedView(
+        service_factory=lambda: service,
+        registry_factory=lambda: registry,
+    )
+    view.set_consumer_filter("audio_cpp", allow_installed_return=True)
+
+    class _CapturingApp(App[None]):
+        def __init__(self) -> None:
+            self.requests: list[CuratedView.InstallRequested] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield view
+
+        @on(CuratedView.InstallRequested)
+        def _capture(self, event: CuratedView.InstallRequested) -> None:
+            self.requests.append(event)
+
+    app = _CapturingApp()
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        button = _install_buttons(app)[0]
+        assert str(button.label) == "Use installed package"
+        assert button.disabled is False
+        button.press()
+        await pilot.pause()
+
+    assert len(app.requests) == 1
+    assert app.requests[0].reference == descriptor.reference
+    assert app.requests[0].already_installed is True
+
+
+@pytest.mark.asyncio
+async def test_installed_audio_cpp_row_outside_handoff_is_not_a_return_action(
+    tmp_path: Path,
+) -> None:
+    descriptor = _descriptor(
+        ArtifactRef("audio-cpp-model", "a" * 40, "f16"),
+        b"audio-package",
+        consumer="audio_cpp",
+    )
+    registry = _registry_with(descriptor)
+    service = ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.bin").write_bytes(b"audio-package")
+    service.install(descriptor, source)
+    view = CuratedView(
+        service_factory=lambda: service,
+        registry_factory=lambda: registry,
+    )
+    app = _ViewApp(view)
+
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        button = _install_buttons(app)[0]
+        assert str(button.label) == "Installed"
+        assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_row_is_truthful_expandable_and_keyboard_reachable_at_80x24(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One dense row keeps six lifecycle dimensions and its action reachable."""
+    import tldw_chatbook.TTS.audio_cpp_recipes as recipes_module
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    recipe = next(
+        item
+        for item in recipes_module.AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if descriptor.reference.artifact_id in item.model_library_artifact_ids
+    )
+    signal = recipe.required_files[0]
+    companion_paths = tuple(
+        f"companions/voice-assets/reviewed-file-{index:02d}.json" for index in range(12)
+    )
+    recipe = replace(
+        recipe,
+        display_name=("Extremely long reviewed audio.cpp family and model name " * 3),
+        required_files=recipe.required_files
+        + tuple(replace(signal, relative_path=path) for path in companion_paths),
+    )
+    monkeypatch.setattr(
+        recipes_module,
+        "AUDIO_CPP_RECIPE_REGISTRY",
+        SimpleNamespace(recipes=(recipe,)),
+    )
+    descriptor = replace(
+        descriptor,
+        model_id=("audio-cpp/very-long-reviewed-model-name-" * 5),
+        model_family=("long-family-name-" * 5),
+    )
+    registry = _registry_with()
+    registry.register(descriptor, sources=sources)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        text = _all_text(app)
+        for fact in (
+            descriptor.model_id,
+            "Available: Complete pinned source recorded; live reachability not checked",
+            "Integrity: Not checked — package is not installed",
+            f"Recipe: {recipe.recipe_id}@{recipe.recipe_revision}",
+            "installed scan not checked",
+            "Compatibility:",
+            "Configured: Unknown — Settings state was not checked",
+            "Running: Unknown — supervisor state was not checked",
+            "Speech tasks: TTS, CLONE",
+            "Required package files:",
+            "Pinned source:",
+            "Manifest authority: Pinned sizes and SHA-256 digests recorded",
+            "Package size:",
+            "Model package only — audiocpp_server is not included",
+        ):
+            assert fact in text
+        assert "Active" not in text
+        assert "Available: Downloadable" not in text
+        assert "Integrity: Verified" not in text
+        assert "Recipe: Matched" not in text
+
+        class _ComposeMustNotReadRecipes:
+            @property
+            def recipes(self):
+                raise AssertionError("compose read the mutable recipe registry")
+
+        monkeypatch.setattr(
+            recipes_module,
+            "AUDIO_CPP_RECIPE_REGISTRY",
+            _ComposeMustNotReadRecipes(),
+        )
+        view.refresh(recompose=True)
+        await pilot.pause()
+        assert f"Recipe: {recipe.recipe_id}@{recipe.recipe_revision}" in _all_text(app)
+
+        disclosure = view.query_one(".audio-cpp-companions", Collapsible)
+        assert str(disclosure.title) == "Companion files (12)"
+        assert disclosure.collapsed is True
+        refresh = view.query_one("#curated-models-refresh", Button)
+        app.screen.set_focus(refresh)
+        await pilot.press("tab")
+        title = disclosure.query_one(CollapsibleTitle)
+        assert title.has_focus
+        await pilot.press("enter")
+        assert disclosure.collapsed is False
+        assert all(path in _all_text(app) for path in companion_paths)
+
+        await pilot.press("tab")
+        install = view.query_one(".curated-install", Button)
+        assert install.has_focus
+        assert install in app.screen._compositor.visible_widgets
+        assert install.region.right <= view.region.right
+        assert install.region.bottom <= view.region.bottom
+
+
+@pytest.mark.parametrize(
+    "theme",
+    ("textual-dark", "textual-light", "tokyo-night", "monokai", "dracula"),
+)
+@pytest.mark.asyncio
+async def test_disabled_installed_audio_cpp_action_has_reason_and_three_to_one_contrast(
+    tmp_path: Path,
+    theme: str,
+) -> None:
+    """Installed is readable and explains why it is inert in every target theme."""
+    descriptor = _descriptor(
+        ArtifactRef("audio-cpp-model", "a" * 40, "f16"),
+        b"audio-package",
+        consumer="audio_cpp",
+    )
+    registry = _registry_with(descriptor)
+    service = ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.bin").write_bytes(b"audio-package")
+    service.install(descriptor, source)
+    view = CuratedView(
+        service_factory=lambda: service, registry_factory=lambda: registry
+    )
+    app = _StyledViewApp(view)
+    app.theme = theme
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        button = view.query_one(".curated-install", Button)
+        assert button.disabled is True
+        assert button.styles.opacity == 1.0
+        assert button.tooltip == (
+            "Already installed — open Guided Settings to review this package."
+        )
+        assert "Installed — open Guided Settings to review this package." in _all_text(
+            app
+        )
+        button.scroll_visible(animate=False, immediate=True, force=True)
+        await pilot.pause()
+        painted = _painted_style_of_text(app, button.region, "Installed")
+        assert painted is not None
+        assert painted.color is not None and painted.bgcolor is not None
+        ratio = _contrast(painted.color, painted.bgcolor)
+        assert ratio >= 3.0, f"Installed is {ratio:.2f}:1 under {theme}"
+
+
+@pytest.mark.asyncio
+async def test_refresh_restores_focus_after_curated_worker_recompose(
+    tmp_path: Path,
+) -> None:
+    """Keyboard refresh returns focus to the newly mounted Refresh control."""
+    descriptor = _descriptor(ArtifactRef("model-a", "a" * 40, "int8"))
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: _registry_with(descriptor),
+    )
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        refresh = view.query_one("#curated-models-refresh", Button)
+        app.screen.set_focus(refresh)
+        await pilot.press("enter")
+        assert await _wait_until(
+            lambda: (
+                not view._loading
+                and view.query_one("#curated-models-refresh", Button).has_focus
+            ),
+            pilot=pilot,
+        )
+
+
+def test_default_only_evidence_does_not_claim_guided_settings_membership() -> None:
+    """A global default is not evidence that the package is in Guided Settings."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+    )
+    from tldw_chatbook.UI.Screens.model_curated_view import (
+        AudioCppPackageProjection,
+        project_audio_cpp_observation,
+    )
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    projection = AudioCppPackageProjection(
+        recipe="recipe",
+        compatibility="compatibility",
+        availability="availability",
+        companion_paths=(),
+        speech_tasks="TTS",
+        required_files="model.bin",
+        pinned_source="source",
+        manifest_authority="authority",
+        package_size="1 byte",
+    )
+    evidence = AudioCppArtifactRemovalEvidence(
+        reference,
+        settings_consumers=(
+            ("saved-default", "Saved global TTS default", "model"),
+            ("draft-default", "Unsaved global TTS default", "model"),
+        ),
+    )
+
+    observed = project_audio_cpp_observation(projection, reference, evidence)
+
+    assert observed.configured == "Not configured — exact Settings state checked"
+    assert "Saved Settings" not in observed.configured
+    assert "draft" not in observed.configured
+
+
+@pytest.mark.asyncio
+async def test_all_audio_cpp_rows_share_one_bulk_observation_call(
+    tmp_path: Path,
+) -> None:
+    """The catalog's many rows must not each trigger a full app evidence snapshot."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    registry = CuratedRegistry()
+    for descriptor, sources in audio_cpp_curated_entries():
+        registry.register(descriptor, sources=sources)
+    calls = []
+
+    async def observe(references):
+        calls.append(references)
+        return AudioCppModelLibraryObservationSnapshot(())
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _ViewApp(view)
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded and bool(calls), pilot=pilot)
+        await pilot.pause()
+
+    assert len(registry.list()) >= 40
+    assert calls == [(tuple(item.reference for item in registry.list()))]
+
+
+@pytest.mark.parametrize("role", ("install", "disclosure"))
+@pytest.mark.asyncio
+async def test_delayed_bulk_observation_restores_curated_semantic_focus(
+    tmp_path: Path,
+    role: str,
+) -> None:
+    """Evidence refresh preserves the focused id-less row control in place."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    release = __import__("asyncio").Event()
+    calls: list[tuple[ArtifactRef, ...]] = []
+
+    async def observe(references):
+        calls.append(references)
+        await release.wait()
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    descriptor.reference,
+                    settings_consumers=(("saved", "Guided Settings", "package"),),
+                ),
+            )
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded and bool(calls), pilot=pilot)
+        target = (
+            view.query_one(".curated-install", Button)
+            if role == "install"
+            else view.query_one(CollapsibleTitle)
+        )
+        target.focus()
+        release.set()
+        assert await _wait_until(
+            lambda: "Configured: Saved Settings" in _all_text(app), pilot=pilot
+        )
+        assert target is app.focused
+        assert (
+            view.query_one(".curated-install", Button).has_focus
+            if role == "install"
+            else view.query_one(CollapsibleTitle).has_focus
+        )
+
+    assert calls == [(descriptor.reference,)]
+
+
+@pytest.mark.asyncio
+async def test_newer_bulk_observation_wins_over_delayed_old_generation(
+    tmp_path: Path,
+) -> None:
+    """A cancelled old observer cannot overwrite the newer exact-ref projection."""
+    import asyncio
+
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    old_release = asyncio.Event()
+    old_entered = asyncio.Event()
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        assert references == (descriptor.reference,)
+        if calls == 1:
+            old_entered.set()
+            try:
+                await old_release.wait()
+            except asyncio.CancelledError:
+                await old_release.wait()
+            consumers = (("saved", "Guided Settings", "old-package"),)
+        else:
+            consumers = ()
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    descriptor.reference,
+                    settings_consumers=consumers,
+                ),
+            )
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(old_entered.is_set, pilot=pilot)
+        view.refresh_observations()
+        assert await _wait_until(
+            lambda: (
+                calls == 2
+                and "Configured: Not configured — exact Settings state checked"
+                in _all_text(app)
+            ),
+            pilot=pilot,
+        )
+        old_release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert "Configured: Saved Settings" not in _all_text(app)
+
+
+@pytest.mark.asyncio
+async def test_observation_refresh_clears_stale_affirmation_while_pending(
+    tmp_path: Path,
+) -> None:
+    """A new generation cannot display the prior generation as current evidence."""
+    import asyncio
+
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    release_refresh = asyncio.Event()
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            await release_refresh.wait()
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    references[0],
+                    settings_consumers=(
+                        (("saved", "Guided Settings", "package"),) if calls == 1 else ()
+                    ),
+                ),
+            )
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(
+            lambda: "Configured: Saved Settings" in _all_text(app), pilot=pilot
+        )
+        view.refresh_observations()
+        await pilot.pause()
+        text = _all_text(app)
+        assert "Configured: Saved Settings" not in text
+        assert "Configured: Unknown — Settings state was not checked" in text
+        release_refresh.set()
+
+
+@pytest.mark.asyncio
+async def test_back_to_back_curated_refresh_starts_only_the_latest_generation(
+    tmp_path: Path,
+) -> None:
+    """A deferred old start cannot cancel the newer observation worker."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    references[0],
+                    settings_consumers=(
+                        (("saved", "Guided Settings", "package"),) if calls == 1 else ()
+                    ),
+                ),
+            )
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(
+            lambda: "Configured: Saved Settings" in _all_text(app), pilot=pilot
+        )
+        view.query_one(".curated-install", Button).focus()
+        await pilot.pause()
+        assert view.query_one(".curated-install", Button).has_focus
+        view.refresh_observations()
+        view.refresh_observations()
+        assert await _wait_until(
+            lambda: (
+                "Configured: Not configured — exact Settings state checked"
+                in _all_text(app)
+            ),
+            pilot=pilot,
+        )
+        assert view.query_one(".curated-install", Button).has_focus
+
+    assert calls == 2

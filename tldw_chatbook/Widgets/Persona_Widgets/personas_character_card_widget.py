@@ -16,16 +16,27 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
-from .personas_pane_messages import EditCharacterRequested
+from ...UI.character_display_text import (
+    sanitize_character_display_items,
+    sanitize_character_display_label,
+    sanitize_character_display_text,
+)
 from .personas_character_tts_widget import PersonasCharacterTTSWidget
+from .personas_pane_messages import EditCharacterRequested
+
+_CARD_NAME_MAX_CHARACTERS = 200
+_CARD_LONG_FIELD_MAX_CHARACTERS = 20_000
+_CARD_METADATA_MAX_CHARACTERS = 1_000
+_CARD_GREETING_PREVIEW_MAX_CHARACTERS = 5_000
+_CARD_COLLECTION_MAX_ITEMS = 50
 
 
 class PersonasCharacterCardWidget(Container):
     """Flat read-only character card with an Edit action."""
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
-    # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
-    DEFAULT_CSS = """
+    # resolve in bare-App harnesses, so BUNDLED_CSS must not reference them).
+    BUNDLED_CSS = """
     PersonasCharacterCardWidget {
         width: 100%;
         /* height: 100% fills the (scrollable) detail-stack viewport so the
@@ -135,43 +146,89 @@ class PersonasCharacterCardWidget(Container):
 
         labels = {suffix: label for label, suffix in self._FIELD_ROWS}
 
-        def _set(suffix: str, value: str) -> None:
+        def _set(
+            suffix: str,
+            value: object,
+            *,
+            max_characters: int = _CARD_LONG_FIELD_MAX_CHARACTERS,
+            single_line: bool = False,
+        ) -> None:
             widget = self.query_one(f"#personas-character-card-{suffix}", Static)
             label = labels.get(suffix)
+            sanitizer = (
+                sanitize_character_display_label
+                if single_line
+                else sanitize_character_display_text
+            )
+            display_value = sanitizer(value, max_characters=max_characters)
             if label is not None:
                 # Label inline with the value: "Name: Detective Sam". Rows
                 # with no value are hidden outright - a bare "Label:" line is
                 # noise, not information (display toggling keeps this
                 # sync-safe and reversible on the next load).
-                widget.display = bool(value)
-                value = f"{label}: {value}" if value else f"{label}:"
-            widget.update(value)
+                widget.display = bool(display_value)
+                display_value = (
+                    f"{label}: {display_value}" if display_value else f"{label}:"
+                )
+            widget.update(display_value)
 
-        _set("name", str(record.get("name") or "Unnamed Character"))
-        _set("description", str(record.get("description") or ""))
-        _set("personality", str(record.get("personality") or ""))
-        _set("scenario", str(record.get("scenario") or ""))
+        _set(
+            "name",
+            record.get("name") or "Unnamed Character",
+            max_characters=_CARD_NAME_MAX_CHARACTERS,
+            single_line=True,
+        )
+        _set("description", record.get("description") or "")
+        _set("personality", record.get("personality") or "")
+        _set("scenario", record.get("scenario") or "")
         _set(
             "first-message",
-            str(record.get("first_mes", record.get("first_message", "")) or ""),
+            record.get("first_mes", record.get("first_message", "")) or "",
         )
         _set(
             "system-prompt",
-            str(record.get("system_prompt", record.get("system", "")) or ""),
+            record.get("system_prompt", record.get("system", "")) or "",
         )
-        _set("post-history", str(record.get("post_history_instructions") or ""))
-        _set("creator", str(record.get("creator") or ""))
+        _set("post-history", record.get("post_history_instructions") or "")
+        _set(
+            "creator",
+            record.get("creator") or "",
+            max_characters=_CARD_METADATA_MAX_CHARACTERS,
+        )
         _set(
             "version",
-            str(record.get("character_version", record.get("version", "1.0")) or ""),
+            record.get("character_version", record.get("version", "1.0")) or "",
+            max_characters=_CARD_METADATA_MAX_CHARACTERS,
         )
-        tags = [str(tag) for tag in (record.get("tags") or [])]
-        _set("tags", f"Tags: {', '.join(tags)}" if tags else "Tags: none")
-        greetings = [
-            str(greeting) for greeting in (record.get("alternate_greetings") or [])
-        ]
-        _set("alt-greetings", f"Alternate greetings: {len(greetings)}")
-        _set("greeting-preview", greetings[0] if greetings else "")
+        tags = sanitize_character_display_items(
+            record.get("tags"),
+            max_items=_CARD_COLLECTION_MAX_ITEMS,
+            max_item_characters=_CARD_METADATA_MAX_CHARACTERS,
+            max_total_characters=_CARD_LONG_FIELD_MAX_CHARACTERS,
+            single_line=True,
+        )
+        tags_text = ", ".join(tags)
+        _set(
+            "tags",
+            f"Tags: {tags_text}" if tags else "Tags: none",
+            max_characters=_CARD_LONG_FIELD_MAX_CHARACTERS,
+        )
+        greetings = sanitize_character_display_items(
+            record.get("alternate_greetings"),
+            max_items=_CARD_COLLECTION_MAX_ITEMS,
+            max_item_characters=_CARD_GREETING_PREVIEW_MAX_CHARACTERS,
+            max_total_characters=_CARD_LONG_FIELD_MAX_CHARACTERS,
+        )
+        _set(
+            "alt-greetings",
+            f"Alternate greetings: {len(greetings)}",
+            max_characters=_CARD_METADATA_MAX_CHARACTERS,
+        )
+        _set(
+            "greeting-preview",
+            greetings[0] if greetings else "",
+            max_characters=_CARD_GREETING_PREVIEW_MAX_CHARACTERS,
+        )
         # The preview row is unlabeled, so the labeled-row hiding above does
         # not cover it; an empty preview must not leave a blank line.
         # ("Tags: none", "Alternate greetings: 0", and "Avatar: none" stay
@@ -186,14 +243,19 @@ class PersonasCharacterCardWidget(Container):
 
         # Display toggling (never remove/mount) keeps load_character sync-safe
         # for the handler's call_from_thread continuation.
-        self.query_one("#personas-character-card-empty").display = False
-        self.query_one("#personas-character-card-body").display = True
+        has_record = bool(record)
+        self.query_one("#personas-character-card-empty").display = not has_record
+        self.query_one("#personas-character-card-body").display = has_record
         edit_button = self.query_one("#personas-card-edit-character", Button)
         edit_button.disabled = self._character_id is None
         edit_button.tooltip = (
-            None
-            if self._character_id is not None
-            else "This character has no saved record to edit."
+            "Select a character to edit."
+            if not has_record
+            else (
+                None
+                if self._character_id is not None
+                else "This character has no saved record to edit."
+            )
         )
 
     # ===== Events =====

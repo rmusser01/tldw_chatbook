@@ -7,8 +7,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from textual.app import App, ComposeResult
-from textual.containers import Container as _Container
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input
 
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
@@ -16,20 +19,16 @@ from tldw_chatbook.UI.Logs_Window import LogRecord, LogsWindow, _passes_filter
 
 
 def _llm_harness():
-    import tldw_chatbook.Widgets.HuggingFace as hf
+    app_instance = MagicMock(notify=MagicMock())
+    app_instance._llm_server_launch_claims = {}
+    app_instance.llamacpp_server_process = None
+    app_instance.llamafile_server_process = None
 
-    class _StubWidget(_Container):
-        def __init__(self, *args, **kwargs):
-            super().__init__(**{k: v for k, v in kwargs.items() if k == "id"})
-
-    class Harness(App[None]):
+    class Harness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
-            yield LLMManagementWindow(MagicMock(notify=MagicMock()))
+            yield LLMManagementWindow(app_instance)
 
-    monkey = pytest.MonkeyPatch()
-    monkey.setattr(hf, "LocalModelsWidget", _StubWidget)
-    monkey.setattr(hf, "HuggingFaceModelBrowser", _StubWidget)
-    return Harness, monkey
+    return Harness
 
 
 # UX-078 -----------------------------------------------------------------
@@ -48,40 +47,34 @@ def test_discover_binary_via_path_and_common_dirs(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_detect_button_fills_input_and_notifies() -> None:
-    Harness, monkey = _llm_harness()
-    try:
-        app = Harness()
-        async with app.run_test(size=(140, 42)) as pilot:
+    Harness = _llm_harness()
+    app = Harness()
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        window = app.query_one(LLMManagementWindow)
+        with patch.object(
+            LLMManagementWindow,
+            "_discover_binary",
+            staticmethod(lambda names: "/opt/homebrew/bin/llama-server"),
+        ):
+            window.query_one("#llamacpp-detect-exec-button").press()
             await pilot.pause()
-            window = app.query_one(LLMManagementWindow)
-            with patch.object(
-                LLMManagementWindow,
-                "_discover_binary",
-                staticmethod(lambda names: "/opt/homebrew/bin/llama-server"),
-            ):
-                window.query_one("#llamacpp-detect-exec-button").press()
-                await pilot.pause()
-            value = window.query_one("#llamacpp-exec-path", Input).value
-            assert value == "/opt/homebrew/bin/llama-server"
-            window.app_instance.notify.assert_called()
-    finally:
-        monkey.undo()
+        value = window.query_one("#llamacpp-exec-path", Input).value
+        assert value == "/opt/homebrew/bin/llama-server"
+        window.app_instance.notify.assert_called()
 
 
 # UX-054 -----------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_lab_form_rows_are_side_by_side() -> None:
-    Harness, monkey = _llm_harness()
-    try:
-        app = Harness()
-        async with app.run_test(size=(140, 42)) as pilot:
-            await pilot.pause()
-            container = app.query_one("#llamacpp-exec-path").parent
-            labels = [w for w in container.children if w.has_class("inline-label")]
-            assert labels, "label must live inside the input row"
-            assert "Server Executable" in str(labels[0].render())
-    finally:
-        monkey.undo()
+    Harness = _llm_harness()
+    app = Harness()
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        container = app.query_one("#llamacpp-exec-path").parent
+        labels = [w for w in container.children if w.has_class("inline-label")]
+        assert labels, "label must live inside the input row"
+        assert "Server Executable" in str(labels[0].render())
 
 
 # UX-077 (regex + saved filters) ------------------------------------------
@@ -100,16 +93,28 @@ def test_regex_filter_and_substring_fallback() -> None:
 def test_saved_filter_roundtrip() -> None:
     saved = {}
 
-    class LogsApp(App[None]):
+    class LogsApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LogsWindow(SimpleNamespace(_log_records=deque()))
 
-    with patch(
-        "tldw_chatbook.config.save_setting_to_cli_config",
-        lambda section, key, value: saved.__setitem__((section, key), value),
-    ), patch(
-        "tldw_chatbook.config.get_cli_setting",
-        lambda section, key, default=None: saved.get((section, key), default),
+    def _batched_save(section_values):
+        # task-21124: save_filter_state persists via ONE batched
+        # save_settings_to_cli_config mutation instead of two sequential
+        # save_setting_to_cli_config rewrites.
+        for section, values in section_values.items():
+            for key, value in values.items():
+                saved[(section, key)] = value
+        return True
+
+    with (
+        patch(
+            "tldw_chatbook.config.save_settings_to_cli_config",
+            _batched_save,
+        ),
+        patch(
+            "tldw_chatbook.config.get_cli_setting",
+            lambda section, key, default=None: saved.get((section, key), default),
+        ),
     ):
         app = LogsApp()
         # First session: set a filter and save it.

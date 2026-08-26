@@ -22,6 +22,10 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleToolsChip,
 )
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 _CSS = (
     Path(__file__).resolve().parents[2]
     / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
@@ -145,61 +149,61 @@ def test_screen_subscribes_to_both_new_chip_messages():
 def test_swap_seeds_greeting_only_into_an_empty_chat():
     """User decision: a greeting must not interrupt a live conversation.
 
-    Drives the real method against a fake store rather than reading
+    Drives the real method against a real in-memory store rather than reading
     source text (cubic PR #1153 P3).
     """
-    from dataclasses import dataclass, replace as dc_replace
+    from types import SimpleNamespace
 
-    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-    @dataclass
-    class _Settings:
-        system_prompt: str = ""
-
-    class _Session:
-        def __init__(self) -> None:
-            self.id = "s1"
-            self.persisted_conversation_id = None
-
-    class _Store:
-        def __init__(self, messages):
-            self.active_session_id = "s1"
-            self._session = _Session()
-            self._messages = messages
-            self.appended = []
-            self.settings = _Settings()
-
-        def sessions(self):
-            return [self._session]
-
-        def session_settings(self, session_id):
-            return self.settings
-
-        def replace_session_settings(self, session_id, settings):
-            self.settings = settings
-
-        def messages_for_session(self, session_id):
-            return self._messages
-
-        def append_message(self, session_id, **kwargs):
-            self.appended.append(kwargs)
-
-    screen = ChatScreen.__new__(ChatScreen)
-
-    empty = _Store([])
-    assert ConsoleSessionController._swap_console_session_character(
-        screen, empty, 7, "Lana", "SYS", "Hello!"
+    from tldw_chatbook.Chat.console_chat_store import (
+        ConsoleChatStore,
+        ConsoleMessageRole,
     )
-    assert [a["content"] for a in empty.appended] == ["Hello!"]
-    assert empty.settings.system_prompt == "SYS"
-
-    busy = _Store(["an existing message"])
-    assert ConsoleSessionController._swap_console_session_character(
-        screen, busy, 7, "Lana", "SYS", "Hello!"
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.UI.Console_Modules.session import (
+        CharacterSessionPromptSeed,
+        ConsoleSessionController,
     )
-    assert busy.appended == [], "greeting must not interrupt a live chat"
-    assert busy.settings.system_prompt == "SYS", "prompt still applies"
+
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
+    controller._manual_reaction_overrides = {}
+    seed = CharacterSessionPromptSeed(
+        name="Lana",
+        system_template="SYS",
+        system_prompt="SYS",
+        greeting_template="Hello!",
+        greeting="Hello!",
+    )
+
+    empty = ConsoleChatStore()
+    empty_session = empty.create_session(
+        settings=ConsoleSessionSettings(provider="openai")
+    )
+    assert controller._swap_console_session_character(
+        empty, 7, seed, global_default="User"
+    )
+    assert [m.content for m in empty.messages_for_session(empty_session.id)] == [
+        "Hello!"
+    ]
+    assert empty.session_settings(empty_session.id).system_prompt == "SYS"
+
+    busy = ConsoleChatStore()
+    busy_session = busy.create_session(
+        settings=ConsoleSessionSettings(provider="openai")
+    )
+    busy.append_message(
+        busy_session.id,
+        role=ConsoleMessageRole.USER,
+        content="an existing message",
+        persist=False,
+    )
+    assert controller._swap_console_session_character(
+        busy, 7, seed, global_default="User"
+    )
+    assert [m.content for m in busy.messages_for_session(busy_session.id)] == [
+        "an existing message"
+    ], "greeting must not interrupt a live chat"
+    assert busy.session_settings(busy_session.id).system_prompt == "SYS"
 
 
 @pytest.mark.unit
@@ -223,7 +227,7 @@ async def test_changing_the_query_unstages_a_pending_pick():
         ConsoleCharacterOption(2, "Zara"),
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         pass
 
     app = _Host()

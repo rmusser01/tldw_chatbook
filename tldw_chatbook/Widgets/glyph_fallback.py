@@ -36,6 +36,7 @@ ASCII_GLYPH_FALLBACKS: dict[str, str] = {
     "◆": "[!]",  # waiting for approval
     "✗": "[X]",  # failed
     "✓": "[x]",  # finished ok / done
+    "◈": "[s]",  # background sub-agent ended -- unseen (PR3a-2 Task 4)
     # Session + voice lifecycle (console_glyphs).
     "◌": "[~]",  # temporary session
     "◉": "(rec)",  # voice capture live

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 from typing import Optional, List, Dict, TYPE_CHECKING
+import asyncio
 import json
 import zipfile
 import os
@@ -711,10 +712,15 @@ class CodeRepoCopyPasteWindow(ModalScreen):
 
         try:
             if self.is_local_repo:
-                # Load from local file
+                # Load from local file, off the loop (task-15471): this runs
+                # per tree-node click and the file can be arbitrarily large.
                 full_path = Path(self.current_repo["path"]) / path
-                with open(full_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+
+                def _read_local_file() -> str:
+                    with open(full_path, "r", encoding="utf-8") as f:
+                        return f.read()
+
+                content = await asyncio.to_thread(_read_local_file)
             else:
                 # Load from GitHub
                 branch = self.query_one("#branch-selector", Select).value
@@ -871,7 +877,11 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             return
 
         # Run export in a worker to avoid blocking UI
-        self.run_worker(self._export_to_zip_worker(selected_files), exclusive=True)
+        self.run_worker(
+            self._export_to_zip_worker(selected_files),
+            exclusive=True,
+            group="coderepo-export-to-zip",
+        )
 
     @on(Button.Pressed, "#generate-compilation-btn")
     async def generate_compilation(self, event: Button.Pressed) -> None:
@@ -894,19 +904,29 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             contents = []
 
             if self.is_local_repo:
-                # Load from local files
-                for file_path in selected_files:
-                    try:
-                        full_path = Path(self.current_repo["path"]) / file_path
-                        with open(full_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                        # Format with file markers
-                        contents.append(f"```{file_path}\n{content}\n```")
-                    except Exception as e:
-                        logger.error(f"Failed to read file {file_path}: {e}")
-                        contents.append(
-                            f"```{file_path}\n# Error reading file: {e}\n```"
-                        )
+                # Load from local files, all off the loop in one hop
+                # (task-15471): this used to read every selected file
+                # synchronously, per compile click. Per-file error handling
+                # is unchanged inside the closure.
+                repo_root = Path(self.current_repo["path"])
+
+                def _read_selected_files() -> List[str]:
+                    file_blocks: List[str] = []
+                    for file_path in selected_files:
+                        try:
+                            full_path = repo_root / file_path
+                            with open(full_path, "r", encoding="utf-8") as f:
+                                content = f.read()
+                            # Format with file markers
+                            file_blocks.append(f"```{file_path}\n{content}\n```")
+                        except Exception as e:
+                            logger.error(f"Failed to read file {file_path}: {e}")
+                            file_blocks.append(
+                                f"```{file_path}\n# Error reading file: {e}\n```"
+                            )
+                    return file_blocks
+
+                contents = await asyncio.to_thread(_read_selected_files)
             else:
                 # Load from GitHub
                 branch = self.query_one("#branch-selector", Select).value

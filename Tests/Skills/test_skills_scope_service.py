@@ -1,7 +1,12 @@
+import threading
+
 import pytest
 
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
+from tldw_chatbook.tldw_api.skills_schemas import SkillContextPayload, SkillSummary
 
 
 class FakeSkillsService:
@@ -175,6 +180,138 @@ async def test_skills_scope_service_preserves_blocked_local_context_trust_fields
     assert blocked["trust_manifest_generation"] == 2
     assert blocked["trust_last_verified_at"] == "2026-06-25T00:00:00+00:00"
     assert context["available_skills"] == []
+
+
+@pytest.mark.asyncio
+async def test_skills_user_content_evidence_uses_only_available_managed_skills():
+    class ContextService:
+        def __init__(self, context):
+            self.context = context
+
+        async def get_context(self):
+            return self.context
+
+    blocked_only = ContextService(
+        {
+            "available_skills": [],
+            "blocked_skills": [
+                {"name": "quarantined", "trust_status": "quarantined_modified"}
+            ],
+        }
+    )
+    service = SkillsScopeService(local_service=blocked_only)
+    result = await service.get_library_user_content_evidence(mode="local")
+    assert type(result) is LibraryContentEvidence
+    assert result is LibraryContentEvidence.EMPTY
+
+    user_skill = ContextService({"available_skills": [{"name": "user-skill"}]})
+    service = SkillsScopeService(local_service=user_skill)
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+
+
+@pytest.mark.asyncio
+async def test_skills_user_content_evidence_runs_real_local_scan_off_loop(
+    tmp_path, monkeypatch
+):
+    local = LocalSkillsService(
+        store_dir=tmp_path,
+        allow_untrusted_without_trust_service=True,
+    )
+    await local.create_skill(
+        name="user-skill",
+        content="---\ndescription: User skill\n---\n# User skill\n",
+    )
+    loop_thread = threading.get_ident()
+    scan_threads = []
+    load_index = local._load_index
+
+    def tracked_load_index():
+        scan_threads.append(threading.get_ident())
+        return load_index()
+
+    monkeypatch.setattr(local, "_load_index", tracked_load_index)
+    service = SkillsScopeService(local_service=local)
+
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert scan_threads
+    assert all(thread_id != loop_thread for thread_id in scan_threads)
+
+
+@pytest.mark.asyncio
+async def test_skills_local_evidence_owner_has_no_bundled_or_sample_population(
+    tmp_path,
+):
+    local = LocalSkillsService(
+        store_dir=tmp_path,
+        allow_untrusted_without_trust_service=True,
+    )
+    assert local.get_library_user_content_evidence_context() == {"available_skills": []}
+
+    await local.import_skill(
+        name="user-import",
+        content="---\ndescription: Imported by the user\n---\n# User import\n",
+    )
+    context = local.get_library_user_content_evidence_context()
+    assert [item["name"] for item in context["available_skills"]] == ["user-import"]
+    assert all(
+        key not in context["available_skills"][0]
+        for key in ("bundled", "is_sample", "source")
+    )
+    assert (
+        await SkillsScopeService(local_service=local).get_library_user_content_evidence(
+            mode="local"
+        )
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+
+
+@pytest.mark.asyncio
+async def test_skills_user_content_evidence_accepts_server_user_skill_and_fails_closed():
+    class ContextService:
+        def __init__(self, context):
+            self.context = context
+
+        async def get_context(self):
+            return self.context
+
+    service = SkillsScopeService(
+        server_service=ContextService(
+            {"available_skills": [{"name": "user-skill"}], "blocked_skills": []}
+        )
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    production_context = SkillContextPayload(
+        available_skills=[
+            SkillSummary(
+                name="schema-skill",
+                user_invocable=True,
+                disable_model_invocation=False,
+                context="inline",
+            )
+        ],
+        context_text="schema-skill",
+    )
+    service = SkillsScopeService(server_service=ContextService(production_context))
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    service = SkillsScopeService(server_service=ContextService({"skills": []}))
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
 
 @pytest.mark.asyncio

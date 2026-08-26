@@ -100,7 +100,9 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from tldw_chatbook.Web_Scraping.Article_Scraper import Scraper, ScraperConfig, ProcessorConfig, scrape_and_process_urls
+from tldw_chatbook.Web_Scraping.Article_Scraper.config import ProcessorConfig, ScraperConfig
+from tldw_chatbook.Web_Scraping.Article_Scraper.processors import scrape_and_process_urls
+from tldw_chatbook.Web_Scraping.Article_Scraper.scraper import Scraper
 
 async def main():
     urls = ["https://example.com/article1", "https://example.com/article2"]
@@ -173,7 +175,7 @@ cookies = get_cookies("example.com", browser="chrome")
 all_cookies = get_cookies("example.com", browser="all")
 
 # Use cookies with scraping
-from tldw_chatbook.Web_Scraping.Article_Scraper import Scraper
+from tldw_chatbook.Web_Scraping.Article_Scraper.scraper import Scraper
 
 async with Scraper(custom_cookies=cookies) as scraper:
     result = await scraper.scrape("https://example.com/protected-content")

@@ -19,6 +19,9 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import join_fleet_children, pin_max_live_subagents
+from Tests.Agents.test_agent_service import FleetChat, verbatim
+
 
 def _fence(name, args):
     return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
@@ -88,6 +91,48 @@ def test_skill_tool_routes_through_spawn(tmp_path):
     assert outcome.status == RUN_DONE
     assert runner.spawned_with == "the diff"
     assert db.count_subagent_runs("c1") == 1  # skill ran as a budget-counted sub-agent
+
+
+def test_skill_spawn_capture_failure_uses_the_parent_diagnostic(tmp_path, monkeypatch):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    original_insert = db.insert_steps_at_indices
+
+    def fail_spawn_capture(run_id, indexed_steps):
+        if any(
+            step["kind"] == "tool_call" and step.get("tool_name") == "code-review"
+            for _index, step in indexed_steps
+        ):
+            raise RuntimeError("persistent skill spawn capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_spawn_capture)
+    reg = _registry_with_code_review_skill()
+    script = [
+        {"choices": [{"message": {"content": _fence("code-review", {"args": "x"})}}]},
+        {"choices": [{"message": {"content": "child answer"}}]},
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+    service = AgentService(
+        db, reg, chat_call=lambda **_kwargs: script.pop(0), skill_runner=_FakeSkillRunner()
+    )
+    parent_id, outcome = service.run_turn(
+        conversation_id="skill-spawn-capture",
+        messages=[{"role": "user", "content": "review"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "code-review", SPAWN_TOOL_NAME),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    rows = db.list_runs("skill-spawn-capture", include_superseded=True)
+    parent = next(row for row in rows if row["id"] == parent_id)
+    child = next(row for row in rows if row["agent_kind"] == "subagent")
+    diagnostic = next(step for step in parent["steps"] if step["kind"] == "capture_failed")
+    diagnostic_id = f"agent-step:{parent_id}:{diagnostic['index']}"
+    assert child["spawn_event_id"] == diagnostic_id
 
 
 def test_skill_tool_respects_subagent_budget(tmp_path):
@@ -264,28 +309,39 @@ def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
 def test_combined_budget_native_spawn_then_skill_call(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
-    script = [
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+    # PR2a Task 6.5: the fleet is ON by default, so the native child runs
+    # on its own thread -- one ordered queue is no longer deterministic.
+    # Addressed per agent instead; the replies themselves are unchanged,
+    # and the COMBINED ceiling this test is about is unaffected by where
+    # the child runs (the counter is incremented in the one shared `spawn`
+    # closure, before either path branches).
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+                        }
                     }
-                }
-            ]
-        },
-        {"choices": [{"message": {"content": "native child answer"}}]},
-        {
-            "choices": [
-                {"message": {"content": _fence("code-review", {"args": "the diff"})}}
-            ]
-        },
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    runner = _FakeSkillRunner()
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_runner=runner
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence("code-review", {"args": "the diff"})
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {"native task": [{"choices": [{"message": {"content": "native child answer"}}]}]},
+        reply=verbatim,
     )
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=chat, skill_runner=runner)
     _r, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -297,6 +353,7 @@ def test_combined_budget_native_spawn_then_skill_call(tmp_path):
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     assert db.count_subagent_runs("c1") == 1  # only the native spawn ran
     assert runner.spawned_with is None  # the skill call never actually ran
@@ -308,28 +365,41 @@ def test_combined_budget_native_spawn_then_skill_call(tmp_path):
 def test_combined_budget_skill_call_then_native_spawn(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
-    script = [
-        {
-            "choices": [
-                {"message": {"content": _fence("code-review", {"args": "the diff"})}}
-            ]
-        },
-        {"choices": [{"message": {"content": "skill child answer"}}]},
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+    # PR2a Task 6.5: addressed per agent (see the sibling test above). The
+    # SKILL's own spawn is threaded too -- both paths go through the one
+    # `spawn` closure -- so the skill child is addressed by the task text
+    # `_FakeSkillRunner.run` renders for it.
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence("code-review", {"args": "the diff"})
+                        }
                     }
-                }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {
+            "RENDERED[the diff]": [
+                {"choices": [{"message": {"content": "skill child answer"}}]}
             ]
         },
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    runner = _FakeSkillRunner()
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_runner=runner
+        reply=verbatim,
     )
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=chat, skill_runner=runner)
     _r, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -369,29 +439,39 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
     never reached (the counting fake's `spawned_with` stays ``None``)."""
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
-    script = [
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+    # PR2a Task 6.5: addressed per agent (see the sibling tests above).
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence(SPAWN_TOOL_NAME, {"task": "native task"})
+                        }
                     }
-                }
-            ]
-        },
-        # Inside the child: the model attempts the skill tool directly.
+                ]
+            },
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
         {
-            "choices": [
-                {"message": {"content": _fence("code-review", {"args": "the diff"})}}
+            "native task": [
+                # Inside the child: the model attempts the skill tool directly.
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": _fence("code-review", {"args": "the diff"})
+                            }
+                        }
+                    ]
+                },
+                {"choices": [{"message": {"content": "child gave up"}}]},
             ]
         },
-        {"choices": [{"message": {"content": "child gave up"}}]},
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    runner = _FakeSkillRunner()
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_runner=runner
+        reply=verbatim,
     )
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=chat, skill_runner=runner)
     _r, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -403,6 +483,7 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     assert runner.spawned_with is None  # never actually rendered/run
 
@@ -410,7 +491,81 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
     child_runs = [r for r in runs if r["agent_kind"] == "subagent"]
     assert len(child_runs) == 1
     tool_results = [
-        s["result"] for s in child_runs[0]["steps"] if s["kind"] == "tool_result"
+        step for step in child_runs[0]["steps"] if step["kind"] == "tool_result"
     ]
-    assert any("Tool not permitted: code-review" in r for r in tool_results)
-    assert not any("sub-agent budget exhausted" in r for r in tool_results)
+    permission_refusal = next(
+        step
+        for step in tool_results
+        if "Tool not permitted: code-review" in step["result"]
+    )
+    assert permission_refusal["tool_outcome"] == "blocked"
+    assert not any(
+        "sub-agent budget exhausted" in step["result"] for step in tool_results
+    )
+
+
+# --- PR2a Task 6.5: a SKILL call keeps its contract under a live fleet ---
+
+
+def test_skill_call_runs_inline_and_returns_the_output_not_a_handle(
+    tmp_path, monkeypatch
+):
+    """With the fleet ON, a skill call still returns the skill's OUTPUT.
+
+    `spawn_subagent` and a skill tool share one `spawn` closure, so turning
+    the fleet on would have made a skill call return `started <id>: ...`
+    and require `wait_agents` to collect. That silently breaks the skill
+    contract: nothing tells the model a skill is asynchronous, so it
+    answers from the literal handle string while `_settle_fleet` discards
+    the real work -- a wrong answer, not an error. The service therefore
+    hands `skill_runner.run` a spawn pre-bound to the inline path.
+
+    Pinned end-to-end through a REAL fleet (max_live_subagents = 3, no
+    injected coordinator), because "the fleet is on" is the precondition
+    that makes this regressable at all.
+    """
+    pin_max_live_subagents(monkeypatch, 3)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = _registry_with_code_review_skill()
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _fence("code-review", {"args": "the diff"})
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "Done reviewing."}}]},
+        ],
+        {"RENDERED[the diff]": [{"choices": [{"message": {"content": "child answer"}}]}]},
+        reply=verbatim,
+    )
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=chat, skill_runner=runner)
+    run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "review"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "code-review", SPAWN_TOOL_NAME),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    # A fleet really was built for this turn ...
+    assert service._fleet is not None
+    # ... and the skill call still came back with the child's own answer,
+    # in the SKILL's own tool_result -- no handle, no wait_agents needed.
+    results = [
+        s["result"]
+        for s in db.get_run(run_id)["steps"]
+        if s["kind"] == "tool_result" and s["tool_name"] == "code-review"
+    ]
+    assert results == ["child answer"]
+    assert not any("started " in r for r in results)
+    assert db.count_subagent_runs("c1") == 1

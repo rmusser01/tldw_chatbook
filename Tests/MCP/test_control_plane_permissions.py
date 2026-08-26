@@ -16,6 +16,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_SERVER_KEY,
+    LocalToolProvider,
+)
+from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_store import LocalMCPStore
@@ -76,6 +81,17 @@ def _service_without_store() -> UnifiedMCPControlPlaneService:
 def _permission_log_records(store: LocalMCPStore) -> list[dict]:
     log_path = Path(store.path).with_name("mcp_execution_log.jsonl")
     return MCPExecutionLog(log_path).read_recent()
+
+
+_TODO_TOOL_NAMES = ("todo_create", "todo_update", "todo_get", "todo_list")
+
+
+def _todo_hubs(tmp_path: Path) -> dict[str, HubTool]:
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        todo_store=SessionTodoStore(),
+    )
+    return {name: provider.hub_tool_for(name) for name in _TODO_TOOL_NAMES}
 
 
 # -- permission_store lazy property ------------------------------------------
@@ -517,3 +533,164 @@ def test_gate_tool_test_by_key_does_not_emit_audit_record(tmp_path):
     service.gate_tool_test_by_key("local:demo", "search")
 
     assert _permission_log_records(store) == []
+
+
+# -- task-2838: local agent tools resolve through the SAME shared store -------
+
+
+def test_local_agent_tool_allow_round_trips_between_console_and_hub(tmp_path):
+    """A Console "Always allow" write resolves identically hub-side.
+
+    Both surfaces talk to the same UnifiedMCPControlPlaneService methods
+    (console_chat_controller._compose_local_provider and the Hub workbench
+    permission cycle) against the same derived mcp_permissions.json, so a
+    grant made on either side must be honored by the other's resolution.
+    """
+    service, _store = _service(tmp_path)
+    provider = LocalToolProvider(workspace_root=tmp_path)
+    hub = provider.hub_tool_for("fs_read")
+
+    # The Console-side write shape (its _persist_approval always_allow path).
+    service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+
+    # The Hub-side batch resolution (Tools State column / Permissions matrix).
+    result = service.effective_tool_states([hub])
+    assert result[(hub.server_key, hub.name)].state == "allow"
+    assert result[(hub.server_key, hub.name)].origin == "tool_override"
+
+    # Persisted under the synthetic local server key WITH the rug-pull hash.
+    payload = service.permission_store.load()
+    entry = payload["profiles"]["default"]["servers"]["local:__local__"]["tools"][
+        "fs_read"
+    ]
+    assert entry["state"] == "allow"
+    assert entry["definition_hash"] == definition_hash(
+        hub.description, hub.input_schema
+    )
+
+
+def test_local_agent_server_default_allow_is_risk_floored_for_mutates_tools(
+    tmp_path,
+):
+    """Spec §3.2: an INHERITED allow floors to ask for `mutates`-tagged tools.
+
+    Setting the `local:__local__` server default to "allow" must NOT wave
+    fs_write/fs_edit/fs_patch through -- only an explicit tool-level
+    "Always allow" escapes the floor.
+    """
+    service, _store = _service(tmp_path)
+    provider = LocalToolProvider(workspace_root=tmp_path)
+    write_hub = provider.hub_tool_for("fs_write")
+    read_hub = provider.hub_tool_for("fs_read")
+
+    service.set_server_default("local:__local__", "allow")
+
+    result = service.effective_tool_states([write_hub, read_hub])
+    floored = result[("local:__local__", "fs_write")]
+    assert floored.state == "ask"
+    assert floored.risk_floored is True
+    assert result[("local:__local__", "fs_read")].state == "allow"
+
+    # An explicit tool-level allow is never floored (spec §3.2).
+    service.set_tool_state(
+        write_hub.server_key, write_hub.name, "allow", tool=write_hub
+    )
+    result = service.effective_tool_states([write_hub])
+    explicit = result[("local:__local__", "fs_write")]
+    assert explicit.state == "allow"
+    assert explicit.risk_floored is False
+
+
+def test_obsolete_todo_write_allow_does_not_authorize_replacement_tools(tmp_path):
+    """The retired broad grant is inert; only inherited read tools stay allowed."""
+    service, _store = _service(tmp_path)
+    hubs = _todo_hubs(tmp_path)
+    legacy = _tool(
+        server_key=LOCAL_SERVER_KEY,
+        name="todo_write",
+        description="Replace the complete session todo list.",
+        input_schema={"type": "object", "properties": {"todos": {"type": "array"}}},
+        tags=("mutates",),
+    )
+    service.set_tool_state(
+        legacy.server_key,
+        legacy.name,
+        "allow",
+        tool=legacy,
+    )
+
+    inherited_ask = service.effective_tool_states(list(hubs.values()))
+    for name in _TODO_TOOL_NAMES:
+        state = inherited_ask[(LOCAL_SERVER_KEY, name)]
+        assert state.state == "ask"
+        assert state.origin == "global_default"
+        assert state.config_changed is False
+        assert state.risk_floored is False
+
+    payload = service.permission_store.load()
+    stored_tools = payload["profiles"]["default"]["servers"][LOCAL_SERVER_KEY]["tools"]
+    assert set(stored_tools) == {"todo_write"}
+
+    service.set_server_default(LOCAL_SERVER_KEY, "allow")
+    inherited_allow = service.effective_tool_states(list(hubs.values()))
+    for name in ("todo_create", "todo_update"):
+        state = inherited_allow[(LOCAL_SERVER_KEY, name)]
+        assert state.state == "ask"
+        assert state.origin == "server_default"
+        assert state.risk_floored is True
+    for name in ("todo_get", "todo_list"):
+        state = inherited_allow[(LOCAL_SERVER_KEY, name)]
+        assert state.state == "allow"
+        assert state.origin == "server_default"
+        assert state.risk_floored is False
+
+
+@pytest.mark.parametrize("tool_name", _TODO_TOOL_NAMES)
+def test_todo_replacement_tool_allow_requires_current_definition_hash(
+    tmp_path, tool_name
+):
+    """Each replacement grant is bound to that tool's live definition."""
+    service, _store = _service(tmp_path)
+    hub = _todo_hubs(tmp_path)[tool_name]
+    legacy = _tool(
+        server_key=LOCAL_SERVER_KEY,
+        name="todo_write",
+        description="Replace the complete session todo list.",
+        input_schema={"type": "object", "properties": {"todos": {"type": "array"}}},
+        tags=("mutates",),
+    )
+    service.set_tool_state(
+        legacy.server_key,
+        legacy.name,
+        "allow",
+        tool=legacy,
+    )
+    legacy_entry = service.permission_store.get_tool_entry(
+        LOCAL_SERVER_KEY, "todo_write"
+    )
+    legacy_hash = legacy_entry["definition_hash"]
+
+    service.permission_store.set_tool_state(
+        LOCAL_SERVER_KEY,
+        tool_name,
+        "allow",
+        definition_hash=legacy_hash,
+    )
+    stale = service.effective_tool_states([hub])[(LOCAL_SERVER_KEY, tool_name)]
+    assert stale.state == "ask"
+    assert stale.origin == "tool_override"
+    assert stale.config_changed is True
+
+    service.set_tool_state(LOCAL_SERVER_KEY, tool_name, "allow", tool=hub)
+    current_hash = definition_hash(hub.description, hub.input_schema)
+    current_entry = service.permission_store.get_tool_entry(LOCAL_SERVER_KEY, tool_name)
+    assert current_entry == {
+        "state": "allow",
+        "definition_hash": current_hash,
+    }
+    assert current_hash != legacy_hash
+    fresh = service.effective_tool_states([hub])[(LOCAL_SERVER_KEY, tool_name)]
+    assert fresh.state == "allow"
+    assert fresh.origin == "tool_override"
+    assert fresh.config_changed is False
+    assert fresh.risk_floored is False

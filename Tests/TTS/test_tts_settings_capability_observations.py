@@ -172,13 +172,12 @@ async def test_older_catalog_request_cannot_overwrite_a_newer_request() -> None:
     old_started = asyncio.Event()
     release_old = asyncio.Event()
     call_count = 0
+    original_catalog = adapter.get_catalog
 
     async def controlled_catalog(
-        provider_id: str,
         refresh: bool = False,
     ) -> TTSProviderCatalog:
         nonlocal call_count
-        assert provider_id == "audio_cpp"
         del refresh
         call_count += 1
         if call_count == 1:
@@ -187,9 +186,9 @@ async def test_older_catalog_request_cannot_overwrite_a_newer_request() -> None:
             adapter.catalog_revision = 1
         else:
             adapter.catalog_revision = 2
-        return await adapter.get_catalog()
+        return await original_catalog()
 
-    service.registry.get_catalog = controlled_catalog  # type: ignore[method-assign]
+    adapter.get_catalog = controlled_catalog  # type: ignore[method-assign]
     old_request = asyncio.create_task(service.get_catalog("audio_cpp", refresh=True))
     await old_started.wait()
     await service.get_catalog("audio_cpp", refresh=True)
@@ -206,19 +205,18 @@ async def test_older_catalog_request_cannot_overwrite_a_newer_request() -> None:
 
 @pytest.mark.asyncio
 async def test_older_voice_request_cannot_overwrite_a_newer_model_result() -> None:
-    service, _adapter, _factory_calls = _service()
+    service, adapter, _factory_calls = _service()
     await service.get_catalog("audio_cpp", refresh=True)
     old_started = asyncio.Event()
     release_old = asyncio.Event()
     call_count = 0
 
     async def controlled_voices(
-        provider_id: str,
         model_id: str,
         refresh: bool = False,
     ) -> TTSVoiceDiscoveryResult:
         nonlocal call_count
-        assert (provider_id, model_id) == ("audio_cpp", "model-a")
+        assert model_id == "model-a"
         del refresh
         call_count += 1
         if call_count == 1:
@@ -235,7 +233,7 @@ async def test_older_voice_request_cannot_overwrite_a_newer_model_result() -> No
             state="complete",
         )
 
-    service.registry.observe_voices = controlled_voices  # type: ignore[method-assign]
+    adapter.observe_voices = controlled_voices  # type: ignore[method-assign]
     old_request = asyncio.create_task(
         service.observe_voices("audio_cpp", "model-a", refresh=True)
     )

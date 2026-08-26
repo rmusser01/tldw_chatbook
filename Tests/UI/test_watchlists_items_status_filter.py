@@ -13,18 +13,29 @@ get_new_items` applied its status predicate unconditionally, and
 incapable of returning anything but `new` rows, and the pane's "All statuses"
 option had nothing else to filter. The tests here run bottom-up: the two data
 layers first, then the pane, then the user gesture.
+
+TASK-3072 changed the filter's vocabulary: the five per-status options became
+the reader's Unread/All pair. "Unread" is `status="new"` pushed into the
+query; "All" is the reader set `new`/`reviewed`/`ingested` -- `ignored` stays
+hidden (the user hid it on purpose) and `error` stays in Runs. Tests below
+that predate the swap assert against the reader set, not the full status
+vocabulary; the data-layer tests (`status=None` returns every status) are
+untouched, because the narrowing lives in the screen's query, not the DB.
 """
 
 from __future__ import annotations
 
 import pytest
-from textual.widgets import DataTable
+from textual.widgets import ListView
 
 from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+from tldw_chatbook.UI.Watchlists_Modules.article_list import (
+    ArticleListPane,
+    _ArticleRow,
+)
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
 
 pytestmark = pytest.mark.unit
 
@@ -36,6 +47,14 @@ SEEDED = {
     "ingested": "Filed into the library",
     "ignored": "Deliberately dismissed",
     "error": "Failed to fetch",
+}
+
+#: The subset of SEEDED the reader's "All" shows (TASK-3072): ignored stays
+#: hidden, error stays in Runs. Every pane-level count expectation uses this.
+READER_SEEDED = {
+    status: title
+    for status, title in SEEDED.items()
+    if status in ArticleListPane._READER_STATUSES
 }
 
 
@@ -71,69 +90,52 @@ def _seed_one_item_per_status(db) -> dict[str, int]:
     return raw_ids
 
 
-async def _settled_items_pane(screen, pilot, expected: int) -> ItemsPane:
-    """The mounted `ItemsPane` once its loader has delivered `expected` rows."""
+async def _settled_items_pane(screen, pilot, expected: int) -> ArticleListPane:
+    """The mounted `ArticleListPane` once its loader has delivered `expected` rows."""
     screen.active_section = "items"
     await pilot.pause(0.3)
-    pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+    pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
     for _ in range(60):
         await pilot.pause()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         if len(pane.items) >= expected:
             break
     return pane
 
 
-def _status_column(pane: ItemsPane) -> list[str]:
-    """The Status column as the LIVE table holds it, row by row.
+def _row_texts_by_id(pane: ArticleListPane) -> dict[str, str]:
+    """The rendered row text for each item, keyed by item id.
 
-    Read off the mounted `DataTable`, not off `pane.items`: the pane's
+    Read off the mounted `ListView`, not off `pane.items`: the pane's
     reactive is what the loader handed it, while this is what the user is
-    looking at, and TASK-2301's whole subject is those two disagreeing.
-
-    The cells carry the USER-FACING labels, not the stored values (review
-    wave, Minor 1) -- the filter above the table has always offered "Read"
-    while the column wrote the raw `reviewed`, and TASK-2301 is what first put
-    the two in the same frame.
+    looking at, and TASK-2301's whole subject is those two disagreeing. The
+    rows are `Text` objects built by appending, never markup-parsed
+    (`_render_row`), so plain text comparison is exact.
     """
-    table = pane.query_one("#items-table", DataTable)
-    status_key = pane._column_keys[2]
-    return [
-        str(table.get_cell(str(item["id"]), status_key))
-        for item in pane.displayed_items()
+    list_view = pane.query_one("#items-table", ListView)
+    out: dict[str, str] = {}
+    for node in list_view.children:
+        if isinstance(node, _ArticleRow):
+            # task-15776: the row renders itself -- there is no inner Static.
+            out[node.item_id_key] = node.render().plain
+    return out
+
+
+def test_the_filter_speaks_the_readers_vocabulary():
+    """TASK-3072. The contract the rest of this file asserts against.
+
+    Written out literally rather than derived, for the same vacuity reason
+    the old STATUS_LABELS table documented: a test that asks production code
+    what it displays cannot tell the display from the mapping.
+    """
+    assert ArticleListPane._FILTER_OPTIONS == [
+        ("Unread", "unread"),
+        ("All", "all"),
     ]
-
-
-#: The word the Status column must show for each stored value, written out
-#: rather than derived from `ItemsPane._status_label`. A helper that asks
-#: production code what it displays cannot tell "the column shows the label"
-#: from "the column shows the raw value" -- both sides move together. Caught
-#: by mutation: making `_status_label` return its input left the first version
-#: of this helper green.
-STATUS_LABELS = {
-    "new": "New",
-    "reviewed": "Read",
-    "ingested": "Ingested",
-    "ignored": "Ignored",
-    "error": "Error",
-}
-
-
-def _labels_for(statuses) -> set[str]:
-    """The words the Status column shows for a set of stored status values."""
-    return {STATUS_LABELS[status] for status in statuses}
-
-
-def test_the_status_column_speaks_the_filters_vocabulary():
-    """Review wave, Minor 1. One vocabulary, and unknown values still show."""
-    assert ItemsPane._status_label("reviewed") == "Read"
-    assert ItemsPane._status_label("ingested") == "Ingested"
-    assert {label for label, _v in ItemsPane._STATUS_OPTIONS} >= set(
-        STATUS_LABELS.values()
-    ), "every column label must be a word the filter also offers"
-    assert ItemsPane._status_label("a-status-from-the-future") == (
-        "a-status-from-the-future"
-    ), "an unmapped status must stay readable rather than blank"
+    assert ArticleListPane._READER_STATUSES == {"new", "reviewed", "ingested"}
+    assert ArticleListPane._UNREAD_DOT == "●"
+    assert ArticleListPane._STAR_GLYPH == "★"
+    assert ArticleListPane._QUEUED_GLYPH == "◆"
 
 
 # --- data layers -----------------------------------------------------------
@@ -192,8 +194,10 @@ async def test_list_items_no_longer_collapses_none_to_new():
 
 
 @pytest.mark.asyncio
-async def test_every_status_appears_in_the_list_and_is_distinguishable():
-    """AC#1. All statuses present under "All statuses", each labelled."""
+async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
+    """AC#1, reader vocabulary. The reader set is present under "All", each
+    status visibly told apart: unread rows carry the dot, ingested rows the
+    marker, reviewed rows neither."""
     app = _build_test_app()
     db = app.local_watchlists_service._db()
     _seed_one_item_per_status(db)
@@ -202,20 +206,40 @@ async def test_every_status_appears_in_the_list_and_is_distinguishable():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+        pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         assert pane.status_filter == "all"
-        assert len(pane.displayed_items()) == len(SEEDED)
-        assert set(_status_column(pane)) == _labels_for(SEEDED), (
-            "the Status column must tell the statuses apart on screen, not "
-            "only in the pane's own data"
+        displayed = pane.displayed_items()
+        assert {row["status"] for row in displayed} == set(READER_SEEDED)
+        texts = _row_texts_by_id(pane)
+        assert set(texts) == {str(row["id"]) for row in displayed}, (
+            "every displayed item must have exactly one rendered row"
+        )
+        by_status = {
+            row["status"]: texts[str(row["id"])] for row in displayed
+        }
+        assert by_status["new"].startswith("● "), (
+            f"the unread row must lead with the unread dot; got {by_status['new']!r}"
+        )
+        assert "· ingested" in by_status["ingested"], (
+            f"the ingested row must carry its marker; got {by_status['ingested']!r}"
+        )
+        reviewed = by_status["reviewed"]
+        assert not reviewed.startswith("●") and "· ingested" not in reviewed, (
+            f"the read row must carry neither mark; got {reviewed!r}"
         )
 
 
 @pytest.mark.asyncio
-async def test_a_triaged_item_is_findable_under_its_own_status_filter():
+async def test_a_triaged_item_is_findable_under_the_readers_filters():
     """AC#4. The regression test the task asks for, stated as the user's
-    question: "where did my ingested item go?"."""
+    question: "where did my ingested item go?".
+
+    TASK-3072 answer: under "All", right where it was -- ingested and read
+    items stay listed. Unread narrows to the unread bucket. What deliberately
+    does NOT come back is the ignored item (the user hid it) and the error
+    row (a Runs-tab concern), and that exclusion is pinned here too.
+    """
     app = _build_test_app()
     db = app.local_watchlists_service._db()
     _seed_one_item_per_status(db)
@@ -224,17 +248,23 @@ async def test_a_triaged_item_is_findable_under_its_own_status_filter():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+        pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
-        for status, title in SEEDED.items():
-            pane.status_filter = status
-            await pilot.pause()
-            pane = screen.query_one("#watchlists-items-pane", ItemsPane)
-            titles = [row["title"] for row in pane.displayed_items()]
-            assert titles == [title], (
-                f"filtering to {status!r} must show exactly that item; showed "
-                f"{titles!r}"
-            )
+        titles = [row["title"] for row in pane.displayed_items()]
+        assert set(titles) == set(READER_SEEDED.values()), (
+            f"All must show exactly the reader set; showed {titles!r}"
+        )
+
+        pane.status_filter = "unread"
+        for _ in range(60):
+            await pilot.pause(0.05)
+            pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+            if [row for row in pane.items if row.get("status") == "new"]:
+                break
+        titles = [row["title"] for row in pane.displayed_items()]
+        assert titles == [SEEDED["new"]], (
+            f"Unread must show exactly the unread item; showed {titles!r}"
+        )
 
 
 # --- the user gesture ------------------------------------------------------
@@ -258,7 +288,7 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+        pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         target = next(
             item for item in pane.items if item["title"] == SEEDED["new"]
@@ -276,20 +306,16 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
             if db.get_item_status(int(target["item_id"])) == "ingested":
                 break
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
-        table = pane.query_one("#items-table", DataTable)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         assert len(pane.displayed_items()) == rows_before, (
             "ingesting must not remove the row from a view whose filter "
             "includes it"
         )
-        assert (
-            # Literal, not `_status_label("ingested")` (round 2, O3): a
-            # helper that asks production code what it displays stays green
-            # when production code stops mapping at all -- the same vacuity
-            # the m1 mutation caught in this file's other assertions.
-            str(table.get_cell(str(target["id"]), pane._column_keys[2]))
-            == STATUS_LABELS["ingested"]
-        ), "the row the user acted on must show its new status immediately"
+        row_text = _row_texts_by_id(pane).get(str(target["id"]), "")
+        assert "· ingested" in row_text, (
+            "the row the user acted on must show its new status immediately; "
+            f"rendered {row_text!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -306,7 +332,7 @@ async def test_ingest_feedback_toast_never_parses_markup():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+        pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         toasts: list[tuple[str, dict]] = []
         screen.app_instance.notify = lambda message, **kwargs: toasts.append(
@@ -338,7 +364,7 @@ async def test_an_ingested_item_survives_the_reload_that_follows():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+        pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         target = next(item for item in pane.items if item["title"] == SEEDED["new"])
         screen.post_message(IngestRequested(dict(target)))
@@ -349,13 +375,15 @@ async def test_an_ingested_item_survives_the_reload_that_follows():
         for _ in range(40):
             await pilot.pause()
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
-        titles = [row["title"] for row in pane.displayed_items()]
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        displayed = pane.displayed_items()
+        titles = [row["title"] for row in displayed]
         assert SEEDED["new"] in titles, (
             "the ingested item must still be in the list after the reload"
         )
-        assert set(_status_column(pane)) == _labels_for(
-            set(SEEDED) - {"new"} | {"ingested"}
+        assert {row["status"] for row in displayed} == {"reviewed", "ingested"}, (
+            "the reader's All still shows exactly its set, with the acted-on "
+            "item now ingested"
         )
 
 
@@ -415,12 +443,12 @@ async def test_unread_items_past_the_newest_page_are_still_reachable():
 
     TASK-2301 made `_load_items` ask for every status, which fixed "triaged
     items are unreachable" and quietly broke the other direction: the query
-    pages at 100 and `ItemsPane._filtered_items` only filters what arrived, so
+    pages at 100 and the pane's in-memory filter only filters what arrived, so
     the page went from "the newest 100 unread" to "the newest 100 of any
-    status". With 120 triaged items newer than every unread one, picking "New"
-    showed ZERO rows -- while the rail, which the same branch made accurate,
-    honestly reported the unread count. Two numbers on one screen disagreeing
-    about the same fact.
+    status". With 120 triaged items newer than every unread one, picking
+    "Unread" showed ZERO rows -- while the rail, which the same branch made
+    accurate, honestly reported the unread count. Two numbers on one screen
+    disagreeing about the same fact.
 
     The fixture is deliberately deeper than the 100-row page so nothing here
     can pass by accident of page size.
@@ -435,24 +463,24 @@ async def test_unread_items_past_the_newest_page_are_still_reachable():
         screen = host.screen_stack[-1]
         pane = await _settled_items_pane(screen, pilot, 100)
 
-        # The precondition that makes this a real test: under "All statuses"
-        # the page is entirely triaged, so an in-memory filter has nothing
-        # unread to find.
+        # The precondition that makes this a real test: under the reader's
+        # "All" the page is entirely triaged, so an in-memory filter has
+        # nothing unread to find.
         assert not [
             row for row in pane.items if row.get("status") == "new"
         ], "precondition: no unread item is inside the newest-100 page"
 
-        pane.status_filter = "new"
+        pane.status_filter = "unread"
         for _ in range(80):
             await pilot.pause(0.05)
-            pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+            pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
             if any(row.get("status") == "new" for row in pane.items):
                 break
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         titles = [row["title"] for row in pane.displayed_items()]
         assert set(titles) == set(unread_titles), (
-            "filtering to New must re-page against the unread bucket, not "
+            "filtering to Unread must re-page against the unread bucket, not "
             f"filter the mixed page in memory; showed {titles!r}"
         )
 
@@ -473,7 +501,7 @@ async def test_a_search_keystroke_does_not_re_page():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+        pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         calls: list[str | None] = []
         real_list_items = screen._controller.list_items
@@ -491,13 +519,14 @@ async def test_a_search_keystroke_does_not_re_page():
         await pilot.pause()
         assert calls == [], "a search keystroke must not re-query"
 
-        pane.status_filter = "ingested"
+        pane.status_filter = "unread"
         for _ in range(40):
             await pilot.pause(0.05)
             if calls:
                 break
-        assert calls == ["ingested"], (
-            "a status change must re-page for exactly that status"
+        assert calls == ["new"], (
+            "switching to Unread must re-page with status='new' pushed into "
+            "the query"
         )
 
 
@@ -524,7 +553,7 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+        pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         toasts: list[str] = []
         screen.app_instance.notify = lambda message, **kwargs: toasts.append(str(message))
@@ -537,7 +566,6 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
             await pilot.pause(0.05)
             if db.get_item_status(raw_ids["new"]) == "ignored":
                 break
-
         assert dialogs == [], "an item must not be offered a delete dialog"
         assert db.get_item_status(raw_ids["new"]) == "ignored"
         assert any("ignored" in message.lower() for message in toasts), (
@@ -549,17 +577,17 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
 async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
     """Round 2, O2. The pin's guarantee must survive query-side filtering.
 
-    `ItemsPane._filtered_items` pins the open item into the list whatever the
-    filter says, because opening an item MARKS IT READ -- so under a "New"
-    filter it drops out of its own list the instant it is opened, and `j`/`k`
-    break for the rest of the session. That pin can only retain what the query
-    returned. Pushing the status filter into the query (I2) meant a reload
-    under `status="new"` came back without it, and the item the user was
-    reading vanished.
+    The pane's `_filtered_items` pins the open item into the list whatever the
+    filter says, because opening an item MARKS IT READ -- so under the
+    "Unread" filter it drops out of its own list the instant it is opened,
+    and `j`/`k` break for the rest of the session. That pin can only retain
+    what the query returned. Pushing the status filter into the query (I2)
+    meant a reload under `status="new"` came back without it, and the item
+    the user was reading vanished.
 
-    Driven through the real gesture: filter to New, open the only unread item
-    (which marks it `reviewed`), then force the reload that any deliberate
-    action would cause.
+    Driven through the real gesture: filter to Unread, open the only unread
+    item (which marks it `reviewed`), then force the reload that any
+    deliberate action would cause.
     """
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -569,12 +597,12 @@ async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+        pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
-        pane.status_filter = "new"
+        pane.status_filter = "unread"
         for _ in range(60):
             await pilot.pause(0.05)
-            pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+            pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
             if [row for row in pane.items if row.get("status") == "new"]:
                 break
         assert [row["title"] for row in pane.displayed_items()] == [SEEDED["new"]]
@@ -586,7 +614,7 @@ async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
             if db.get_item_status(raw_ids["new"]) == "reviewed":
                 break
         assert db.get_item_status(raw_ids["new"]) == "reviewed", (
-            "precondition: opening the item marked it read, so the New "
+            "precondition: opening the item marked it read, so the Unread "
             "filter no longer matches it"
         )
 
@@ -594,7 +622,7 @@ async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
         await screen._load_items()
         await pilot.pause()
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         titles = [row["title"] for row in pane.displayed_items()]
         assert SEEDED["new"] in titles, (
             "the item the reader has open must survive a reload whose filter "
@@ -622,7 +650,7 @@ async def test_the_carried_open_item_keeps_the_pages_ordering():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        await _settled_items_pane(screen, pilot, len(SEEDED))
+        await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         # An item older than every row of the page it will be carried into.
         screen._selected_content_item = {
@@ -631,7 +659,13 @@ async def test_the_carried_open_item_keeps_the_pages_ordering():
             "status": "ignored",
             "created_at": "2000-01-01T00:00:00+00:00",
         }
+        # The pre-reader per-status value, poked directly: TASK-3072's
+        # `_normalize_items_status_filter` maps it to "unread", so this also
+        # pins the legacy-value path -- the query below is `status="new"`.
         screen._items_status_filter = "new"
+        screen._items_committed_page_key = screen._items_page_key(0)
+        # Production selection records this provenance alongside the item.
+        screen._selected_content_page_key = screen._items_committed_page_key
         await screen._load_items()
 
         titles = [row["title"] for row in screen._loaded_items]

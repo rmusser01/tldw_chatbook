@@ -6,10 +6,33 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
 
 SCHEMA_NAME = "rag_char_chat_schema"
+HISTORICAL_NOTES_COLUMNS = {
+    "id",
+    "title",
+    "content",
+    "created_at",
+    "last_modified",
+    "deleted",
+    "client_id",
+    "version",
+    "file_path_on_disk",
+    "relative_file_path_on_disk",
+    "sync_root_folder",
+    "last_synced_disk_file_hash",
+    "last_synced_disk_file_mtime",
+    "is_externally_synced",
+    "sync_strategy",
+    "sync_excluded",
+    "file_extension",
+}
 PROVENANCE_TABLES = {
     "rag_identity_context",
     "rag_citation_traces",
@@ -301,33 +324,37 @@ FOREIGN_KEY_CONTRACT = {
 
 
 def _fresh_db(path: Path) -> CharactersRAGDB:
+    if path.exists():
+        return open_current_chachanotes_from_legacy(
+            path, client_id="citation-migration-test"
+        )
     return CharactersRAGDB(path, client_id="citation-migration-test")
 
 
 def _minimal_v24(path: Path) -> None:
-    with sqlite3.connect(path) as connection:
-        connection.executescript(
-            f"""
-            PRAGMA foreign_keys = ON;
-            CREATE TABLE db_schema_version(
-                schema_name TEXT PRIMARY KEY NOT NULL,
-                version INTEGER NOT NULL
-            );
-            INSERT INTO db_schema_version VALUES ('{SCHEMA_NAME}', 24);
-            CREATE TABLE conversations(
-                id TEXT PRIMARY KEY,
-                character_id INTEGER,
-                assistant_kind TEXT,
-                assistant_id TEXT,
-                runtime_backend TEXT NOT NULL DEFAULT 'local'
-            );
-            CREATE TABLE messages(
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL
-                    REFERENCES conversations(id) ON DELETE CASCADE
-            );
-            """
-        )
+    """Create a runnable v24 fixture with the real pre-v25 migration chain."""
+    current_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+    CharactersRAGDB._CURRENT_SCHEMA_VERSION = 24
+    db = None
+    try:
+        db = CharactersRAGDB(path, client_id="citation-v24-fixture")
+        connection = db.get_connection()
+        assert _version(connection) == 24
+        conversation_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(conversations)")
+        }
+        message_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(messages)")
+        }
+        assert "context_summary" not in conversation_columns
+        assert "summary_boundary_message_id" not in conversation_columns
+        assert "usage_json" not in message_columns
+        assert "metadata_json" not in message_columns
+    finally:
+        if db is not None:
+            db.close_connection()
+        CharactersRAGDB._CURRENT_SCHEMA_VERSION = current_version
 
 
 def _minimal_v26(path: Path) -> None:
@@ -336,9 +363,7 @@ def _minimal_v26(path: Path) -> None:
     _minimal_v24(path)
     with sqlite3.connect(path) as connection:
         connection.executescript(CharactersRAGDB._MIGRATE_V24_TO_V25_SQL)
-        connection.execute(
-            "ALTER TABLE conversations ADD COLUMN context_summary TEXT"
-        )
+        connection.execute("ALTER TABLE conversations ADD COLUMN context_summary TEXT")
         connection.execute(
             "ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT"
         )
@@ -433,6 +458,11 @@ def test_v24_upgrade_reaches_v28_and_uses_exact_citation_sql_schema(
     assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     assert PROVENANCE_TABLES <= _table_names(connection)
     assert "message_generation_metadata" in _table_names(connection)
+    with db.transaction() as cursor:
+        notes_columns = {
+            row["name"] for row in cursor.execute("PRAGMA table_info(notes)")
+        }
+    assert notes_columns == HISTORICAL_NOTES_COLUMNS
     conversation_columns = {
         row["name"]
         for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
@@ -712,7 +742,12 @@ def test_standalone_profile_identifiers_are_utf8_bounded(
     _minimal_v24(path)
     db = _fresh_db(path)
     connection = db.get_connection()
-    connection.execute("INSERT INTO conversations(id) VALUES ('conversation')")
+    connection.execute(
+        """
+        INSERT INTO conversations(id, root_id, client_id)
+        VALUES ('conversation', 'conversation', 'citation-test')
+        """
+    )
 
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(insert_sql, ("é" * 129,))
@@ -828,11 +863,27 @@ def test_migration_failure_rolls_back_schema_context_and_version(
         assert not (PROVENANCE_TABLES & _table_names(connection))
 
 
-def test_citation_failure_after_dev_migrations_leaves_clean_v26(
+def test_citation_failure_after_dev_migrations_leaves_clean_v24(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The sequential v24→v27 path must keep the final migration atomic."""
+    """A failed sequential v24→v27 run rewinds the WHOLE run, then replays.
+
+    Rewritten in task-19553. This test previously asserted the database was
+    left at v26 with v24→v25's and v25→v26's artifacts still present: that was
+    an artifact of ``conn.executescript``, which COMMITTED each intermediate
+    step before the failing one ran. Those steps now execute one statement at
+    a time inside ``_initialize_schema``'s transaction, so the run is
+    all-or-nothing and rewinds to its ENTRY version (24) with none of the
+    intermediate DDL applied.
+
+    That is the stronger guarantee, not a weaker one -- a half-upgraded
+    database is unusable by current code either way, and the old
+    partial-commit behaviour is precisely what could strand a database with
+    committed DDL and a stale version stamp. The final assertion proves the
+    point that matters to a user: the rewound database still opens and
+    migrates on the next attempt.
+    """
 
     path = tmp_path / "sequential-rollback.sqlite"
     _minimal_v24(path)
@@ -848,18 +899,26 @@ def test_citation_failure_after_dev_migrations_leaves_clean_v26(
         _fresh_db(path)
 
     with sqlite3.connect(path) as connection:
-        assert _version(connection) == 26
-        assert "message_generation_metadata" in _table_names(connection)
+        assert _version(connection) == 24
+        assert "message_generation_metadata" not in _table_names(connection)
         conversation_columns = {
             row[1]
-            for row in connection.execute(
-                "PRAGMA table_info(conversations)"
-            ).fetchall()
+            for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
         }
-        assert {"context_summary", "summary_boundary_message_id"} <= (
-            conversation_columns
+        assert not (
+            {"context_summary", "summary_boundary_message_id"} & conversation_columns
         )
         assert not (PROVENANCE_TABLES & _table_names(connection))
+
+    # Re-enterable: with the forced failure removed, the same file migrates.
+    monkeypatch.undo()
+    db = _fresh_db(path)
+    try:
+        assert (
+            _version(db.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
+    finally:
+        db.close_connection()
 
 
 def test_migration_sql_is_ddl_only_and_provenance_is_not_indexed_or_synced(

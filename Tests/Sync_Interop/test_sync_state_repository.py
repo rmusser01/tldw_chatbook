@@ -428,7 +428,7 @@ def test_sync_v2_profile_state_persists_canonical_local_first_sync_mode(tmp_path
     assert stored["profile_mode"] == "local_first_sync"
 
 
-def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
+def test_sync_v2_schema_migration_updates_v3_without_losing_existing_rows(tmp_path):
     db_path = tmp_path / "sync_state.db"
     with sqlite3.connect(db_path) as conn:
         conn.executescript(
@@ -436,7 +436,7 @@ def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
             CREATE TABLE schema_version (
                 version INTEGER PRIMARY KEY NOT NULL
             );
-            INSERT INTO schema_version (version) VALUES (1);
+            INSERT INTO schema_version (version) VALUES (3);
 
             CREATE TABLE sync_profile_state (
                 source_authority TEXT NOT NULL,
@@ -453,6 +453,98 @@ def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
                     workspace_scope
                 )
             );
+            INSERT INTO sync_profile_state (
+                source_authority, server_profile_id,
+                authenticated_principal_id, workspace_scope,
+                last_error, updated_at
+            ) VALUES (
+                'server', 'server-a', 'user-a', 'workspace-1',
+                'preserved-profile', '2026-08-12T00:00:00Z'
+            );
+
+            CREATE TABLE remote_pull_cursors (
+                source_scope_key TEXT NOT NULL,
+                remote_collection TEXT NOT NULL,
+                source_authority TEXT NOT NULL,
+                server_profile_id TEXT,
+                authenticated_principal_id TEXT,
+                workspace_scope TEXT,
+                domain TEXT NOT NULL,
+                cursor TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (source_scope_key, remote_collection)
+            );
+            INSERT INTO remote_pull_cursors VALUES (
+                'server:server-a:user-a:workspace-1:chat:message',
+                'messages', 'server', 'server-a', 'user-a', 'workspace-1',
+                'chat', 'preserved-cursor', '2026-08-12T00:00:00Z'
+            );
+
+            CREATE TABLE sync_v2_local_outbox (
+                outbox_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_scope_key TEXT NOT NULL,
+                server_profile_id TEXT NOT NULL,
+                authenticated_principal_id TEXT NOT NULL,
+                workspace_scope TEXT NOT NULL,
+                dataset_id TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                client_envelope_id TEXT NOT NULL,
+                envelope TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                dispatched_at TEXT,
+                UNIQUE(source_scope_key, dataset_id, client_envelope_id)
+            );
+            INSERT INTO sync_v2_local_outbox (
+                source_scope_key, server_profile_id,
+                authenticated_principal_id, workspace_scope, dataset_id,
+                domain, client_envelope_id, envelope, status,
+                created_at, updated_at
+            ) VALUES (
+                'server:server-a:user-a:workspace-1:sync_v2:outbox',
+                'server-a', 'user-a', 'workspace-1', 'dataset-1', 'chat',
+                'device-1:chat:message-1:sha256:old', '{}', 'pending',
+                '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z'
+            );
+
+            CREATE TABLE sync_v2_conflict_reviews (
+                conflict_review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_scope_key TEXT NOT NULL,
+                server_profile_id TEXT NOT NULL,
+                authenticated_principal_id TEXT NOT NULL,
+                workspace_scope TEXT NOT NULL,
+                dataset_id TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                source_conflict_key TEXT NOT NULL,
+                conflict_kind TEXT NOT NULL,
+                item_label TEXT NOT NULL,
+                cause TEXT NOT NULL,
+                local_summary TEXT NOT NULL,
+                remote_summary TEXT NOT NULL,
+                recovery_options TEXT NOT NULL,
+                resolution_status TEXT NOT NULL,
+                details TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                resolved_at TEXT,
+                UNIQUE(source_scope_key, dataset_id, source_conflict_key)
+            );
+            INSERT INTO sync_v2_conflict_reviews (
+                source_scope_key, server_profile_id,
+                authenticated_principal_id, workspace_scope, dataset_id,
+                domain, source_conflict_key, conflict_kind, item_label,
+                cause, local_summary, remote_summary, recovery_options,
+                resolution_status, details, created_at, updated_at
+            ) VALUES (
+                'server:server-a:user-a:workspace-1:sync_v2:outbox',
+                'server-a', 'user-a', 'workspace-1', 'dataset-1', 'chat',
+                'preserved-conflict', 'stale_base', 'Message', 'Concurrent edit',
+                'Local', 'Remote', '{}', 'open', '{}',
+                '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z'
+            );
             """
         )
 
@@ -468,6 +560,22 @@ def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
         conflict_reviews = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_v2_conflict_reviews'"
         ).fetchone()
+        receipts = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'sync_v2_source_projection_receipts'"
+        ).fetchone()
+        preserved_outbox = conn.execute(
+            "SELECT client_envelope_id FROM sync_v2_local_outbox"
+        ).fetchone()[0]
+        preserved_profile = conn.execute(
+            "SELECT last_error FROM sync_profile_state"
+        ).fetchone()[0]
+        preserved_cursor = conn.execute(
+            "SELECT cursor FROM remote_pull_cursors"
+        ).fetchone()[0]
+        preserved_conflict = conn.execute(
+            "SELECT source_conflict_key FROM sync_v2_conflict_reviews"
+        ).fetchone()[0]
         schema_version = conn.execute(
             "SELECT MAX(version) FROM schema_version"
         ).fetchone()[0]
@@ -488,8 +596,200 @@ def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
     }.issubset(columns)
     assert outbox is not None
     assert conflict_reviews is not None
-    assert schema_version == 3
-    assert schema_versions == [3]
+    assert receipts is not None
+    assert preserved_outbox == "device-1:chat:message-1:sha256:old"
+    assert preserved_profile == "preserved-profile"
+    assert preserved_cursor == "preserved-cursor"
+    assert preserved_conflict == "preserved-conflict"
+    assert schema_version == 4
+    assert schema_versions == [4]
+
+
+def test_sync_state_repository_exposes_explicit_durability(tmp_path):
+    assert SyncStateRepository(tmp_path / "sync_state.db").is_durable is True
+    assert SyncStateRepository(":memory:").is_durable is False
+
+
+def test_source_projection_receipt_is_atomic_idempotent_and_versioned(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-1",
+        "dataset_id": "dataset-1",
+    }
+    first = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="first",
+        entity_version=1,
+    )
+
+    projected = repo.enqueue_sync_v2_outbox_envelope_with_source_receipt(
+        **scope,
+        envelope=first,
+        source_entity_id="message-1",
+        source_version=1,
+        source_payload_hash=first.payload_hash,
+    )
+    repeated = repo.enqueue_sync_v2_outbox_envelope_with_source_receipt(
+        **scope,
+        envelope=first,
+        source_entity_id="message-1",
+        source_version=1,
+        source_payload_hash=first.payload_hash,
+    )
+
+    assert (
+        repeated["outbox_entry"]["outbox_id"] == projected["outbox_entry"]["outbox_id"]
+    )
+    assert repeated["receipt"] == projected["receipt"]
+    assert len(repo.list_sync_v2_outbox_entries(**scope)) == 1
+    assert projected["receipt"]["client_envelope_id"] == first.client_envelope_id
+    assert "first" not in repr(projected["receipt"])
+
+    second = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="second",
+        entity_version=2,
+    )
+    repo.enqueue_sync_v2_outbox_envelope_with_source_receipt(
+        **scope,
+        envelope=second,
+        source_entity_id="message-1",
+        source_version=2,
+        source_payload_hash=second.payload_hash,
+    )
+    assert len(repo.list_sync_v2_outbox_entries(**scope)) == 2
+    with repo._get_connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sync_v2_source_projection_receipts"
+            ).fetchone()[0]
+            == 2
+        )
+
+
+def test_source_projection_receipt_readback_failure_rolls_back_both_rows(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "sync_state.db"
+    repo = SyncStateRepository(db_path)
+    envelope = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    ).build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="private",
+        entity_version=1,
+    )
+
+    def refuse_readback(_row):
+        raise RuntimeError("injected receipt readback failure")
+
+    monkeypatch.setattr(
+        SyncStateRepository,
+        "_source_projection_receipt_from_row",
+        staticmethod(refuse_readback),
+    )
+    with pytest.raises(RuntimeError, match="injected receipt readback failure"):
+        repo.enqueue_sync_v2_outbox_envelope_with_source_receipt(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+            envelope=envelope,
+            source_entity_id="message-1",
+            source_version=1,
+            source_payload_hash=envelope.payload_hash,
+        )
+
+    with sqlite3.connect(db_path) as conn:
+        assert (
+            conn.execute("SELECT COUNT(*) FROM sync_v2_local_outbox").fetchone()[0] == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sync_v2_source_projection_receipts"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_source_projection_receipt_rejects_orphan_and_wrong_scope(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    repo = SyncStateRepository(db_path)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="private",
+        entity_version=1,
+    )
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-1",
+        "dataset_id": "dataset-1",
+    }
+    repo.enqueue_sync_v2_outbox_envelope_with_source_receipt(
+        **scope,
+        envelope=envelope,
+        source_entity_id="message-1",
+        source_version=1,
+        source_payload_hash=envelope.payload_hash,
+    )
+
+    assert (
+        repo.get_sync_v2_source_projection_receipt(
+            **scope,
+            domain="chat",
+            source_entity_id="message-1",
+            source_version=1,
+            source_payload_hash=envelope.payload_hash,
+        )
+        is not None
+    )
+    assert (
+        repo.get_sync_v2_source_projection_receipt(
+            **{**scope, "authenticated_principal_id": "user-b"},
+            domain="chat",
+            source_entity_id="message-1",
+            source_version=1,
+            source_payload_hash=envelope.payload_hash,
+        )
+        is None
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DELETE FROM sync_v2_local_outbox")
+    assert (
+        repo.get_sync_v2_source_projection_receipt(
+            **scope,
+            domain="chat",
+            source_entity_id="message-1",
+            source_version=1,
+            source_payload_hash=envelope.payload_hash,
+        )
+        is None
+    )
 
 
 def test_sync_v2_profile_column_migration_validates_column_identifiers(
@@ -535,7 +835,9 @@ def test_sync_v2_profile_column_migration_validates_column_identifiers(
         record_validated_column,
     )
 
-    SyncStateRepository(db_path)
+    # TASK-21105: the store opens (and migrates) on FIRST USE, not at
+    # construction; one operation is what runs the column migration now.
+    SyncStateRepository(db_path).list_identity_mappings()
 
     assert ("profile_mode", "sync_profile_state") in calls
     assert ("dry_run_metadata", "sync_profile_state") in calls
@@ -642,6 +944,131 @@ def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):
     assert [entry["attempt_count"] for entry in pending_after] == [1, 1]
     assert pending_after[0]["last_error"]["error_code"] == "stale_base"
     assert pending_after[1]["last_error"]["error_code"] == "conflict"
+
+
+def test_sync_v2_outbox_readback_failure_rolls_back_uncommitted_insert(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "sync_state.db"
+    dataset_key = generate_dataset_key()
+    envelope = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="active")
+    repo = SyncStateRepository(db_path)
+
+    def refuse_readback(_row):
+        raise RuntimeError("injected outbox readback failure")
+
+    monkeypatch.setattr(
+        SyncStateRepository,
+        "_outbox_from_row",
+        staticmethod(refuse_readback),
+    )
+
+    with pytest.raises(RuntimeError, match="injected outbox readback failure"):
+        repo.enqueue_sync_v2_outbox_envelope(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+            envelope=envelope,
+        )
+
+    with sqlite3.connect(db_path) as verification:
+        committed = verification.execute(
+            "SELECT COUNT(*) FROM sync_v2_local_outbox"
+        ).fetchone()[0]
+    assert committed == 0
+
+
+def test_sync_v2_outbox_atomic_enqueue_returns_committed_payload_hash(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    dataset_key = generate_dataset_key()
+    envelope = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="active")
+    repo = SyncStateRepository(db_path)
+
+    entry = repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=envelope,
+    )
+
+    assert entry["envelope"]["payload_hash"] == envelope.payload_hash
+    assert (
+        repo.list_pending_sync_v2_outbox_envelopes(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+        )[0]["envelope"]["payload_hash"]
+        == envelope.payload_hash
+    )
+
+
+def test_sync_v2_identical_reenqueue_preserves_dispatched_outbox_state(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+    dispatched_envelope = builder.build_note_upsert(
+        note_id="note-1", title="Title", body="Body"
+    )
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-1",
+        "dataset_id": "dataset-1",
+    }
+    repo.enqueue_sync_v2_outbox_envelope(**scope, envelope=dispatched_envelope)
+    assert repo.mark_sync_v2_outbox_push_results(
+        **scope,
+        accepted=[{"client_envelope_id": dispatched_envelope.client_envelope_id}],
+        rejected=[],
+        conflicts=[],
+    ) == {"dispatched": 1, "retained": 0}
+    dispatched_before = repo.list_sync_v2_outbox_entries(**scope, status="dispatched")[
+        0
+    ]
+
+    same_payload_envelope = builder.build_note_upsert(
+        note_id="note-1", title="Title", body="Body"
+    )
+    assert (
+        same_payload_envelope.client_envelope_id
+        == dispatched_envelope.client_envelope_id
+    )
+    assert same_payload_envelope.payload_hash == dispatched_envelope.payload_hash
+
+    same_entry = repo.enqueue_sync_v2_outbox_envelope(
+        **scope, envelope=same_payload_envelope
+    )
+
+    assert same_entry["status"] == "dispatched"
+    assert same_entry["dispatched_at"] == dispatched_before["dispatched_at"]
+    assert same_entry["attempt_count"] == 1
+    assert repo.list_pending_sync_v2_outbox_envelopes(**scope) == []
+    changed_envelope = builder.build_note_upsert(
+        note_id="note-1", title="Title", body="Changed body"
+    )
+    assert changed_envelope.payload_hash != dispatched_envelope.payload_hash
+    changed_entry = repo.enqueue_sync_v2_outbox_envelope(
+        **scope, envelope=changed_envelope
+    )
+    assert changed_entry["status"] == "pending"
+    assert [
+        entry["client_envelope_id"]
+        for entry in repo.list_pending_sync_v2_outbox_envelopes(**scope)
+    ] == [changed_envelope.client_envelope_id]
 
 
 def test_sync_v2_profile_summary_aggregates_state_counts_and_status(tmp_path):

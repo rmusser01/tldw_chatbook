@@ -19,6 +19,9 @@ rules (all AC-driven):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from functools import partial
+from threading import Event
 from typing import Any
 from uuid import uuid4
 
@@ -41,6 +44,22 @@ from tldw_chatbook.Media_Playback.availability import (
 from tldw_chatbook.Media_Playback.frame_source import AvFrameSource
 
 PreviewState = str  # "poster" | "playing" | "paused"
+
+
+@dataclass(frozen=True)
+class _PreviewRun:
+    generation: int
+    cancelled: Event
+
+
+def _log_preview_failure(phase: str, error: BaseException) -> None:
+    """Log bounded diagnostics without media paths or exception payloads."""
+    logger.warning(
+        "Console video playback failed: component=inline_preview "
+        "phase={} error_type={}",
+        phase,
+        type(error).__name__,
+    )
 
 
 def _format_clock(seconds: float | None) -> str:
@@ -106,6 +125,8 @@ class ConsoleVideoPreview(Vertical):
             self._eligible = True
             self._ineligible_reason = ""
         self._source: AvFrameSource | None = None
+        self._generation = 0
+        self._run: _PreviewRun | None = None
         self._position: float | None = None
         self._pixels: Pixels | None = None
         self._offscreen_timer: Any | None = None
@@ -140,25 +161,17 @@ class ConsoleVideoPreview(Vertical):
         if not self._eligible or self.state == "playing":
             return
         self._pause_active_peer()
+        self._generation += 1
+        run = _PreviewRun(self._generation, Event())
+        self._run = run
         ConsoleVideoPreview._active = self
         self.state = "playing"
-        if self._source is None:
-            self._source = AvFrameSource(self._file_path)
-            eligible, reason = self._source.check_eligible()
-            if not eligible:
-                # Probed shape violates the caps even though metadata passed.
-                self._eligible = False
-                self._ineligible_reason = reason
-                self.state = "poster"
-                ConsoleVideoPreview._active = None
-                self._source.close()
-                self._source = None
-                self._refresh_frame()
-                return
         self.run_worker(
-            self._decode_loop, thread=True, exclusive=True, group="video-preview-decode"
+            partial(self._decode_loop, run),
+            thread=True,
+            exclusive=True,
+            group="video-preview-decode",
         )
-        self._offscreen_timer = self.set_interval(0.5, self._pause_if_offscreen)
 
     def pause(self) -> None:
         """Pause (keeps the last rendered frame; resumes on next play)."""
@@ -169,14 +182,18 @@ class ConsoleVideoPreview(Vertical):
         self._refresh_frame()
 
     def _stop_decode(self) -> None:
+        run, self._run = self._run, None
+        self._source = None
+        if run is not None:
+            run.cancelled.set()
         if ConsoleVideoPreview._active is self:
             ConsoleVideoPreview._active = None
-        if self._offscreen_timer is not None:
-            self._offscreen_timer.stop()
-            self._offscreen_timer = None
-        if self._source is not None:
-            self._source.close()
-            self._source = None
+        timer, self._offscreen_timer = self._offscreen_timer, None
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception as exc:
+                _log_preview_failure("cleanup", exc)
 
     @classmethod
     def _pause_active_peer(cls) -> None:
@@ -185,68 +202,225 @@ class ConsoleVideoPreview(Vertical):
         if active is not None:
             try:
                 active.pause()
-            except Exception:
-                logger.opt(exception=True).debug("video preview peer pause failed")
+            except Exception as exc:
+                _log_preview_failure("cleanup", exc)
             finally:
                 cls._active = None
 
     # -- decode loop (worker thread) -------------------------------------------
 
-    def _decode_loop(self) -> None:
-        """Drive the frame source, pushing frames onto the UI thread (worker)."""
-        source = self._source
-        if source is None:
-            return
+    def _bridge(self, phase: str, callback: Any, *args: Any) -> Any:
+        """Attempt one worker-to-app bridge with no direct-thread fallback."""
         try:
-            for timestamp, image in source.iter_frames():
-                if self.state != "playing":
-                    break
-                self.call_from_thread(self._show_frame, timestamp, image)
+            return self.app.call_from_thread(callback, *args)
         except Exception as exc:
-            logger.warning("video preview decode loop ended early: {}", exc)
-        finally:
-            # Natural EOF lands paused-at-end (the last frame stays up);
-            # an explicit pause already transitioned state and stopped us.
-            if self.state == "playing":
-                self.call_from_thread(self.pause)
+            _log_preview_failure(phase, exc)
+            return False
 
-    def _show_frame(self, timestamp: float, image: Any) -> None:
+    def _decode_loop(self, run: _PreviewRun) -> None:
+        """Create, probe, decode, and close one private source in its worker."""
+        source: AvFrameSource | None = None
+        try:
+            try:
+                source = AvFrameSource(self._file_path)
+                eligible, reason = source.check_eligible()
+            except Exception as exc:
+                _log_preview_failure("open", exc)
+                self._bridge("frame_dispatch", self._activation_failed, run, source)
+                return
+
+            if not eligible:
+                self._bridge(
+                    "frame_dispatch",
+                    self._activation_ineligible,
+                    run,
+                    source,
+                    reason,
+                )
+                return
+            if run.cancelled.is_set():
+                return
+            if (
+                self._bridge("frame_dispatch", self._accept_source, run, source)
+                is not True
+            ):
+                return
+
+            try:
+                iterator = iter(source.iter_frames())
+                while not run.cancelled.is_set():
+                    try:
+                        timestamp, image = next(iterator)
+                    except StopIteration:
+                        self._bridge("eof", self._finish_run, run, source)
+                        return
+                    except Exception as exc:
+                        _log_preview_failure("decode", exc)
+                        self._bridge("frame_dispatch", self._degrade_run, run, source)
+                        return
+                    if (
+                        self._bridge(
+                            "frame_dispatch",
+                            self._show_frame,
+                            run,
+                            source,
+                            timestamp,
+                            image,
+                        )
+                        is not True
+                    ):
+                        return
+            except Exception as exc:
+                _log_preview_failure("decode", exc)
+                self._bridge("frame_dispatch", self._degrade_run, run, source)
+        finally:
+            if source is not None:
+                try:
+                    source.close()
+                except Exception as exc:
+                    _log_preview_failure("cleanup", exc)
+
+    def _accept_source(self, run: _PreviewRun, source: AvFrameSource) -> bool:
+        """Attach a current worker source and arm policy before decode starts."""
+        if (
+            not self.is_attached
+            or self._run is not run
+            or self._source is not None
+            or run.cancelled.is_set()
+            or self.state != "playing"
+        ):
+            return False
+        self._source = source
+        try:
+            self._offscreen_timer = self.set_interval(
+                0.5, partial(self._pause_if_offscreen, run, source)
+            )
+        except Exception as exc:
+            _log_preview_failure("cleanup", exc)
+            self._degrade_run(run, source)
+            return False
+        return True
+
+    def _activation_failed(
+        self,
+        run: _PreviewRun,
+        source: AvFrameSource | None,
+    ) -> bool:
+        """Degrade only a still-current activation that published no source."""
+        if (
+            not self.is_attached
+            or self._run is not run
+            or self._source is not None
+            or run.cancelled.is_set()
+            or self.state != "playing"
+        ):
+            return False
+        self._make_unavailable()
+        return True
+
+    def _activation_ineligible(
+        self,
+        run: _PreviewRun,
+        source: AvFrameSource,
+        reason: str,
+    ) -> bool:
+        """Publish a probed cap refusal only for its current activation."""
+        if (
+            not self.is_attached
+            or self._run is not run
+            or self._source is not None
+            or run.cancelled.is_set()
+            or self.state != "playing"
+        ):
+            return False
+        self._eligible = False
+        self._ineligible_reason = reason
+        self.state = "poster"
+        self._stop_decode()
+        self._refresh_frame()
+        return True
+
+    def _matches(self, run: _PreviewRun, source: AvFrameSource) -> bool:
+        return (
+            self.is_attached
+            and self._run is run
+            and self._source is source
+            and self.state == "playing"
+        )
+
+    def _make_unavailable(self) -> None:
+        self._eligible = False
+        self._ineligible_reason = (
+            "Inline preview stopped — use Play for the full player "
+            "or open the clip in your system player."
+        )
+        self.state = "poster"
+        self._stop_decode()
+        self._refresh_frame()
+
+    def _degrade_run(self, run: _PreviewRun, source: AvFrameSource) -> bool:
+        if not self._matches(run, source):
+            return False
+        self._make_unavailable()
+        return True
+
+    def _finish_run(self, run: _PreviewRun, source: AvFrameSource) -> bool:
+        if not self._matches(run, source):
+            return False
+        self.state = "paused"
+        self._stop_decode()
+        self._refresh_frame()
+        return True
+
+    def _show_frame(
+        self,
+        run: _PreviewRun,
+        source: AvFrameSource,
+        timestamp: float,
+        image: Any,
+    ) -> bool:
         """Render one decoded frame (UI thread)."""
-        if self.state != "playing":
-            return
+        if not self._matches(run, source):
+            return False
         try:
             scaled = image.copy()
             scaled.thumbnail((PIXELS_MAX_COLS, PIXELS_MAX_LINES * 2))
             self._pixels = Pixels.from_image(scaled)
+            self._position = timestamp
+            self._update_frame()
+            self._update_progress()
         except Exception as exc:
-            logger.debug("video preview frame render skipped: {}", exc)
-            return
-        self._position = timestamp
-        self._refresh_frame()
-        self._refresh_progress()
+            _log_preview_failure("render", exc)
+            self._degrade_run(run, source)
+            return False
+        return True
 
-    def _refresh_frame(self) -> None:
-        try:
-            frame = self.query_one(f"#{self.id}-frame", Static)
-        except Exception:
-            return  # children not mounted yet (or already gone)
+    def _update_frame(self) -> None:
+        frame = self.query_one(f"#{self.id}-frame", Static)
         if self._pixels is not None and self.state in {"playing", "paused"}:
             frame.update(self._pixels)
         else:
             frame.update(self._poster_text())
 
-    def _refresh_progress(self) -> None:
+    def _refresh_frame(self) -> None:
         try:
-            progress = self.query_one(f"#{self.id}-progress", Static)
+            self._update_frame()
         except Exception:
-            return
+            return  # children not mounted yet (or already gone)
+
+    def _update_progress(self) -> None:
+        progress = self.query_one(f"#{self.id}-progress", Static)
         progress.update(progress_line(self._position, self._duration))
 
     # -- off-screen / lifecycle guards ------------------------------------------
 
-    def _pause_if_offscreen(self) -> None:
+    def _pause_if_offscreen(
+        self,
+        run: _PreviewRun,
+        source: AvFrameSource,
+    ) -> None:
         """Pause when the preview's region has left the viewport (AC2)."""
-        if self.state != "playing":
+        if not self._matches(run, source):
             return
         try:
             region = self.region

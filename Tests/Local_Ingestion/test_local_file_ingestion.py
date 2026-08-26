@@ -10,6 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
+import pytest
+
+from tldw_chatbook.Local_Ingestion import local_file_ingestion
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import parse_local_file_for_ingest
 
 
@@ -155,6 +158,13 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     source.write_bytes(b"ID3\x00" + b"\x00" * 64)
 
     calls: list[Dict[str, Any]] = []
+    progress_events: list[tuple[str, str, float | None]] = []
+    synthetic_data = {"stage": "preparing", "private": object()}
+    measured_data = {
+        "current_time": 2.0,
+        "total_time": 8.0,
+        "provider": object(),
+    }
 
     class _StubAudioProcessor:
         def __init__(self, media_db=None):
@@ -162,6 +172,16 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
 
         def process_audio_files(self, **kwargs):
             calls.append(kwargs)
+            kwargs["transcription_progress_callback"](
+                10.0,
+                "Preparing audio for transcription",
+                synthetic_data,
+            )
+            kwargs["transcription_progress_callback"](
+                91.0,
+                "Transcribing segment 3 of 8",
+                measured_data,
+            )
             return {
                 "results": [
                     {
@@ -192,6 +212,9 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
             "timestamps": False,
             "diarization": True,
         },
+        progress_callback=lambda phase, message, percent=None: progress_events.append(
+            (phase, message, percent)
+        ),
     )
 
     assert len(calls) == 1
@@ -205,6 +228,18 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert call["transcription_batch_route_resolved"] is True
     assert call["timestamp_option"] is False
     assert call["diarize"] is True
+    assert (
+        "transcribing",
+        "Preparing audio for transcription",
+        None,
+    ) in progress_events
+    assert (
+        "transcribing",
+        "Transcribing segment 3 of 8",
+        25.0,
+    ) in progress_events
+    assert all(synthetic_data not in event for event in progress_events)
+    assert all(measured_data not in event for event in progress_events)
 
 
 def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> None:
@@ -212,6 +247,13 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     source.write_bytes(b"\x00\x00\x00\x20ftypisom" + b"\x00" * 64)
 
     calls: list[Dict[str, Any]] = []
+    progress_events: list[tuple[str, str, float | None]] = []
+    synthetic_data = {"stage": "uploading", "private": object()}
+    measured_data = {
+        "chunk": 3,
+        "total_chunks": 8,
+        "provider": object(),
+    }
 
     class _StubVideoProcessor:
         def __init__(self, media_db=None):
@@ -219,6 +261,16 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
 
         def process_videos(self, **kwargs):
             calls.append(kwargs)
+            kwargs["transcription_progress_callback"](
+                20.0,
+                "Uploading audio for transcription",
+                synthetic_data,
+            )
+            kwargs["transcription_progress_callback"](
+                91.0,
+                "Transcribing segment 3 of 8",
+                measured_data,
+            )
             return {
                 "results": [
                     {
@@ -250,6 +302,9 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
             "timestamps": True,
             "diarization": False,
         },
+        progress_callback=lambda phase, message, percent=None: progress_events.append(
+            (phase, message, percent)
+        ),
     )
 
     assert len(calls) == 1
@@ -264,6 +319,57 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert call["transcription_batch_route_resolved"] is True
     assert call["timestamp_option"] is True
     assert call["diarize"] is False
+    assert (
+        "transcribing",
+        "Uploading audio for transcription",
+        None,
+    ) in progress_events
+    assert (
+        "transcribing",
+        "Transcribing segment 3 of 8",
+        37.5,
+    ) in progress_events
+    assert all(synthetic_data not in event for event in progress_events)
+    assert all(measured_data not in event for event in progress_events)
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    (
+        ({"current_time": 1.5, "total_time": 6.0}, 25.0),
+        ({"chunk": 3, "total_chunks": 8}, 37.5),
+        ({"current": 4, "total": 5}, 80.0),
+        ({"current": 0, "total": 5}, 0.0),
+        ({"current": 5, "total": 5}, 100.0),
+        ({"stage": "processing", "private": object()}, None),
+        ({"percent": 37.0}, None),
+        (None, None),
+        ((1, 2), None),
+        ({"current": True, "total": 2}, None),
+        ({"current": 1, "total": False}, None),
+        ({"current": "1", "total": 2}, None),
+        ({"current": 1, "total": "2"}, None),
+        ({"current": float("nan"), "total": 2}, None),
+        ({"current": 1, "total": float("inf")}, None),
+        ({"current": 1, "total": 0}, None),
+        ({"current": 1, "total": -2}, None),
+        ({"current": -1, "total": 2}, None),
+        ({"current": 3, "total": 2}, None),
+    ),
+)
+def test_measured_transcription_percent_accepts_only_bounded_allowlisted_ratios(
+    metadata: object,
+    expected: float | None,
+) -> None:
+    assert local_file_ingestion._measured_transcription_percent(metadata) == expected
+
+
+def test_measured_transcription_percent_ignores_hostile_mapping() -> None:
+    class _HostileMapping(dict[str, object]):
+        def __contains__(self, _key: object) -> bool:
+            raise RuntimeError("hostile provider metadata")
+
+    assert local_file_ingestion._measured_transcription_percent(_HostileMapping()) is None
 
 
 def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) -> None:
@@ -323,3 +429,49 @@ def test_ebook_split_chapters_false_records_warning(tmp_path: Path, monkeypatch)
 
     assert payload["content"] == "Ebook text"
     assert payload["warnings"] == ["split_chapters=False"]
+
+
+# --- task-3307: image extension mapping --------------------------------------
+
+
+def test_detect_file_type_maps_image_extensions_task_3307() -> None:
+    """The raster formats process_image's PIL loader opens map to 'image'."""
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import detect_file_type
+
+    for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"):
+        assert detect_file_type(f"/tmp/picture{ext}") == "image", ext
+        assert detect_file_type(f"/tmp/PICTURE{ext.upper()}") == "image", ext
+
+
+def test_detect_file_type_image_lookalikes_unsupported_task_3307() -> None:
+    """svg (vector), ico (icon container), heic/heif (need the absent
+    pillow_heif opener) stay unsupported -- and the error copy still names
+    the supported set."""
+    import pytest as _pytest
+
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        FileIngestionError,
+        detect_file_type,
+    )
+
+    for ext in (".svg", ".ico", ".heic", ".heif"):
+        with _pytest.raises(FileIngestionError, match="Unsupported file type"):
+            detect_file_type(f"/tmp/picture{ext}")
+
+
+def test_get_supported_extensions_includes_image_task_3307() -> None:
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        get_supported_extensions,
+    )
+
+    extensions = get_supported_extensions()
+    assert extensions["image"] == [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tiff",
+        ".tif",
+    ]

@@ -1,3 +1,4 @@
+import dataclasses
 import inspect
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from tldw_chatbook.RAG_Search.simplified import config as rag_config_module
 from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
+    build_library_rag_save_sections,
+    load_direct_library_tools,
     validate_library_rag_defaults,
 )
 
@@ -152,3 +155,188 @@ def test_hard_config_errors_fails_closed_when_the_profile_fetch_raises(monkeypat
     errors = ad.hard_config_errors(SettingsLibraryRagDefaults())
 
     assert errors == ["Could not load the active profile for validation."]
+
+
+# --- task-1337 Task 7: [console].direct_library_tools -----------------------
+
+
+def _patch_cli_config(monkeypatch, config):
+    """Point the config module's load seam at a fake mapping."""
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *args, **kwargs: config,
+    )
+
+
+def test_direct_library_tools_field_defaults_true():
+    assert SettingsLibraryRagDefaults().direct_library_tools is True
+
+
+@pytest.mark.parametrize(
+    "app_config",
+    [
+        {},
+        {"console": {}},
+        {"console": "not-a-mapping"},
+        {"console": {"direct_library_tools": "maybe"}},
+        {"console": {"direct_library_tools": "enabled"}},
+        {"console": {"direct_library_tools": 42}},
+        {"console": {"direct_library_tools": ["true"]}},
+        {"console": {"direct_library_tools": None}},
+    ],
+)
+def test_load_direct_library_tools_defaults_true_when_missing_or_malformed(
+    app_config,
+):
+    assert load_direct_library_tools(app_config) is True
+
+
+def test_load_direct_library_tools_reads_live_config_when_no_mapping_given(
+    monkeypatch,
+):
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": False}})
+    assert load_direct_library_tools() is False
+
+    _patch_cli_config(monkeypatch, {})
+    assert load_direct_library_tools() is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("TRUE", True),
+        (" True ", True),
+        ("1", True),
+        ("yes", True),
+        ("t", True),
+        ("false", False),
+        ("FALSE", False),
+        ("0", False),
+        ("no", False),
+        ("f", False),
+    ],
+)
+def test_load_direct_library_tools_coerces_bool_and_string_forms(raw, expected):
+    app_config = {"console": {"direct_library_tools": raw}}
+
+    assert load_direct_library_tools(app_config) is expected
+
+
+def test_build_library_rag_save_sections_deep_merges_without_dropping_keys():
+    app_config = {
+        "console": {"max_parallel_runs": 3, "rail_state": {"open": True}},
+        "AppRAGSearchConfig": {"rag": {"top_k": 5}},
+        "general": {"default_tab": "chat"},
+    }
+    values = SettingsLibraryRagDefaults(direct_library_tools=False)
+
+    sections = build_library_rag_save_sections(app_config, values)
+
+    assert sections["console"]["direct_library_tools"] is False
+    # Unrelated Console keys survive the merge.
+    assert sections["console"]["max_parallel_runs"] == 3
+    assert sections["console"]["rail_state"] == {"open": True}
+    # The RAG section rides along verbatim (profile system remains the RAG
+    # writer; this keeps the two-section save atomic).
+    assert sections["AppRAGSearchConfig"] == {"rag": {"top_k": 5}}
+    # Untouched sections are not part of the payload at all.
+    assert "general" not in sections
+    # Deep merge: mutating the returned sections must not reach back into the
+    # caller's app_config.
+    sections["console"]["rail_state"]["open"] = False
+    assert app_config["console"]["rail_state"]["open"] is True
+
+
+def test_build_library_rag_save_sections_handles_missing_sections():
+    values = SettingsLibraryRagDefaults(direct_library_tools=True)
+
+    sections = build_library_rag_save_sections({}, values)
+
+    assert sections == {
+        "console": {"direct_library_tools": True},
+        "AppRAGSearchConfig": {},
+    }
+
+
+def test_direct_library_tools_absent_from_console_session_settings():
+    """The toggle is global app config -- never serialized per session."""
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    field_names = {field.name for field in dataclasses.fields(ConsoleSessionSettings)}
+    assert "direct_library_tools" not in field_names
+
+
+def test_rag_defaults_load_overlays_live_console_setting(monkeypatch):
+    """Both the active-profile load and the profile-picker preview read the
+    global [console] toggle fresh, so the checkbox never shows a stale value."""
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": False}})
+    assert ad.load_rag_defaults_from_active_profile().direct_library_tools is False
+    preview = ad.get_profile_defaults("hybrid_basic")
+    assert preview is not None
+    assert preview.direct_library_tools is False
+
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
+    assert ad.load_rag_defaults_from_active_profile().direct_library_tools is True
+
+
+# --- TASK-3502 AC#1: the reranker-provider Select's option list is
+# ENUMERATED from the dispatch table `chat_api_call` actually resolves the
+# reranker's `model_provider` against -- never hand-listed, so a provider
+# this build cannot dispatch can never be offered, and a newly registered
+# one cannot go missing. ---
+
+
+def test_reranker_provider_options_are_enumerated_from_the_dispatch_table():
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        DEFAULT_RERANKER_PROVIDER,
+        library_rag_reranker_provider_options,
+    )
+
+    options = library_rag_reranker_provider_options()
+
+    # The default row is labelled explicitly and carries that provider's own
+    # NAME -- picking it must really write openai back over a profile
+    # currently set to another provider (a blank sentinel there would leave
+    # the old provider in place: blank means "leave the default alone").
+    assert options[0] == (f"{DEFAULT_RERANKER_PROVIDER} (default)", DEFAULT_RERANKER_PROVIDER)
+    assert {value for _label, value in options[1:]} == (
+        set(API_CALL_HANDLERS) - {DEFAULT_RERANKER_PROVIDER}
+    )
+    assert [value for _label, value in options[1:]] == sorted(
+        set(API_CALL_HANDLERS) - {DEFAULT_RERANKER_PROVIDER}
+    )
+    assert all(label == value for label, value in options[1:])
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Blank resolves to the provider a blank field really bills at run
+        # time, so the control names it instead of showing nothing.
+        ("", "openai"),
+        ("   ", "openai"),
+        ("openai", "openai"),
+        ("anthropic", "anthropic"),
+        (" anthropic ", "anthropic"),
+        # A hand-edited profile naming a provider this build cannot dispatch
+        # must not reach Select(value=...) -- that raises
+        # InvalidSelectValueError out of compose().
+        ("not-a-real-provider", "openai"),
+        (None, "openai"),
+    ],
+)
+def test_normalise_reranker_provider_falls_back_to_the_default_row(raw, expected):
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        normalise_library_rag_reranker_provider,
+    )
+
+    assert normalise_library_rag_reranker_provider(raw) == expected

@@ -11,6 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore
@@ -110,7 +114,7 @@ async def test_evals_screen_composes_destination_header_in_the_workbench_shell()
     """
     from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
-    class _EvalsHarness(App):
+    class _EvalsHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self._app_instance = app_instance
@@ -160,7 +164,7 @@ async def test_llm_screen_composes_destination_header_in_the_lab_frame():
     Lab frame's shared "lab-destination-header", not a route-specific one."""
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 
-    class _LLMHarness(App):
+    class _LLMHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self._app_instance = app_instance
@@ -197,7 +201,7 @@ async def test_llm_screen_composes_destination_header_in_the_lab_frame():
         assert str(status.renderable) == "Ready"
 
 
-class _StudyHarness(App):
+class _StudyHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
         self._screen = self._build_screen(app_instance)
@@ -273,7 +277,7 @@ async def test_study_screen_mounts_destination_header_and_clears_nav_highlight()
 async def test_folded_screens_box_owning_destination_in_nav():
     from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 
-    class _Harness(App):
+    class _Harness(ConsolidatedCSSApp):
         def __init__(self, route):
             super().__init__()
             self._route = route
@@ -313,7 +317,7 @@ async def test_stts_screen_composes_destination_header_in_the_lab_frame():
     """
     from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 
-    class _STTSHarness(App):
+    class _STTSHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self._app_instance = app_instance

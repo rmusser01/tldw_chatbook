@@ -21,8 +21,8 @@ class PersonaProfileCardWidget(Container):
     """Read-only persona profile card with an Edit action."""
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
-    # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
-    DEFAULT_CSS = """
+    # resolve in bare-App harnesses, so BUNDLED_CSS must not reference them).
+    BUNDLED_CSS = """
     PersonaProfileCardWidget {
         width: 100%;
         height: 100%;

@@ -5,12 +5,16 @@ import json
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 
 
-class FormApp(App):
+class FormApp(ConsolidatedCSSApp):
     def __init__(self, profile=None) -> None:
         super().__init__()
         self.profile = profile
@@ -350,7 +354,7 @@ async def test_error_path_reenables_only_when_fields_still_valid():
 # -- T8: MCPImportPanel (paste/file mcpServers JSON import) -----------------
 
 
-class ImportApp(App):
+class ImportApp(ConsolidatedCSSApp):
     def __init__(self, *, existing_ids=None) -> None:
         super().__init__()
         self.existing_ids = existing_ids

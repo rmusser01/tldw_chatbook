@@ -36,6 +36,7 @@ PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "oobabooga": "Text Generation WebUI (Oobabooga)",
     "openai": "OpenAI",
     "openrouter": "OpenRouter",
+    "qwencloud": "QwenCloud",
     "tabbyapi": "TabbyAPI",
     "vllm": "vLLM",
     "zai": "Z.ai",

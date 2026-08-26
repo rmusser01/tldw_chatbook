@@ -47,7 +47,7 @@ def _get_connection(self) -> sqlite3.Connection:
 
 ### Completed ✅
 - `RAG_Indexing_DB.py` - Updated to use Union[str, Path] and standardized handling
-- `search_history_db.py` - Updated to use Union[str, Path] and standardized handling
+- `search_history_db.py` - Updated to use Union[str, Path] and standardized handling (retired as dead code by task-15481 commit `11a6f2944`; recover via `git show fdffc031a:tldw_chatbook/DB/search_history_db.py`)
 - `Evals_DB.py` - Already had Union[str, Path], maintains compatibility
 
 ### Already Compliant ✅

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
@@ -18,6 +19,10 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileServiceError,
 )
 from tldw_chatbook.TTS.profile_service import LoadedCharacterTTSAssignment
+from tldw_chatbook.TTS.profile_reference_types import (
+    TTSCloneReference,
+    TTSCloneReferenceSummary,
+)
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -50,6 +55,7 @@ def _profile(
     model_id: str = "supertonic-3",
     voice_id: str | None = "voice-7",
     response_format: str = "wav",
+    reference: TTSCloneReferenceSummary | None = None,
 ) -> TTSGenerationProfile:
     draft = TTSProfileDraft(
         display_name="Mara",
@@ -73,6 +79,26 @@ def _profile(
         revision=revision,
         created_at=_CREATED_AT,
         updated_at=_CREATED_AT,
+        reference=reference,
+    )
+
+
+def _reference() -> TTSCloneReference:
+    wav_bytes = b"character-private-reference"
+    return TTSCloneReference(
+        summary=TTSCloneReferenceSummary(
+            reference_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            byte_length=len(wav_bytes),
+            duration_ms=300,
+            sample_rate_hz=24_000,
+            channels=1,
+            sample_encoding="pcm_s16le",
+            created_at=_CREATED_AT,
+            updated_at=_CREATED_AT,
+        ),
+        reference_text="Character private transcript",
+        sha256=hashlib.sha256(wav_bytes).hexdigest(),
+        wav_bytes=wav_bytes,
     )
 
 
@@ -85,6 +111,7 @@ def _loaded_assignment(
     model_id: str = "supertonic-3",
     voice_id: str | None = "voice-7",
     response_format: str = "wav",
+    reference: TTSCloneReferenceSummary | None = None,
 ) -> LoadedCharacterTTSAssignment:
     profile = _profile(
         revision=revision,
@@ -92,6 +119,7 @@ def _loaded_assignment(
         model_id=model_id,
         voice_id=voice_id,
         response_format=response_format,
+        reference=reference,
     )
     return LoadedCharacterTTSAssignment(
         repository_generation=generation,
@@ -110,6 +138,9 @@ class _FakeProfileService:
         self.result = result
         self.calls: list[CharacterRef] = []
         self.error: BaseException | None = None
+        self.reference_result: TTSCloneReference | None = None
+        self.reference_error: BaseException | None = None
+        self.reference_calls: list[tuple[UUID, int, int]] = []
 
     async def get_assigned_profile(
         self,
@@ -119,6 +150,22 @@ class _FakeProfileService:
         if self.error is not None:
             raise self.error
         return cast(LoadedCharacterTTSAssignment, self.result)
+
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> TTSCloneReference:
+        self.reference_calls.append(
+            (profile_id, expected_revision, expected_generation)
+        )
+        if self.reference_error is not None:
+            raise self.reference_error
+        if self.reference_result is None:
+            raise AssertionError("unexpected reference read")
+        return self.reference_result
 
     async def observe_availability(self, *_args: object) -> object:
         raise AssertionError("runtime resolution must not preflight availability")
@@ -144,6 +191,7 @@ async def test_generic_or_persona_speech_resolves_global_without_profile_work(
         repository_generation=None,
         profile_id=None,
         profile_revision=None,
+        reference=None,
     )
     assert service.calls == []
 
@@ -215,6 +263,87 @@ async def test_assigned_character_freezes_one_exact_request_without_preflight() 
     assert resolved.profile_id == _PROFILE_ID
     assert resolved.profile_revision == 6
     assert service.calls == [character_ref]
+    assert service.reference_calls == []
+
+
+@pytest.mark.asyncio
+async def test_assigned_character_freezes_exact_reference_under_profile_fences() -> None:
+    character_ref = _character_ref()
+    reference = _reference()
+    service = _FakeProfileService(
+        _loaded_assignment(
+            character_ref,
+            revision=6,
+            voice_id=None,
+            reference=reference.summary,
+        )
+    )
+    service.reference_result = reference
+    resolver = CharacterTTSRequestResolver(service)
+
+    resolved = await resolver.resolve(
+        text="A cloned character reply.",
+        assistant_kind="character",
+        character_ref=character_ref,
+    )
+
+    assert resolved.reference == reference
+    assert resolved.profile_id == _PROFILE_ID
+    assert resolved.profile_revision == 6
+    assert resolved.repository_generation == 9
+    assert service.reference_calls == [(_PROFILE_ID, 6, 9)]
+    assert "Character private transcript" not in repr(resolved)
+
+
+@pytest.mark.asyncio
+async def test_assigned_character_reference_edit_race_fails_closed() -> None:
+    character_ref = _character_ref()
+    reference = _reference()
+    service = _FakeProfileService(
+        _loaded_assignment(
+            character_ref,
+            revision=6,
+            voice_id=None,
+            reference=reference.summary,
+        )
+    )
+    service.reference_error = ProfileRepositoryError("stale")
+    resolver = CharacterTTSRequestResolver(service)
+
+    with pytest.raises(CharacterTTSResolutionError) as caught:
+        await resolver.resolve(
+            text="Do not substitute a changed reference.",
+            assistant_kind="character",
+            character_ref=character_ref,
+        )
+
+    assert caught.value.code == "assignment_invalid"
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    assert service.reference_calls == [(_PROFILE_ID, 6, 9)]
+
+
+@pytest.mark.asyncio
+async def test_assigned_character_reference_failure_severs_raw_exception() -> None:
+    character_ref = _character_ref()
+    reference = _reference()
+    service = _FakeProfileService(
+        _loaded_assignment(character_ref, reference=reference.summary)
+    )
+    service.reference_error = RuntimeError("PRIVATE_REFERENCE_CANARY")
+    resolver = CharacterTTSRequestResolver(service)
+
+    with pytest.raises(CharacterTTSResolutionError) as caught:
+        await resolver.resolve(
+            text="Do not expose a reference failure.",
+            assistant_kind="character",
+            character_ref=character_ref,
+        )
+
+    assert caught.value.code == "profile_store_unavailable"
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    assert "PRIVATE_REFERENCE_CANARY" not in repr(caught.value)
 
 
 @pytest.mark.asyncio

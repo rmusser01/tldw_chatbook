@@ -18,11 +18,16 @@ chardet
 toml
 tomli
 rich
+wcwidth>=0.2.14,<1
 textual==8.2.8
 textual-diff-view==0.1.5
 psutil
 requests
-pillow
+# TASK-18606: was ==11.2.1 for ADR-054 renderer identity. The renderer now
+# owns its determinism (fixed-cell font pinned and metric-verified, identity
+# hashed from pixels not PNG bytes), so it no longer rides on this version.
+# Floor is 10.4, which introduced ImageFont.load_default_imagefont().
+pillow>=10.4
 loguru
 pydantic
 portalocker==3.2.0
@@ -38,7 +43,6 @@ markdownify
 prometheus_client
 aiofiles
 yt_dlp
-anytree
 croniter>=1.4.0
 #pytest  # In dev group
 

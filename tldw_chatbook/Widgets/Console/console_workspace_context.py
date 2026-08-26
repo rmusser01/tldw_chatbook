@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from rich.cells import cell_len
 from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Input, Static
 
@@ -32,14 +33,17 @@ from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 class ConsoleBrowserSearchInput(Input):
     """Search input whose initial value never echoes as a user edit.
 
-    TASK-1900. `ConsoleWorkspaceContextTray.sync_state` recomposes
-    unconditionally (see its own docstring for why an equality guard is
-    unsafe), so every sync re-mounts a fresh search input. Textual's
+    TASK-1900. `ConsoleWorkspaceContextTray.sync_state` re-mounts a fresh
+    search input on every sync that actually changes anything -- which, while
+    the user is typing, is every one of them (TASK-15454 narrowed the tray's
+    recompose to changed states, so a no-op sync no longer replaces this
+    widget; a real search still does). Textual's
     `Input._watch_value` posts `Changed` for a constructor-set value
     unconditionally -- its `_initial_value` flag only positions the cursor --
     and that echo travels the message pump, so on a busy machine it lands
@@ -56,7 +60,9 @@ class ConsoleBrowserSearchInput(Input):
     -- every `Changed` from this box is a real edit -- becomes true.
     """
 
-    def __init__(self, *args: object, initial_value: str = "", **kwargs: object) -> None:
+    def __init__(
+        self, *args: object, initial_value: str = "", **kwargs: object
+    ) -> None:
         """Store the display value without arming the reactive.
 
         Args:
@@ -161,7 +167,13 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
         still overflows two lines.
     """
     budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
-    remaining = str(title).strip() or _UNTITLED_CONVERSATION
+    remaining = (
+        sanitize_character_display_label(
+            title,
+            max_characters=1_000,
+        )
+        or _UNTITLED_CONVERSATION
+    )
     lines: list[str] = []
     while remaining:
         if len(lines) == _TITLE_WRAP_MAX_LINES - 1:
@@ -287,7 +299,9 @@ def _marker_meaning_tooltip_suffix(marker_glyph: str) -> str:
     An unrecognized or empty glyph (the steady state) adds no suffix, so a
     caller can always append this unconditionally.
     """
-    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(str(marker_glyph or "").strip(), "")
+    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(
+        str(marker_glyph or "").strip(), ""
+    )
     return f" — {meaning}" if meaning else ""
 
 
@@ -343,9 +357,7 @@ _ROW_BOTTOM_MARGIN = 1
 _RELABEL_MIN_WIDTH_DELTA = 2
 
 
-def _conversation_row_render_height(
-    name_line_count: int, subagent_count: int
-) -> int:
+def _conversation_row_render_height(name_line_count: int, subagent_count: int) -> int:
     """Return the button height for a row: name lines + metadata line,
     plus a dedicated badge line when this conversation has historical
     sub-agent runs (see `format_console_conversation_row_label`)."""
@@ -404,6 +416,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         *,
         label_id: str,
         value_id: str,
+        label_width_floor: int = 13,
         **kwargs: Any,
     ) -> None:
         """Initialize the label/value status row.
@@ -413,6 +426,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             value: User-facing row value.
             label_id: Textual widget id for the label cell.
             value_id: Textual widget id for the value cell.
+            label_width_floor: Minimum label-column width in terminal cells.
             **kwargs: Additional keyword arguments passed to ``Horizontal``.
         """
         super().__init__(classes="console-workspace-status-pair", **kwargs)
@@ -420,6 +434,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         self.value = value
         self.label_id = label_id
         self.value_id = value_id
+        self.label_width_floor = max(1, int(label_width_floor))
         self.styles.height = "auto"
         self.styles.min_height = 1
 
@@ -435,15 +450,15 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-label",
             markup=False,
         )
-        # I1 (final review): "Conversation" (RAG-45) is exactly 12 characters
-        # -- the label column's old fixed width -- so it filled the whole
-        # cell with zero gutter before the value column, and live captures
-        # showed the two fuse into one run-on token ("Conversation—",
-        # "ConversationThis conversation"). Widened to 13 so every label
-        # (this 12-char one included) always leaves at least one blank cell
-        # of separation.
-        label_widget.styles.width = 13
-        label_widget.styles.min_width = 13
+        # Keep one gutter cell after the label. Most status rows retain the
+        # original 13-cell floor; a caller may lower it for a deliberately
+        # concise label when the security-relevant value needs the extra cell.
+        label_width = max(
+            self.label_width_floor,
+            min(17, cell_len(self.label) + 1),
+        )
+        label_widget.styles.width = label_width
+        label_widget.styles.min_width = label_width
         yield label_widget
 
         value_widget = Static(
@@ -453,10 +468,10 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             markup=False,
         )
         value_widget.styles.width = "1fr"
-        # Rail IA spec section 8: the value column enforces a 10-cell floor so
-        # it never collapses to a single character at the rail's minimum width
-        # (TASK-2154.3 -- it was 0, letting the value shrink to 3-6 cells).
-        value_widget.styles.min_width = 10
+        # Preserve the established 23-cell combined floor. Longer labels may
+        # shrink the value to 6 cells and use the existing ellipsis + tooltip
+        # behavior instead of widening the whole rail.
+        value_widget.styles.min_width = max(6, 23 - label_width)
         # TASK-384: at narrow rail widths the value column shrinks to a few cells
         # and a value like "Default" word-wrapped into a "Def / aul / t" letter
         # stack. Truncate the whole token with an ellipsis on one line instead,
@@ -474,6 +489,25 @@ class ConsoleWorkspaceStatusPair(Horizontal):
 class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
+    #: (row id, row key) pairs for the grouped-browser rows the last COMPLETED
+    #: `compose()` built, or None when `compose` has not finished for this
+    #: instance (never started, or abandoned part-way). Only
+    #: `_can_skip_recompose` reads it; None means "no proof, recompose".
+    #: Class attribute so an instance that never composed still answers None.
+    _composed_row_signature: tuple[tuple[str, str], ...] | None = None
+    #: Live collector for the compose pass currently running, or None.
+    _composing_row_signature: list[tuple[str, str]] | None = None
+    #: Ordered ids of the FIXED (non-row) controls the last completed
+    #: `compose()` built. The Sessions and Workspaces projections build no
+    #: rows at all, so the row signature above is empty for them and proves
+    #: nothing -- this is what carries their DOM evidence (task-15454 review
+    #: round 1). Populated through `_record_composed_node`; the pin in
+    #: `Tests/UI/test_console_workspace_tray_recompose_guard.py` reds if a
+    #: control is ever added to those two projections without recording it.
+    _composed_fixed_signature: tuple[str, ...] | None = None
+    #: Live collector for the compose pass currently running, or None.
+    _composing_fixed_signature: list[str] | None = None
+
     class Relabeled(Message):
         """Posted after a width-driven relabel recompose.
 
@@ -488,16 +522,31 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         state: ConsoleWorkspaceContextState,
         *,
         show_heading: bool = True,
+        content: Literal["all", "session", "workspace", "conversations"] = "all",
         **kwargs: Any,
     ) -> None:
+        """Initialize a scoped Console workspace-context projection.
+
+        Args:
+            state: Shared workspace context snapshot rendered by the tray.
+            show_heading: Whether the tray should render its own heading.
+            content: Portion of the shared snapshot to render. ``all`` keeps
+                the legacy combined layout; the other values render one peer
+                rail section.
+            **kwargs: Additional arguments forwarded to Textual's ``Vertical``.
+        """
         super().__init__(**kwargs)
         self.state = state
         self.show_heading = show_heading
+        self.content = content
         self._row_content_width = _FALLBACK_ROW_CONTENT_WIDTH
+        self._row_owner_width = 0
         # False until the first real content-width measurement is adopted.
         # The first measurement always relabels (to replace the pre-measure
         # fallback budget); later ones apply the hysteresis threshold.
         self._row_width_measured = False
+        self._workspace_action_fit_generation = 0
+        self._workspace_tree_context_data: Any | None = None
         self.styles.height = "auto"
         self.styles.min_height = 0
 
@@ -509,6 +558,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
 
         self.call_after_refresh(self._fit_height_to_content)
+        self.call_after_refresh(self._update_workspace_tree_selection_context)
 
     def on_resize(self, event: Any) -> None:
         """Refit wrapped status rows when the rail width changes.
@@ -521,6 +571,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
 
         self.call_after_refresh(self._fit_height_to_content)
+        self.call_after_refresh(self._update_workspace_tree_selection_context)
 
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
         """Refresh the mounted workspace context tray from new display state.
@@ -539,12 +590,19 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # + resume flows) -- skipping `refresh(recompose=True)` also skips
         # rebuilding the row children, and this widget's own scroll/fit-pass
         # (`_schedule_recomposed_content_fit`) alone does not settle correct
-        # on-screen regions for the (unrebuilt) existing children. Tried
-        # narrowing the guard to skip only the recompose while still always
-        # scheduling the fit-pass -- still broke the same two tests -- so
-        # this keeps the original unconditional recompose. The screen-side
-        # skip in `_sync_console_workspace_context` (the `call_after_refresh`
-        # legacy-alias kick) still applies and is safe/tested.
+        # on-screen regions for the (unrebuilt) existing children.
+        #
+        # TASK-15454 re-guards this, NARROWLY. The lesson from the revert is
+        # that state equality alone is not evidence the DOM shows that
+        # state: the tray can hold state X while its children say something
+        # else, and the unconditional recompose was what healed that. So
+        # `_can_skip_recompose` skips only when the mounted DOM is *proved*
+        # to be the DOM this state produced -- see its docstring. Every case
+        # the revert was about (fresh instance, unsettled/emptied children,
+        # a recompose already latched) fails that proof and recomposes
+        # exactly as before.
+        if self._can_skip_recompose(state):
+            return
         self.state = state
         self.styles.min_height = 0
         scroll_parent = self._nearest_scroll_parent()
@@ -553,6 +611,126 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+
+    def _can_skip_recompose(self, state: ConsoleWorkspaceContextState) -> bool:
+        """Return True only when the mounted DOM already IS ``state``'s DOM.
+
+        TASK-15454. This is deliberately not the value-equality guard the
+        siblings use. The reverted TASK-251 guard failed because
+        ``state == self.state`` answers "does the tray remember this state",
+        not "is the tray *showing* it" -- and those two came apart (a fresh
+        tray from a full-screen recompose, or one whose rows were superseded
+        before they settled, remembers rows it is not displaying). Skipping
+        there left the grouped-browser rows unbuilt and the click targets
+        with them.
+
+        So all six of these must hold before a recompose is skipped:
+
+        1. The rail has pushed at least one state into THIS instance
+           (``_console_workspace_context_synced``, set by
+           ``ConsoleLeftRail.sync_workspace_context`` after each push, and
+           dying with the widget). This is the same per-instance marker the
+           screen-side skip already uses, and it is what preserves the
+           TASK-344/349 one-time healing push for a fresh instance.
+        2. ``compose`` has run to completion for this instance, so there is
+           a recorded signature of the rows it built.
+        3. No recompose is already latched (``_recompose_required``): the
+           DOM is about to change, so it is not evidence of anything.
+        4. The tray is mounted and has children at all.
+        5. The state is value-equal.
+        6. The DOM still matches what ``compose`` recorded building, on BOTH
+           halves:
+           - the grouped-browser rows, in order, by (row id, row key). That
+             pair is exactly the identity Console click routing dispatches on
+             (`on_button_pressed` matches the id prefix, then reads `row_key`/
+             `conversation_id` off the button), so a match means every dynamic
+             click target is present, in place, and pointing at the same
+             conversation it did before;
+           - the FIXED controls, in order, by id. Without this half the
+             evidence would be vacuous for the Sessions and Workspaces
+             projections, which build no rows: their row signature is empty
+             and would trivially match anything, degenerating the guard back
+             toward the reverted full-equality shape (task-15454 review round
+             1). Now the Workspaces projection proves its Switch / New / RAG
+             Scope buttons and their rows are still mounted, and the Sessions
+             projection proves its status pair and summary line are.
+
+        Nodes mounted into the tray from OUTSIDE ``compose`` are ignored
+        rather than treated as drift: the screen mounts the transitional
+        ``#console-new-workspace-conversation`` alias directly into the
+        Conversations tray, and requiring exact DOM equality would make that
+        tray permanently unskippable.
+
+        Args:
+            state: The incoming display state.
+
+        Returns:
+            True when recomposing would rebuild an identical DOM.
+        """
+        if not getattr(self, "_console_workspace_context_synced", False):
+            return False
+        composed_rows = self._composed_row_signature
+        composed_fixed = self._composed_fixed_signature
+        if composed_rows is None or composed_fixed is None:
+            return False
+        if getattr(self, "_recompose_required", False):
+            return False
+        if not self.is_mounted or not self.children:
+            return False
+        if state != self.state:
+            return False
+        mounted_rows, mounted_fixed = self._mounted_signatures(composed_fixed)
+        return mounted_rows == composed_rows and mounted_fixed == composed_fixed
+
+    def _mounted_signatures(
+        self,
+        expected_fixed_ids: tuple[str, ...],
+    ) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+        """Read both DOM signatures out of the live tree in one walk.
+
+        Read from the live DOM rather than from state, so it can contradict
+        what the tray believes -- which is the whole point (see
+        ``_can_skip_recompose``).
+
+        Args:
+            expected_fixed_ids: The fixed-control ids ``compose`` recorded.
+                Only these are collected, so an out-of-band mount elsewhere
+                in the tray never registers as drift.
+
+        Returns:
+            ``(row signature, fixed-id signature)``, each in DOM order.
+        """
+        wanted = set(expected_fixed_ids)
+        rows: list[tuple[str, str]] = []
+        fixed: list[str] = []
+        for node in self.query("*"):
+            node_id = str(getattr(node, "id", "") or "")
+            if node.has_class("console-workspace-conversation-row"):
+                rows.append((node_id, str(getattr(node, "row_key", "") or "")))
+            elif node_id in wanted:
+                fixed.append(node_id)
+        return tuple(rows), tuple(fixed)
+
+    def _record_composed_node(self, widget: Any) -> Any:
+        """Record one fixed (non-row) control built by the running compose pass.
+
+        Returns ``widget`` so a call site stays a single expression
+        (``yield self._record_composed_node(Button(...))``). A no-op outside
+        a compose pass, and for a widget with no id.
+
+        Args:
+            widget: The freshly built control.
+
+        Returns:
+            ``widget``, unchanged.
+        """
+        collector = self._composing_fixed_signature
+        if collector is None:
+            return widget
+        widget_id = str(getattr(widget, "id", "") or "")
+        if widget_id:
+            collector.append(widget_id)
+        return widget
 
     def _nearest_scroll_parent(self) -> Any | None:
         """Return the nearest ancestor that owns vertical scrolling.
@@ -672,6 +850,29 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             return False
         measured = int(region.width)
         should_relabel = self._should_relabel_at_width(measured)
+        scroll_parent = self._nearest_scroll_parent()
+        owner_region = getattr(scroll_parent, "content_region", None)
+        owner_width = max(
+            0,
+            int(getattr(owner_region, "width", 0) or getattr(self.region, "width", 0)),
+        )
+        prior_owner_width = self._row_owner_width
+        owner_width_changed = bool(
+            prior_owner_width and owner_width != prior_owner_width
+        )
+        self._row_owner_width = owner_width
+        # Showing/mounting a child can make Textual settle this tray's frame
+        # and content region two cells narrower without changing the owning
+        # rail viewport. That is not new wrapping space and recomposing for it
+        # would discard out-of-band controls. A real two-cell resize changes
+        # the owner width too and must retain the established relabel contract.
+        if (
+            self._row_width_measured
+            and should_relabel
+            and not owner_width_changed
+            and abs(measured - self._row_content_width) == _RELABEL_MIN_WIDTH_DELTA
+        ):
+            should_relabel = False
         # Latch on the first *real* measurement regardless of whether it
         # relabels: when the measured width coincides with the fallback the
         # decision is a no-op, but the tray has still been measured, so a
@@ -683,14 +884,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self._row_content_width = measured
         scroll_parent = self._nearest_scroll_parent()
         parent_scroll_y = getattr(scroll_parent, "scroll_y", None)
-        restore_scroll_y = (
-            int(parent_scroll_y) if parent_scroll_y is not None else None
-        )
+        restore_scroll_y = int(parent_scroll_y) if parent_scroll_y is not None else None
         self.refresh(recompose=True)
         if self.is_mounted:
-            self._schedule_recomposed_content_fit(
-                restore_scroll_y=restore_scroll_y
-            )
+            self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
             self.post_message(self.Relabeled())
         return True
 
@@ -958,25 +1155,80 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         return max(_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT, height)
 
     def compose(self) -> ComposeResult:
-        if self.show_heading:
-            yield self._static(
-                self.state.heading,
-                id="console-workspace-context-title",
-                classes="destination-section",
-            )
+        # TASK-15454: record the row signature of THIS pass so
+        # `_can_skip_recompose` can later check the mounted DOM against what
+        # was actually built, not against what `self.state` claims. The
+        # signature is published only after the generator runs to the end --
+        # a pass abandoned part-way (Textual closing the generator) leaves it
+        # None, which forbids skipping.
+        collected: list[tuple[str, str]] = []
+        collected_fixed: list[str] = []
+        self._composing_row_signature = collected
+        self._composing_fixed_signature = collected_fixed
+        self._composed_row_signature = None
+        self._composed_fixed_signature = None
+        try:
+            if self.show_heading:
+                yield self._record_composed_node(
+                    self._static(
+                        self.state.heading,
+                        id="console-workspace-context-title",
+                        classes="destination-section",
+                    )
+                )
+
+            if self.content in {"all", "workspace"}:
+                yield from self._compose_workspace_context()
+
+            if self.content in {"all", "session"}:
+                yield from self._compose_session_context(
+                    show_selected_summary=self.content == "session"
+                )
+
+            browser = self.state.conversation_browser
+            if self.content in {"all", "conversations"} and browser is not None:
+                yield from self._compose_conversation_browser(
+                    browser,
+                    show_heading=self.content == "all",
+                    show_selected_summary=self.content == "all",
+                )
+        finally:
+            self._composing_row_signature = None
+            self._composing_fixed_signature = None
+        self._composed_row_signature = tuple(collected)
+        self._composed_fixed_signature = tuple(collected_fixed)
+
+    def _compose_workspace_context(self) -> ComposeResult:
+        """Render active workspace identity and workspace-scoped actions.
+
+        TASK-15454 review round 1: every id-carrying control built here goes
+        through ``_record_composed_node``, because this projection
+        (``#console-workspaces-context``) builds no grouped-browser rows and
+        would otherwise contribute NO DOM evidence to ``_can_skip_recompose``.
+        Anything added here must be recorded too -- pinned by
+        ``test_the_fixed_projections_record_every_control_they_build``, which
+        reds on an unrecorded control rather than letting the guard quietly
+        lose its evidence. (``ConsoleWorkspaceStatusPair`` composes its own
+        label/value Statics; that subtree is its business, not this
+        signature's.)
+        """
 
         workspace_value = self.state.workspace_name or self._workspace_selector_label()
-        yield ConsoleWorkspaceStatusPair(
-            "Workspace",
-            workspace_value,
-            label_id="console-active-workspace-label",
-            value_id="console-active-workspace-value",
-            id="console-active-workspace",
+        yield self._record_composed_node(
+            ConsoleWorkspaceStatusPair(
+                "Workspace",
+                workspace_value,
+                label_id="console-active-workspace-label",
+                value_id="console-active-workspace-value",
+                id="console-active-workspace",
+            )
         )
 
-        with Horizontal(
-            id="console-workspace-action-row",
-            classes="console-workspace-action-row",
+        with self._record_composed_node(
+            Horizontal(
+                id="console-workspace-action-row",
+                classes="console-workspace-action-row",
+            )
         ):
             switch_button = Button(
                 "Switch",
@@ -998,64 +1250,262 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 and self.state.change_workspace_recovery
             ):
                 switch_button.tooltip = self.state.change_workspace_recovery
-            yield switch_button
-            yield Button(
-                "New",
-                id="console-new-workspace",
-                classes="console-workspace-action",
-                compact=True,
-                disabled=not self.state.new_workspace_enabled,
+            yield self._record_composed_node(switch_button)
+            yield self._record_composed_node(
+                Button(
+                    "New",
+                    id="console-new-workspace",
+                    classes="console-workspace-action",
+                    compact=True,
+                    disabled=not self.state.new_workspace_enabled,
+                )
             )
-
-        # task-13: workspace-level RAG retrieval scope entry point.
-        # Named "RAG Scope" (not "Scope") to avoid colliding with the
-        # Console Inspector's item-scope row ("Scope: everything" / "Scope:
-        # N items", `console_retrieval_scope_row.py`), which names a
-        # RAG retrieval scope, not this button. Enabled only for a real
-        # registry workspace (`rag_scope_enabled`) -- never for the
-        # "Local Default"/error/no-registry sentinel states, which have
-        # no real workspace_id to scope against.
-        #
-        # This lives on its OWN row (task-14) rather than sharing the
-        # Switch/New row: the narrow Console left rail body is only wide
-        # enough for ~2 compact buttons (Textual's default Button
-        # min-width is 16 columns each). A third button packed into the
-        # same Horizontal overflowed the rail's clipped width, so the
-        # button's clickable region extended past the rail body -- real
-        # clicks (and `pilot.click`) landed on the rail backdrop instead
-        # of the button.
-        with Horizontal(
-            id="console-workspace-rag-scope-row",
-            classes="console-workspace-action-row",
-        ):
             scope_button = Button(
-                "RAG Scope",
+                "RAG",
                 id="console-workspace-rag-scope-open",
                 classes="console-workspace-action",
                 compact=True,
                 disabled=not self.state.rag_scope_enabled,
             )
-            scope_button.tooltip = "Narrow RAG retrieval to items in this workspace"
-            yield scope_button
+            scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
+            yield self._record_composed_node(scope_button)
+        context_data = self._workspace_tree_context_data
+        selection_copy = self._workspace_tree_selection_copy(context_data)
+        yield self._record_composed_node(
+            Static(
+                selection_copy,
+                id="console-workspace-tree-selection-context",
+                classes="console-workspace-tree-selection-context",
+                markup=False,
+            )
+        )
+        context_is_markable = self._workspace_tree_context_is_markable(context_data)
+        context_action_row = Horizontal(
+            id="console-workspace-context-action-row",
+            classes="console-workspace-context-action-row",
+        )
+        context_action_row.display = context_is_markable
+        with self._record_composed_node(context_action_row):
+            star_button = Button(
+                (
+                    "Unstar"
+                    if context_is_markable
+                    and bool(getattr(context_data, "starred", False))
+                    else "Star"
+                ),
+                id="console-workspace-tree-star",
+                classes="console-workspace-action console-workspace-tree-star",
+                compact=True,
+                disabled=not context_is_markable,
+            )
+            star_button.workspace_id = (
+                getattr(context_data, "workspace_id", None)
+                if context_is_markable
+                else None
+            )
+            star_button.conversation_id = (
+                getattr(context_data, "conversation_id", None)
+                if context_is_markable
+                else None
+            )
+            star_button.starred = bool(
+                context_is_markable and getattr(context_data, "starred", False)
+            )
+            yield self._record_composed_node(star_button)
 
-        if (
-            not self.state.change_workspace_enabled
-            and self.state.change_workspace_recovery
-        ):
-            yield self._static(
-                self.state.change_workspace_recovery,
-                id="console-change-workspace-recovery",
-                classes="console-workspace-recovery",
+        yield self._record_composed_node(
+            ConsoleBrowserSearchInput(
+                initial_value=self.state.workspace_query,
+                placeholder="Search workspaces",
+                id="console-workspace-search",
+                classes="console-workspace-search",
+            )
+        )
+        if self.state.workspace_loading:
+            yield self._record_composed_node(
+                self._static(
+                    "Searching…",
+                    id="console-workspace-search-status",
+                    classes="console-workspace-recovery",
+                )
+            )
+        elif self.state.workspace_error:
+            yield self._record_composed_node(
+                self._static(
+                    self.state.workspace_error,
+                    id="console-workspace-search-status",
+                    classes="console-workspace-recovery",
+                )
+            )
+            if self.state.workspace_retry_available:
+                yield self._record_composed_node(
+                    Button(
+                        "Retry",
+                        id="console-workspace-search-retry",
+                        classes="console-workspace-action",
+                        compact=True,
+                    )
+                )
+
+        if self.state.recovery_copy:
+            yield self._record_composed_node(
+                self._static(
+                    self.state.recovery_copy,
+                    id="console-workspace-recovery",
+                    classes="console-workspace-recovery",
+                )
             )
 
+    def sync_workspace_tree_context(self, data: Any | None) -> bool:
+        """Update the compact Tree action and report a visibility change."""
+
+        is_conversation = self._workspace_tree_context_is_markable(data)
+        starred = bool(getattr(data, "starred", False)) if is_conversation else False
+        # A width relabel removes these controls before recomposing them. Keep
+        # the latest cursor truth even in that transient NoMatches window so
+        # compose cannot rebuild Star for the conversation the cursor left.
+        self._workspace_tree_context_data = data
+        self._update_workspace_tree_selection_context()
+        try:
+            button = self.query_one("#console-workspace-tree-star", Button)
+            action_row = self.query_one(
+                "#console-workspace-context-action-row", Horizontal
+            )
+        except NoMatches:
+            return False
+        visibility_changed = action_row.display != is_conversation
+        action_row.display = is_conversation
+        if visibility_changed:
+            self._workspace_action_fit_generation += 1
+            generation = self._workspace_action_fit_generation
+            self.styles.height = "auto"
+            self.refresh(layout=True)
+
+            def fit_current_action_geometry() -> None:
+                if generation != self._workspace_action_fit_generation:
+                    return
+                self._fit_height_to_content()
+
+                def reconcile_current_action_geometry() -> None:
+                    if generation != self._workspace_action_fit_generation:
+                        return
+                    self._reconcile_workspace_action_owners()
+
+                self.call_after_refresh(reconcile_current_action_geometry)
+
+            self.call_after_refresh(fit_current_action_geometry)
+        button.label = "Unstar" if starred else "Star"
+        button.disabled = not is_conversation
+        button.workspace_id = (
+            getattr(data, "workspace_id", None) if is_conversation else None
+        )
+        button.conversation_id = (
+            getattr(data, "conversation_id", None) if is_conversation else None
+        )
+        button.starred = starred
+        return visibility_changed
+
+    def _workspace_tree_selection_copy(self, data: Any | None) -> str:
+        """Return the stable one-row copy for the current Tree cursor."""
+
+        raw_label = str(getattr(data, "raw_label", "") or "")
+        rows = raw_label.splitlines()
+        label = rows[0] if rows else ""
+        if not label:
+            label = self.state.workspace_name or self._workspace_selector_label()
+        if not label:
+            label = "Workspace tree"
+        return f"Selected: {label} · Enter open"
+
+    def _update_workspace_tree_selection_context(self) -> None:
+        """Patch selected copy and expose the full value only when clipped.
+
+        TASK-22203: every Tree cursor move lands here, so both writes are
+        equality-guarded. A changed copy repaints with ``layout=False``
+        because the slot's geometry is pinned at compose time (one
+        ``nowrap``/``ellipsis`` row — ``#console-workspace-tree-selection-
+        context`` in the CSS pins ``height/min/max: 1``); the unguarded
+        ``Static.update`` default armed one screen layout pass per arrow key.
+        """
+
+        if not self.is_mounted:
+            return
+        try:
+            context = self.query_one(
+                "#console-workspace-tree-selection-context", Static
+            )
+        except NoMatches:
+            return
+        copy = self._workspace_tree_selection_copy(self._workspace_tree_context_data)
+        if context.content != copy:
+            context.update(copy, layout=False)
+        width = max(0, context.content_region.width)
+        tooltip = Text(copy) if width and cell_len(copy) > width else None
+        current = context.tooltip
+        current_plain = current.plain if isinstance(current, Text) else current
+        if (tooltip.plain if tooltip is not None else None) != current_plain:
+            context.tooltip = tooltip
+
+    def _workspace_tree_context_is_markable(self, data: Any | None) -> bool:
+        """Return whether ``data`` may expose the contextual star action."""
+
+        return bool(
+            data is not None
+            and getattr(data, "kind", None) == "conversation"
+            and getattr(data, "workspace_id", None)
+            and getattr(data, "conversation_id", None)
+            and getattr(data, "star_enabled", False)
+            and self.state.workspace_marks_available
+        )
+
+    def _reconcile_workspace_action_owners(self) -> None:
+        """Re-fit the bounded owner's local geometry after the action-row fit.
+
+        TASK-22203: this used to also request the rail-wide allocation
+        reconcile (``console-left-rail``), so every workspace<->conversation
+        cursor crossing ran the full 7-section, ~45-``query_one`` rail
+        measure (measured: 45 rail ``query_one`` + 1 allocation pass + 8
+        section reconciles per arrow key). The action row's one-row flip only
+        needs the owning bounded section to re-fit its fixed chrome against
+        its existing allocation, so the request is SCOPED — the bounded
+        section runs the same reconcile but skips the demand-change
+        escalation into the allocator. Genuine content changes still escalate
+        through the ordinary (unscoped) reconcile requests issued by state
+        pushes and resizes. The known, bounded trade: while the rail has
+        spare space, the section keeps its current allocation until the next
+        genuine allocation trigger instead of growing by the flipped row.
+        """
+
+        for ancestor in self.ancestors:
+            if getattr(ancestor, "id", None) == "console-bounded-section-workspace":
+                request_scoped = getattr(
+                    ancestor, "request_scoped_reconcile", None
+                )
+                if callable(request_scoped):
+                    request_scoped()
+                    return
+                request_reconcile = getattr(ancestor, "request_reconcile", None)
+                if callable(request_reconcile):
+                    request_reconcile()
+                return
+
+    def _compose_session_context(
+        self,
+        *,
+        show_selected_summary: bool,
+    ) -> ComposeResult:
+        """Render the active session identity without workspace controls.
+
+        TASK-15454 review round 1: like ``_compose_workspace_context``, this
+        projection (``#console-session-context``) builds no grouped-browser
+        rows, so every id-carrying control it builds is recorded through
+        ``_record_composed_node`` to give ``_can_skip_recompose`` real DOM
+        evidence. See that method's docstring for the pin that enforces it.
+        """
+
         # RAG-45: this pair renders the active CONVERSATION's identity, not a
-        # RAG retrieval scope -- labeled "Conversation" (not "Scope") so it
-        # reads distinctly from both the "RAG Scope" button above and the
-        # Inspector's item-scope row ("Scope: everything" / "Scope: N
-        # items"). A fresh session with no active conversation has nothing
-        # to show here, so the value falls back to an explicit placeholder
-        # rather than rendering a bare label with an empty body.
-        scope_value = self.state.scope_label or "—"
+        # RAG retrieval scope. The raw durable id remains available on hover.
+        scope_value = self.state.scope_label or "None"
         scope_pair = ConsoleWorkspaceStatusPair(
             "Conversation",
             scope_value,
@@ -1063,60 +1513,51 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             value_id="console-active-scope-value",
             id="console-active-scope",
         )
-        # TASK-373 AC#2: keep the raw conversation identifier available on hover
-        # rather than in the primary row.
         if self.state.scope_detail:
             scope_pair.tooltip = f"Conversation id: {self.state.scope_detail}"
-        yield scope_pair
+        yield self._record_composed_node(scope_pair)
 
-        if self.state.recovery_copy:
-            yield self._static(
-                self.state.recovery_copy,
-                id="console-workspace-recovery",
-                classes="console-workspace-recovery",
+        if show_selected_summary:
+            browser = self.state.conversation_browser
+            selected_summary = browser.selected_summary if browser is not None else ""
+            yield self._record_composed_node(
+                self._static(
+                    selected_summary or "No active session.",
+                    id="console-workspace-selected-conversation",
+                    classes=(
+                        "console-workspace-selected-conversation "
+                        "console-session-selected-conversation"
+                    ),
+                )
             )
-
-        # TASK-1190: the transitional legacy conversation-list compose path
-        # (taken only when ``conversation_browser is None``) was retired.
-        # Reachability sweep (grep every constructor/caller that could
-        # produce a state reaching this widget): the SOLE production
-        # builder, ``ChatScreen._build_console_workspace_context_state``,
-        # always finishes by calling ``_with_console_conversation_browser_
-        # state``, which unconditionally attaches a real
-        # ``ConsoleConversationBrowserState`` via ``build_console_
-        # conversation_browser_state`` (that builder has exactly one
-        # ``return`` and it is never ``None``). No other production call
-        # site constructs a ``ConsoleWorkspaceContextState`` or calls this
-        # tray's ``sync_state`` with ``conversation_browser=None`` -- only
-        # test fixtures did, to pin the now-removed legacy render path. The
-        # ``browser is not None`` guard below stays as defense in depth
-        # (render nothing rather than crash) rather than an assertion.
-        browser = self.state.conversation_browser
-        if browser is not None:
-            yield from self._compose_conversation_browser(browser)
 
     def _compose_conversation_browser(
         self,
         browser: ConsoleConversationBrowserState,
+        *,
+        show_heading: bool = True,
+        show_selected_summary: bool = True,
     ) -> ComposeResult:
         """Render the grouped all-workspaces conversation browser."""
 
-        with Horizontal(
-            id="console-workspace-conversations-header",
-            classes="console-rail-header console-workspace-conversations-header",
-        ):
-            title = self._static(
-                "Conversations",
-                id="console-workspace-conversations-title",
-                classes="console-rail-section-title",
+        if show_heading:
+            with Horizontal(
+                id="console-workspace-conversations-header",
+                classes="console-rail-header console-workspace-conversations-header",
+            ):
+                title = self._static(
+                    "Conversations",
+                    id="console-workspace-conversations-title",
+                    classes="console-rail-section-title",
+                )
+                title.styles.width = "1fr"
+                yield title
+        if show_selected_summary:
+            yield self._static(
+                browser.selected_summary or "No active conversation.",
+                id="console-workspace-selected-conversation",
+                classes="console-workspace-selected-conversation",
             )
-            title.styles.width = "1fr"
-            yield title
-        yield self._static(
-            browser.selected_summary or "No active conversation.",
-            id="console-workspace-selected-conversation",
-            classes="console-workspace-selected-conversation",
-        )
         with Horizontal(
             id="console-workspace-conversation-search-row",
             classes="console-workspace-conversation-search-row",
@@ -1371,15 +1812,17 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             name_lines = _marker_prefixed_name_lines(row.title, row.run_marker, budget)
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
-            secondary = truncate_console_row_cells(
+            secondary_copy = (
                 self._conversation_row_secondary(
                     detail,
                     row.updated_label,
                     workspace_label=row.workspace_label if show_workspace else "",
                 )
-                or "conversation",
-                budget,
+                or "conversation"
             )
+            if row.queued_count:
+                secondary_copy = f"{secondary_copy} · Queue {row.queued_count}"
+            secondary = truncate_console_row_cells(secondary_copy, budget)
             status_suffix = f" [{status}]" if status else ""
             # TASK-1233 AC#1 (review round 1): `tooltip_label` here is the
             # PRE-escape, pre-period sentence body -- `_conversation_button`
@@ -1401,6 +1844,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 name_line_count=len(name_lines),
             )
             row_button.row_key = row.row_key
+            # TASK-15454: this pair is the row's click identity; `compose`
+            # publishes the collected sequence once it finishes.
+            if self._composing_row_signature is not None:
+                self._composing_row_signature.append(
+                    (str(row_button.id or ""), str(row.row_key or ""))
+                )
             row_button.native_session_id = row.native_session_id
             row_button.scope_type = row.scope_type
             row_button.workspace_id = row.workspace_id
@@ -1460,7 +1909,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     @staticmethod
     def _conversation_title(title: str) -> str:
         """Return a readable conversation label."""
-        return str(title).strip() or _UNTITLED_CONVERSATION
+        return (
+            sanitize_character_display_label(
+                title,
+                max_characters=1_000,
+            )
+            or _UNTITLED_CONVERSATION
+        )
 
     def _browser_title_budget(self) -> int:
         """Cells available to grouped-browser row text."""
@@ -1521,7 +1976,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             part
             for part in (
                 workspace_label,
-                detail if detail and detail != CONSOLE_DEFAULT_CONVERSATION_DETAIL else "",
+                detail
+                if detail and detail != CONSOLE_DEFAULT_CONVERSATION_DETAIL
+                else "",
                 updated_label,
             )
             if str(part or "").strip()

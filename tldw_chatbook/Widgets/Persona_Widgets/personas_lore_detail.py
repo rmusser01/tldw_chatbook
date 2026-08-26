@@ -87,7 +87,7 @@ class LoreDetachRequested(Message):
 class PersonasLoreDetailWidget(Vertical):
     """Entries + Settings tabs for one lore/world book. Emits intents; owns no I/O."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasLoreDetailWidget {
         height: 1fr;
         min-height: 0;
@@ -251,6 +251,8 @@ class PersonasLoreDetailWidget(Vertical):
         Returns:
             None.
         """
+        if not self.is_attached:
+            return
         table = self.query_one("#personas-lore-entries-table", DataTable)
         table.add_columns("keys", "content", "position", "priority", "enabled")
         self.query_one("#personas-lore-attachments-table", DataTable).add_columns(

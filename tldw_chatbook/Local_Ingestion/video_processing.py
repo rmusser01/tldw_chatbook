@@ -11,16 +11,17 @@ import tempfile
 import logging
 import time
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from urllib.parse import urlparse
 import subprocess
 from loguru import logger
 
 # Local imports
-from .audio_processing import LocalAudioProcessor
+from .audio_processing import LocalAudioProcessor, build_ffmpeg_trim_args
 from ..config import get_cli_setting
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.egress import EgressBlockedError, check_url_or_raise, origin_set
 
 # Optional imports
 try:
@@ -46,10 +47,59 @@ class VideoDownloadError(VideoProcessingError):
     pass
 
 
+def check_media_url_egress(url: str) -> None:
+    """Apply the app's egress policy to a media URL before yt-dlp sees it.
+
+    The media arm of ingest never consulted ``Utils/egress.py`` (TASK-19556
+    (b)), while the article arm of the same entry point did, and
+    ``audio_processing.download_audio_file`` guards its own plain-HTTP branch
+    with ``guarded_fetch_requests(..., trusted_origins=origin_set(url))``.
+    This is that same check, applied at the two yt-dlp seams, so both arms
+    behave identically.
+
+    The URL is its own trusted origin, exactly as in the audio arm: a media
+    URL the user typed into the ingest form is an explicitly configured URL,
+    which ``config.py``'s ``[web_security]`` contract permits to be private
+    (an intranet media server is a legitimate source). What the check still
+    refuses is what no configured URL may be: a cloud metadata endpoint
+    (blocked regardless of trust) and anything that is not http(s) -- yt-dlp
+    itself is happy to hand ``file://`` and dozens of other protocols to its
+    extractors.
+
+    WHAT THIS DOES NOT COVER, stated plainly: yt-dlp performs its own HTTP
+    fetching. This is a pre-check on the entry URL only. It cannot
+    re-validate yt-dlp's own redirect hops, the per-format media URLs an
+    extractor discovers inside a page, or a DNS answer that changes between
+    this call and yt-dlp's own resolution -- the TOCTOU window
+    ``Utils/egress.py`` documents as a residual for every consumer of a
+    resolve-then-connect check. Closing those would need a yt-dlp request
+    hook and is not in this task's scope.
+
+    Args:
+        url: The media URL about to be handed to yt-dlp.
+
+    Raises:
+        VideoDownloadError: If the egress policy refuses the URL.
+    """
+    try:
+        check_url_or_raise(url, trusted_origins=origin_set(url))
+    except EgressBlockedError as exc:
+        log_counter(
+            "video_processing_download_error",
+            labels={"error_type": "egress_blocked"},
+        )
+        raise VideoDownloadError(f"URL blocked by the egress policy: {exc}") from exc
+
+
 class LocalVideoProcessor:
     """Handles local video processing including download, audio extraction, and analysis."""
 
-    def __init__(self, media_db: Optional[MediaDatabase] = None):
+    def __init__(
+        self,
+        media_db: Optional[MediaDatabase] = None,
+        *,
+        transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
+    ):
         """
         Initialize the video processor.
 
@@ -57,7 +107,10 @@ class LocalVideoProcessor:
             media_db: Optional MediaDatabase instance for storage
         """
         self.media_db = media_db
-        self.audio_processor = LocalAudioProcessor(media_db)
+        self.audio_processor = LocalAudioProcessor(
+            media_db,
+            transcription_runner=transcription_runner,
+        )
         self._cancelled = False  # Flag to track cancellation
         self.max_file_size_mb = get_cli_setting(
             "media_processing.max_video_file_size_mb", 2000
@@ -84,6 +137,88 @@ class LocalVideoProcessor:
         # Also reset audio processor cancellation
         if self.audio_processor:
             self.audio_processor.reset_cancellation()
+
+    @staticmethod
+    def _write_temp_cookiefile(cookie_dict: Dict[str, Any]) -> str:
+        """Write a ``name=value`` cookie mapping to a new temp file.
+
+        Returns:
+            The temp file's path. The caller OWNS this file and is
+            responsible for removing it.
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            for name, value in cookie_dict.items():
+                f.write(f"{name}={value}\n")
+            return f.name
+
+    def _resolve_cookiefile(
+        self, use_cookies: bool, cookies: Optional[Any]
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Resolve yt-dlp's ``cookiefile``, tracking whether WE created it.
+
+        (task-3306 xhigh review round) Ownership is returned explicitly
+        instead of being inferred later from the path. ``download_video``
+        used to clean up any cookiefile whose path started with
+        ``tempfile.gettempdir()`` -- a heuristic that was only ever safe
+        while the key could hold nothing but a temp file this class had
+        written. Once the ingest form began routing a user's own cookies
+        path into the same argument, a user who exported cookies to
+        ``/tmp/cookies.txt`` lost the file on the first import, and the
+        unlink failure was swallowed into a debug log.
+
+        Args:
+            use_cookies: Whether cookies were requested at all.
+            cookies: Either a path to a cookies file, a JSON string of
+                ``{name: value}`` pairs, or that mapping directly.
+
+        Returns:
+            ``(cookiefile, owned_temp_path)``. ``owned_temp_path`` is
+            non-``None`` only for a file this call created, and is the ONLY
+            thing a caller may delete.
+
+        Raises:
+            VideoDownloadError: When cookies were requested but the value is
+                neither an existing file nor a cookie mapping. Cookies exist
+                to get past an authentication gate; continuing without them
+                only produces a later, unrelated-looking failure.
+        """
+        if not use_cookies or not cookies:
+            return None, None
+
+        if isinstance(cookies, str):
+            candidate = os.path.expanduser(cookies.strip())
+            if os.path.isfile(candidate):
+                return candidate, None
+            try:
+                cookie_dict = json.loads(cookies)
+            except json.JSONDecodeError as exc:
+                raise VideoDownloadError(
+                    f"Cookies file not found: {cookies}"
+                ) from exc
+            if not isinstance(cookie_dict, dict):
+                raise VideoDownloadError(
+                    f"Cookies file not found: {cookies}"
+                )
+            temp_path = self._write_temp_cookiefile(cookie_dict)
+            return temp_path, temp_path
+
+        if isinstance(cookies, dict):
+            temp_path = self._write_temp_cookiefile(cookies)
+            return temp_path, temp_path
+
+        raise VideoDownloadError(
+            f"Unsupported cookies value of type {type(cookies).__name__}"
+        )
+
+    @staticmethod
+    def _discard_temp_cookiefile(path: Optional[str]) -> None:
+        """Remove a temp cookiefile this class created, if any."""
+        if not path:
+            return
+        try:
+            os.unlink(path)
+        except OSError as e:
+            logger.debug(f"Failed to clean up temporary cookie file: {e}")
 
     def download_video(
         self,
@@ -122,6 +257,17 @@ class LocalVideoProcessor:
             )
             raise VideoDownloadError("yt-dlp is not installed")
 
+        # (TASK-19556) Before ANY yt-dlp work -- the probe below is itself a
+        # fetch. Outside the try/except so a policy refusal keeps its own
+        # reason instead of being rewrapped as "Download failed".
+        check_media_url_egress(url)
+
+        # Resolved before the try so an unusable cookies value fails with
+        # its own reason instead of being wrapped as a download failure.
+        cookiefile, owned_temp_cookiefile = self._resolve_cookiefile(
+            use_cookies, cookies
+        )
+
         try:
             # Base configuration
             ydl_opts = {
@@ -131,33 +277,8 @@ class LocalVideoProcessor:
                 "noplaylist": True,
             }
 
-            # Add cookies if provided
-            if use_cookies and cookies:
-                if isinstance(cookies, str):
-                    # If cookies is a file path
-                    if os.path.exists(cookies):
-                        ydl_opts["cookiefile"] = cookies
-                    else:
-                        # Try to parse as JSON
-                        try:
-                            cookie_dict = json.loads(cookies)
-                            # Create temp cookie file
-                            with tempfile.NamedTemporaryFile(
-                                mode="w", suffix=".txt", delete=False
-                            ) as f:
-                                for name, value in cookie_dict.items():
-                                    f.write(f"{name}={value}\n")
-                                ydl_opts["cookiefile"] = f.name
-                        except json.JSONDecodeError:
-                            logger.warning("Invalid cookie format")
-                elif isinstance(cookies, dict):
-                    # Create temp cookie file from dict
-                    with tempfile.NamedTemporaryFile(
-                        mode="w", suffix=".txt", delete=False
-                    ) as f:
-                        for name, value in cookies.items():
-                            f.write(f"{name}={value}\n")
-                        ydl_opts["cookiefile"] = f.name
+            if cookiefile:
+                ydl_opts["cookiefile"] = cookiefile
 
             # Configure format based on download type
             if download_video_flag:
@@ -182,9 +303,16 @@ class LocalVideoProcessor:
             if ffmpeg_path:
                 ydl_opts["ffmpeg_location"] = ffmpeg_path
 
-            # Extract info first to check file size
+            # Extract info first to check file size. (task-3306 review
+            # round) The probe runs BEFORE the download, so an
+            # authentication-gated URL -- the only reason the cookies
+            # option exists -- failed here while the cookies sat unused in
+            # the download's options.
+            probe_opts: Dict[str, Any] = {"quiet": True}
+            if cookiefile:
+                probe_opts["cookiefile"] = cookiefile
             metadata_start = time.time()
-            with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+            with yt_dlp.YoutubeDL(probe_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
                 # Log metadata extraction
@@ -331,19 +459,27 @@ class LocalVideoProcessor:
             logger.error(f"Video download error: {str(e)}")
             raise VideoDownloadError(f"Download failed: {str(e)}") from e
         finally:
-            # Clean up temporary cookie file if created
-            if "cookiefile" in ydl_opts and ydl_opts["cookiefile"].startswith(
-                tempfile.gettempdir()
-            ):
-                try:
-                    os.unlink(ydl_opts["cookiefile"])
-                except (OSError, FileNotFoundError) as e:
-                    logger.debug(f"Failed to clean up temporary cookie file: {e}")
+            # Clean up ONLY the temporary cookie file this call created.
+            # A user-supplied path is never ours to delete, wherever it
+            # happens to live.
+            self._discard_temp_cookiefile(owned_temp_cookiefile)
 
     def extract_metadata(
         self, url: str, use_cookies: bool = False, cookies: Optional[Dict] = None
     ) -> Optional[Dict[str, Any]]:
-        """Extract metadata from video URL without downloading."""
+        """Extract metadata from video URL without downloading.
+
+        Args:
+            url: Video URL.
+            use_cookies: Whether to authenticate the request with cookies.
+            cookies: A cookies-file path, a JSON string of ``{name: value}``
+                pairs, or that mapping. (task-3306 review round) These two
+                arguments were declared and then ignored, so metadata for a
+                gated URL failed even when the caller had cookies.
+
+        Returns:
+            The metadata dict, or ``None`` on any failure.
+        """
         start_time = time.time()
         log_counter("video_processing_metadata_attempt")
 
@@ -354,13 +490,31 @@ class LocalVideoProcessor:
             )
             return None
 
+        # (TASK-19556) The metadata seam fetches too -- same guard as the
+        # download seam, reported through this function's None contract.
         try:
+            check_media_url_egress(url)
+        except VideoDownloadError as exc:
+            log_counter(
+                "video_processing_metadata_error",
+                labels={"error_type": "egress_blocked"},
+            )
+            logger.error(f"Metadata extraction refused: {exc}")
+            return None
+
+        owned_temp_cookiefile: Optional[str] = None
+        try:
+            cookiefile, owned_temp_cookiefile = self._resolve_cookiefile(
+                use_cookies, cookies
+            )
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
                 "extract_flat": False,  # Get full info
                 "skip_download": True,
             }
+            if cookiefile:
+                ydl_opts["cookiefile"] = cookiefile
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -409,6 +563,8 @@ class LocalVideoProcessor:
             )
             logger.error(f"Error extracting metadata: {str(e)}")
             return None
+        finally:
+            self._discard_temp_cookiefile(owned_temp_cookiefile)
 
     def process_videos(
         self,
@@ -669,6 +825,17 @@ class LocalVideoProcessor:
                     logger.info(
                         f"[VIDEO] Extracted audio file size: {os.path.getsize(audio_path) / (1024 * 1024):.2f} MB"
                     )
+                    # (task-3306) The extraction above already applied the
+                    # requested time range. The audio stage below re-cuts
+                    # any local non-YouTube input carrying these bounds
+                    # (``_process_single_audio`` -> ``_extract_time_range``),
+                    # which would apply the trim TWICE -- a start of 60s
+                    # shifting the transcript window to 120s. Drop the
+                    # bounds so the trim runs exactly once. The
+                    # already-audio path above keeps them: no extraction
+                    # ran there, so the audio stage's trim is the only one.
+                    kwargs.pop("start_time", None)
+                    kwargs.pop("end_time", None)
                 except Exception as e:
                     logger.opt(exception=True).error(
                         f"[VIDEO] Audio extraction failed: {type(e).__name__}: {str(e)}"
@@ -750,9 +917,7 @@ class LocalVideoProcessor:
                     )
                     if isinstance(audio_result.get("error_detail"), dict):
                         result["error_detail"] = audio_result["error_detail"]
-                    if isinstance(
-                        audio_result.get("stt_failure_provenance"), dict
-                    ):
+                    if isinstance(audio_result.get("stt_failure_provenance"), dict):
                         result["stt_failure_provenance"] = audio_result[
                             "stt_failure_provenance"
                         ]
@@ -771,9 +936,7 @@ class LocalVideoProcessor:
                     "analysis": audio_result.get("analysis"),
                     "analysis_details": audio_result.get("analysis_details"),
                     "warnings": audio_result.get("warnings", []),
-                    "transcription_model": audio_result.get(
-                        "transcription_model"
-                    ),
+                    "transcription_model": audio_result.get("transcription_model"),
                     "transcription_provenance": audio_result.get(
                         "transcription_provenance"
                     ),
@@ -945,23 +1108,15 @@ class LocalVideoProcessor:
         else:
             audio_path = os.path.join(output_dir, f"{base_name}_audio.mp3")
 
-        # Extract audio as MP3
-        command = [ffmpeg_cmd]
-
-        # Add start time if specified (before input file for faster seeking)
-        if start_time:
-            command.extend(["-ss", start_time])
-
-        command.extend(["-i", video_path])
-
-        # Add duration if end time is specified
-        if end_time:
-            if start_time:
-                # Use -to for absolute end time when start time is also specified
-                command.extend(["-to", end_time])
-            else:
-                # Use -t for duration from beginning
-                command.extend(["-t", end_time])
+        # Extract audio as MP3. The trim arguments come from the shared
+        # builder in ``audio_processing`` -- this path used to emit ``-ss``
+        # before ``-i`` (input seeking rebases the output's timestamps to
+        # zero) and then ``-to`` as an OUTPUT option, which turned an
+        # absolute "Stop at" into a duration measured from "Start at": the
+        # same pair that selected 0:30-1:00 on an .mp3 selected 0:30-1:30
+        # on an .mp4 (task-3306 review round).
+        pre_input, post_input = build_ffmpeg_trim_args(start_time, end_time)
+        command = [ffmpeg_cmd, *pre_input, "-i", video_path, *post_input]
 
         # Audio extraction options
         command.extend(

@@ -17,9 +17,18 @@ worker thread, or ``asyncio.run`` re-entrancy concerns.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+from loguru import logger
+
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.UI.Screens.library_screen import (
+    LibraryEntryReconcileResult,
+    LibraryScreen,
+)
 
 
 # --- _build_library_export_payload: include_media invariant -----------------
@@ -87,6 +96,221 @@ def test_payload_include_media_true_combined_with_other_content_types():
     )
 
     assert payload["include_media"] is True
+
+
+class _PoisonExportSource:
+    is_memory_db = False
+
+    def __getattr__(self, name):
+        raise AssertionError(f"out-of-scope source touched: {name}")
+
+
+class _PromptIdSource:
+    def __init__(self, ids, *, is_memory_db=False, error=None):
+        self.ids = list(ids)
+        self.is_memory_db = is_memory_db
+        self.error = error
+        self.calls = 0
+
+    def get_all_active_prompt_ids(self):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return list(self.ids)
+
+
+def _capture_logs(caplog, operation):
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+    try:
+        result = operation()
+    finally:
+        logger.remove(sink)
+    rendered = "\n".join(messages + [record.getMessage() for record in caplog.records])
+    return result, rendered
+
+
+def test_prompt_scope_counts_use_the_app_prompt_database_only():
+    prompts = _PromptIdSource(range(1, 208))
+
+    counts = LibraryScreen._compute_library_export_counts(
+        ExportScope(kind="prompts"),
+        _PoisonExportSource(),
+        _PoisonExportSource(),
+        prompts,
+    )
+
+    assert counts == {
+        "media": 0,
+        "conversations": 0,
+        "notes": 0,
+        "prompts": 207,
+    }
+    assert prompts.calls == 1
+
+
+def test_prompt_memory_database_forces_inline_count_resolution():
+    prompts = _PromptIdSource([7, 8], is_memory_db=True)
+    landed: list[tuple[ExportScope, dict[str, int], dict[str, object]]] = []
+    scope = ExportScope(kind="prompts")
+    route_key = ("export",)
+
+    def apply_counts(
+        settled_scope: ExportScope,
+        counts: dict[str, int],
+        **context: object,
+    ) -> LibraryEntryReconcileResult:
+        landed.append((settled_scope, counts, context))
+        return LibraryEntryReconcileResult.APPLIED
+
+    fake = SimpleNamespace(
+        _library_export_scope=scope,
+        _library_export_counts_request_id=0,
+        _library_snapshot_state_generation=7,
+        _library_entry_route_key=lambda: route_key,
+        app_instance=SimpleNamespace(
+            media_db=_PoisonExportSource(), prompts_db=prompts
+        ),
+        _resolve_library_export_chachanotes_db=lambda: _PoisonExportSource(),
+        _compute_library_export_counts=lambda *_args: {
+            "media": 0,
+            "conversations": 0,
+            "notes": 0,
+            "prompts": 2,
+        },
+        _apply_library_export_counts=apply_counts,
+        _run_library_export_counts_worker=lambda *_args: pytest.fail(
+            "memory-backed Prompt counts must stay on the owner thread"
+        ),
+    )
+
+    LibraryScreen._start_library_export_counts_worker(fake)
+
+    assert landed == [
+        (
+            scope,
+            {"media": 0, "conversations": 0, "notes": 0, "prompts": 2},
+            {"generation": 7, "route_key": route_key, "request_id": 1},
+        )
+    ]
+
+
+def test_prompt_memory_database_forces_inline_selection_resolution():
+    prompts = _PromptIdSource([7, 8], is_memory_db=True)
+    dispatched: list[dict] = []
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            media_db=_PoisonExportSource(), prompts_db=prompts
+        ),
+        _resolve_library_export_chachanotes_db=lambda: _PoisonExportSource(),
+        _run_library_export_worker=lambda **kwargs: dispatched.append(kwargs),
+        _apply_library_export_failure=lambda *_args: pytest.fail(
+            "valid Prompt resolution must not fail"
+        ),
+    )
+
+    LibraryScreen._start_library_export_worker(
+        fake,
+        run_id=3,
+        scope=ExportScope(kind="prompts"),
+        name="Prompts",
+        description="",
+        media_quality="thumbnail",
+        destination="/tmp/prompts.zip",
+        cancel_event=None,
+    )
+
+    assert len(dispatched) == 1
+    assert dispatched[0]["prompts_db"] is prompts
+    assert dispatched[0]["preresolved_selections"] == {ContentType.PROMPT: ["7", "8"]}
+
+
+def test_prompt_count_failure_is_fixed_and_private(caplog):
+    sentinel = "TASK197_COUNT_ID_991991991_MUST_NOT_LEAK"
+    prompts = _PromptIdSource([], error=RuntimeError(sentinel))
+
+    counts, rendered = _capture_logs(
+        caplog,
+        lambda: LibraryScreen._compute_library_export_counts(
+            ExportScope(kind="prompts"),
+            _PoisonExportSource(),
+            _PoisonExportSource(),
+            prompts,
+        ),
+    )
+
+    assert counts == {
+        "media": 0,
+        "conversations": 0,
+        "notes": 0,
+        "prompts": 0,
+    }
+    assert (
+        "Library export counts failed scope_kind=prompts category=RuntimeError"
+        in rendered
+    )
+    assert sentinel not in rendered
+    assert "Traceback" not in rendered
+
+
+@pytest.mark.parametrize("branch", ["inline", "worker"])
+def test_prompt_selection_failure_uses_fixed_copy_and_private_logs(caplog, branch):
+    sentinel = f"TASK197_SELECTION_{branch.upper()}_991991991_MUST_NOT_LEAK"
+    prompts = _PromptIdSource(
+        [], is_memory_db=branch == "inline", error=RuntimeError(sentinel)
+    )
+    failures: list[str] = []
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            media_db=_PoisonExportSource(),
+            prompts_db=prompts,
+            local_chatbook_service=object(),
+        ),
+        _resolve_library_export_chachanotes_db=lambda: _PoisonExportSource(),
+        _run_library_export_worker=lambda **_kwargs: pytest.fail(
+            "failed inline resolution must not dispatch"
+        ),
+        _apply_library_export_failure=lambda _run_id, copy: failures.append(copy),
+        _marshal_library_export_failure=lambda _run_id, copy: failures.append(copy),
+    )
+
+    def run() -> None:
+        if branch == "inline":
+            LibraryScreen._start_library_export_worker(
+                fake,
+                run_id=4,
+                scope=ExportScope(kind="prompts"),
+                name="Prompts",
+                description="",
+                media_quality="thumbnail",
+                destination="/tmp/prompts.zip",
+                cancel_event=None,
+            )
+            return
+        LibraryScreen._run_library_export_worker.__wrapped__(
+            fake,
+            run_id=4,
+            scope=ExportScope(kind="prompts"),
+            name="Prompts",
+            description="",
+            media_quality="thumbnail",
+            destination="/tmp/prompts.zip",
+            media_db=_PoisonExportSource(),
+            chachanotes_db=_PoisonExportSource(),
+            prompts_db=prompts,
+            preresolved_selections=None,
+            cancel_event=None,
+        )
+
+    _, rendered = _capture_logs(caplog, run)
+
+    assert failures == ["Unable to resolve export selections."]
+    assert (
+        "Library export selection resolution failed "
+        "scope_kind=prompts category=RuntimeError"
+    ) in rendered
+    assert sentinel not in rendered
+    assert "Traceback" not in rendered
 
 
 # --- _run_library_export_via_service: zip-first, registry-only-on-success ---

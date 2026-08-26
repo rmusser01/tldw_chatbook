@@ -87,15 +87,36 @@ def curated_registry() -> CuratedRegistry:
     if _REGISTRY is None:
         registry = CuratedRegistry()
         from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
-            parakeet_v2_descriptor,
-            parakeet_v2_reference,
-            parakeet_v2_source_map,
+            PARAKEET_PRECISIONS,
+            parakeet_descriptor,
+            parakeet_reference,
+            parakeet_source_map,
+            parakeet_vad_descriptor,
+            parakeet_vad_reference,
+        )
+        from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+            PARAKEET_V2_MODEL,
+            PARAKEET_V3_MODEL,
         )
 
-        reference = parakeet_v2_reference()
+        source_map = parakeet_source_map()
+        for model in (PARAKEET_V2_MODEL, PARAKEET_V3_MODEL):
+            for precision in PARAKEET_PRECISIONS:
+                reference = parakeet_reference(model, precision)
+                registry.register(
+                    parakeet_descriptor(model, precision),
+                    sources=source_map[reference],
+                )
+        vad_reference = parakeet_vad_reference()
         registry.register(
-            parakeet_v2_descriptor(),
-            sources=parakeet_v2_source_map()[reference],
+            parakeet_vad_descriptor(),
+            sources=source_map[vad_reference],
         )
+        from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+            audio_cpp_curated_entries,
+        )
+
+        for descriptor, sources in audio_cpp_curated_entries():
+            registry.register(descriptor, sources=sources)
         _REGISTRY = registry
     return _REGISTRY

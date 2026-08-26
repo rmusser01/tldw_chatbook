@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,21 @@ DEFAULT_SEARCH_MODE = "semantic"
 DEFAULT_CITATION_STYLE = "inline"
 DEFAULT_CHUNKING_METHOD = "words"
 DEFAULT_DISTANCE_METRIC = "cosine"
+#: ``RerankingConfig().model_provider`` (RAG_Search/reranker.py) -- the
+#: provider a bare reranker config bills its per-candidate calls to.
+#: Hardcoded rather than imported for the same reason ``reranker_top_k``'s
+#: default is (reranker.py drags Chat_Functions/Internal_Prompts in behind
+#: it); kept honest by
+#: ``test_reranker_provider_default_constant_matches_rerankingconfig_default``.
+DEFAULT_RERANKER_PROVIDER = "openai"
+#: ``1 + RerankingConfig().max_retries`` (RAG_Search/reranker.py) -- the
+#: attempts ONE candidate can cost. `BaseReranker._call_llm` retries every
+#: `Exception`, not just transient ones, so a provider that is down (or a
+#: credential that is wrong) multiplies the per-search call count by this,
+#: measured: 3 candidates against an erroring provider issue 9 calls. Same
+#: hardcode-not-import trade as the two constants above; kept honest by
+#: ``test_reranker_attempts_constant_matches_rerankingconfig_retries``.
+RERANKER_ATTEMPTS_PER_CANDIDATE = 3
 MIN_RAG_RESULT_COUNT = 1
 MAX_RAG_RESULT_COUNT = 100
 MIN_RAG_BALANCE = 0.0
@@ -54,8 +70,13 @@ class SettingsLibraryRagDefaults:
     distance_metric: str = DEFAULT_DISTANCE_METRIC
     # Reranking -- `enable_reranking` controls the PRESENCE of the active
     # profile's `reranking_config` (see settings_rag_profile_adapter.py); a
-    # blank `reranker_model` means "use the reranker's own default".
+    # blank `reranker_model`/`reranker_provider` means "use the reranker's
+    # own default" (TASK-3502 AC#1: the provider the per-candidate calls are
+    # BILLED to used to be unreachable from Settings entirely -- enabling
+    # reranking created a bare `RerankingConfig()` and whatever provider it
+    # defaulted to was the one that got charged).
     enable_reranking: bool = False
+    reranker_provider: str = ""
     reranker_model: str = ""
     # 20 == RerankingConfig().top_k_to_rerank (RAG_Search/reranker.py) --
     # NOT SearchConfig.reranker_top_k (5), a functionally-dead field the RAG
@@ -65,6 +86,108 @@ class SettingsLibraryRagDefaults:
     # (Chat_Functions, Internal_Prompts) into this otherwise-light module;
     # kept honest by test_reranker_top_k_default_matches_reranking_config.
     reranker_top_k: int = 20
+    # task-1337 (ADR-030): global [console] toggle -- when True, Console
+    # agents get the 18 direct Library tools; when False, they fall back to
+    # the bounded Library RAG tool. Global app config, NOT profile-scoped and
+    # never serialized into per-conversation session settings; the adapter
+    # overlays the live value on load (see load_direct_library_tools).
+    direct_library_tools: bool = True
+
+
+#: Bool string forms recognised by config coercion; anything outside this set
+#: is treated as malformed and falls back to the safe default (True), unlike
+#: ``coerce_bool_setting`` which maps ANY unrecognised string to False.
+_RECOGNIZED_BOOL_STRINGS = frozenset(
+    {"true", "1", "t", "y", "yes", "false", "0", "f", "n", "no"}
+)
+
+
+def load_direct_library_tools(app_config: Mapping[str, Any] | None = None) -> bool:
+    """Read the global ``[console].direct_library_tools`` toggle.
+
+    Args:
+        app_config: Config mapping to read; when ``None``, the live CLI
+            config is loaded fresh (so a Settings save applies to the next
+            Console run without a restart).
+
+    Returns:
+        The configured boolean; ``True`` when the section/key is missing or
+        the value is malformed (direct tools are the default retrieval mode).
+    """
+    if app_config is None:
+        # Lazy import: keeps this module free of the config import chain for
+        # the adapter's headless callers.
+        from tldw_chatbook.config import get_cli_setting
+
+        raw = get_cli_setting("console", "direct_library_tools", True)
+    else:
+        console = app_config.get("console")
+        raw = (
+            console.get("direct_library_tools", True)
+            if isinstance(console, Mapping)
+            else True
+        )
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in _RECOGNIZED_BOOL_STRINGS:
+            # Route through the existing coercion (whitespace-normalized --
+            # coerce_bool_setting itself does not strip).
+            from tldw_chatbook.config import coerce_bool_setting
+
+            return coerce_bool_setting(normalized, True)
+    return True
+
+
+#: Approved visible copy for the Console agent retrieval subsection (spec
+#: section 8). Rendered below the toggle as plain text -- never a tooltip.
+CONSOLE_DIRECT_LIBRARY_TOOLS_COPY = (
+    "On: Console agents may automatically list, count, read, and lexically "
+    "search your local Library.\n"
+    "Off: Direct list, count, view, and lexical search tools are unavailable. "
+    "Console agents use Library RAG as the default retrieval method. RAG "
+    "currently covers Notes, Media, and Conversations and requires an "
+    "available, populated index.\n"
+    "Privacy: Retrieved titles, metadata, content, and RAG excerpts are "
+    "included in model requests. If you use a cloud model, this Library data "
+    "leaves your device and is handled by that provider. Use a local model if "
+    "the data must remain on-device.\n"
+    "Scope: This setting affects Console agents only. MCP Library access is "
+    "controlled separately."
+)
+
+
+def build_library_rag_save_sections(
+    app_config: Mapping[str, Any],
+    values: SettingsLibraryRagDefaults,
+) -> dict[str, dict[str, Any]]:
+    """Build config sections persisted alongside a Library/RAG profile save.
+
+    The RAG search/chunking fields themselves live in the active RAG profile
+    (written by the profile adapter); this returns the deep-merged ``console``
+    section carrying the global retrieval-mode toggle plus a verbatim copy of
+    ``AppRAGSearchConfig`` so the two-section write stays atomic and unrelated
+    keys in either section survive.
+
+    Args:
+        app_config: Existing application configuration mapping.
+        values: Validated Library/RAG defaults being saved.
+
+    Returns:
+        ``{"console": ..., "AppRAGSearchConfig": ...}`` suitable for
+        ``SettingsConfigAdapter.save_sections``.
+    """
+    console = app_config.get("console")
+    merged_console = dict(deepcopy(console)) if isinstance(console, Mapping) else {}
+    merged_console["direct_library_tools"] = bool(values.direct_library_tools)
+    rag_section = app_config.get("AppRAGSearchConfig")
+    return {
+        "console": merged_console,
+        "AppRAGSearchConfig": (
+            dict(deepcopy(rag_section)) if isinstance(rag_section, Mapping) else {}
+        ),
+    }
 
 
 def _strict_int(value: Any) -> int | None:
@@ -140,6 +263,91 @@ def normalise_library_rag_distance_metric(value: Any) -> str:
     """
     text = str(value).strip()
     return text if text in DISTANCE_METRICS else DEFAULT_DISTANCE_METRIC
+
+
+def library_rag_reranker_providers() -> tuple[str, ...]:
+    """Return the chat provider names this build registers.
+
+    Enumerated from ``Chat_Functions.API_CALL_HANDLERS`` -- the exact
+    dispatch table ``chat_api_call`` looks the reranker's
+    ``model_provider`` up in (``RAG_Search/reranker.py``'s
+    ``_call_llm_impl``) -- rather than hand-listed, so a newly registered
+    chat provider cannot silently be missing here, and a name that would
+    dispatch nowhere cannot be offered. Imported lazily: this module is
+    deliberately light (see ``load_direct_library_tools``), and
+    ``Chat_Functions`` is not.
+
+    This enumerates what ``chat_api_call`` can ROUTE, and since TASK-17065
+    that is also what the reranker can CALL: it resolves no credential of
+    its own any more and dispatches by keyword, so each row reaches its
+    registered handler and each handler resolves its own key (the keyless
+    local providers need none). Whether a given provider then ANSWERS is
+    that provider's business -- a refusal is disclosed on the results
+    screen ("Reranking was skipped (...)") rather than silently.
+
+    Returns:
+        Every registered chat provider name, ``DEFAULT_RERANKER_PROVIDER``
+        first and the rest sorted, so the default reads as the head of the
+        list rather than an arbitrary row inside it.
+    """
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+
+    rest = sorted(
+        name for name in API_CALL_HANDLERS if name != DEFAULT_RERANKER_PROVIDER
+    )
+    return (DEFAULT_RERANKER_PROVIDER, *rest)
+
+
+def library_rag_reranker_provider_options() -> list[tuple[str, str]]:
+    """Return ``(label, value)`` pairs for the reranker-provider Select.
+
+    The default provider's row is labelled explicitly -- "openai (default)"
+    -- and carries that provider's own NAME as its value, not a blank
+    sentinel (spec AC#1: "the default made visible rather than implicit").
+    Blank stays a legal *field* value meaning "leave the reranker's own
+    default alone" (``apply_defaults_to_profile``, the rule
+    ``reranker_model`` follows), but the Select never emits it: a user
+    switching a profile back from anthropic to openai must actually write
+    openai, and staging blank there would silently leave anthropic in place.
+
+    Returns:
+        One option per dispatchable provider, default row first.
+    """
+    default, *rest = library_rag_reranker_providers()
+    return [(f"{default} (default)", default)] + [(name, name) for name in rest]
+
+
+def normalise_library_rag_reranker_provider(value: Any) -> str:
+    """Return a safe reranker provider value for the Select widget.
+
+    Args:
+        value: Raw profile or draft value.
+
+    Returns:
+        The provider name when it is one this build can dispatch, else
+        ``DEFAULT_RERANKER_PROVIDER`` -- what a blank field actually
+        resolves to at run time (``RerankingConfig``'s own default), so for
+        a blank value the control shows the provider that would really be
+        billed. A name this build does not register (a hand-edited profile
+        file, a provider from a newer build) resolves there too rather than
+        raising ``InvalidSelectValueError`` out of ``compose()`` -- so in
+        THAT branch the control shows the default while the profile still
+        carries the unrecognised name. That branch IS repairable: the
+        reranker-provider change guard no longer folds an unrecognised
+        loaded value back (see ``settings_screen``'s
+        ``handle_library_rag_reranker_provider_changed``), so picking a
+        registered provider over it stages and saves
+        (``Tests/UI/test_settings_rag_profile_region.py::
+        test_an_unrecognised_stored_provider_is_repairable_from_the_picker``).
+        Left unrepaired, the stored name reaches ``chat_api_call``, which
+        cannot route it, and the results screen discloses the skip.
+    """
+    text = str(value).strip()
+    if not text:
+        return DEFAULT_RERANKER_PROVIDER
+    return (
+        text if text in library_rag_reranker_providers() else DEFAULT_RERANKER_PROVIDER
+    )
 
 
 def validate_library_rag_defaults(

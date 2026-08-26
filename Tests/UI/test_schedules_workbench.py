@@ -6,6 +6,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Horizontal
 from textual.widgets import Button, DataTable, Input, Static
 
@@ -73,7 +77,7 @@ class _MockSchedulingServiceMixin:
         pass
 
 
-class WorkbenchTestApp(App):
+class WorkbenchTestApp(ConsolidatedCSSApp):
     """Minimal test app that may not expose a real SchedulingService."""
 
     scheduling_service = None
@@ -119,7 +123,7 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
         return True
 
 
-class WorkbenchTestAppWithService(App):
+class WorkbenchTestAppWithService(ConsolidatedCSSApp):
     """Test app with a mock scheduling service."""
 
     def __init__(self, *args, **kwargs) -> None:
@@ -156,7 +160,7 @@ class MockSchedulingServiceWithWatchlist(_MockSchedulingServiceMixin):
         ]
 
 
-class WorkbenchTestAppWithMixedService(App):
+class WorkbenchTestAppWithMixedService(ConsolidatedCSSApp):
     """Test app with a mixed reminder + watchlist scheduling service."""
 
     scheduling_service = MockSchedulingServiceWithWatchlist()
@@ -335,19 +339,19 @@ class FailingMockSchedulingService(_MockSchedulingServiceMixin):
         raise RuntimeError("service unavailable")
 
 
-class WorkbenchTestAppWithEmptyService(App):
+class WorkbenchTestAppWithEmptyService(ConsolidatedCSSApp):
     """Test app with an empty scheduling service."""
 
     scheduling_service = EmptyMockSchedulingService()
 
 
-class WorkbenchTestAppWithDistinctMetadata(App):
+class WorkbenchTestAppWithDistinctMetadata(ConsolidatedCSSApp):
     """Test app with a scheduling service returning synced metadata."""
 
     scheduling_service = DistinctMetadataMockSchedulingService()
 
 
-class WorkbenchTestAppWithFailingService(App):
+class WorkbenchTestAppWithFailingService(ConsolidatedCSSApp):
     """Test app with a failing scheduling service."""
 
     scheduling_service = FailingMockSchedulingService()
@@ -473,7 +477,7 @@ async def test_conflict_card_shows_for_conflict_status():
         async def list_tasks(self):
             return await self.list_reminders()
 
-    class WorkbenchTestAppWithConflict(App):
+    class WorkbenchTestAppWithConflict(ConsolidatedCSSApp):
         scheduling_service = ConflictMockSchedulingService()
 
     async with WorkbenchTestAppWithConflict().run_test() as pilot:
@@ -649,7 +653,7 @@ class ToggleFailingMockSchedulingService(_MockSchedulingServiceMixin):
         return await self.list_reminders()
 
 
-class WorkbenchTestAppWithToggleFailingService(App):
+class WorkbenchTestAppWithToggleFailingService(ConsolidatedCSSApp):
     """Test app whose service succeeds on first load, then fails."""
 
     scheduling_service = ToggleFailingMockSchedulingService()
@@ -707,7 +711,7 @@ class RecordingMockSchedulingService(_MockSchedulingServiceMixin):
         self._deleted = True
 
 
-class WorkbenchTestAppWithRecordingService(App):
+class WorkbenchTestAppWithRecordingService(ConsolidatedCSSApp):
     """Test app with a recording scheduling service."""
 
     def __init__(self, *args, **kwargs):

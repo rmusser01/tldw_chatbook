@@ -39,7 +39,11 @@ from tldw_chatbook.Subscriptions.feed_server import (
     is_loopback_bind,
 )
 
-pytestmark = pytest.mark.unit
+# Network opt-in (task-15111): this module binds a real briefings feed
+# server on an ephemeral loopback port and fetches from it.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = [pytest.mark.unit, pytest.mark.allow_network]
 
 
 def _raw_http_request(port: int, request_bytes: bytes, timeout: float = 5.0) -> bytes:

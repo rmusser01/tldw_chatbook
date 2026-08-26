@@ -1,6 +1,6 @@
 """Vertical (up/down) caret movement in the Console composer.
 
-The composer already grows to `MAX_DRAFT_ROWS` (4) wrapped rows, but the
+The composer already grows to `MAX_DRAFT_ROWS` (8) wrapped rows, but the
 caret could only move left/right/home/end -- never up/down -- inside a
 wrapped or multi-line draft. `ConsoleComposerBar.move_cursor_up`/
 `move_cursor_down` add row-stepping caret movement; `ChatScreen.on_key`
@@ -117,6 +117,37 @@ async def test_down_from_the_last_row_returns_false_and_moves_nothing():
 
         assert moved is False
         assert composer.cursor_index == before
+
+
+def test_middle_collapsed_paste_uses_the_actual_predecessor_and_maps_caret():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_text("tail")
+    first_token_end = len(f"Pasted text | {len(first)} characters | Expand")
+    composer.position_cursor_from_display_index(first_token_end)
+
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first + "\n" + second + "tail"
+    assert composer.cursor_index == len(first) + 1 + len(second)
+    assert composer._canonical_index_at_display(first_token_end) == len(first)
+    assert composer._cursor_display_index() == (
+        first_token_end + 1 + len(f"Pasted text | {len(second)} characters | Expand")
+    )
+
+
+def test_collapsed_paste_before_first_segment_has_no_synthetic_prefix_boundary():
+    pasted = "P" * 80
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.load_draft("tail")
+    composer.position_cursor_from_display_index(0)
+
+    composer.insert_pasted_text(pasted)
+
+    assert composer.draft_text() == pasted + "tail"
+    assert composer.cursor_index == len(pasted)
 
 
 @pytest.mark.asyncio
@@ -264,7 +295,7 @@ async def test_on_key_only_consumes_up_and_down_when_the_move_actually_happened(
 
 
 # ---------------------------------------------------------------------------
-# Windowed drafts (>4 rows): the caret-following window must re-window on Up
+# Windowed drafts (>MAX_DRAFT_ROWS): the caret-following window must re-window on Up
 # ---------------------------------------------------------------------------
 
 
@@ -279,20 +310,20 @@ async def test_moving_up_above_the_visible_window_scrolls_it_to_follow_the_caret
     app, _ = _ready_host()
     host = _CssTrueConsoleHarness(app)
     async with host.run_test(size=APP_SIZE) as pilot:
-        text = "\n".join(f"LINE{i}" for i in range(8))
+        text = "\n".join(f"LINE{i}" for i in range(10))
         composer = await _focused_composer(host, pilot, text)
-        assert composer.cursor_index == len(text)  # row7 (LINE7), the tail.
+        assert composer.cursor_index == len(text)  # row9 (LINE9), the tail.
 
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         initial_row0 = visible_draft.render_line(0).text
         assert "LINE0" not in initial_row0
 
-        for _ in range(7):
+        for _ in range(9):
             assert composer.move_cursor_up() is True
             await pilot.pause()
 
         # Every "LINEn" row is exactly 5 characters, so climbing straight up
-        # preserves the starting column (5, the tail of "LINE7") the whole
+        # preserves the starting column (5, the tail of "LINE9") the whole
         # way -- no clamp is ever needed -- landing at the tail of "LINE0",
         # not column 0.
         assert composer.cursor_index == 5
@@ -436,8 +467,8 @@ async def test_up_from_the_first_column_after_a_whitespace_wrap_boundary_ascends
 
 @pytest.mark.asyncio
 async def test_windowed_draft_with_unequal_row_lengths_clamps_while_climbing():
-    """Windowed (>4-row) draft with genuinely UNEQUAL row lengths -- the
-    original windowed test used 8 equal-length rows, which the report
+    """Windowed (>8-row) draft with genuinely UNEQUAL row lengths -- the
+    original windowed test used equal-length rows, which the report
     itself noted meant "no clamp is ever needed"; this one forces a clamp
     mid-climb (row2 is 1 character) while also exercising two no-clamp
     transitions, cross-checked against hand-derived offsets from the same
@@ -446,10 +477,20 @@ async def test_windowed_draft_with_unequal_row_lengths_clamps_while_climbing():
     app, _ = _ready_host()
     host = _CssTrueConsoleHarness(app)
     async with host.run_test(size=APP_SIZE) as pilot:
-        rows = ["SENT0", "B" * 20, "C", "D" * 15, "EE"]
+        rows = [
+            "SENT0",
+            "B" * 20,
+            "C",
+            "D" * 15,
+            "E" * 7,
+            "F" * 7,
+            "G" * 7,
+            "H" * 7,
+            "II",
+        ]
         text = "\n".join(rows)
         composer = await _focused_composer(host, pilot, text)
-        assert composer.cursor_index == len(text)  # tail: row4 ("EE"), col 2.
+        assert composer.cursor_index == len(text)  # tail: row8 ("II"), col 2.
 
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         initial_painted = "".join(
@@ -460,11 +501,11 @@ async def test_windowed_draft_with_unequal_row_lengths_clamps_while_climbing():
 
         # Hand-derived from the same row boundaries `_wrap_draft_line_slices`
         # produces for this text (verified independently: row0 "SENT0" [0,5),
-        # row1 "B"*20 [6,26), row2 "C" [27,28), row3 "D"*15 [29,44), row4
-        # "EE" [45,47)). Column carried from row4 (2) clamps to row2's
-        # single character (up#2, 2 -> 1); every other step carries its
+        # row1 "B"*20 [6,26), row2 "C" [27,28), row3 "D"*15 [29,44), rows
+        # 4-7 are seven characters each, and row8 is "II". Column 2 clamps
+        # to row2's single character; every other step carries its
         # column unclamped.
-        expected_after_each_up = [31, 28, 7, 1]
+        expected_after_each_up = [71, 63, 55, 47, 31, 28, 7, 1]
 
         for expected in expected_after_each_up:
             assert composer.move_cursor_up() is True

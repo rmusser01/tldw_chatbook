@@ -27,7 +27,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_switcher_state import (
     ConsoleConversationBrowserInputRow,
 )
-from tldw_chatbook.UI.Screens.chat_screen import (
+from tldw_chatbook.UI.Console_Modules.frame import (
     CONSOLE_FOCUS_FRAME_BORDER,
     CONSOLE_FRAME_BORDER,
 )
@@ -105,9 +105,7 @@ async def test_composer_pageup_scrolls_transcript_keyboard_only():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         assert transcript.max_scroll_y > 0
         bottom = transcript.scroll_y
 
@@ -174,10 +172,8 @@ async def test_switcher_arrow_keys_move_focus_through_results():
 
 
 @pytest.mark.asyncio
-async def test_f6_rail_stop_paints_accent_frame_and_restores_on_leave():
-    """TASK-359: the rail F6 stop must be as visible as the other two —
-    the inline region border swaps to the focus accent while focus is
-    inside the rail, and restores when it leaves."""
+async def test_f6_rail_stop_paints_owned_divider_and_restores_on_leave():
+    """F6 emphasizes one owned divider and a non-color control cue."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
@@ -187,19 +183,35 @@ async def test_f6_rail_stop_paints_accent_frame_and_restores_on_leave():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         _select_llamacpp_console(console)
+        # The focus-frame contract needs the expanded rail; current Console
+        # startup may leave Context collapsed while Inspector owns the band.
+        console._set_console_rail_preference(
+            left_open=True,
+            notify_on_failure=False,
+        )
+        await pilot.pause()
         rail = console.query_one("#console-left-rail")
+        collapse = console.query_one("#console-context-rail-collapse")
+        before = (rail.region, rail.content_region)
 
         from textual.color import Color
 
         console._focus_console_workbench_target("console-left-rail")
         await pilot.pause()
-        assert rail.styles.border_top[1] == Color.parse(
-            CONSOLE_FOCUS_FRAME_BORDER[1]
-        )
+        assert rail.styles.border_right[1] == Color.parse(CONSOLE_FOCUS_FRAME_BORDER[1])
+        assert rail.styles.border_top[0] in {"", "none"}
+        assert rail.styles.border_bottom[0] in {"", "none"}
+        assert rail.styles.border_left[0] in {"", "none"}
+        assert collapse.styles.text_style.bold
+        assert collapse.styles.text_style.underline
+        assert (rail.region, rail.content_region) == before
 
         console._focus_console_workbench_target("console-native-composer")
         await pilot.pause()
-        assert rail.styles.border_top[1] == Color.parse(CONSOLE_FRAME_BORDER[1])
+        assert rail.styles.border_right[1] == Color.parse(CONSOLE_FRAME_BORDER[1])
+        assert not collapse.styles.text_style.bold
+        assert not collapse.styles.text_style.underline
+        assert (rail.region, rail.content_region) == before
 
 
 @pytest.mark.asyncio
@@ -222,17 +234,13 @@ async def test_console_shell_drops_header_at_small_height():
         await _wait_for_selector(console, pilot, "#console-shell")
         shell = console.query_one("#console-shell")
 
-        console._adapt_console_shell_to_height(
-            Resize(Size(97, 30), Size(97, 30))
-        )
+        console._adapt_console_shell_to_height(Resize(Size(97, 30), Size(97, 30)))
         await pilot.pause()
         assert shell.has_class("-console-compact"), (
             "small height must drop the header banner to preserve the composer"
         )
 
-        console._adapt_console_shell_to_height(
-            Resize(Size(125, 38), Size(125, 38))
-        )
+        console._adapt_console_shell_to_height(Resize(Size(125, 38), Size(125, 38)))
         await pilot.pause()
         assert not shell.has_class("-console-compact"), (
             "ample height must restore the header banner"

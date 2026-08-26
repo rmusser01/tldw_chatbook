@@ -339,6 +339,61 @@ class TestTabNavigationProvider:
         assert any("Library — Skills" in text for text in tab_texts)
 
     @pytest.mark.asyncio
+    async def test_palette_library_skills_command_opens_hidden_starter_route(
+        self,
+    ):
+        """The mounted Skills palette command bypasses Starter rail filtering."""
+        from Tests.UI.app_factory import _build_test_app
+        from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
+        from tldw_chatbook.Library.library_shell_state import (
+            LIBRARY_ROW_BROWSE_SKILLS,
+        )
+        from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+        app = _build_test_app()
+        app.app_config["_first_run"] = False
+        app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+            "lifecycle"
+        ] = "starter"
+        async with app.run_test(size=(170, 48)) as pilot:
+            for _ in range(200):
+                await pilot.pause()
+                if getattr(app, "_initial_screen_pushed", False):
+                    break
+            else:
+                pytest.fail("test app did not finish initial navigation")
+            provider = TabNavigationProvider(screen=app.screen)
+            matcher = MagicMock()
+            matcher.match.return_value = 1.0
+            matcher.highlight.side_effect = lambda text: text
+            provider.matcher = MagicMock(return_value=matcher)
+            hits = []
+            async for hit in provider.search("Library — Skills"):
+                hits.append(hit)
+            command = next(
+                hit
+                for hit in hits
+                if hit.text == "Tab Navigation: Library — Skills"
+            )
+
+            command.command()
+            for _ in range(200):
+                await pilot.pause()
+                if isinstance(app.screen, LibraryScreen) and app.screen.query(
+                    "#library-skills-canvas"
+                ):
+                    break
+            else:
+                pytest.fail("palette command did not mount the Library Skills route")
+
+            screen = app.screen
+            assert isinstance(screen, LibraryScreen)
+            assert screen._library_lifecycle is LibraryLifecycle.STARTER
+            assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+            assert screen.query_one("#library-skills-canvas")
+            assert not screen.query(f"#library-row-{LIBRARY_ROW_BROWSE_SKILLS}")
+
+    @pytest.mark.asyncio
     async def test_search_uses_destination_labels_without_duplicates(
         self, tab_provider
     ):
@@ -543,11 +598,12 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.discover():
             hits.append(hit)
 
-        assert len(hits) == 4  # Popular actions defined in discover method
+        assert len(hits) == 5  # Popular actions defined in discover method
         action_names = [hit.text for hit in hits]
         assert any("New Chat" in name for name in action_names)
         assert any("New Note" in name for name in action_names)
         assert any("Search All" in name for name in action_names)
+        assert any("Toggle Focus Mode" in name for name in action_names)
 
     @pytest.mark.asyncio
     async def test_search_shows_all_actions(self, quick_actions_provider):
@@ -556,10 +612,11 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.search("quick"):
             hits.append(hit)
 
-        assert len(hits) == 5  # All actions defined in search method
+        assert len(hits) == 6  # All actions defined in search method
         action_texts = [hit.text for hit in hits]
         assert any("New Chat Conversation" in text for text in action_texts)
         assert any("Import Media" in text for text in action_texts)
+        assert any("Toggle Focus Mode" in text for text in action_texts)
 
     @pytest.mark.asyncio
     async def test_search_excludes_unwired_actions(self, quick_actions_provider):

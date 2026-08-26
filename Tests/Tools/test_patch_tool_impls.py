@@ -5,9 +5,11 @@ import pytest
 
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 from tldw_chatbook.Tools.patch_tool_impls import (
+    FilesystemPatchError,
     PATCH_MAX_BYTES,
     PATCH_MAX_FILES,
     PATCH_MAX_HUNKS,
+    parse_patch_targets,
     patch_files,
 )
 
@@ -63,6 +65,58 @@ def test_dry_run_writes_nothing(tmp_path):
     result = patch_files(CREATE_DIFF, workspace_root=ws, dry_run=True)
     assert "would patch new.txt" in result
     assert not (ws / "new.txt").exists()
+
+
+def test_parse_patch_targets_reuses_bounded_parser_and_normalizes_paths():
+    plans = parse_patch_targets(MODIFY_DIFF + CREATE_DIFF)
+
+    assert [(plan.action, plan.new_path) for plan in plans] == [
+        ("modify", "notes.txt"),
+        ("create", "new.txt"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("diff_text", "reason"),
+    [
+        ("not a diff", "invalid_diff"),
+        (
+            "--- a/old.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n",
+            "delete_not_supported",
+        ),
+        (
+            "--- a/old.txt\n+++ b/new.txt\n@@ -1 +1 @@\n-old\n+new\n",
+            "rename_not_supported",
+        ),
+    ],
+)
+def test_parse_patch_targets_preserves_parser_reason_codes(diff_text, reason):
+    with pytest.raises(FilesystemPatchError) as caught:
+        parse_patch_targets(diff_text)
+
+    assert caught.value.reason_code == reason
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_patch_execution_and_dry_run_use_shared_target_parser(
+    monkeypatch, tmp_path, dry_run
+):
+    import tldw_chatbook.Tools.patch_tool_impls as patch_module
+
+    ws = _ws(tmp_path)
+    (ws / "notes.txt").write_text("alpha\nbeta\ngamma\n")
+    calls = []
+    real_parser = patch_module.parse_patch_targets
+
+    def recording_parser(diff_text):
+        calls.append(diff_text)
+        return real_parser(diff_text)
+
+    monkeypatch.setattr(patch_module, "parse_patch_targets", recording_parser)
+
+    patch_files(MODIFY_DIFF, workspace_root=ws, dry_run=dry_run)
+
+    assert calls == [MODIFY_DIFF]
 
 
 def test_context_mismatch(tmp_path):

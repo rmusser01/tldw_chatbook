@@ -1,12 +1,17 @@
 """Mounted tests for the Personas inspector pane."""
 
 import pytest
-from textual.app import App
+from textual.message import Message
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
 )
+from tldw_chatbook.Widgets.Persona_Widgets import personas_messages
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     ConversationRowSelected,
 )
@@ -19,9 +24,387 @@ def _row_text(item: ListItem) -> str:
     return str(item.query_one(Static).renderable)
 
 
-class InspectorApp(App):
+class InspectorApp(ConsolidatedCSSApp):
+    def __init__(self):
+        super().__init__()
+        self.buddy_messages = []
+        self.actor_pack_export_messages = []
+
     def compose(self):
         yield PersonasInspectorPane(id="personas-inspector-pane")
+
+    def on_persona_buddy_action_requested(self, message) -> None:
+        self.buddy_messages.append(message)
+
+    def on_actor_pack_export_requested(self, message) -> None:
+        self.actor_pack_export_messages.append(message)
+
+
+async def test_actor_pack_export_message_is_typed_frozen_and_slotted():
+    message_type = getattr(personas_messages, "ActorPackExportRequested", None)
+    assert message_type is not None
+    assert message_type.__slots__ == ("_payload",)
+    assert "__dict__" not in message_type.__slots__
+    assert message_type.set_sender is Message.set_sender
+    assert message_type.stop is Message.stop
+
+    message = message_type(
+        actor_kind="persona",
+        source="local",
+        local_actor_id="persona-7",
+        actor_revision=4,
+    )
+
+    assert (
+        message.actor_kind,
+        message.source,
+        message.local_actor_id,
+        message.actor_revision,
+    ) == ("persona", "local", "persona-7", 4)
+    with pytest.raises(AttributeError):
+        message.actor_revision = 5
+
+
+@pytest.mark.parametrize("size", ((170, 50), (80, 24)))
+@pytest.mark.parametrize("actor_kind", ("character", "persona"))
+async def test_eligible_local_actor_pack_action_is_labelled_focusable_and_typed(
+    size, actor_kind
+):
+    app = InspectorApp()
+    async with app.run_test(size=size) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        actor_id = "7" if actor_kind == "character" else "persona-7"
+        pane.show_selection(name="Portable", kind=actor_kind)
+        pane.set_actor_pack_export_state(
+            source="local",
+            actor_kind=actor_kind,
+            local_actor_id=actor_id,
+            actor_revision=4,
+            eligible=True,
+        )
+        await pilot.pause()
+
+        button = pane.query_one("#personas-export-actor-pack", Button)
+        assert str(button.label) == "Export Actor Pack"
+        assert button.display is True
+        assert button.disabled is False
+        button.focus(scroll_visible=True)
+        await pilot.pause()
+        assert button.has_focus is True
+        await pilot.click("#personas-export-actor-pack")
+        await pilot.pause()
+
+        message = app.actor_pack_export_messages[-1]
+        assert (
+            message.actor_kind,
+            message.source,
+            message.local_actor_id,
+            message.actor_revision,
+        ) == (actor_kind, "local", actor_id, 4)
+
+
+async def test_server_actor_pack_action_names_save_local_copy_recovery():
+    app = InspectorApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Remote", kind="persona")
+        pane.set_actor_pack_export_state(
+            source="server",
+            actor_kind="persona",
+            local_actor_id="persona-7",
+            actor_revision=4,
+            eligible=True,
+            reason="Save a local copy first",
+        )
+        await pilot.pause()
+
+        button = pane.query_one("#personas-export-actor-pack", Button)
+        assert button.display is True
+        assert button.disabled is True
+        assert button.tooltip == "Save a local copy first"
+
+
+async def test_corrupt_or_missing_actor_pack_selection_stays_disabled():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Broken", kind="character")
+        pane.set_actor_pack_export_state(
+            source="local",
+            actor_kind="character",
+            local_actor_id="7",
+            actor_revision=4,
+            eligible=False,
+            reason="Actor or portrait is unavailable. Refresh and try again.",
+        )
+        await pilot.pause()
+
+        button = pane.query_one("#personas-export-actor-pack", Button)
+        assert button.disabled is True
+        assert (
+            button.tooltip == "Actor or portrait is unavailable. Refresh and try again."
+        )
+
+
+async def test_persona_buddy_action_message_is_typed_frozen_and_slotted():
+    message_type = getattr(personas_messages, "PersonaBuddyActionRequested", None)
+    assert message_type is not None
+    assert message_type.__slots__ == ("_payload",)
+    assert "__dict__" not in message_type.__slots__
+    assert message_type.set_sender is Message.set_sender
+    assert message_type.prevent_default is Message.prevent_default
+    assert message_type.stop is Message.stop
+
+    message = message_type(
+        action="use",
+        source="local",
+        persona_id="persona-7",
+        revision=4,
+    )
+
+    assert (message.action, message.source, message.persona_id, message.revision) == (
+        "use",
+        "local",
+        "persona-7",
+        4,
+    )
+    with pytest.raises(AttributeError):
+        message.action = "show"
+
+
+async def test_persona_buddy_action_message_uses_normal_textual_delivery():
+    app = InspectorApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        message = personas_messages.PersonaBuddyActionRequested(
+            action="use",
+            source="local",
+            persona_id="persona-7",
+            revision=4,
+        )
+
+        pane.post_message(message)
+        await pilot.pause()
+
+        assert app.buddy_messages == [message]
+
+
+@pytest.mark.parametrize(
+    ("button_id", "label", "action"),
+    (
+        ("#personas-buddy-use", "Use for Buddy", "use"),
+        ("#personas-buddy-show", "Show Buddy", "show"),
+        ("#personas-buddy-close", "Close Buddy", "close"),
+        ("#personas-buddy-disable", "Disable Buddy", "disable"),
+    ),
+)
+async def test_active_local_persona_buddy_actions_are_explicit_and_typed(
+    button_id: str,
+    label: str,
+    action: str,
+):
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Archivist",
+            kind="persona",
+            source="local",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+            profile_current=True,
+        )
+        pane.set_buddy_status(
+            source="local",
+            persona_id="persona-7",
+            enabled=True,
+            open=action != "show",
+        )
+        await pilot.pause()
+
+        button = pilot.app.query_one(button_id, Button)
+        assert str(button.label) == label
+        assert button.disabled is False
+        await pilot.click(button_id)
+        await pilot.pause()
+
+        message = app.buddy_messages[-1]
+        assert (
+            message.action,
+            message.source,
+            message.persona_id,
+            message.revision,
+        ) == (
+            action,
+            "local",
+            "persona-7",
+            4,
+        )
+
+
+async def test_server_persona_buddy_actions_are_disabled_with_exact_recovery_copy():
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Remote Archivist",
+            kind="persona",
+            source="server",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+            profile_current=True,
+        )
+        await pilot.pause()
+
+        for button_id in (
+            "#personas-buddy-use",
+            "#personas-buddy-show",
+            "#personas-buddy-close",
+            "#personas-buddy-disable",
+        ):
+            button = pilot.app.query_one(button_id, Button)
+            assert button.disabled is True
+            assert button.tooltip == "Save a local copy first"
+
+
+async def test_non_owner_highlight_only_enables_use_with_truthful_tooltip():
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Navigator",
+            kind="persona",
+            source="local",
+            entity_id="persona-2",
+            revision=5,
+            active=True,
+            profile_current=True,
+        )
+        pane.set_buddy_status(
+            source="local",
+            persona_id="persona-1",
+            enabled=True,
+            open=True,
+        )
+        await pilot.pause()
+
+        assert pane.query_one("#personas-buddy-use", Button).disabled is False
+        for button_id in (
+            "#personas-buddy-show",
+            "#personas-buddy-close",
+            "#personas-buddy-disable",
+        ):
+            button = pane.query_one(button_id, Button)
+            assert button.disabled is True
+            assert button.tooltip == "Select the Persona currently used by Buddy"
+
+
+async def test_persona_highlight_alone_emits_no_buddy_action():
+    app = InspectorApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Archivist",
+            kind="persona",
+            source="local",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+            profile_current=True,
+        )
+        await pilot.pause()
+
+        assert app.buddy_messages == []
+
+
+@pytest.mark.parametrize("size", ((170, 50), (80, 24)))
+async def test_buddy_actions_keep_exact_labels_and_focus_without_keybindings(size):
+    app = InspectorApp()
+    async with app.run_test(size=size) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Archivist",
+            kind="persona",
+            source="local",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+            profile_current=True,
+        )
+        await pilot.pause()
+
+        expected = (
+            ("#personas-buddy-use", "Use for Buddy"),
+            ("#personas-buddy-show", "Show Buddy"),
+            ("#personas-buddy-close", "Close Buddy"),
+            ("#personas-buddy-disable", "Disable Buddy"),
+        )
+        for button_id, label in expected:
+            pane.set_buddy_status(
+                source="local",
+                persona_id="persona-7",
+                enabled=True,
+                open=button_id != "#personas-buddy-show",
+            )
+            button = pilot.app.query_one(button_id, Button)
+            assert str(button.label) == label
+            assert button.can_focus is True
+            button.focus(scroll_visible=True)
+            await pilot.pause()
+            assert button.has_focus is True
+
+        await pilot.press("u", "s", "c", "d")
+        assert app.buddy_messages == []
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "revision", "active"),
+    ((None, 4, True), ("persona-7", None, True), ("persona-7", 4, False)),
+)
+async def test_buddy_rejects_incomplete_or_inactive_local_persona(
+    entity_id, revision, active
+):
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Archivist",
+            kind="persona",
+            source="local",
+            entity_id=entity_id,
+            revision=revision,
+            active=active,
+            profile_current=True,
+        )
+        await pilot.pause()
+
+        for button in pilot.app.query(".persona-buddy-action").results(Button):
+            assert button.disabled is True
+
+
+async def test_buddy_requires_current_complete_profile_not_cached_eligibility():
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Cached Persona",
+            kind="persona",
+            source="local",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+            profile_current=False,
+        )
+        await pilot.pause()
+
+        for button in pilot.app.query(".persona-buddy-action").results(Button):
+            assert button.disabled is True
+            assert (
+                button.tooltip
+                == "Persona details are unavailable. Refresh and try again."
+            )
 
 
 async def test_default_state_shows_no_selection_and_disabled_actions():
@@ -38,9 +421,10 @@ async def test_default_state_shows_no_selection_and_disabled_actions():
             "#personas-delete",
         ):
             assert pilot.app.query_one(button_id, Button).disabled is True
-        assert str(
-            pilot.app.query_one("#personas-readiness-console", Static).renderable
-        ) == "Pick a character or persona to start chatting."
+        assert (
+            str(pilot.app.query_one("#personas-readiness-console", Static).renderable)
+            == "Pick a character or persona to start chatting."
+        )
 
 
 async def test_no_selection_shows_single_guidance_line():
@@ -49,9 +433,7 @@ async def test_no_selection_shows_single_guidance_line():
     "Validation: OK"."""
     app = InspectorApp()
     async with app.run_test() as pilot:
-        assert (
-            pilot.app.query_one("#personas-inspector-actions").display is False
-        )
+        assert pilot.app.query_one("#personas-inspector-actions").display is False
         assert (
             pilot.app.query_one("#personas-conversations-header", Static).display
             is False
@@ -61,18 +443,15 @@ async def test_no_selection_shows_single_guidance_line():
             is False
         )
         assert (
-            pilot.app.query_one("#personas-readiness-header", Static).display
-            is False
+            pilot.app.query_one("#personas-readiness-header", Static).display is False
         )
         assert (
-            pilot.app.query_one("#personas-validation-summary", Static).display
-            is False
+            pilot.app.query_one("#personas-validation-summary", Static).display is False
         )
         guidance = pilot.app.query_one("#personas-readiness-console", Static)
         assert guidance.display is True
         assert (
-            str(guidance.renderable)
-            == "Pick a character or persona to start chatting."
+            str(guidance.renderable) == "Pick a character or persona to start chatting."
         )
 
 
@@ -83,9 +462,7 @@ async def test_selection_reveals_inspector_sections():
         pane = pilot.app.query_one(PersonasInspectorPane)
         pane.show_selection(name="Detective Sam", kind="character")
         await pilot.pause()
-        assert (
-            pilot.app.query_one("#personas-inspector-actions").display is True
-        )
+        assert pilot.app.query_one("#personas-inspector-actions").display is True
         assert (
             pilot.app.query_one("#personas-conversations-header", Static).display
             is True
@@ -94,13 +471,9 @@ async def test_selection_reveals_inspector_sections():
             pilot.app.query_one("#personas-conversations-list", ListView).display
             is True
         )
+        assert pilot.app.query_one("#personas-readiness-header", Static).display is True
         assert (
-            pilot.app.query_one("#personas-readiness-header", Static).display
-            is True
-        )
-        assert (
-            pilot.app.query_one("#personas-validation-summary", Static).display
-            is True
+            pilot.app.query_one("#personas-validation-summary", Static).display is True
         )
 
 
@@ -154,15 +527,11 @@ async def test_non_character_selections_hide_conversations_section():
             pane.show_selection(name="Item", kind=kind)
             await pilot.pause()
             assert (
-                pilot.app.query_one(
-                    "#personas-conversations-header", Static
-                ).display
+                pilot.app.query_one("#personas-conversations-header", Static).display
                 is False
             ), kind
             assert (
-                pilot.app.query_one(
-                    "#personas-conversations-list", ListView
-                ).display
+                pilot.app.query_one("#personas-conversations-list", ListView).display
                 is False
             ), kind
         # ...and a character selection reveals it again.
@@ -285,7 +654,7 @@ async def test_disabled_tts_checkbox_stays_legible():
 
     from textual.color import Color
 
-    class StyledInspectorApp(App):
+    class StyledInspectorApp(ConsolidatedCSSApp):
         CSS_PATH = str(
             Path(__file__).resolve().parents[2]
             / "tldw_chatbook"
@@ -400,9 +769,7 @@ async def test_character_selection_renders_all_actions():
             "#personas-export-png",
             "#personas-delete",
         ):
-            assert (
-                pilot.app.query_one(button_id, Button).display is True
-            ), button_id
+            assert pilot.app.query_one(button_id, Button).display is True, button_id
 
 
 async def test_persona_selection_hides_only_export_png():
@@ -421,9 +788,7 @@ async def test_persona_selection_hides_only_export_png():
             "#personas-export-json",
             "#personas-delete",
         ):
-            assert (
-                pilot.app.query_one(button_id, Button).display is True
-            ), button_id
+            assert pilot.app.query_one(button_id, Button).display is True, button_id
         assert pilot.app.query_one("#personas-export-png", Button).display is False
 
 
@@ -442,9 +807,7 @@ async def test_dictionary_selection_hides_console_and_export_actions():
             "#personas-export-json",
             "#personas-export-png",
         ):
-            assert (
-                pilot.app.query_one(button_id, Button).display is False
-            ), button_id
+            assert pilot.app.query_one(button_id, Button).display is False, button_id
         assert pilot.app.query_one("#personas-delete", Button).display is True
         # F-032: the readiness line says what DOES apply, in intent language.
         assert "Console chat is for characters and personas." in str(
@@ -466,9 +829,7 @@ async def test_lore_selection_hides_console_and_export_actions():
             "#personas-export-json",
             "#personas-export-png",
         ):
-            assert (
-                pilot.app.query_one(button_id, Button).display is False
-            ), button_id
+            assert pilot.app.query_one(button_id, Button).display is False, button_id
         assert pilot.app.query_one("#personas-delete", Button).display is True
 
 
@@ -493,9 +854,7 @@ async def test_clear_selection_restores_action_visibility():
             "#personas-export-png",
             "#personas-delete",
         ):
-            assert (
-                pilot.app.query_one(button_id, Button).display is True
-            ), button_id
+            assert pilot.app.query_one(button_id, Button).display is True, button_id
         # ...but the stack itself is hidden again until a selection returns.
         assert pilot.app.query_one("#personas-inspector-actions").display is False
         pane.show_selection(name="Detective Sam", kind="character")
@@ -542,8 +901,11 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Chat now and Send to Console draft blocked: prompts are not attachable" in str(
-            pilot.app.query_one("#personas-readiness-console", Static).renderable
+        assert (
+            "Chat now and Send to Console draft blocked: prompts are not attachable"
+            in str(
+                pilot.app.query_one("#personas-readiness-console", Static).renderable
+            )
         )
 
 
@@ -718,7 +1080,7 @@ async def test_state_pushed_before_children_mount_defers_then_replays():
     # The exact call observed crashing live, issued pre-mount:
     pane.set_console_actions_enabled(False, reason="task-2727-probe")
 
-    class LateStateApp(App):
+    class LateStateApp(ConsolidatedCSSApp):
         def compose(self):
             yield pane
 
@@ -731,3 +1093,74 @@ async def test_state_pushed_before_children_mount_defers_then_replays():
         assert "task-2727-probe" in readiness, (
             f"pre-mount push was dropped; readiness reads: {readiness!r}"
         )
+
+
+async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
+    """task-3793: the inspector portrait must not fold into black stripes.
+
+    The thumb box used to add padding 0 1 on top of max-width 24, so the
+    24-column mosaic baked by PersonasScreen._build_avatar_pixels folded at
+    22 content columns -- every folded line painted a black continuation row
+    (the striped portrait the owner reported) and the folded stack clipped
+    at max-height 10. The box is now padding-free and set_avatar_thumbnail
+    sizes the Static explicitly from the renderable grid.
+    """
+    from PIL import Image
+    from textual.containers import Container
+
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+    )
+    from tldw_chatbook.Utils.mosaic_render import mosaic_from_image
+
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        mosaic = mosaic_from_image(
+            Image.new("RGB", (820, 1230), (64, 200, 180)),
+            AVATAR_THUMB_COLS,
+            AVATAR_THUMB_LINES,
+            fit="cover",
+        )
+        pane.set_avatar_thumbnail(mosaic)
+        await pilot.pause()
+        thumb_box = pane.query_one("#personas-inspector-avatar-thumb", Container)
+        static = thumb_box.query_one(Static)
+        # Before task-3793 the painted height was ~2x the mosaic rows (fold).
+        assert static.region.height == len(mosaic.plain.split("\n"))
+        assert static.region.width <= thumb_box.content_size.width
+        padding = thumb_box.styles.padding
+        assert (padding.top, padding.right, padding.bottom, padding.left) == (
+            0,
+            0,
+            0,
+            0,
+        )
+
+
+async def test_avatar_thumbnail_falls_back_to_box_dims_for_non_text_renderable():
+    """Non-Text renderables get the thumb box dims, not a default-width Static.
+
+    Pins the documented ``explicit_cell_size`` contract (PR #1434 review):
+    when the renderable's grid cannot be read (e.g. a ``rich_pixels``
+    renderable), ``set_avatar_thumbnail`` falls back to the container box
+    (AVATAR_THUMB_COLS x AVATAR_THUMB_LINES), matching the console builder.
+    """
+    from rich.panel import Panel
+    from textual.containers import Container
+
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+    )
+
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.set_avatar_thumbnail(Panel("portrait"))
+        await pilot.pause()
+        thumb_box = pane.query_one("#personas-inspector-avatar-thumb", Container)
+        static = thumb_box.query_one(Static)
+        assert static.styles.width.value == AVATAR_THUMB_COLS
+        assert static.styles.height.value == AVATAR_THUMB_LINES

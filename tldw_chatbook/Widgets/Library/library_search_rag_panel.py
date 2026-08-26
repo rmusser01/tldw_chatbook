@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 
+from loguru import logger
 from rich.markup import escape as escape_markup
 
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Button, Collapsible, Static
 from textual.widget import Widget
 
@@ -34,21 +38,344 @@ from ...Library.library_rag_state import (
     library_rag_scope_summary,
     searching_status_line,
 )
+from ...Library.library_rechunk_service import (
+    RECHUNK_SLOT,
+    RECHUNK_WORKER_GROUP,
+    acquire_bulk_rag_slot,
+    bulk_rag_slot_in_flight,
+    format_rechunk_summary,
+    release_bulk_rag_slot,
+)
 from .library_rail import SelectAllOnFocusingClickInput
 
 
-class LibrarySearchRagPanel(VerticalScroll):
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
+
+
+class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
     """Display the source scope, query controls, and evidence results."""
+
+    #: Stable id for the legacy-chunk report line (task-12, spec §10.1) --
+    #: named here so Task 13's re-chunk control can find its sibling.
+    LEGACY_CHUNK_REPORT_LINE_ID = "library-rag-legacy-chunk-line"
+
+    #: Stable ids for task-13's re-chunk control + its summary line
+    #: (spec §10.2-§10.3).
+    RECHUNK_BUTTON_ID = "library-rag-rechunk-legacy"
+    RECHUNK_SUMMARY_ID = "library-rag-rechunk-summary"
 
     def __init__(self, state: LibraryRagPanelState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
+        # task-12 (spec §10.1): cached copy of the legacy-chunk report line
+        # fetched off the mount path. Compose re-reads this cache on every
+        # rebuild (the ingest canvas's template-name cache pattern), so the
+        # fetched line survives `sync_state` recomposes without re-querying.
+        self._legacy_chunk_report: str = ""
+
+    def sync_state(self, state: LibraryRagPanelState) -> None:
+        """Rebuild only this mounted Search/RAG panel from ``state``.
+
+        Args:
+            state: Complete Search/RAG controls and results state to render.
+        """
+        self.state = state
+        self.refresh(recompose=True)
+
+    def on_show(self) -> None:
+        """Fetch the legacy-chunk report once the canvas is actually visible.
+
+        (task-12, spec §10.1) The report is sourced through the app's
+        ``rag_admin_scope_service`` -- the ``rag.admin.observe.local``
+        action -- scheduled OFF the mount path into a worker (mount-time DB
+        populate is the documented "(0) count" trap; the ingest canvas's
+        template picker established this exact shape). The Library screen
+        remounts this canvas on every destination switch, so each visit
+        re-queries: a re-chunk (Task 13) or new ingest is reflected the
+        next time the user lands here.
+        """
+        self._request_legacy_chunk_report_refresh()
+
+    def _request_legacy_chunk_report_refresh(self) -> None:
+        """Schedule the legacy-chunk report fetch worker (once per show)."""
+        try:
+            self.run_worker(
+                self._fetch_legacy_chunk_report(),
+                group="library-rag-legacy-chunk-report",
+                exclusive=True,
+            )
+        except Exception:
+            # A worker-scheduling failure must never break the canvas.
+            return
+
+    async def _fetch_legacy_chunk_report(self) -> None:
+        """Query the legacy-chunk report line via the scope service.
+
+        TASK-21126: this is an ASYNC worker, so "off the mount path" is not
+        the same as "off the event loop" — until that task the scope
+        service evaluated the local backend's synchronous
+        ``get_template_diagnostics`` (and with it the legacy-chunk census
+        SELECT) inline here, freezing the UI for the duration. The census
+        now runs on a worker thread inside
+        ``RAGAdminScopeService._call_off_loop``; this coroutine only awaits
+        it. Keep it that way: any new work added here runs on the loop.
+
+        Consumes ONLY the payload's ``legacy_chunk_report`` field. The same
+        payload's ``capability`` / ``missing_methods`` / ``fallback_enabled``
+        are HARDCODED upstream (spec §11 item 4) and never render here --
+        surfacing them would be a fabricated health claim. Degrades quietly
+        on every failure shape (missing service, policy denial, store
+        error): the line simply stays omitted, which is also its honest
+        empty state (omit-when-empty, spec §10.1 -- a clean library shows
+        nothing rather than a zero).
+        """
+        service = getattr(self.app, "rag_admin_scope_service", None)
+        get_diagnostics = getattr(service, "get_template_diagnostics", None)
+        if not callable(get_diagnostics):
+            return
+        try:
+            payload = await get_diagnostics(mode="local")
+        except Exception:
+            return
+        report = str((payload or {}).get("legacy_chunk_report") or "").strip()
+        self._legacy_chunk_report = report
+        self._apply_legacy_chunk_report(report)
+
+    def _apply_legacy_chunk_report(self, report: str) -> None:
+        """Show/hide the mounted report line in place (no remove/mount).
+
+        Plain ``Static.update()`` + a ``display`` flip -- the same
+        yield-free class of write the screen's snapshot syncers use, so
+        this can never interleave with the panel's other refresh callers.
+
+        task-13: the re-chunk control rides the report's visibility -- it
+        is offered exactly when there is something older-engine to re-chunk
+        (a fully stamped library shows neither).
+        """
+        try:
+            line = self.query_one(
+                f"#{self.LEGACY_CHUNK_REPORT_LINE_ID}", Static
+            )
+        except NoMatches:
+            # Mid-recompose: the cache is set, so the rebuild renders it.
+            return
+        line.update(report)
+        line.display = bool(report)
+        try:
+            button = self.query_one(f"#{self.RECHUNK_BUTTON_ID}", Button)
+        except NoMatches:
+            return
+        # Never hide the control mid-run: an in-flight re-chunk keeps its
+        # button mounted (disabled) even if this refresh lands an empty
+        # report -- the summary line still has to surface.
+        button.display = bool(report) or bulk_rag_slot_in_flight(RECHUNK_SLOT)
+
+    def _legacy_chunk_report_line(self) -> Static:
+        """Build the report line ``Static`` (always mounted, display-gated).
+
+        Always mounted and shown/hidden via ``display`` rather than
+        conditionally composed -- an async-fetched, instance-cached line
+        must never depend on a remove/mount racing the panel's recompose
+        cycle. ``display = False`` removes it from the layout entirely, so
+        omit-when-empty holds visually: no line, no reserved row.
+        """
+        line = Static(
+            self._legacy_chunk_report,
+            id=self.LEGACY_CHUNK_REPORT_LINE_ID,
+            classes="library-rag-quiet-line",
+            # Service-built copy, but interpolated from DB state -- render
+            # literally, matching the panel's other quiet lines.
+            markup=False,
+        )
+        line.display = bool(self._legacy_chunk_report)
+        return line
+
+    def _rechunk_action_children(self) -> list[Widget]:
+        """The re-chunk control + its summary row (task-13, spec §10.2).
+
+        The control shares the report line's visibility (both derive from
+        the cached report): it is offered exactly when older-engine items
+        exist, so a fully stamped library shows neither. Always mounted and
+        ``display``-gated -- the same never-remove/mount rule the report
+        line follows, so a mid-run recompose cannot eat the summary.
+        """
+        shown = bool(self._legacy_chunk_report) or bulk_rag_slot_in_flight(
+            RECHUNK_SLOT
+        )
+        button = Button(
+            "Re-chunk older-engine items",
+            id=self.RECHUNK_BUTTON_ID,
+            classes="library-rag-recovery-action",
+            tooltip=(
+                "Re-chunk items persisted before the current chunking "
+                "engine through the template-aware path, then re-index "
+                "them. Runs cannot overlap a RAG index backfill."
+            ),
+        )
+        button.display = shown
+        summary = Static(
+            "",
+            id=self.RECHUNK_SUMMARY_ID,
+            classes="library-rag-quiet-line",
+            # Counts plus service-built notes -- literal, never markup.
+            markup=False,
+        )
+        summary.styles.height = 1
+        summary.display = False
+        return [button, summary]
+
+    @on(Button.Pressed, f"#{RECHUNK_BUTTON_ID}")
+    def _handle_rechunk_legacy_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._trigger_rechunk_legacy()
+
+    def _trigger_rechunk_legacy(self) -> None:
+        """Guard, then launch the re-chunk worker (spec §10.3).
+
+        The mutual in-flight guard with the Settings backfill lives in the
+        shared slot registry -- a REFUSAL with a notice, never Textual
+        worker cancellation (``exclusive=True`` CANCELS same-group workers
+        on Textual 8.2.8; the task-228 lesson, deliberately not "fixed").
+        """
+        refusal = acquire_bulk_rag_slot(RECHUNK_SLOT)
+        if refusal is not None:
+            self.app.notify(refusal, severity="warning")
+            return
+        try:
+            button = self.query_one(f"#{self.RECHUNK_BUTTON_ID}", Button)
+        except NoMatches:
+            pass
+        else:
+            button.disabled = True
+        try:
+            summary = self.query_one(f"#{self.RECHUNK_SUMMARY_ID}", Static)
+        except NoMatches:
+            pass
+        else:
+            summary.update("Re-chunking…")
+            summary.display = True
+        self._rechunk_legacy_worker()
+
+    @work(thread=True, group=RECHUNK_WORKER_GROUP, exclusive=False)
+    def _rechunk_legacy_worker(self) -> None:
+        """The re-chunk worker (spec §10.2-§10.3), on its OWN group.
+
+        ``exclusive=False`` is written out deliberately: this worker group
+        must NEVER gain exclusive semantics -- Textual 8.2.8 cancels
+        same-group workers, and the mutual exclusion with the backfill is
+        the guard slot's job (a refusal notice), not cancellation's. The
+        spec documents this as a measured deviation from CLAUDE.md gotcha
+        9; do not "fix" it back.
+
+        Thread worker (not async-on-the-loop): the per-item chunking and
+        the chunk-row transaction are long synchronous stretches, exactly
+        like the backfill worker's rationale. Services are pre-resolved
+        OUTSIDE the transient ``asyncio.run`` loop (the #700-hardened
+        pattern the backfill worker documents) so the shared RAG service
+        is never constructed for the first time inside a loop that closes
+        when this run finishes.
+        """
+        from ...RAG_Search.ingestion_indexing import (
+            get_shared_rag_service,
+            semantic_indexing_available,
+        )
+        from ...runtime_policy.types import PolicyDeniedError
+
+        try:
+            scope = getattr(self.app, "rag_admin_scope_service", None)
+            launch = getattr(scope, "rechunk_legacy_media", None)
+            if scope is None or not callable(launch):
+                self.app.call_from_thread(
+                    self.app.notify,
+                    "Re-chunk could not start: the RAG admin service is "
+                    "unavailable right now.",
+                    severity="error",
+                )
+                return
+            # §10.2.1: the whole re-index step is conditional on the
+            # semantic index being enabled/present; the summary discloses
+            # the skip. Pre-resolved here, before the transient loop.
+            rag_service = None
+            if semantic_indexing_available():
+                rag_service = get_shared_rag_service()
+            summary = asyncio.run(
+                launch(mode="local", rag_service=rag_service)
+            )
+        except PolicyDeniedError as denied:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Re-chunk was blocked by policy: {denied.user_message}",
+                severity="error",
+            )
+            return
+        except Exception as exc:
+            logger.error(f"Legacy re-chunk worker crashed: {exc}")
+            self.app.call_from_thread(
+                self.app.notify, f"Re-chunk failed: {exc}", severity="error"
+            )
+            return
+        finally:
+            release_bulk_rag_slot(RECHUNK_SLOT)
+            self.app.call_from_thread(self._finish_rechunk_run)
+        line = format_rechunk_summary(summary)
+        self.app.call_from_thread(self._apply_rechunk_summary, line)
+        self.app.call_from_thread(
+            self.app.notify, f"Re-chunk finished: {line}", severity="information"
+        )
+
+    def _apply_rechunk_summary(self, line: str) -> None:
+        """Surface the run summary (main thread)."""
+        try:
+            summary = self.query_one(f"#{self.RECHUNK_SUMMARY_ID}", Static)
+        except NoMatches:
+            return
+        summary.update(line)
+        summary.display = bool(line)
+
+    def _finish_rechunk_run(self) -> None:
+        """Re-enable the control and refresh the (now lower) report count."""
+        try:
+            button = self.query_one(f"#{self.RECHUNK_BUTTON_ID}", Button)
+        except NoMatches:
+            pass
+        else:
+            button.disabled = False
+            if not self._legacy_chunk_report and not bulk_rag_slot_in_flight(
+                RECHUNK_SLOT
+            ):
+                button.display = False
+        try:
+            summary = self.query_one(f"#{self.RECHUNK_SUMMARY_ID}", Static)
+        except NoMatches:
+            pass
+        else:
+            # A failure path never lands a summary line -- retire the
+            # in-flight placeholder so it cannot read as a stuck run.
+            # (On success this runs BEFORE the summary lands, so a real
+            # summary is never cleared.)
+            if str(summary.renderable) == "Re-chunking…":
+                summary.update("")
+                summary.display = False
+        # The report count dropped by however many items were re-chunked;
+        # refresh it in place rather than waiting for the next remount.
+        self._request_legacy_chunk_report_refresh()
 
     def compose(self) -> ComposeResult:
+        # task-2859 item 7: drop the "Library " prefix (this canvas already
+        # lives inside the Library destination) and match the rail row's
+        # own spaced "Search / RAG" (library_shell_state.py) -- the canvas
+        # used to say "Library Search/RAG", disagreeing with the rail on
+        # both the prefix and the slash spacing. NOT the same string as
+        # the cross-app "Library Search/RAG" evidence-provenance label
+        # (``OWNER_LIBRARY_RAG``/``source=`` on staged Console evidence) --
+        # that vocabulary is deliberately unchanged here.
         yield Static(
-            "Library Search/RAG",
+            "Search / RAG",
             id="library-rag-panel-title",
             classes="destination-section",
+            markup=False,
         )
         with Vertical(
             id="library-rag-query-controls",
@@ -93,6 +420,15 @@ class LibrarySearchRagPanel(VerticalScroll):
             )
             for toggle in library_rag_scope_toggle_children(self.state):
                 yield toggle
+            # task-12 (spec §10.0/§10.1): the legacy-chunk report line --
+            # "Chunked by an older engine: N items" -- lives HERE, on the
+            # Library RAG surface ADR-003 names as the owner (not Settings).
+            # Sits after the source toggles because it describes the state
+            # of those sources' chunk data. Task 13's "Re-chunk older-engine
+            # items" control joins it here (its own worker group + the
+            # §10.3 mutual in-flight guard -- never this fetch's group).
+            yield self._legacy_chunk_report_line()
+            yield from self._rechunk_action_children()
             for child in library_rag_scope_recovery_children(self.state):
                 yield child
 
@@ -615,8 +951,22 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
 
 
 def _mode_toggle_label(state: LibraryRagPanelState) -> str:
-    """Return the visible mode-cycle button label."""
-    return f"mode: {state.query_state.mode_label} ▸"
+    """Return the visible mode-toggle button label.
+
+    task-14902: a KEPT one-press toggle (a genuine two-state mode flip
+    that resets retrieval state -- a choice strip would add a press to
+    the most common action for zero information). AC#1 is satisfied at
+    the label instead: both modes render with the ``✓`` marker on the
+    active one, so the full option space is on screen and one press IS a
+    direct pick of the only other mode.
+    """
+    from ...Library.library_shell_state import library_toggle_label
+
+    return library_toggle_label(
+        "mode",
+        ("Search", "RAG Answer"),
+        0 if state.query_state.mode == "search" else 1,
+    )
 
 
 def _other_mode_label(state: LibraryRagPanelState) -> str:
@@ -725,7 +1075,11 @@ def library_rag_result_row_children(
         evidence.
     """
     selected = row.result_id == selected_result_id
-    score = library_rag_score_suffix(row.score)
+    score = library_rag_score_suffix(
+        row.score,
+        score_kind=row.score_kind,
+        vector_score=row.vector_score,
+    )
     card_children: list[Widget] = [
         Static(
             f"{index + 1}. {row.title}{score}",
@@ -814,14 +1168,44 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
     Returns:
         The widgets to mount directly below the Evidence heading.
     """
-    # Task 8: the coverage note, when there is one, is the very first thing
-    # under the heading -- ahead of the row list. `state.coverage_note` is
-    # only ever non-empty alongside `state.results` (see
-    # `library_rag_coverage_note`'s empty-rows guard), so prepending it
-    # unconditionally here is a no-op in every other branch below rather
-    # than needing its own conditional per branch.
+    # Task 8: the coverage note, when there is one, sits ahead of the row
+    # list -- directly under the heading on every branch except the results
+    # branch below, where task-2859's "N results for 'query'." headline
+    # comes first. It is prepended to EVERY branch: `state.coverage_note`
+    # used to be non-empty only alongside `state.results`, but a routing
+    # disclosure (RAG-port P0: "this profile ran keyword-only", "no keyword
+    # leg for the selected sources") survives the zero-row outcome, and zero
+    # rows is exactly when it is most diagnostic -- the quiet no-match line
+    # otherwise reads as a verdict on an index the search never queried.
+    # Branches whose state has nothing to disclose prepend an empty list,
+    # i.e. are unchanged. (The scope divert that used to be the second
+    # example here retired with TASK-15020/B1: a scoped hybrid search now
+    # runs hybrid, so nothing can emit that disclosure.)
+    note_children: list[Widget] = list(library_rag_coverage_note_children(state))
     if state.results:
-        children: list[Widget] = list(library_rag_coverage_note_children(state))
+        # task-2859 item 10: "N results for 'query'" headline -- the
+        # Evidence region used to jump straight from the mode/top-k
+        # heading into the row cards with no line naming how many actually
+        # landed or what query produced them.
+        children: list[Widget] = []
+        if state.results_count_line:
+            # NOT markup=False: `results_count_line` is already
+            # `escape_markup`-escaped (matching `coverage_note`/the empty-
+            # state quiet copy below) -- disabling markup parsing here
+            # would show the escape backslashes verbatim instead of
+            # un-escaping them back to literal brackets.
+            children.append(
+                Static(
+                    state.results_count_line,
+                    id="library-rag-results-count-line",
+                    classes="library-rag-quiet-line",
+                )
+            )
+        # (rebase note) Reuse the already-computed `note_children` rather
+        # than recomputing `library_rag_coverage_note_children(state)` --
+        # dev's variable and the branch's headline are both real; only the
+        # redundant recomputation was dropped.
+        children.extend(note_children)
         for index, result in enumerate(state.results):
             children.extend(
                 library_rag_result_row_children(result, index, state.selected_result_id)
@@ -841,7 +1225,7 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
                 )
         return children
     if state.retrieval_status == "searching":
-        return [
+        return note_children + [
             Static(
                 searching_status_line(state.scope.selected_source_types),
                 id="library-rag-searching-line",
@@ -849,7 +1233,7 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
         ]
     if state.recovery_copy and state.recovery_selector:
         if state.retrieval_status == "empty":
-            return [
+            return note_children + [
                 Static(
                     # `state.searched_query`, NOT `state.query_state.query`
                     # (task-15 finding I3): the latter is live, not-yet-
@@ -865,15 +1249,17 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
                     classes="library-rag-quiet-line",
                 )
             ]
-        return [Static(state.recovery_copy, id=state.recovery_selector)]
+        return note_children + [
+            Static(state.recovery_copy, id=state.recovery_selector)
+        ]
     if not state.scope.has_available_sources:
         # No Library sources at all: the scope region's single quiet gate
         # line + "Open Import media" action are the entire guidance for
         # this state -- repeating "No evidence yet"/"Add or import
         # sources…" here would re-stack the layered dump the quiet-gate
         # principle retired (2026-07 UAT).
-        return []
-    return [
+        return note_children
+    return note_children + [
         Static(
             "No evidence yet. Run Search/RAG to populate results.",
             id="library-rag-results-empty",

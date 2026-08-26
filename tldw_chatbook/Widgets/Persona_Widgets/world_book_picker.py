@@ -11,18 +11,31 @@ from typing import Any
 
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
-class WorldBookPicker(ModalScreen[int | None]):
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`). A full refresh clears
+#: and re-appends every matching `ListItem` into the `ListView`, which
+#: should not happen on every keystroke (task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
+
+
+class WorldBookPicker(SafeModalDismissMixin, ModalScreen[int | None]):
     """Pick one world book (by int id) to attach to the current character.
 
     Args:
         world_books: ``{"world_book_id": int, "name": str}`` rows to choose from
             (already filtered to those not yet attached to the character).
     """
+
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
+    SAFE_MODAL_CONTENT = "#world-book-picker-dialog"
 
     DEFAULT_CSS = """
     WorldBookPicker { align: center middle; }
@@ -46,9 +59,10 @@ class WorldBookPicker(ModalScreen[int | None]):
         self._row_ids: list[int] = []
         self._title = title
         self._confirm_label = confirm_label
+        self._filter_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with Vertical(id="world-book-picker-dialog"):
             yield Label(self._title, markup=False)
             yield Input(placeholder="Search world books…", id="worldbook-pick-search")
             yield ListView(id="worldbook-pick-list")
@@ -79,7 +93,16 @@ class WorldBookPicker(ModalScreen[int | None]):
     @on(Input.Changed, "#worldbook-pick-search")
     def _filter(self, event: Input.Changed) -> None:
         event.stop()
-        needle = event.value.strip().lower()
+        needle = event.value
+        if self._filter_debounce_timer is not None:
+            self._filter_debounce_timer.stop()
+        self._filter_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS, lambda: self._apply_filter_debounced(needle)
+        )
+
+    def _apply_filter_debounced(self, raw_value: str) -> None:
+        self._filter_debounce_timer = None
+        needle = raw_value.strip().lower()
         rows = (
             [b for b in self._world_books if needle in str(b.get("name") or "").lower()]
             if needle
@@ -102,7 +125,7 @@ class WorldBookPicker(ModalScreen[int | None]):
     @on(Button.Pressed, "#worldbook-pick-cancel")
     def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
 
 
 __all__ = ["WorldBookPicker"]

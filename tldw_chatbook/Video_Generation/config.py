@@ -44,6 +44,7 @@ DEFAULT_MINIMAX_VIDEO_POLL_INTERVAL_SECONDS = 10
 DEFAULT_MINIMAX_VIDEO_TIMEOUT_SECONDS = 600
 
 DEFAULT_COMFYUI_BASE_URL = "http://127.0.0.1:8188"
+DEFAULT_COMFYUI_WORKFLOW = "minimax_h3_t2v.json"
 DEFAULT_COMFYUI_TIMEOUT_SECONDS = 1800
 
 DEFAULT_SD_CPP_VIDEO_STEPS = 25
@@ -139,7 +140,10 @@ def _warn_unknown_top_level_keys(raw: dict) -> None:
             else:
                 logger.warning(f"[video_generation] unknown key '{key}' is ignored")
     except Exception as e:  # never let a malformed section crash config loading
-        logger.debug(f"video_generation unknown-key scan failed: {e}")
+        logger.debug(
+            "video_generation unknown-key scan failed (error_type={})",
+            type(e).__name__,
+        )
 
 
 def _read_video_generation_toml() -> dict:
@@ -153,7 +157,11 @@ def _keyring_get(backend: str):
     try:
         return keyring.get_password("tldw_chatbook_videogen", backend)
     except Exception as e:  # keyring backend may be unavailable
-        logger.debug(f"keyring lookup failed for videogen/{backend}: {e}")
+        logger.debug(
+            "keyring lookup failed for videogen/{} (error_type={})",
+            backend,
+            type(e).__name__,
+        )
         return None
 
 
@@ -185,6 +193,8 @@ def _load_video_generation_section() -> tuple[dict, dict[str, str]]:
     id to where its secret was resolved from.
     """
     raw = _read_video_generation_toml()
+    if not isinstance(raw, dict):
+        raw = {}
     _warn_unknown_top_level_keys(raw)
     flat: dict = {}
     for k in _GLOBAL_KEYS:
@@ -192,15 +202,64 @@ def _load_video_generation_section() -> tuple[dict, dict[str, str]]:
             flat[k] = raw[k]
     for (backend, toml_key), flat_field in _NON_SECRET.items():
         sub = raw.get(backend) or {}
+        if not isinstance(sub, dict):
+            sub = {}
         if toml_key in sub:
             flat[flat_field] = sub[toml_key]
     key_sources: dict[str, str] = {backend: "missing" for backend in _BACKEND_NAMES}
     for backend in _SECRETS:
-        field_name, value, source = _resolve_secret(backend, raw.get(backend) or {})
+        sub = raw.get(backend) or {}
+        if not isinstance(sub, dict):
+            sub = {}
+        field_name, value, source = _resolve_secret(backend, sub)
         key_sources[backend] = source
         if value:
             flat[field_name] = value
     return flat, key_sources
+
+
+@dataclass(frozen=True)
+class VideoStorePolicy:
+    """The only three settings ``VideoStore`` reads. No secrets involved.
+
+    Field names and value normalization match ``VideoGenerationConfig``
+    exactly, so the store cannot tell the two apart (it reads all three via
+    ``getattr(config, name, default)``).
+    """
+
+    retention: str
+    retention_ttl_hours: int
+    max_store_mb: int
+
+
+def get_video_store_policy() -> VideoStorePolicy:
+    """Read the generated-video retention/capacity policy without any secret.
+
+    ``VideoStore`` is constructed and asked to ``enforce_retention()`` inside
+    ``TldwCli.__init__``. Routing that through ``get_video_generation_config()``
+    made every single boot resolve the MiniMax API key, whose last resort is
+    ``keyring.get_password(...)`` -- a real OS credential-store round trip,
+    measured at **18.2 ms** on macOS (11.3 ms of keyring backend discovery +
+    the Security.framework ctypes load, then the Keychain query itself), for a
+    secret the store never looks at. On a locked keychain that call can block
+    or raise a consent dialog during startup. TASK-21111(b).
+
+    Returns:
+        The retention mode, TTL and capacity, normalized exactly as
+        ``get_video_generation_config`` normalizes them.
+    """
+    raw = _read_video_generation_toml()
+    if not isinstance(raw, dict):
+        raw = {}
+    return VideoStorePolicy(
+        retention=_coerce_choice(
+            raw.get("retention"), default=DEFAULT_RETENTION, allowed={"session", "ttl"}
+        ),
+        retention_ttl_hours=max(
+            1, _coerce_int(raw.get("retention_ttl_hours"), DEFAULT_RETENTION_TTL_HOURS)
+        ),
+        max_store_mb=max(1, _coerce_int(raw.get("max_store_mb"), DEFAULT_MAX_STORE_MB)),
+    )
 
 
 @dataclass(frozen=True)
@@ -364,7 +423,10 @@ def get_video_generation_config(*, reload: bool = False) -> VideoGenerationConfi
         minimax_video_allowed_extra_params=_parse_list(section.get("minimax_video_allowed_extra_params")),
         comfyui_base_url=_get_config_value(section, "comfyui_base_url") or DEFAULT_COMFYUI_BASE_URL,
         comfyui_default_model=_get_config_value(section, "comfyui_default_model"),
-        comfyui_default_workflow=_get_config_value(section, "comfyui_default_workflow"),
+        comfyui_default_workflow=(
+            _get_config_value(section, "comfyui_default_workflow")
+            or DEFAULT_COMFYUI_WORKFLOW
+        ),
         comfyui_timeout_seconds=_coerce_int(
             section.get("comfyui_timeout_seconds"),
             DEFAULT_COMFYUI_TIMEOUT_SECONDS,
@@ -404,3 +466,15 @@ def get_video_generation_config(*, reload: bool = False) -> VideoGenerationConfi
 def reset_video_generation_config_cache() -> None:
     global _config_cache
     _config_cache = None
+
+
+def reset_video_generation_runtime() -> None:
+    """Invalidate cached video configuration and adapter instances.
+
+    The registry import stays local so configuration loading remains independent
+    from adapter construction at module-import time.
+    """
+    reset_video_generation_config_cache()
+    from tldw_chatbook.Video_Generation.adapter_registry import reset_registry
+
+    reset_registry()

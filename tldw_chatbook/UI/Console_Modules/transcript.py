@@ -21,7 +21,7 @@ baseline (``Tests/UI/test_console_shell_regions.py``) at all three sizes, so
 that placement is not a stylistic preference.
 
 **Naming**: the DOM here spells two things, an outer column and an inner
-framed region, and the whole column exists to hold the transcript — there is
+borderless region, and the whole column exists to hold the transcript — there is
 no other content in it. So the class is named for what the column is FOR
 (``ConsoleTranscriptRegion``) while the ids stay exactly as they are, the
 same judgement call ``ConsoleInspectorRail`` made when the plan's placeholder
@@ -116,7 +116,7 @@ class _ConsoleTranscriptReadingState:
 
 
 class ConsoleTranscriptRegion(Vertical):
-    """The Console shell's main column: the framed transcript surface.
+    """The Console shell's main column: the borderless transcript surface.
 
     Composes nothing of its own beyond the two containers the screen used to
     build inline; the transcript itself lives inside ``ConsoleSessionSurface``
@@ -156,17 +156,16 @@ class ConsoleTranscriptRegion(Vertical):
         self._session_surface_builder = session_surface_builder
 
     def compose(self) -> ComposeResult:
-        """Compose the framed transcript region and the session surface.
+        """Compose the borderless transcript region and the session surface.
 
         Returns:
-            The framed ``#console-transcript-region`` container holding the
-            Console session surface. ``top=False`` is deliberate: the control
-            bar directly above already paints that edge, so the transcript
-            reads as continuous with it instead of drawing a doubled rule.
+            The borderless ``#console-transcript-region`` container holding the
+            Console session surface. ``edges=()`` makes this child root own no
+            workspace shell edge.
         """
         transcript_region = frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
-            top=False,
+            edges=(),
         )
         with transcript_region:
             yield self._session_surface_builder()
@@ -227,15 +226,34 @@ class ConsoleTranscriptRegion(Vertical):
         transcript = self._transcript_or_none()
         if transcript is None:
             return
+        revealed = False
+        if state.selected_message_id is not None:
+            # TASK-15455: assigning the id directly bypasses `select_message`,
+            # so a selection captured before the transcript re-windowed (a
+            # session switch between capture and restore) could name a message
+            # with no mounted row. Inert whenever the id is already mounted.
+            revealed = transcript.reveal_message(state.selected_message_id)
         transcript.selected_message_id = state.selected_message_id
-        if state.anchored:
-            transcript.anchor()
+
+        def _apply_reading_position() -> None:
+            if state.anchored:
+                transcript.anchor()
+                return
+            transcript.release_anchor()
+            transcript.scroll_to(
+                y=min(state.scroll_y, float(transcript.max_scroll_y)),
+                animate=False,
+            )
+
+        if revealed:
+            # Read order matters: the offset is clamped against
+            # `max_scroll_y`, which only grows once the revealed rows are
+            # mounted. Applying it first silently drops the reader at the
+            # pre-reveal maximum instead of where they were.
+            transcript.call_later(transcript.refresh_messages)
+            transcript.call_after_refresh(_apply_reading_position)
             return
-        transcript.release_anchor()
-        transcript.scroll_to(
-            y=min(state.scroll_y, float(transcript.max_scroll_y)),
-            animate=False,
-        )
+        _apply_reading_position()
 
     def note_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).

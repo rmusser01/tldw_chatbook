@@ -1,19 +1,92 @@
 import base64
 import json
+import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
 
-from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
     CitationTraceRepository,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleContextRepository,
+    ContextPolicyReadResult,
+)
+from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDurableTurnAcceptance,
+)
+from tldw_chatbook.Chat.console_library_policy_repository import (
+    ConsoleLibraryPolicyRepository,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicySnapshot,
+    ConsoleLibraryPolicyWriteStatus,
+)
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleTransactionContribution,
+    _scoped_console_transaction_writer,
+)
+from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.console_roleplay_metadata import (
+    ConsoleRoleplayContext,
+    merge_console_roleplay_context,
+    parse_console_roleplay_context,
+)
+from tldw_chatbook.Chat.console_speech_preferences import (
+    ConsoleSpeechPreferences,
+    merge_console_speech_preferences,
+    parse_console_speech_preferences,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    ConflictError,
+    TrajectoryRowWrite,
+)
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
+
+
+def _initial_metadata_object(metadata: object) -> dict[str, object]:
+    """Return strict JSON-object metadata without lossy key coercion."""
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"Non-finite JSON constant {value!r} is not supported.")
+
+    try:
+        if isinstance(metadata, Mapping):
+            candidate = dict(metadata)
+            if not _mapping_keys_are_strings(candidate):
+                raise ValueError("Mapping keys must be strings.")
+            serialized = json.dumps(candidate, allow_nan=False, sort_keys=True)
+            decoded = json.loads(serialized, parse_constant=reject_constant)
+        elif type(metadata) is str:
+            decoded = json.loads(metadata, parse_constant=reject_constant)
+        else:
+            raise ValueError("Unsupported metadata type.")
+    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("metadata must be a valid JSON object.") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError("metadata must be a valid JSON object.")
+    return decoded
+
+
+def _mapping_keys_are_strings(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return all(
+            type(key) is str and _mapping_keys_are_strings(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return all(_mapping_keys_are_strings(item) for item in value)
+    return True
 
 
 class ChatPersistenceService:
@@ -26,6 +99,9 @@ class ChatPersistenceService:
         self.db = db
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
+        self.context_repository = ConsoleContextRepository(db)
+        self.console_library_policy_repository = ConsoleLibraryPolicyRepository(db)
+        self.console_dispatch_repository = ConsoleDispatchRepository(db)
 
     @property
     def canonical_citation_writes_ready(self) -> bool:
@@ -63,6 +139,73 @@ class ChatPersistenceService:
             return None
         return version
 
+    def get_conversation_version(self, conversation_id: str) -> int | None:
+        """Return the current positive version for one active conversation."""
+        if not isinstance(conversation_id, str) or not conversation_id:
+            return None
+        conversation = self.db.get_conversation_by_id(conversation_id)
+        if conversation is None or conversation.get("deleted"):
+            return None
+        version = conversation.get("version")
+        if (
+            not isinstance(version, int)
+            or isinstance(version, bool)
+            or version < 1
+        ):
+            return None
+        return version
+
+    def get_conversation_speech_preferences(
+        self, conversation_id: str
+    ) -> ConsoleSpeechPreferences:
+        """Read fail-closed reply-speech preferences from conversation metadata."""
+        if type(conversation_id) is not str or not conversation_id:
+            return ConsoleSpeechPreferences()
+        record = self.db.get_conversation_by_id(conversation_id)
+        if record is None or record.get("deleted"):
+            return ConsoleSpeechPreferences()
+        return parse_console_speech_preferences(record.get("metadata"))
+
+    def update_conversation_speech_preferences(
+        self,
+        *,
+        conversation_id: str,
+        preferences: ConsoleSpeechPreferences,
+        expected_version: int,
+    ) -> bool:
+        """Merge speech metadata using the caller's exact conversation version."""
+        if type(expected_version) is not int or expected_version < 1:
+            return False
+        record = self.db.get_conversation_by_id(str(conversation_id))
+        if record is None or record.get("version") != expected_version:
+            return False
+        metadata = merge_console_speech_preferences(
+            record.get("metadata"),
+            preferences,
+        )
+        return bool(
+            self.db.update_conversation(
+                str(conversation_id),
+                {"metadata": json.dumps(metadata, sort_keys=True)},
+                expected_version=expected_version,
+            )
+        )
+
+    def get_conversation_context_policy(
+        self, conversation_id: str
+    ) -> ContextPolicyReadResult:
+        """Return local sparse context-policy overrides for one conversation."""
+        return self.context_repository.load_policy(conversation_id)
+
+    def update_conversation_context_policy(
+        self,
+        *,
+        conversation_id: str,
+        overrides: ConsoleContextPolicyOverrides,
+    ) -> int | None:
+        """Persist local sparse context-policy overrides without sync writes."""
+        return self.context_repository.save_policy(conversation_id, overrides)
+
     @staticmethod
     def derive_conversation_title(
         *,
@@ -92,6 +235,7 @@ class ChatPersistenceService:
     def create_conversation(
         self,
         *,
+        conversation_id: str | None = None,
         character_id: Optional[int] = None,
         character_name: Optional[str] = None,
         assistant_kind: Optional[str] = None,
@@ -105,10 +249,13 @@ class ChatPersistenceService:
         workspace_id: Optional[str] = None,
         conversation_title: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        metadata: Mapping[str, object] | str | None = None,
+        speech_preferences: ConsoleSpeechPreferences | None = None,
     ) -> str:
-        """Create a conversation and link it to a workspace when requested.
+        """Create a conversation after validating any workspace authority.
 
         Args:
+            conversation_id: Optional preallocated durable conversation identity.
             character_id: Local character identifier associated with the conversation.
             character_name: Display name used to derive a title when no explicit
                 title is supplied.
@@ -122,25 +269,27 @@ class ChatPersistenceService:
             discovery_owner: Owner of the assistant discovery record.
             discovery_entity_id: Discovery record identifier for the assistant.
             scope_type: Conversation scope. Only an explicit normalized
-                ``scope_type="workspace"`` validates and links workspace
-                membership here.
+                ``scope_type="workspace"`` validates the workspace target here.
+                Registry membership is a separate post-commit projection.
             workspace_id: Candidate workspace identifier forwarded to the
                 database and resolved for an explicit workspace scope.
                 Non-workspace/global persistence is normalized by the database
-                and may clear it; omitting scope does not create a link.
+                and may clear it; this method never creates registry membership.
             conversation_title: Explicit title, which takes precedence when
                 truthy; otherwise the character or assistant-derived title is used.
             system_prompt: Initial system prompt persisted with the conversation.
+            metadata: Optional initial conversation metadata mapping or JSON object
+                string. Malformed or non-object values are rejected before creation.
+            speech_preferences: Optional staged Console reply-speech preferences
+                to include in the conversation metadata before returning.
 
         Returns:
             Persisted conversation ID.
 
         Raises:
             ValueError: If workspace scope is invalid or its workspace cannot be
-                resolved.
-            Exception: If workspace membership linkage fails after creation. A
-                best-effort soft-delete is attempted; a false result can leave
-                the row, and a cleanup exception may replace the link error.
+                resolved. Workspace registry membership is intentionally not
+                written here; it is a post-commit projection of the durable row.
         """
         safe_workspace_id = self._require_workspace_scope(
             scope_type=scope_type,
@@ -168,20 +317,187 @@ class ChatPersistenceService:
             "system_prompt": system_prompt,
             "client_id": self.db.client_id,
         }
+        if conversation_id is not None:
+            conversation_data["id"] = conversation_id
         if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
             conversation_data["assistant_authority_id"] = assistant_authority_id
-        conversation_id = self.db.add_conversation(conversation_data)
-        if safe_workspace_id is not None:
-            try:
-                self._link_workspace_conversation(
-                    workspace_id=safe_workspace_id,
-                    conversation_id=conversation_id,
-                    title=title,
+        initial_metadata = (
+            _initial_metadata_object(metadata) if metadata is not None else None
+        )
+        if (
+            speech_preferences is not None
+            and speech_preferences != ConsoleSpeechPreferences()
+        ):
+            initial_metadata = merge_console_speech_preferences(
+                initial_metadata,
+                speech_preferences,
+            )
+        if initial_metadata is not None:
+            conversation_data["metadata"] = json.dumps(
+                initial_metadata,
+                allow_nan=False,
+                sort_keys=True,
+            )
+        return self.db.add_conversation(conversation_data)
+
+    def persist_console_conversation_with_policy(
+        self,
+        *,
+        conversation_id: str,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Commit a first conversation row and its Library policy together."""
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True):
+            created_id = self.create_conversation(
+                conversation_id=conversation_id,
+                **dict(conversation_kwargs),
+            )
+            if created_id != conversation_id:
+                raise RuntimeError("Persistence returned an unexpected conversation id.")
+            result = self.console_library_policy_repository.insert(
+                conversation_id,
+                policy_candidate,
+            )
+            if result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with conversation."
                 )
-            except Exception:
-                self._discard_created_conversation(conversation_id)
-                raise
-        return conversation_id
+        return result.snapshot
+
+    def commit_durable_turn(
+        self,
+        *,
+        acceptance: ConsoleDurableTurnAcceptance,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+    ) -> ConsoleDispatchCheckpoint:
+        """Atomically create/validate and accept one durable Console turn.
+
+        The service owns the sole outer ``BEGIN IMMEDIATE``.  It intentionally
+        returns only durable values and never mutates the live Console session;
+        publication is a postcommit store/controller responsibility.
+        """
+
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True) as cursor:
+            conversation = cursor.execute(
+                "SELECT deleted FROM conversations WHERE id = ?",
+                (acceptance.conversation_id,),
+            ).fetchone()
+            if conversation is None:
+                created_id = self.create_conversation(
+                    conversation_id=acceptance.conversation_id,
+                    **dict(conversation_kwargs),
+                )
+                if created_id != acceptance.conversation_id:
+                    raise RuntimeError(
+                        "Persistence returned an unexpected conversation id."
+                    )
+                policy_result = self.console_library_policy_repository.insert(
+                    acceptance.conversation_id,
+                    policy_candidate,
+                )
+                if (
+                    policy_result.status
+                    is not ConsoleLibraryPolicyWriteStatus.COMMITTED
+                ):
+                    raise RuntimeError(
+                        "Console Library policy could not be committed with turn."
+                    )
+            else:
+                if conversation["deleted"]:
+                    raise RuntimeError("Durable conversation is unavailable.")
+                policy_row = cursor.execute(
+                    "SELECT auto_retrieve_on_send, assistant_library_access, "
+                    "policy_revision FROM console_conversation_library_policy "
+                    "WHERE conversation_id = ?",
+                    (acceptance.conversation_id,),
+                ).fetchone()
+                authority = acceptance.frozen_authority.policy
+                if (
+                    policy_row is None
+                    or authority.source != "durable"
+                    or authority.policy_revision != policy_row["policy_revision"]
+                    or int(policy_candidate.auto_retrieve.value == "automatic")
+                    != policy_row["auto_retrieve_on_send"]
+                    or int(policy_candidate.assistant_access.value == "allowed")
+                    != policy_row["assistant_library_access"]
+                ):
+                    raise RuntimeError(
+                        "Durable Console Library policy no longer matches acceptance."
+                    )
+            return self.console_dispatch_repository.insert_with_messages(
+                cursor,
+                acceptance,
+            )
+
+    def promote_console_conversation_bundle(
+        self,
+        *,
+        conversation_id: str,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+        messages: Sequence[Mapping[str, object]],
+        active_leaf_message_id: str | None,
+        context_summary: str | None = None,
+        context_summary_boundary_message_id: str | None = None,
+        contributions: Sequence[ConsoleTransactionContribution] = (),
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Commit one temporary Console transcript and all Task-7 sidecars."""
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True) as cursor:
+            created_id = self.create_conversation(
+                conversation_id=conversation_id,
+                **dict(conversation_kwargs),
+            )
+            if created_id != conversation_id:
+                raise RuntimeError("Persistence returned an unexpected conversation id.")
+            policy_result = self.console_library_policy_repository.insert(
+                conversation_id,
+                policy_candidate,
+            )
+            if policy_result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with conversation."
+                )
+            message_ids: dict[str, str] = {}
+            for prepared in messages:
+                native_id = str(prepared["native_id"])
+                kwargs = dict(prepared["create_kwargs"])
+                persisted_id = self.create_message(
+                    conversation_id=conversation_id,
+                    **kwargs,
+                )
+                expected_id = str(kwargs["message_id"])
+                if persisted_id != expected_id:
+                    raise RuntimeError("Persistence returned an unexpected message id.")
+                message_ids[native_id] = persisted_id
+                role = str(kwargs["sender"])
+                if role in {"user", "assistant"}:
+                    message_ids[role] = persisted_id
+            self.db.set_conversation_active_leaf(
+                conversation_id,
+                active_leaf_message_id,
+            )
+            self.db.set_conversation_context_summary(
+                conversation_id,
+                context_summary,
+                context_summary_boundary_message_id,
+            )
+            if contributions:
+                with _scoped_console_transaction_writer(
+                    cursor,
+                    conversation_id,
+                ) as writer:
+                    for contribution in contributions:
+                        contribution.write(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            message_ids=message_ids,
+                        )
+        return policy_result.snapshot
 
     def fork_conversation_into_workspace(
         self,
@@ -244,6 +560,30 @@ class ChatPersistenceService:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
         return safe_workspace_id
 
+    def validate_workspace_target(self, **conversation_kwargs: object) -> str | None:
+        """Validate an intended workspace before opening a Chat transaction."""
+        return self._require_workspace_scope(
+            scope_type=conversation_kwargs.get("scope_type"),
+            workspace_id=conversation_kwargs.get("workspace_id"),
+        )
+
+    def project_workspace_membership(self, conversation_id: str) -> Any | None:
+        """Project durable workspace authority into the registry idempotently."""
+        conversation = self.db.get_conversation_by_id(conversation_id)
+        if conversation is None:
+            raise ValueError(f"Conversation {conversation_id} not found")
+        safe_workspace_id = self._require_workspace_scope(
+            scope_type=conversation.get("scope_type"),
+            workspace_id=conversation.get("workspace_id"),
+        )
+        if safe_workspace_id is None:
+            return None
+        return self._link_workspace_conversation(
+            workspace_id=safe_workspace_id,
+            conversation_id=conversation_id,
+            title=str(conversation.get("title") or "Workspace conversation"),
+        )
+
     def _link_workspace_conversation(
         self,
         *,
@@ -259,30 +599,15 @@ class ChatPersistenceService:
             title=title,
         )
 
-    def _discard_created_conversation(self, conversation_id: str) -> None:
-        conversation = self.db.get_conversation_by_id(
-            conversation_id,
-            include_deleted=True,
-        )
-        if conversation is None or conversation.get("deleted"):
-            return
-        try:
-            expected_version = int(conversation["version"])
-            self.db.soft_delete_conversation(
-                conversation_id,
-                expected_version=expected_version,
-            )
-        except Exception:
-            logger.bind(conversation_id=conversation_id).opt(exception=True).error(
-                "Failed to soft-delete workspace conversation after membership link failure",
-            )
-            raise
-
     def update_conversation_system_prompt(
         self,
         *,
         conversation_id: str,
         system_prompt: Optional[str],
+        expected_roleplay_context: ConsoleRoleplayContext | None = None,
+        expected_system_prompts: tuple[str | None, ...] | None = None,
+        allow_source_owned_repair: bool = False,
+        expected_roleplay_version: int | None = None,
     ) -> bool:
         """Update the persisted system prompt for an existing conversation.
 
@@ -299,6 +624,24 @@ class ChatPersistenceService:
         current_conversation = self.db.get_conversation_by_id(conversation_id)
         if not current_conversation:
             raise ValueError(f"Conversation {conversation_id} not found")
+        if (
+            expected_roleplay_version is not None
+            and current_conversation.get("version") != expected_roleplay_version
+        ):
+            return False
+        if (
+            expected_roleplay_context is not None
+            and parse_console_roleplay_context(current_conversation.get("metadata"))
+            != expected_roleplay_context
+        ):
+            return False
+        if (
+            expected_system_prompts is not None
+            and not allow_source_owned_repair
+            and current_conversation.get("system_prompt")
+            not in expected_system_prompts
+        ):
+            return False
 
         return bool(
             self.db.update_conversation(
@@ -307,6 +650,43 @@ class ChatPersistenceService:
                 expected_version=current_conversation["version"],
             )
         )
+
+    def update_conversation_roleplay_context(
+        self,
+        *,
+        conversation_id: str,
+        user_name_override: str | None,
+        character_system_template: str | None,
+    ) -> bool:
+        """Merge Console-owned roleplay identity context with one retry.
+
+        Re-reading the conversation before each bounded optimistic attempt is
+        essential: a concurrent metadata writer can add unrelated sibling
+        keys after our first read. Merging only the fresh record preserves
+        those keys while this method changes its owned context.
+        """
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(str(conversation_id))
+            if record is None:
+                return False
+            metadata = merge_console_roleplay_context(
+                record.get("metadata"),
+                ConsoleRoleplayContext(
+                    user_name_override=user_name_override,
+                    character_system_template=character_system_template,
+                ),
+            )
+            try:
+                self.db.update_conversation(
+                    str(conversation_id),
+                    {"metadata": metadata},
+                    expected_version=record["version"],
+                )
+                return True
+            except ConflictError:
+                if attempt == 1:
+                    raise
+        return False
 
     def update_conversation_pinned_prefill(
         self,
@@ -375,6 +755,36 @@ class ChatPersistenceService:
             )
         )
 
+    def get_conversation_console_project_context(
+        self, *, conversation_id: str
+    ) -> str | None:
+        """Return a conversation's local-only Console project-context JSON.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+
+        Returns:
+            Stored versioned JSON, or ``None`` when unset or unavailable.
+        """
+        return self.db.get_conversation_console_project_context(conversation_id)
+
+    def set_conversation_console_project_context(
+        self,
+        *,
+        conversation_id: str,
+        project_context_json: str | None,
+    ) -> None:
+        """Write local-only Console project-context JSON without sync churn.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            project_context_json: Versioned control-state JSON, or ``None`` to
+                clear it.
+        """
+        self.db.set_conversation_console_project_context(
+            conversation_id, project_context_json
+        )
+
     def update_message_content(
         self,
         *,
@@ -389,6 +799,12 @@ class ChatPersistenceService:
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        expected_roleplay_template_source: str | None = None,
+        expected_message_contents: tuple[str, ...] | None = None,
+        allow_source_owned_repair: bool = False,
+        expected_roleplay_version: int | None = None,
+        preserve_provider_continuation: bool = False,
+        preserve_descendants: bool = False,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -446,6 +862,8 @@ class ChatPersistenceService:
             metadata_json: Optional structured message metadata JSON
                 (task-2364). Follows the same only-when-supplied rule as
                 ``usage_json``, for the same reason.
+            preserve_descendants: Skip descendant tombstones when this
+                update belongs to an authoritative bulk-history resave.
 
         Returns:
             True if the row update was applied; False if the underlying
@@ -460,6 +878,28 @@ class ChatPersistenceService:
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
+        if (
+            expected_roleplay_version is not None
+            and current_message.get("version") != expected_roleplay_version
+        ):
+            return False
+        if expected_roleplay_template_source is not None:
+            current_metadata = MessageMetadata.from_json(
+                current_message.get("metadata_json")
+            )
+            if (
+                current_metadata is None
+                or current_metadata.template_kind != "character_greeting"
+                or current_metadata.template_source
+                != expected_roleplay_template_source
+            ):
+                return False
+        if (
+            expected_message_contents is not None
+            and not allow_source_owned_repair
+            and current_message.get("content") not in expected_message_contents
+        ):
+            return False
 
         update_data: Dict[str, Any] = {"content": content}
         # Only include the image columns when new image bytes are supplied.
@@ -525,12 +965,19 @@ class ChatPersistenceService:
             extra_rows = []
 
         if citation_repository is not None:
-            with self.db.transaction() as cursor:
+            # IMMEDIATE (task-21100): `transaction(immediate=...)` is honored
+            # only at depth 0, so this OUTER wrapper decides the begin mode for
+            # the nested hot messages writers -- left DEFERRED it re-opens the
+            # snapshot-upgrade "database is locked" window their own IMMEDIATE
+            # closes (see add_message's scoping comment).
+            with self.db.transaction(immediate=True) as cursor:
                 result = bool(
                     self.db.update_message(
                         message_id,
                         update_data,
                         expected_version=current_message["version"],
+                        preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
                     )
                 )
                 if result and attachments is not None:
@@ -555,12 +1002,17 @@ class ChatPersistenceService:
             # attachments table write must be skipped -- otherwise
             # attachments would be rewritten while content/version were not,
             # leaving the two out of sync.
-            with self.db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True):
                 result = bool(
                     self.db.update_message(
                         message_id,
                         update_data,
                         expected_version=current_message["version"],
+                        preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
                     )
                 )
                 if result:
@@ -572,6 +1024,8 @@ class ChatPersistenceService:
                 message_id,
                 update_data,
                 expected_version=current_message["version"],
+                preserve_provider_continuation=preserve_provider_continuation,
+                preserve_descendants=preserve_descendants,
             )
         )
 
@@ -606,6 +1060,82 @@ class ChatPersistenceService:
             updated; False otherwise.
         """
         return self.db.update_message_usage_local(message_id, usage_json)
+
+    def append_message_exchanges(
+        self, *, message_id: str, rows: Sequence[Mapping[str, Any]]
+    ) -> bool:
+        """Local-only exchange-capture flush (Conversation Inspector).
+
+        Same contract as ``update_message_usage``: version-neutral, never
+        enqueues sync rows. Unlike that sibling, this never lets a database
+        error escape -- exchange captures are best-effort diagnostic
+        payloads, not user-visible content, so a write failure is logged
+        (the warning binds only ``message_id`` and the exception's
+        ``repr()`` -- never row contents or capture payloads) and reported
+        as ``False`` rather than propagated.
+
+        Args:
+            message_id: UUID of the owning message row.
+            rows: Exchange rows to upsert; see
+                :meth:`CharactersRAGDB.append_message_exchanges_local`.
+
+        Returns:
+            True if the rows were written; False if the write failed.
+        """
+        try:
+            self.db.append_message_exchanges_local(message_id, rows)
+            return True
+        except Exception as exc:  # noqa: BLE001 -- best-effort capture flush
+            logger.bind(message_id=message_id, error=repr(exc)).warning(
+                "exchange_append_failed"
+            )
+            return False
+
+    def delete_message_subtree(self, *, message_id: str) -> list[dict[str, Any]]:
+        """Atomically tombstone one persisted branch and return its versions."""
+        current_message = self.db.get_message_by_id(message_id)
+        if not current_message:
+            raise ValueError(f"Message {message_id} not found")
+        return self.db.soft_delete_message_subtree(
+            message_id,
+            expected_version=current_message["version"],
+        )
+
+    def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:
+        """Persist trajectory sidecar rows; LOCAL-ONLY, never raises.
+
+        The trajectory sibling of :meth:`update_message_usage`: the
+        ``message_trajectory_metadata`` sidecar (schema v38) is local-only
+        with no sync triggers, so it never routes through the
+        version-bumping general-purpose row updater. A small bounded retry
+        absorbs transient write-write lock contention (concurrent Console
+        sessions, compaction auxiliary turns): ``upsert_trajectory_rows``
+        assigns ``seq`` inside its own transaction, so a rolled-back
+        attempt simply re-derives seqs on retry. Returns ``False`` (after
+        logging with row COUNT only -- never message contents or payloads)
+        when every attempt failed, so the store's best-effort capture knows
+        the batch was dropped.
+
+        Args:
+            rows: Sidecar rows to upsert.
+
+        Returns:
+            True when the rows were written; False when all attempts failed.
+        """
+        last_error: Exception | None = None
+        for attempt in range(5):
+            try:
+                self.db.upsert_trajectory_rows(rows)
+                return True
+            except Exception as exc:  # noqa: BLE001 -- never fail the turn
+                last_error = exc
+                # Brief escalating backoff: the losing writer of a
+                # concurrent pair only needs the winner's commit to land.
+                time.sleep(0.02 * (attempt + 1))
+        logger.bind(row_count=len(rows), error=repr(last_error)).warning(
+            "trajectory_rows_write_failed"
+        )
+        return False
 
     def update_message_metadata(self, *, message_id: str, metadata_json: str) -> bool:
         """Persist structured message metadata WITHOUT touching sync metadata.
@@ -786,7 +1316,10 @@ class ChatPersistenceService:
             "metadata_json": metadata_json,
         }
         if prepared_citation is not None:
-            with self.db.transaction() as cursor:
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True) as cursor:
                 existing_message = (
                     self.db.get_message_by_id(message_id)
                     if message_id is not None
@@ -833,7 +1366,10 @@ class ChatPersistenceService:
             # attachments write always runs when this branch is taken -- an
             # empty list still clears any stale rows a prior attempt at this
             # same message_id may have left behind.
-            with self.db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True):
                 created_message_id = self.db.add_message(message_payload)
                 self.db.set_message_attachments(created_message_id, extra_rows)
                 if generation_metadata is not None:
@@ -1063,6 +1599,7 @@ class ChatPersistenceService:
                     feedback=feedback,
                     update_parent="parent_message_id" in message_obj,
                     update_feedback="feedback" in message_obj,
+                    preserve_descendants=True,
                 )
                 consumed_existing_ids.add(message_id)
             elif message_id:
@@ -1095,6 +1632,7 @@ class ChatPersistenceService:
                     feedback=feedback,
                     update_parent="parent_message_id" in message_obj,
                     update_feedback="feedback" in message_obj,
+                    preserve_descendants=True,
                 )
                 consumed_existing_ids.add(existing_message["id"])
                 fallback_index += 1

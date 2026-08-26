@@ -38,9 +38,22 @@ Two things this file exists specifically to pin, per the wave-2 Task 3 brief:
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
+from unittest.mock import AsyncMock
+
 import pytest
 
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_character_session_prompt_seed import (
+    _character_screen,
+    _roleplay_card,
+    _start_chat_handoff,
+)
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -54,6 +67,323 @@ from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSwitcherChoice,
 )
+
+
+@pytest.mark.asyncio
+async def test_character_handoff_reuses_untouched_chat_one(monkeypatch):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    defaults = screen._session._default_console_session_settings()
+    original = store.ensure_session(
+        title="Chat 1",
+        workspace_id="workspace-original",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    sync = AsyncMock()
+    focus_calls: list[bool] = []
+    screen._session._sync_native_console_chat_ui_fn = sync
+    screen._session._focus_composer_if_needed_fn = (
+        lambda *, force=False: focus_calls.append(force)
+    )
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session is original
+    assert session.id == original.id
+    assert session.workspace_id == "workspace-original"
+    assert session.title == "Chat with Alba"
+    assert session.settings.model == defaults.model
+    assert session.settings.system_prompt == "Protect Captain Rowan as Alba."
+    greetings = store.messages_for_session(session.id)
+    assert [message.content for message in greetings] == ["Hello, Captain Rowan."]
+    assert session.identity_revision == 2
+    assert store.payload_revision(session.id) == 3
+    presentation = store.presentation_context(session.id, "fallback")
+    assert presentation.character_name == "Alba"
+    assert presentation.revision == session.identity_revision
+    sync.assert_awaited_once_with()
+    assert focus_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_draft_sync_initial_session_keeps_provenance_for_character_handoff(
+    monkeypatch,
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+
+    screen._session._sync_console_session_draft()
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    original = sessions[0]
+    assert original.canonical_settings_baseline is original.settings
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    assert sessions[0].id == original.id
+    assert sessions[0].title == "Chat with Alba"
+
+
+@pytest.mark.asyncio
+async def test_tab_sync_initial_session_keeps_provenance_for_character_handoff(
+    monkeypatch,
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    surface = AsyncMock()
+    surface.sync_sessions = AsyncMock()
+    monkeypatch.setattr(screen, "query_one", lambda *_args, **_kwargs: surface)
+    monkeypatch.setattr(screen, "_maybe_show_fleet_coachmark", lambda *_args: None)
+    monkeypatch.setattr(screen, "_console_chat_controller", None)
+
+    await screen._sync_console_native_session_tabs()
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    original = sessions[0]
+    assert original.canonical_settings_baseline is original.settings
+    surface.sync_sessions.assert_awaited_once()
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    assert sessions[0].id == original.id
+    assert sessions[0].title == "Chat with Alba"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "worked_state",
+    [
+        "draft",
+        "title",
+        "system-prompt",
+        "pinned-prefill",
+        "model",
+        "provider",
+        "temperature",
+        "character-label",
+    ],
+)
+async def test_character_handoff_leaves_worked_session_and_creates_another(
+    monkeypatch, worked_state
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    defaults = screen._session._default_console_session_settings()
+    original = store.ensure_session(
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    if worked_state == "draft":
+        store.set_session_draft(original.id, "my work")
+    elif worked_state == "system-prompt":
+        store.set_session_system_prompt(original.id, "My system prompt")
+    elif worked_state == "pinned-prefill":
+        store.set_session_pinned_prefill(original.id, "Always:")
+    elif worked_state == "model":
+        store.replace_session_settings(
+            original.id,
+            replace(defaults, model="my-model"),
+        )
+    elif worked_state == "provider":
+        store.replace_session_settings(
+            original.id,
+            replace(defaults, provider="anthropic"),
+        )
+    elif worked_state == "temperature":
+        store.replace_session_settings(
+            original.id,
+            replace(defaults, temperature=defaults.temperature + 0.1),
+        )
+    elif worked_state == "character-label":
+        store.replace_session_settings(
+            original.id,
+            replace(defaults, character_label="My assistant"),
+        )
+    else:
+        original.title = "Planning"
+    original_before = replace(original)
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    assert len(store.sessions()) == 2
+    assert store.sessions()[0] == original_before
+    assert store.active_session_id != original.id
+    assert store.sessions()[1].title == "Chat with Alba"
+    assert len(store.messages_for_session(store.active_session_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_character_handoff_does_not_refresh_unproven_derived_settings(
+    monkeypatch,
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    stale = screen._session._default_console_session_settings()
+    original = store.ensure_session(settings=stale)
+    original_before = replace(original)
+    screen.app_instance.app_config.setdefault("chat_defaults", {})["model"] = (
+        "canonical-current-model"
+    )
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    assert len(store.sessions()) == 2
+    assert store.sessions()[0] == original_before
+    assert store.active_session_id != original.id
+
+
+def test_typed_then_cleared_work_marker_survives_screen_state_restore(monkeypatch):
+    screen = _character_screen(monkeypatch, _roleplay_card(name="Alba"))
+    store = screen._ensure_console_chat_store()
+    defaults = screen._session._default_console_session_settings()
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    store.set_session_draft(session.id, "my work")
+    store.set_session_draft(session.id, "")
+
+    payload = screen._session._console_session_to_state(session)
+    restored = screen._session._console_session_from_state(payload)
+
+    assert restored.has_user_work is True
+
+
+@pytest.mark.asyncio
+async def test_character_handoff_uses_current_canonical_defaults_not_stale_session(
+    monkeypatch,
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    stale = screen._session._default_console_session_settings()
+    original = store.ensure_session(
+        settings=stale,
+        canonical_settings_baseline=stale,
+    )
+    screen.app_instance.app_config.setdefault("chat_defaults", {})["model"] = (
+        "canonical-current-model"
+    )
+    screen.app_instance.app_config.setdefault("chat_defaults", {})["provider"] = (
+        "openai"
+    )
+    current = screen._session._default_console_session_settings()
+    assert stale.model != current.model
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    active = store.switch_session(store.active_session_id)
+    assert active is original
+    assert active.settings.model == "canonical-current-model"
+    assert active.settings.system_prompt == "Protect Captain Rowan as Alba."
+    assert active.assistant_kind == "character"
+    assert active.character_name == "Alba"
+    assert len(store.sessions()) == 1
+    assert active.id == original.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_greeting", [True, False])
+async def test_duplicate_character_handoff_does_not_duplicate_session_or_greeting(
+    monkeypatch, has_greeting
+):
+    card = _roleplay_card(name="Alba")
+    if not has_greeting:
+        card["first_message"] = ""
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    defaults = screen._session._default_console_session_settings()
+    store.ensure_session(
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    payload = _start_chat_handoff(card)
+
+    assert await screen._session._start_character_console_session(payload)
+    assert await screen._session._start_character_console_session(payload)
+
+    assert len(store.sessions()) == 1
+    assert len(store.messages_for_session(store.active_session_id)) == int(has_greeting)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_character_handoff_does_not_duplicate_session_or_greeting(
+    monkeypatch,
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    defaults = screen._session._default_console_session_settings()
+    store.ensure_session(
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    both_fetches_started = asyncio.Event()
+    release_fetches = asyncio.Event()
+    fetch_count = 0
+
+    async def get_character(*_args, **_kwargs):
+        nonlocal fetch_count
+        fetch_count += 1
+        if fetch_count == 2:
+            both_fetches_started.set()
+        await release_fetches.wait()
+        return card
+
+    screen.app_instance.character_persona_scope_service.get_character = get_character
+    payload = _start_chat_handoff(card)
+
+    async def start_both() -> list[bool]:
+        return await asyncio.gather(
+            screen._session._start_character_console_session(payload),
+            screen._session._start_character_console_session(payload),
+        )
+
+    both = asyncio.create_task(start_both())
+    await wait_for_background_signal(
+        both_fetches_started,
+        both,
+        what="both concurrent character fetches to start",
+    )
+    release_fetches.set()
+
+    assert await await_background_task(
+        both,
+        what="both concurrent character handoffs to finish",
+    ) == [True, True]
+    assert len(store.sessions()) == 1
+    assert len(store.messages_for_session(store.active_session_id)) == 1
 
 
 def _real_chachanotes_db(tmp_path) -> CharactersRAGDB:

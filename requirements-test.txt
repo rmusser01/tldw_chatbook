@@ -4,10 +4,13 @@ pytest-asyncio
 pytest-mock
 pytest-timeout
 pytest-xdist
+# TASK-18608: deterministic cross-job sharding of the UI suite in CI
+pytest-shard
 pytest-cov
 hypothesis
 aiohttp
 build
+uv>=0.8.0,<1
 setuptools>=77
 
 # Optional dependencies needed for tests
@@ -42,6 +45,5 @@ lxml
 markdown
 markdownify
 beautifulsoup4
-anytree
 # Additional test utilities
 anyio

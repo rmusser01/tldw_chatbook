@@ -7,30 +7,81 @@ This extends the Phase 1 enhanced RAG service with:
 - Configuration profiles
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
-from typing import Any, Collection, Dict, List, Literal, Mapping, Optional, Tuple, Union
+from dataclasses import replace
+from typing import Any, Collection, Dict, List, Literal, Optional, Tuple, Union
 
 from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, timeit
 from .enhanced_rag_service import EnhancedRAGService
+from .rag_service import MetadataAllowlist
 from .config import RAGConfig
+from .data_models import IndexingResult
 from .vector_store import SearchResult, SearchResultWithCitations
-from ..reranker import create_reranker
+from ..reranker import create_reranker_from_config
 from ..parallel_processor import (
     create_embedding_processor,
     create_chunking_processor,
     ProcessingConfig,
 )
-from ..config_profiles import (
-    get_profile_manager,
-    ProfileConfig,
-    ExperimentConfig,
-    ProfileType,
-    ConfigProfileManager,
-)
-from .data_models import IndexingResult
+
+# task-21160: import config_profiles lazily. The module-level from-import
+# created a circular-import edge -- ``config_profiles`` imports
+# ``.simplified.config``, which executes ``simplified/__init__``, which
+# executes THIS module; a ``config_profiles``-first import order then hit the
+# partially-initialized module and raised ImportError (latent for as long as
+# the eager ``RAG_Search/__init__`` front-loaded ``simplified`` in the safe
+# order; unmasked when task-21102 made that facade lazy). Typing-only names
+# stay importable for checkers; the two runtime uses go through
+# ``_config_profiles()``.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..config_profiles import (
+        ProfileConfig,
+        ExperimentConfig,
+        ProfileType,
+        ConfigProfileManager,
+    )
+
+
+def _config_profiles():
+    """Return the ``config_profiles`` module, imported at first use."""
+    from .. import config_profiles
+
+    return config_profiles
+
+
+def _tag_first_result(
+    results: List[Union[SearchResult, SearchResultWithCitations]],
+    key: str,
+    value: str,
+) -> List[Union[SearchResult, SearchResultWithCitations]]:
+    """Return a NEW results list whose first element carries `metadata[key]
+    = value`, without mutating the original first result object or the
+    original list.
+
+    `results` here may be the EXACT objects `RAGService.search()`'s cache
+    is holding by reference (see the `cache.put_async`/`cache.get_async`
+    call sites in rag_service.py) -- caching stores the list and its
+    `SearchResult`/`SearchResultWithCitations` elements by reference, not by
+    copy. An in-place `results[0].metadata[key] = value` mutation there
+    would poison the cached entry for up to `cache_ttl` seconds (3600s by
+    default), regardless of whether a LATER search for the same query
+    reranks successfully or has reranking disabled entirely -- the stale
+    tag would still be sitting on the shared object (task-3170 P0 review
+    finding). Building a new list with a new first-element copy sidesteps
+    this: the original object's metadata dict is only ever read
+    (`**results[0].metadata`), never written.
+    """
+    if not results:
+        return results
+    tagged_first = replace(results[0], metadata={**results[0].metadata, key: value})
+    return [tagged_first] + list(results[1:])
 
 
 class EnhancedRAGServiceV2(EnhancedRAGService):
@@ -64,7 +115,9 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         # Handle different config types
         if isinstance(config, str):
             # Load profile by name
-            self.profile_manager = profile_manager or get_profile_manager()
+            self.profile_manager = (
+                profile_manager or _config_profiles().get_profile_manager()
+            )
             profile = self.profile_manager.get_profile(config)
             if not profile:
                 raise ValueError(f"Profile '{config}' not found")
@@ -72,19 +125,30 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             config = profile.rag_config
             self.reranking_config = profile.reranking_config
             self.processing_config = profile.processing_config
-        elif isinstance(config, ProfileConfig):
-            # Use provided profile
+        elif isinstance(config, _config_profiles().ProfileConfig):
+            # Use provided profile. Capture reranking_config/processing_config
+            # off the ProfileConfig BEFORE reassigning the local `config` name
+            # to its `.rag_config` below -- reading them off the reassigned
+            # variable instead (a plain RAGConfig, which has neither
+            # attribute) raised AttributeError unconditionally on every call
+            # through this branch, i.e. every from_profile()/
+            # create_rag_from_profile() call, for every profile, reranking or
+            # not (task-3170 P0).
             self.profile = config
-            config = config.rag_config
             self.reranking_config = config.reranking_config
             self.processing_config = config.processing_config
-            self.profile_manager = profile_manager or get_profile_manager()
+            config = config.rag_config
+            self.profile_manager = (
+                profile_manager or _config_profiles().get_profile_manager()
+            )
         else:
             # Direct RAG config
             self.profile = None
             self.reranking_config = None
             self.processing_config = None
-            self.profile_manager = profile_manager or get_profile_manager()
+            self.profile_manager = (
+                profile_manager or _config_profiles().get_profile_manager()
+            )
 
         # Initialize base service
         super().__init__(config, enable_parent_retrieval)
@@ -93,14 +157,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         self.enable_reranking = enable_reranking
         self.enable_parallel_processing = enable_parallel_processing
 
-        # Initialize reranker if enabled
-        self.reranker = None
-        if self.enable_reranking and self.reranking_config:
-            self.reranker = create_reranker(
-                strategy=self.reranking_config.strategy,
-                **self.reranking_config.__dict__,
-            )
-            logger.info(f"Initialized {self.reranking_config.strategy} reranker")
+        self._configure_reranker()
 
         # Initialize parallel processors if enabled
         self.embedding_processor = None
@@ -128,6 +185,25 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             },
         )
 
+    def _configure_reranker(self) -> None:
+        """Initialize the configured reranker, retaining safe failure detail."""
+        self.reranker = None
+        self._reranker_unavailable_reason = None
+        if not (self.enable_reranking and self.reranking_config):
+            return
+        try:
+            self.reranker = create_reranker_from_config(self.reranking_config)
+            logger.info(f"Initialized {self.reranking_config.strategy} reranker")
+        except Exception as exc:
+            exception_name = type(exc).__name__
+            self._reranker_unavailable_reason = (
+                f"reranker construction failed ({exception_name})"
+            )
+            logger.warning(
+                f"Failed to construct {self.reranking_config.strategy} reranker "
+                f"({exception_name}); continuing without reranking"
+            )
+
     @classmethod
     def from_profile(
         cls, profile_name: ProfileType, **kwargs
@@ -142,7 +218,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         Returns:
             Configured RAG service
         """
-        manager = get_profile_manager()
+        manager = _config_profiles().get_profile_manager()
         profile = manager.get_profile(profile_name)
 
         if not profile:
@@ -169,7 +245,8 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         rerank: Optional[bool] = None,
         user_id: Optional[str] = None,
         *,
-        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Enhanced search with optional reranking and experiment tracking.
@@ -183,12 +260,24 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             score_threshold: Minimum score
             rerank: Override reranking setting
             user_id: User ID for experiment tracking
-            metadata_allowlist: Metadata key -> allowed values, forwarded to
-                ``RAGService.search`` for store-level scoping. See
+            metadata_allowlist: Metadata key -> allowed values (one mapping,
+                or a sequence of them), forwarded to ``RAGService.search``
+                for leg-level scoping -- since TASK-15020/B1 that is the
+                vector store AND the FTS sub-legs on a hybrid search. See
                 ``RAGService.search`` for semantics. This subclass is the
                 one actually instantiated at runtime, so it must accept and
                 forward this kwarg itself rather than relying on it merely
                 being present on the base class.
+            keyword_source_types: Keyword-leg source-type selection,
+                forwarded to ``RAGService.search`` (TASK-14751). Same
+                runtime-override caveat as ``metadata_allowlist``, and it
+                bit for real: the P1 eval harness -- which drives the
+                Library service against THIS class -- crashed with a
+                ``TypeError`` the moment the Library started pushing the
+                selection down, while every unit test stayed green because
+                their doubles mirror ``RAGService.search``, not this
+                override. Any new base-class search kwarg has to be added
+                here too.
 
         Returns:
             Search results, optionally reranked
@@ -225,27 +314,93 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             include_citations=include_citations,
             score_threshold=score_threshold,
             metadata_allowlist=metadata_allowlist,
+            keyword_source_types=keyword_source_types,
         )
 
-        # Apply reranking if enabled
-        should_rerank = rerank if rerank is not None else self.enable_reranking
-        if should_rerank and self.reranker and len(results) > 1:
-            rerank_start = time.time()
-
-            # Use experiment profile's reranking config if available
-            if experiment_profile and experiment_profile.reranking_config:
-                # Create temporary reranker with experiment config
-                temp_reranker = create_reranker(
-                    strategy=experiment_profile.reranking_config.strategy,
-                    **experiment_profile.reranking_config.__dict__,
-                )
-                results = await temp_reranker.rerank(query, results)
+        # Apply reranking if enabled. Reranking must NEVER fail a search:
+        # LLM-based strategies (pointwise/pairwise/listwise -- reranker.py
+        # has no local/offline strategy) spend a provider call per search,
+        # so a raising reranker (bad credentials, provider outage, a
+        # misconfigured profile) degrades to the unreranked base results
+        # instead of raising. `_final_score_kind=reranker` (see
+        # local_citation_capture.py) is the provenance channel that
+        # discloses when a result WAS actually reranked; this
+        # `reranking_skipped` tag is the counterpart that discloses when it
+        # was attempted and skipped.
+        if rerank is not None:
+            should_rerank = rerank
+        elif experiment_profile is not None:
+            should_rerank = experiment_profile.reranking_config is not None
+        else:
+            should_rerank = self.enable_reranking
+        reranked = False
+        if should_rerank and results:
+            active_reranker = None
+            unavailable_reason = None
+            if experiment_profile is not None:
+                if experiment_profile.reranking_config:
+                    try:
+                        active_reranker = create_reranker_from_config(
+                            experiment_profile.reranking_config
+                        )
+                    except Exception as exc:
+                        exception_name = type(exc).__name__
+                        unavailable_reason = (
+                            f"reranker construction failed ({exception_name})"
+                        )
+                        logger.warning(
+                            f"Failed to construct {experiment_profile.reranking_config.strategy} "
+                            f"reranker ({exception_name}); returning unreranked results"
+                        )
+                # A selected experiment with no reranking config explicitly
+                # opts out by default, but an explicit override may inherit it.
+                elif rerank is True:
+                    active_reranker = self.reranker
+                    unavailable_reason = self._reranker_unavailable_reason
             else:
-                results = await self.reranker.rerank(query, results)
+                active_reranker = self.reranker
+                unavailable_reason = self._reranker_unavailable_reason
+            if active_reranker is not None and len(results) > 1:
+                rerank_start = time.time()
+                try:
+                    outcome = await active_reranker.rerank(query, results)
+                    results = outcome.results
+                    reranked = outcome.failed < outcome.total
 
-            rerank_time = time.time() - rerank_start
-            log_histogram("rag_reranking_time", rerank_time)
-            logger.debug(f"Reranking completed in {rerank_time:.3f}s")
+                    rerank_time = time.time() - rerank_start
+                    log_histogram("rag_reranking_time", rerank_time)
+                    logger.debug(f"Reranking completed in {rerank_time:.3f}s")
+
+                    # rerank() can return NORMALLY while having silently scored
+                    # nothing (or almost nothing) -- e.g. every per-result LLM
+                    # call exhausting retries under a missing provider
+                    # credential -- which looks identical to "nothing needed
+                    # reranking" (an unchanged ordering, no exception) unless
+                    # disclosed here.
+                    #
+                    # These counts come from THIS call's return value, never
+                    # from the reranker object: `self.reranker` is a singleton
+                    # shared by every concurrent search(), so reading counters
+                    # off it after rerank() returned let another search's
+                    # failures be attributed to this search's tag (TASK-3502
+                    # AC#4 -- scoped, not locked; see RerankOutcome).
+                    if outcome.degraded:
+                        detail = f"{outcome.failed}/{outcome.total} scorings failed"
+                        logger.warning(f"Reranking degraded: {detail}")
+                        results = _tag_first_result(
+                            results, "reranking_degraded", detail
+                        )
+                except Exception as exc:
+                    exception_name = type(exc).__name__
+                    detail = f"reranking failed ({exception_name})"
+                    logger.warning(
+                        f"Reranking failed ({exception_name}); returning unreranked results"
+                    )
+                    results = _tag_first_result(results, "reranking_skipped", detail)
+            elif unavailable_reason:
+                results = _tag_first_result(
+                    results, "reranking_skipped", unavailable_reason
+                )
 
         # Record experiment metrics if active
         if self._current_experiment and user_id:
@@ -254,7 +409,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 "search_latency": search_time * 1000,  # Convert to ms
                 "results_returned": len(results),
                 "search_type": search_type,
-                "reranked": should_rerank,
+                "reranked": reranked,
             }
 
             # Add result quality metrics
@@ -338,12 +493,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         self.reranking_config = profile.reranking_config
         self.processing_config = profile.processing_config
 
-        # Reinitialize components if needed
-        if self.enable_reranking and self.reranking_config:
-            self.reranker = create_reranker(
-                strategy=self.reranking_config.strategy,
-                **self.reranking_config.__dict__,
-            )
+        self._configure_reranker()
 
         logger.info(f"Switched to profile: {profile_name}")
         log_counter("rag_profile_switch", labels={"profile": profile_name})

@@ -1,0 +1,43 @@
+╭─────────────╮
+tldw chatbook
+‹ts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Logs │ F9 Settings │ More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Settings | Global preferences, appearance, storage, and app behavior | Local
+Mode: Console Behavior
+┌──────────────────────────────┐│┌───────────────────────────────────────────────────────┐│┌───────────────────┐
+││││││││
+│Filter categories (/)│││State: Draft — save with s | Changes affect global│││Scope Inspector│
+│No filter | / focus│││Console fallbacks after save.││││
+│category search││││││Selected│
+││││Console Behavior│││category: Console│
+│Core│││┌──────────────────────────────────────────────────┐│││Behavior│
+│   Overview (view) ││││┌──────────────────────────────────────────────┐││││No unsaved│
+│   Providers & Models ││││││││││changes│
+│   Speech & TTS │││││Start here││▃│││Guided edits:│
+│Interface│││││ Conversation context and memory ↓ │││││change a field│
+│   Appearance │││││Also in this category: rail presentation,│││││first.│
+│   Theme │││││paste handling, images, agent limits, and│││││ Save (s) — no ch│
+│   Splash Screen │││││generation defaults.│││││ Revert (r) — no │
+│ > Console Behavior ││││││││││Local-only: saves│
+│Data & Privacy│││││Rail presentation│││││write your config│
+│   Storage │││││▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│││││file.│
+│   Workspaces │││││▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│││││Control guide│
+│   Privacy & Security │││││Saved style: Horizontal│││││Default chat│
+│Troubleshooting│││││Uses narrower 3-column handles by stacking│││││display name:▆│
+│   Diagnostics (view) │││││upright letters. Direction glyphs are│││││Speaker label│
+│   About (view) │││││omitted.│││││and trusted│
+│   Agents ││││││││││character-temp│
+│Expert│││││Composer paste handling│││││late human│
+│   Internal Prompts │││││Collapse large pasted chunks only when they│││││name│
+│   Advanced Config │││││exceed the threshold.││││││
+│ Domain Defaults ▸ (11) │││││▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│││││Streaming:│
+││││││▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│││││Global│
+││││││Threshold (chars)│50│││││fallback for│
+││││││Normal typing stays literal. The canonical│││││streaming│
+││││││message payload is preserved.│││││responses when│
+│││││││││││no Console│
+││││││Chat images│││││▼ more — scroll│
+││││││││
+└──────────────────────────────┘│└───────────────────────────────────────────────────────┘│└───────────────────┘
+
+s save category | r revert category | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit

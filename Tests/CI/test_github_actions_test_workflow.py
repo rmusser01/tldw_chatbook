@@ -22,6 +22,13 @@ def _all_tests_job_block() -> str:
     return workflow[start:end]
 
 
+def _core_tests_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  core-tests:")
+    end = workflow.index("  artifact-lease-spike:", start)
+    return workflow[start:end]
+
+
 def _nightly_deep_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  nightly-deep:")
@@ -59,6 +66,13 @@ def _artifact_lease_gate_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  artifact-lease-gate:")
     end = workflow.index("  ui-tests:", start)
+    return workflow[start:end]
+
+
+def _ui_tests_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  ui-tests:")
+    end = workflow.index("  textual-minimum:", start)
     return workflow[start:end]
 
 
@@ -124,6 +138,22 @@ def test_full_suite_job_is_bounded_and_manual_only() -> None:
     assert "pull_request" not in all_tests_job
     assert "name: Full Test Suite (Manual)" in all_tests_job
     assert "pytest ./Tests/" in all_tests_job
+
+
+def test_jobs_running_architecture_tests_fetch_pinned_history() -> None:
+    """Keep immutable architecture baselines available in every full test job.
+
+    The Wave 6 inventory reads a pinned source blob with ``git show``. GitHub's
+    default depth-one checkout does not contain that historical commit.
+    """
+    for block in (
+        _core_tests_job_block(),
+        _all_tests_job_block(),
+        _nightly_deep_job_block(),
+    ):
+        checkout_start = block.index("    - uses: actions/checkout@v4")
+        checkout_end = block.index("\n    - name:", checkout_start)
+        assert "fetch-depth: 0" in block[checkout_start:checkout_end]
 
 
 def test_ci_exercises_mcp_against_minimum_textual() -> None:
@@ -217,6 +247,7 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
 def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:
     """task-1465: core+ui shards replace the 27-file `-m unit` selection."""
     workflow = _workflow_text()
+    ui_job = _ui_tests_job_block()
 
     assert "  core-tests:" in workflow
     assert "pytest Tests --ignore=Tests/UI" in workflow
@@ -225,6 +256,118 @@ def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:
     assert "pytest -m unit" not in workflow
     assert "pytest -m integration" not in workflow
     assert not (PROJECT_ROOT / ".github" / "workflows" / "python-app.yml").exists()
+
+
+def test_ui_job_is_sharded_to_fit_its_time_budget() -> None:
+    """TASK-18608: one job could never finish the UI suite.
+
+    The full Tests/UI directory needs ~5.8 serial-equivalent hours on a
+    standard runner; the job budget is 45 minutes, so the unsharded job was
+    cancelled at ~11% on every run, on every branch (100+ consecutive red
+    runs). The fix is a matrix of pytest-shard slices -- the contract here
+    is that the split stays deterministic (pytest-shard, not xdist-only,
+    which is per-job randomness), covers every test exactly once across the
+    matrix, and each slice still parallelizes internally with xdist.
+    """
+    workflow = _workflow_text()
+    ui_job = _ui_tests_job_block()
+
+    assert "pytest-shard" in (
+        PROJECT_ROOT / "requirements-test.txt"
+    ).read_text()
+    assert "--shard-id=${{ matrix.shard }}" in ui_job
+    # The ids and the divisor must describe the same complete partition:
+    # 12 shards numbered 0..11. A mismatch (e.g. ids 1..12 against
+    # num-shards 12, or a stale id list after resizing) would silently
+    # duplicate or drop a slice of the suite.
+    # Read the ids from the UI JOB, not the whole workflow. This used to
+    # search `workflow` for the first "shard: [" -- which was the UI job only
+    # because it was then the only sharded job. TASK-21411 sharded core-tests
+    # too, and core's ids were suddenly being checked against the UI job's
+    # divisor. A partition assertion that can silently start describing a
+    # different job is worse than no assertion.
+    id_values = _shard_ids(ui_job)
+    divisor = int(ui_job.split("--num-shards=")[1].split()[0].rstrip("'\""))
+    assert id_values == list(range(divisor)), "shard ids must be 0..N-1"
+    assert divisor >= 10, (
+        "the UI suite needs ~5.8h serial; a 45-minute job budget needs at "
+        "least ~10 deterministic shards (~35 min each) to finish"
+    )
+    # xdist still parallelizes WITHIN each shard.
+    assert "-n auto --dist loadscope" in ui_job
+    # Every shard uploads its report, and the names must be per-shard so
+    # matrix siblings cannot overwrite each other's artifacts.
+    assert "ui-test-results-${{ matrix.shard }}.json" in ui_job
+    assert "name: ui-test-results-${{ matrix.shard }}" in ui_job
+
+
+def _shard_ids(job_block: str) -> list[int]:
+    """The `shard: [...]` id list declared inside one job block."""
+    line = job_block[job_block.index("shard: [") :].splitlines()[0]
+    return [
+        int(part.strip())
+        for part in line[line.index("[") + 1 : line.rindex("]")].split(",")
+    ]
+
+
+def test_core_tests_job_is_sharded_to_fit_its_time_budget() -> None:
+    """TASK-21411: one job could not finish the core suite either.
+
+    Diagnosed from a killed run's own log rather than from the outcome: the
+    ubuntu leg started pytest at 15:44:55 and was still emitting progress
+    steadily when the 120-minute cap killed it at 17:39, having reached 60%.
+    Steady progress at the kill is what separates "too slow" from "hung" --
+    the suite needs ~190 minutes on a 4-vCPU runner, so no timeout below
+    GitHub's 6-hour ceiling makes one job the right container.
+
+    The contract mirrors the UI job's: a deterministic pytest-shard split
+    covering every test exactly once, xdist still parallelizing within each
+    slice, and per-shard artifact names so matrix siblings cannot overwrite
+    each other's report.
+    """
+    core = _core_tests_job_block()
+
+    assert "--shard-id=${{ matrix.shard }}" in core
+    divisor = int(core.split("--num-shards=")[1].split()[0].rstrip("'\""))
+    assert _shard_ids(core) == list(range(divisor)), "shard ids must be 0..N-1"
+    assert divisor >= 4, (
+        "the core suite needs ~190 minutes on a standard runner; fewer than "
+        "~4 shards puts a slice back within reach of the 120-minute cap"
+    )
+    assert "-n auto --dist loadscope" in core
+    assert "core-test-results-${{ matrix.shard }}.json" in core
+    assert "name: core-test-results-${{ matrix.shard }}" in core
+
+
+def test_core_tests_job_does_not_multiply_the_scarcest_runner_pool() -> None:
+    """macOS breadth belongs to nightly-deep, not to a six-way PR matrix.
+
+    macOS runners are the constrained pool here -- queue waits of 42 to 90
+    minutes were observed while ubuntu jobs started promptly -- so sharding
+    core across them would spend more in queueing than it buys. This pins the
+    intent, and pins that the coverage it gives up still exists elsewhere.
+    """
+    core = _core_tests_job_block()
+    assert "runs-on: ubuntu-latest" in core
+    assert "macos" not in core
+    assert "macos-latest" in _nightly_deep_job_block()
+
+
+def test_core_tests_job_budget_covers_the_suite() -> None:
+    """TASK-18608: 60 minutes stopped being enough for the core suite.
+
+    The ubuntu leg was killed by its own timeout mid-run while the macOS
+    leg finished at ~58m, so the budget must sit clearly above the
+    observed worst leg, not at it.
+    """
+    core = _core_tests_job_block()
+
+    line = next(
+        l.strip()
+        for l in core.splitlines()
+        if l.strip().startswith("timeout-minutes:")
+    )
+    assert int(line.split(":")[1]) >= 120
 
 
 def test_nightly_deep_runs_the_tiers_the_pr_gate_does_not() -> None:
@@ -244,3 +387,127 @@ def test_nightly_deep_runs_the_tiers_the_pr_gate_does_not() -> None:
     assert "-n auto" not in nightly  # serial on purpose: order-regression canary
     assert "windows-latest" in nightly
     assert "macos-latest" in nightly
+
+
+def test_every_json_report_invocation_omits_log_capture() -> None:
+    """Every ``--json-report`` MUST carry ``--json-report-omit log``.
+
+    Incident (2026-08-20, TASK-19160): pytest-json-report captures RAW
+    ``logging.LogRecord`` objects per test and attaches them to the report
+    (``report._json_report_extra``). The websockets library logs through a
+    ``LoggerAdapter`` whose extra carries the LIVE connection object, so when
+    a realtime test failed on the runner with DEBUG-level logging left on by
+    an earlier test in the same xdist worker, execnet hit
+    ``DumpError: can't serialize <class 'websockets...ServerConnection'>``
+    while shipping the report — killing the worker and aborting BOTH Core
+    jobs with INTERNALERROR. One flaky test nuked the whole job's results.
+
+    Reproduced deterministically (failing realtime test + ``--log-level=DEBUG``
+    + xdist + json-report) and verified fixed by the omit flag. Nothing
+    consumes the log section: ``generate_test_summary.py`` reads only
+    ``tests[].outcome`` and ``call.longrepr``.
+    """
+    # Join shell continuation lines into logical commands first, so the
+    # activation flag and its omit argument may legally sit on different
+    # physical lines; then accept every valid spelling of the omit
+    # ("--json-report-omit log", "--json-report-omit=log", comma lists).
+    logical = _workflow_text().replace("\\\n", " ")
+    activations = 0
+    for command in logical.splitlines():
+        tokens = command.split()
+        if "--json-report" not in tokens:
+            continue
+        activations += 1
+        omits: list[str] = []
+        for index, token in enumerate(tokens):
+            if token == "--json-report-omit" and index + 1 < len(tokens):
+                omits.extend(tokens[index + 1].split(","))
+            elif token.startswith("--json-report-omit="):
+                omits.extend(token.split("=", 1)[1].split(","))
+        assert "log" in omits, (
+            f"test.yml: '--json-report' without log in '--json-report-omit' "
+            f"— raw LogRecords in reports crash xdist workers (see "
+            f"docstring): {command.strip()[:120]!r}"
+        )
+    assert activations >= 4, (
+        f"expected at least 4 json-report activations (core, UI, full, "
+        f"nightly); found {activations} — the pin may have gone inert"
+    )
+
+
+def test_the_test_summary_job_can_actually_fail() -> None:
+    """TASK-21411: `needs:` + `if: always()` schedules a job; it does not judge one.
+
+    On run 32647831275 the Test Summary check reported success while all
+    twelve UI shards were red -- it ran after them, read their artifacts, and
+    never looked at their conclusions. Since this is the check most likely to
+    be marked required, a summary that cannot go red is worse than no summary.
+
+    The verdict must also be the last step, so a failing suite still leaves
+    the PR comment behind rather than exiting before it is posted.
+    """
+    summary = _test_summary_job_block()
+
+    for job in ("core-tests", "ui-tests", "textual-minimum", "artifact-lease-gate"):
+        assert f"needs.{job}.result != 'success'" in summary, (
+            f"the summary does not fail when {job} fails"
+        )
+    assert "exit 1" in summary
+
+    step_names = [
+        line.split("- name:", 1)[1].strip()
+        for line in summary.splitlines()
+        if line.strip().startswith("- name:")
+    ]
+    assert step_names[-1] == "Require every gated job to have succeeded", (
+        "the verdict must be the final step, after the PR comment is posted; "
+        f"steps end with {step_names[-2:]}"
+    )
+
+
+def test_an_in_flight_pull_request_run_is_not_cancelled_mid_run() -> None:
+    """TASK-22250: superseding RUNNING PR runs is why `Tests` never reports.
+
+    Scope, stated precisely because the first version of this test overclaimed:
+    this guarantees only that a PR run already EXECUTING is not killed
+    mid-flight. GitHub concurrency keeps one running plus one *pending* member
+    per group, and a third arrival still replaces the pending one -- so a PR run
+    can be cancelled while queued, and `cancel-in-progress` cannot prevent that.
+    Making the group unique per run would, but it would also stop superseding
+    obsolete commits and multiply queue pressure that is already this repo's
+    bottleneck (runs observed queued 20+ minutes before starting).
+
+    Killing a queued run costs nothing and yields the newer commit's verdict,
+    which is what you want. Killing a RUNNING batch throws away up to 35 minutes
+    per shard and produces no verdict at all. Only the second is the defect.
+
+    This is the slowest workflow in the repo -- 12 UI shards plus 6 core
+    shards at roughly 35 minutes each. With `cancel-in-progress` applying to
+    `pull_request` events, every push to a branch killed the batch already
+    running for that branch's PR, so an actively-worked PR never produced a
+    verdict at all.
+
+    Measured on PR #2078: one push cancelled 20 checks at once (all 6 core
+    shards, all 12 UI shards, MCP min-Textual, an artifact-lease leg), and
+    each batch's cancellation timestamp matched the NEXT batch's creation
+    timestamp -- supersession, not an external agent.
+
+    `derived-artifacts.yml` already scopes cancellation to `push` only, and it
+    is the one required check that reliably survives to report. That is the
+    precedent this pins.
+
+    A push run may still be superseded: pushing again genuinely obsoletes the
+    previous commit's run. `main` is never cancelled either way.
+    """
+    concurrency = _workflow_text().split("concurrency:", 1)[1].split("permissions:", 1)[0]
+    cancel_line = next(
+        line for line in concurrency.splitlines() if "cancel-in-progress:" in line
+    )
+    assert "github.event_name == 'push'" in cancel_line, (
+        "cancel-in-progress must be scoped to push events; cancelling a "
+        "RUNNING pull_request run mid-flight is what stopped this workflow "
+        f"reporting. Line: {cancel_line.strip()!r}"
+    )
+    assert "github.ref != 'refs/heads/main'" in cancel_line, (
+        f"main must never be cancelled. Line: {cancel_line.strip()!r}"
+    )

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Collapsible, Static
+from textual.widgets import Button, Collapsible, Static
 
-from tldw_chatbook.Library.library_collections_state import LibraryCollectionsPanelState
+from tldw_chatbook.Library.library_collections_state import (
+    LibraryCollectionDeleteReceipt,
+    LibraryCollectionsPanelState,
+)
 from tldw_chatbook.Widgets.Library.library_collections_panel import (
     LIBRARY_COLLECTIONS_STATUS_LINE,
     LibraryCollectionsPanel,
@@ -13,6 +16,56 @@ from tldw_chatbook.Widgets.Library.library_collections_panel import (
 
 
 pytestmark = pytest.mark.asyncio
+
+
+# task-2859 item 7: canvas titles drop the "Library " prefix and match the
+# sibling "Name (n)" pattern (Media/Notes/Prompts/Skills already do this;
+# Collections used to render the bare, count-less "Library Collections").
+
+
+async def test_library_collections_panel_title_matches_the_sibling_name_count_pattern(
+    widget_pilot,
+):
+    state = LibraryCollectionsPanelState.from_values(
+        collections=(
+            {"collection_id": "collection-1", "name": "Research", "item_count": 2},
+            {"collection_id": "collection-2", "name": "Reading list", "item_count": 0},
+        ),
+    )
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        title = pilot.app.query_one("#library-collections-title", Static)
+        assert str(title.renderable) == "Collections (2)"
+
+
+async def test_library_collections_panel_empty_title_shows_zero_count(widget_pilot):
+    state = LibraryCollectionsPanelState.from_values(collections=(), status="empty")
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        title = pilot.app.query_one("#library-collections-title", Static)
+        assert str(title.renderable) == "Collections (0)"
+
+
+async def test_library_collections_panel_renders_receipt_in_empty_state(widget_pilot):
+    state = LibraryCollectionsPanelState.from_values(
+        collections=(),
+        status="empty",
+        delete_receipt=LibraryCollectionDeleteReceipt(
+            collection_id="collection-1",
+            name="Research",
+        ),
+    )
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        copy = pilot.app.query_one("#library-collections-delete-receipt-copy", Static)
+        assert str(copy.renderable) == "✓ deleted · Collection · Research"
+        assert copy._render_markup is False
+        assert pilot.app.query_one("#library-collections-delete-undo", Button)
+        assert pilot.app.query_one("#library-collections-delete-receipt-dismiss", Button)
+        assert pilot.app.query_one("#library-collections-empty-title", Static)
 
 
 async def test_library_collections_panel_renders_read_only_sync_dry_run_detail(
@@ -273,19 +326,14 @@ async def test_library_collections_panel_moves_sync_detail_behind_details_disclo
 async def test_library_collections_panel_empty_state_renders_message_once(
     widget_pilot,
 ):
-    """TASK-2855 AC3: the empty-state "no stored collection items" sentence
-    renders once, not twice."""
+    """The current empty-state guidance renders once, not twice."""
     state = LibraryCollectionsPanelState.from_values(collections=(), status="empty")
 
     async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
         await pilot.pause()
-        occurrences = sum(
-            1
-            for widget in pilot.app.query(Static)
-            if "No stored collection items are available locally yet."
-            in str(widget.renderable)
-        )
-        assert occurrences == 1
+        empty_copy = pilot.app.query("#library-collections-empty")
+        assert len(empty_copy) == 1
+        assert str(empty_copy[0].renderable) == state.empty_copy
         assert not pilot.app.query("#library-collection-empty-reader")
         assert not pilot.app.query("#library-collection-empty-reader-title")
 

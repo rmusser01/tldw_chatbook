@@ -41,6 +41,8 @@ import asyncio
 import queue
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +56,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Tuple,
 )
 
 from loguru import logger
@@ -415,6 +418,30 @@ def peek_shared_rag_service() -> Optional[Any]:
     return _shared_service
 
 
+def shared_rag_service_generation() -> int:
+    """Return the current shared-service generation counter.
+
+    Bumped by every ``set_shared_rag_service()`` (including
+    ``reset_shared_rag_service()``'s ``set_shared_rag_service(None)``), so a
+    caller that caches the shared service elsewhere -- notably
+    ``app._rag_service``, which a profile switch would otherwise leave
+    pointing at the previous profile's runtime for the rest of the session
+    -- can capture this alongside the service and detect that it has been
+    superseded. See ``semantic_availability.cache_app_rag_service`` /
+    ``current_app_rag_service``, the one pair of helpers both app-level
+    resolvers use.
+
+    Returns:
+        The generation at the moment of the call. Capture it BEFORE
+        resolving/building a service, never after: a reset landing during
+        construction must leave the captured value BEHIND the current one,
+        so the cache is treated as stale rather than trusted (the same
+        ordering rule ``get_shared_rag_service`` follows internally).
+    """
+    with _shared_service_lock:
+        return _shared_service_generation
+
+
 def set_shared_rag_service(service: Optional[Any]) -> None:
     """Directly install (or clear) the shared RAG service instance.
 
@@ -740,28 +767,40 @@ async def index_entries(
             summary["errors"].append(message)
             return summary
 
+    # Indexing-state rows for the whole batch, written in ONE transaction
+    # below rather than one open+commit per item (task-15466).
+    indexed_records: List[Tuple[str, str, Any, int]] = []
     for entry in to_index:
         result = results_by_doc.get(entry.document["id"])
         if result is not None and result.success:
             summary["indexed"] += 1
             if indexing_db is not None:
-                try:
-                    indexing_db.mark_item_indexed(
+                indexed_records.append(
+                    (
                         entry.item_id,
                         entry.item_type,
-                        last_modified=entry.last_modified,
-                        chunk_count=result.chunks_created,
+                        entry.last_modified,
+                        result.chunks_created,
                     )
-                except Exception as e:
-                    logger.warning(
-                        f"Could not record indexing state for {entry.item_type} {entry.item_id}: {e}"
-                    )
+                )
         else:
             error = getattr(result, "error", None) or "no indexing result returned"
             summary["failed"] += 1
             summary["errors"].append(f"{entry.item_type} {entry.item_id}: {error}")
             logger.error(
                 f"RAG indexing failed for {entry.item_type} {entry.item_id}: {error}"
+            )
+
+    if indexed_records:
+        try:
+            indexing_db.mark_items_indexed(indexed_records)
+        except Exception as e:
+            # Tracking stays best-effort, exactly as the per-item form was:
+            # the documents ARE indexed, so `indexed` is not decremented; an
+            # unrecorded item is simply re-indexed on the next run.
+            logger.warning(
+                f"Could not record indexing state for {len(indexed_records)} "
+                f"item(s) in this batch (error_type={type(e).__name__})"
             )
 
     return summary
@@ -1262,6 +1301,28 @@ def reset_ingestion_indexer() -> None:
 
 _hook_installed = False
 _hook_lock = threading.Lock()
+_ingestion_indexing_suppressed: ContextVar[bool] = ContextVar(
+    "ingestion_indexing_suppressed", default=False
+)
+
+
+@contextmanager
+def suppress_ingestion_indexing() -> Iterator[None]:
+    """Temporarily skip post-ingest semantic indexing in this execution context.
+
+    Source persistence stays authoritative. The context-local value is only
+    consulted by the best-effort post-commit hook and is reset even when the
+    surrounding database write raises.
+
+    Yields:
+        None. Post-ingest semantic indexing is suppressed until the context
+        exits, then the previous context-local setting is restored.
+    """
+    token = _ingestion_indexing_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _ingestion_indexing_suppressed.reset(token)
 
 
 def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -> None:
@@ -1272,6 +1333,8 @@ def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
     error is swallowed -- ingestion must never be affected (AC #4/#5).
     """
     try:
+        if _ingestion_indexing_suppressed.get():
+            return
         if not semantic_indexing_available():
             return
         media = db.get_media_by_id(media_id)

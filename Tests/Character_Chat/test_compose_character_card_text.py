@@ -8,7 +8,43 @@ unit level, ahead of the caller-level parity tests in
 ``Tests/UI/test_character_session_prompt_seed.py``.
 """
 
-from tldw_chatbook.Character_Chat.Character_Chat_Lib import compose_character_card_text
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+    compose_character_card_template,
+    compose_character_card_text,
+)
+
+
+def test_raw_template_preserves_macros_and_resolved_composer_keeps_field_layout():
+    """A regression that reuses eager resolution in the raw composer loses source."""
+    fields = dict(
+        name="Vex",
+        system_prompt="You are {{character}}.",
+        personality="watchful of {{user}}",
+        description="Keeps <CHAR> beside <USER>.",
+        scenario="{{random_user}} meets {{persona}}.",
+        message_example="{{char}}: Welcome, {{user}}.",
+        post_history_instructions="Protect {{user}}.",
+    )
+
+    template = compose_character_card_template(**fields)
+    resolved = compose_character_card_text(**fields, user_name="Captain Rowan")
+
+    assert template == (
+        "You are {{character}}.\n\n"
+        "Personality: watchful of {{user}}\n\n"
+        "Description: Keeps <CHAR> beside <USER>.\n\n"
+        "Scenario: {{random_user}} meets {{persona}}.\n\n"
+        "Example dialogue:\n{{char}}: Welcome, {{user}}.\n\n"
+        "Protect {{user}}."
+    )
+    assert resolved == (
+        "You are Vex.\n\n"
+        "Personality: watchful of Captain Rowan\n\n"
+        "Description: Keeps Vex beside Captain Rowan.\n\n"
+        "Scenario: Captain Rowan meets Vex.\n\n"
+        "Example dialogue:\nVex: Welcome, Captain Rowan.\n\n"
+        "Protect Captain Rowan."
+    )
 
 
 def test_whitespace_only_labelled_field_contributes_no_label():
@@ -68,6 +104,22 @@ def test_interior_whitespace_in_a_real_value_is_untouched():
         message_example="<START>\n  Vex: Try me.\n\nVex: Again?",
     )
     assert out == "Example dialogue:\n<START>\n  Vex: Try me.\n\nVex: Again?"
+
+
+def test_terminal_unsafe_character_text_remains_exact_in_prompt_composition():
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    raw_description = "Keeps\u200b exact lore."
+
+    out = compose_character_card_text(
+        name=raw_name,
+        system_prompt="You are {{character}}.",
+        description=raw_description,
+    )
+
+    assert out == (
+        f"You are {raw_name}.\n\n"
+        f"Description: {raw_description}"
+    )
 
 
 def test_leading_and_trailing_whitespace_around_a_real_value_still_trims():

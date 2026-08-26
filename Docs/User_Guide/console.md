@@ -35,25 +35,41 @@ Top to bottom:
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
   **Attach context**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
-- **Left rail: "Console context"** — sections **Session** (workspace and
-  the conversation browser), **Model**, **Agent**, and **Details**. The
-  **◂** button in the rail header collapses it; while collapsed, a thin
-  **Context ▸** handle on the far left brings it back.
+- **Left rail: "Console context"** — separate sections for **Sessions**
+  (the active conversation), **Workspaces** (named workspaces and their
+  conversations), **Conversations** (Default and unassigned conversations),
+  **Model**, **Agent**, and **Details**, plus **Character** when character
+  avatars are enabled. The
+  full-width **<---------|Context** header button collapses the rail; while
+  collapsed, the **Context->** handle on the far left brings it back.
 - **Conversation pane** — titled "Conversation", extended to
   "Conversation | \<session title\>" once a session is active.
   Above it sits the session tab strip: one button per tab (each with a
   **✕** close button) ending in **New tab**.
-- **Right rail: "Inspector"** — collapsed by default. Its handle on the
-  right edge reads "Inspector" and grows small badges when something needs
-  you (pending approvals, an available artifact). Opened, it holds
+- **Right rail: "Inspector"** — collapsed by default. Its **<-Inspect**
+  handle on the right edge grows small badges when something needs you
+  (pending approvals, an available artifact). Opened, its full-width
+  **Inspect|--------->** header button collapses it, and the body holds
   **Sources**, the retrieval scope row ("Scope: everything" until you
   narrow it), a run status line, groups such as **Run**, **Tools**,
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
   (ask Library sources before sending), and the **Session Settings**
   summary.
-- **Status chip strip** — one row of chips directly above the composer:
-  **Provider**, **Model**, **Assistant**, **Library search**, **Sources**,
-  **Tools**, **Approvals**, and — once retrieval is narrowed — **Scope**.
+- **Staged-evidence strip** — appears at the top of the control deck,
+  directly under the conversation pane and above the status chip strip,
+  only while Library RAG evidence is staged (or briefly after a send
+  consumes it); lists what's staged with an **Un-stage** button — see
+  [Context & RAG](console/context-and-rag.md). The prompt-queue shelf
+  occupies the same slot while prompts are queued.
+- **Status chip strip** — one row of chips directly below the
+  conversation pane (and below any staged-evidence or prompt-queue
+  strip), above the composer: **Provider**, **Model**,
+  **Assistant**, **Library search**, **Sources**, **Tools**,
+  **Approvals**, and — once retrieval is narrowed — **Scope**. (Settings ▸
+  Console Behavior ▸ **Status row placement** can move this row below the
+  composer instead, restoring the older bottom-row layout; the collapse
+  choice on its leading **Status ▾** control is remembered across visits
+  and restarts.)
   The chips are actions, not just readouts: **Sources** and **Tools** open
   the Inspector rail (the only way to reach it in single-pane mode, where
   the edge handles hide), **Provider**/**Model** open the model picker,
@@ -61,11 +77,9 @@ Top to bottom:
   pending approval card, and **Scope** opens the scope picker. The **Tools**
   chip only appears once tools are counted for the session (after your
   first send) — before that it stays hidden rather than guessing.
-- **Staged-evidence strip** — appears between the status chips and the
-  composer only while Library RAG evidence is staged (or briefly after a
-  send consumes it); lists what's staged with an **Un-stage** button — see
-  [Context & RAG](console/context-and-rag.md).
-- **Composer row** — the "Composer ▾" collapse toggle, the draft area
+- **Composer row** — a slim one-row bar (it grows with your draft, up to
+  eight rows, and shrinks back as the draft empties) marked by a one-column edge on its left that brightens and
+  thickens while the composer has focus — the "Composer ▾" collapse toggle, the draft area
   ("Ask, command, or paste task..."), then **Send**, **Mic**, **Attach**,
   and **Save**; a **Stop** button appears between Send and Mic while a
   reply is streaming. **Send** is genuinely disabled whenever a send can't
@@ -75,7 +89,19 @@ Top to bottom:
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft.
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
-  Ctrl+P), a word count, the "Tokens:" counter, and database sizes.
+  Ctrl+P), a word count, and database sizes. (Token usage lives in the
+  status row's cost chip — e.g. "2.7k tok" — not in the footer.)
+
+### Rail scrolling and focus
+
+Context sections keep complete reading bodies up to their own limits: 15 rows
+for Sessions, Model, Agent, and Details; 20 for Workspaces and Conversations;
+and 35 for Character. Inspector sections keep a 20-row limit. **▼ more —
+scroll** means more content remains inside the current section; **▼ more
+sections — scroll** means complete later sections remain below, so scroll the
+whole Context or Inspector rail.
+See [Reading long Context and Inspector sections](console/context-and-rag.md#reading-long-context-and-inspector-sections)
+for pointer and keyboard navigation.
 
 ### Small terminals
 
@@ -84,11 +110,38 @@ The shell adapts instead of clipping: below 35 rows the header banner hides
 so the status identity survives); below 150 columns the Inspector rail
 starts collapsed and below 100 columns the left rail starts collapsed too —
 these compact collapses are only the default: opening a rail from its
-handle (or via the **Sources**/**Tools** chips) always works, at any width,
-and your stored open/closed preference is kept and restored at wider sizes;
+handle (or via the **Sources**/**Tools** chips) works while the viewport can
+still keep a usable transcript, and your stored open/closed preference is
+kept and restored at wider sizes;
 and below 84 columns the workspace switches to a single pane — both edge
 handles hide and the transcript takes the full width, so it stays usable
-even at 80x24 or 60x18.
+even at 80x24 or 60x18. An explicitly opened rail yields to this rule once
+the terminal cannot fit the rail plus a usable transcript (~70 columns for
+the Context rail, ~74 for the Inspector); the preference itself survives and
+the rail returns when the terminal widens again.
+
+The full-width layout on larger terminals remains primary, while short
+terminals keep every Context header and complete open section reachable by
+scrolling the rail.
+
+### Focus mode
+
+Focus mode (`Ctrl+Shift+F`, or the palette's "Quick Actions: Toggle Focus
+Mode") strips the Console down to the conversation: the navigation bar and
+the workbench header disappear; the one-line status bar — token count and
+key hints — stays. It is the claude-code-style surface for heads-down
+coding, and the comfortable shape on a phone over `--serve`, where fine
+pointers and function keys are scarce.
+
+- Start chrome-free every launch: set `[general] focus_mode = true`, or
+  launch with `--focus` (which also forces the Console as the startup
+  screen, overriding `default_tab`; first-run onboarding still comes
+  first).
+- Leaving is any navigation — a destination hotkey or a palette jump
+  lands you on the target screen with normal chrome, and one
+  `Ctrl+Shift+F` brings the focused Console back.
+- Context usage remains available in the status line (on wide terminals)
+  and via `Ctrl+Shift+P`.
 
 ### First run: the "Get started" card
 
@@ -125,19 +178,23 @@ composer-level strip below shows once setup completes.
 | **Search Library** | Searches Library evidence before sending — see [Context & RAG](console/context-and-rag.md). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Help** | Opens the Console help panel (same as F1). |
+| **Speak replies** | Speaks new assistant replies in this conversation. |
+| **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. |
 
 ### Rails and handles
 
 | Control | What it does |
 |---|---|
-| **◂** / **▸** (rail headers) | Collapse that rail (**◂** on "Console context", **▸** on "Inspector"). |
-| **Context ▸** handle | Reopens the collapsed "Console context" rail. |
-| **Inspector** handle | Reopens the collapsed "Inspector" rail; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
-| **Session** section | Workspace controls and the conversation browser — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
+| **<---------\|Context** / **Inspect\|--------->** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
+| **Context->** handle | Reopens the collapsed "Console context" rail when the viewport can retain a usable transcript. |
+| **<-Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
+| **Sessions** section | Names the active conversation. |
+| **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
+| **Conversations** section | Independently searches, starts, stars, and resumes only Default and unassigned conversations; starred entries sort first — see [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
 | **Model** section | Read-only Provider / Model / Temperature / Max tokens lines plus a **Configure** button that opens Console Settings. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
-| **Character** section | Appears only when the character-avatar preference is on: the active character's portrait (click to enlarge) and name. |
+| **Character** section | Appears only when the character-avatar preference is on. Its complete portrait is centered and keeps its aspect ratio; it only scales down to fit and is never stretched, cropped, or enlarged merely to fill the 35-row body. |
 
 ### Status chips
 
@@ -149,7 +206,52 @@ composer-level strip below shows once setup completes.
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
 | **Scope** | Appears when retrieval is narrowed ("Scope: N"); Enter or Space opens the scope picker. |
 
+### Long conversations
+
+Opening or switching to a long conversation shows the most recent stretch of it
+first, rather than mounting the whole history up front — a 500-message session
+opens in about a second instead of tens of seconds. Scroll to the top of what is
+shown (wheel, Page Up, or the scrollbar) and the previous chunk is prepended
+under you, keeping the same message in view; the jump-to-latest pill or a new
+send takes you back to the tail. Nothing is deleted: exports, `/rewind`, and the
+context sent to the model always use the full history.
+
+Scroll-back no longer stops at the watermarks: the view slides rather than
+grows. Once the mounted stretch reaches `prune_low_watermark` (12,000 rows by
+default), scrolling further back keeps loading older history while the newest
+end of the stretch is set aside the same way — so a very long session stays
+reachable by scrolling, at a roughly constant memory cost. One deliberate
+exception: a selected message is never set aside, so a selection pinned at
+either end of the stretch pauses the sliding in that direction until you
+clear it (Esc) — after a jump to an old message, the jumped-to selection
+sits at the oldest end, so reading far enough past it eventually pauses the
+forward walk the same way (the view stays bounded instead of growing).
+Scrolling back down (or a jump to an old message — selecting one far outside
+the stretch lands you on a fresh window around it instead of loading
+everything in between) walks forward the same way, and the jump-to-latest
+pill or a new send always returns you straight to a fresh view of the tail.
+Tune it under `[chat_defaults]` in `config.toml`:
+
+- `transcript_window_lines` (144) and `transcript_scrollback_lines` (96) are
+  **floors**, not the budget. The window actually used is the larger of the
+  floor and your terminal height ×6 (×4 per scroll-back step), so on any
+  terminal 24 rows or taller the shipped floors change nothing — raise them
+  above `height × 6` to widen the window, or set `transcript_window_lines` to
+  `0` to mount the whole history at load, as before.
+- `prune_low_watermark` / `prune_high_watermark` bound the mounted view itself
+  and keep working with the window disabled. With the window disabled (or with
+  watermarks set too small to hold a scroll-back step), sliding is off too:
+  history the watermarks pruned is then reachable only via export or a jump,
+  as before TASK-15777.
+
 ### Composer
+
+The composer is a slim bar that floats one blank line clear of the status
+row above and the footer below (compact terminals under 35 rows drop both
+gaps). It is exactly as tall as your draft — one row when empty, growing
+to eight as text wraps, shrinking back as it empties. The one-column edge
+on its left carries its state: muted at rest, ready-green while a draft is
+present, and thick focus-blue while the composer has focus.
 
 Editing keys, send/stream/stop, attachments, and Mic dictation live in
 [Chat basics](console/chat-basics.md) and
@@ -178,6 +280,101 @@ button, the Model section's **Configure** button in the left rail, or the
 For a faster switch, **Alt+M** opens the quick **Model** popover —
 provider, model, and temperature without the full modal.
 
+#### QwenCloud in Console
+
+QwenCloud behaves like the other hosted providers: select it once, use the
+normal streaming Console and native function tools, and discover models
+through the shared cached catalog. Configure its durable **API mode** in
+**F9 ▸ Providers & Models**; it is not a per-session Console override. A run
+pins the selected mode and endpoint for every model turn, so changing Settings
+mid-run cannot switch its continuation to another API.
+
+- `responses` is the default. It re-sends the required history, does not send
+  `previous_response_id` or a provider conversation ID, and does not rely on
+  provider-managed session state. It requests `store=false` where the
+  compatible endpoint honors it; Chatbook makes no claim about provider
+  operational retention or caching.
+- `chat_completions` disables preserved-thinking replay because Chatbook does
+  not retain private reasoning content.
+- Existing Chatbook function tools work through the same approval, execution,
+  cancellation, budget, and continuation path in both modes. QwenCloud-hosted
+  built-in tools are not exposed.
+- The default model is `qwen3.8-max`. Model/mode availability still depends on
+  your QwenCloud account; use model discovery or the provider's recovery error
+  instead of assuming compatibility from the model name.
+- Token usage can be shown even when pricing is unavailable. **Pricing
+  unknown** means no verified rate is configured, not zero cost.
+
+Optional live verification makes paid requests and is never part of the
+default suite. With `DASHSCOPE_API_KEY` already exported, explicitly opt in:
+
+```bash
+TLDW_LIVE_QWENCLOUD=1 .venv/bin/python -m pytest -q \
+  Tests/Chat/test_live_qwencloud_api.py
+```
+
+The test runs both API modes in isolated temporary config and data profiles,
+checks identifying text plus a marker derived from one calculator result, and
+does not print the key, prompt, or response. Override the defaults only when
+your account requires it with `TLDW_LIVE_QWENCLOUD_MODEL` or
+`TLDW_LIVE_QWENCLOUD_API_BASE_URL`.
+
+#### Moonshot Kimi and Z.ai GLM in Console
+
+**Moonshot** and **Z.ai** use their stable provider identities and the ordinary
+streaming Console path. They support Chat Completions only—there is no Responses
+mode or provider conversation ID. Fresh defaults are `kimi-k3` at
+`https://api.moonshot.ai/v1` and `glm-5.2` at
+`https://api.z.ai/api/paas/v4`; saved historical models remain usable.
+Moonshot's China endpoint and intentional compatible custom endpoints are
+configured in **F9 ▸ Providers & Models**.
+
+- Existing Chatbook function tools use the same approval, cancellation,
+  execution, budget, and durable recovery loop for both providers. Moonshot
+  and Z.ai hosted search, retrieval, code, memory, and other built-in tools are
+  not exposed.
+- Kimi K3 uses always-on Preserved Thinking. Its retained assistant reasoning
+  is private but is replayed when K3 requires it. Other Kimi models follow only
+  their curated policy. GLM keeps reasoning for an active or restored function
+  tool run with `clear_thinking=false`; ordinary GLM chat clears prior thinking.
+- Private continuation data is assistant/variant-owned, bounded, and omitted
+  from the visible transcript, logs, summaries, ordinary exports, and usage
+  details. It still counts against the context window and is evicted atomically
+  with its visible owner.
+- Terminal usage reaches Console when the provider returns it. If a selected
+  model has no verified rate, **pricing unknown** means cost was not estimated;
+  it never means free.
+- Model discovery reuses the chat endpoint and credential. Moonshot discovery
+  is authenticated; Z.ai is best-effort, so a failed catalog refresh keeps the
+  configured/cached models and does not block generation.
+
+If a tool run is interrupted, opening the conversation does not execute
+anything. Use **Resume** only after checking the pending calls and approving
+them again; Console pins the original provider, model, Chat-Completions
+protocol, and normalized base while resolving the current credential. Use
+**Take over** to continue visibly without replaying the provider checkpoint, or
+**Discard** to clear it. Executing calls remain ambiguous and are blocked;
+completed and failed calls are not run again. Invalid endpoint/config errors
+must be repaired and saved in Settings before retrying.
+
+Optional live verification is paid and skipped by default. Export the relevant
+API key before running either command. Each command starts
+a fresh isolated profile, suppresses child output/logging, and proves one real
+Calculator result changes the final answer. It requires both the exact opt-in
+flag and a nonblank key:
+
+```bash
+TLDW_LIVE_MOONSHOT=1 .venv/bin/python -m pytest -q \
+  Tests/Chat/test_live_moonshot_zai_api.py -k moonshot
+
+TLDW_LIVE_ZAI=1 .venv/bin/python -m pytest -q \
+  Tests/Chat/test_live_moonshot_zai_api.py -k zai
+```
+
+Use `TLDW_LIVE_MOONSHOT_MODEL` / `TLDW_LIVE_MOONSHOT_API_BASE_URL` or
+`TLDW_LIVE_ZAI_MODEL` / `TLDW_LIVE_ZAI_API_BASE_URL` only when your account
+requires an override. The default test suite makes no paid request.
+
 ### Leaving Console during a run
 
 Agent runs are screen-scoped: navigating to any other screen cancels every
@@ -200,8 +397,8 @@ and a one-time toast on return reports what was cancelled. Details in
 3. **Make today's provider the default.** Open **Settings**, configure
    provider and model, and press **Save as default** — the next launch
    starts there.
-4. **Get a distraction-free transcript.** Click **◂** in the "Console
-   context" rail header (the Inspector is already collapsed by default);
+4. **Get a distraction-free transcript.** Click **<---------|Context** in
+   the "Console context" rail header (the Inspector is already collapsed by default);
    click **Composer ▾** to hide the composer too, and press **Esc** to
    bring it back. Reopen the rails from the edge handles.
 5. **Find any Console shortcut.** Press **F1** — the help panel lists the
@@ -215,6 +412,9 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 |---|---|
 | F1 | Open the Console help panel (actions, agent notes, full shortcut list) |
 | F6 / Shift+F6 | Focus the next / previous pane (context rail → transcript → Inspector → composer) |
+| Tab / Shift+Tab | Move through rail controls and any overflowing section in normal order; sections that fit do not add an extra stop |
+| Arrow keys / Page Up / Page Down / Home / End | Scroll within a focused overflowing section |
+| n / p (Inspector focused) | Move to the next / previous named Inspector section, without wrapping or taking over editable input |
 | Ctrl+K | Open the "Switch Session" conversation finder |
 | Ctrl+T | New Console tab |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
@@ -242,7 +442,7 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   gate use), `[console]` and `[console.background_effects]` (paste
   collapse, ambience), `[chat.images]` (attachments), `[general]`
   `default_tab` (start here).
-- Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md)
+- Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md) · [Text selection & feedback](console/text-selection-and-feedback.md)
 - Deep dives: [Speech services](../Features/Speech-Services-Guide.md) (Mic dictation backends) · [Chat dictionaries](../Features/ChatDictionaries-Documented.md).
 
 ## Quirks & troubleshooting
@@ -273,4 +473,26 @@ outranks that provider's environment variable. Verified against
 42b28089f — 2026-08-06 (task-2852: live check on a fresh profile — a
 Library Search/RAG handoff staged while locked now shows a receipt line
 on the Get started card, and the same handoff on a configured Console
-still lands on the unchanged staged-evidence strip).*
+still lands on the unchanged staged-evidence strip). "Long conversations"
+verified against the TASK-15455 windowing (PR #1538) plus its reconciliation
+delta — shipped tests and an isolated 500-message load probe; not re-checked
+live. "Long conversations" sliding scroll-back and bounded far jumps
+verified against TASK-15777 — shipped tests plus isolated 400/500-message
+mounted probes (scroll-back walks the full history with mounted rows bounded
+by the watermarks — measured ~150 rows / height ~600 at the default marks;
+a far jump mounted 5 rows instead of 490); not re-checked live. The
+head-pinned-selection pause (TASK-16851) verified by shipped tests — a
+post-jump walk-down held ≤1100 virtual rows against a 900 high mark where
+it previously grew to 1966 and kept growing; not re-checked live. Verified
+against the Console bottom-stack de-clutter programme — tasks 17650-17661,
+eight merged PRs, dev @ b6036515e — 2026-08-18 (headless painted probes at
+150×44 and 150×30, both status-row placements, ready/long-draft/collapsed/
+setup-blocked states, plus a staged-sources probe): the control deck below
+the conversation is now transient strips (staged evidence, prompt queue)
+→ status row → blank → composer (1-8 rows, demand-grown, dense-form left
+edge) → blank → footer; the workbench frame closes at the grid's single
+border; transcript message rules reach edge to edge at any terminal
+width; the footer token counter is retired in favor of the status row's
+cost chip; the Status ▾ collapse choice and the status-row placement
+setting persist; compact mode (under 35 rows) drops the breathing-room
+rows. This page's layout tour re-verified against that build.*

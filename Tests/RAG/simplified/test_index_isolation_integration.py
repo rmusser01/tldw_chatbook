@@ -46,7 +46,7 @@ def test_metric_and_model_diffs_fork_collection(chroma_persist_dir):
     base = RAGService(_chroma_cfg(chroma_persist_dir)).vector_store.collection_name
     metric = _chroma_cfg(chroma_persist_dir, vector_store={"distance_metric": "l2"})
     model = _chroma_cfg(chroma_persist_dir)
-    model.embedding.model = "other-model"
+    model.embedding.model = "mock/other-model"
     assert RAGService(metric).vector_store.collection_name != base
     assert RAGService(model).vector_store.collection_name != base
 

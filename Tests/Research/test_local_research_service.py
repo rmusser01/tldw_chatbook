@@ -1,5 +1,12 @@
+import sqlite3
+import threading
+import time
+
 import pytest
 
+from tldw_chatbook.Research_Interop import (
+    local_research_service as local_research_service_module,
+)
 from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
 
 
@@ -129,3 +136,675 @@ def test_local_research_service_dispatches_terminal_run_notifications(tmp_path):
             },
         }
     ]
+
+
+# --- update_run_progress (task-16322 engine seam) ------------------------------
+
+def test_update_run_progress_sets_fields_records_event_and_bumps_version(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="How do persistent agents checkpoint?")
+
+    updated = service.update_run_progress(
+        run["id"],
+        phase="collecting",
+        progress_percent=45.0,
+        progress_message="Collecting sources",
+    )
+
+    assert updated["phase"] == "collecting"
+    assert updated["progress_percent"] == 45.0
+    assert updated["progress_message"] == "Collecting sources"
+    assert updated["status"] == "running"  # untouched
+    assert updated["version"] == run["version"] + 1
+    events = list(service.list_run_events(run["id"]))
+    assert events[-1]["event"] == "progress"
+    assert events[-1]["data"] == {"phase": "collecting", "progress_percent": 45.0}
+
+
+def test_update_run_progress_supports_status_and_control_for_engine_start(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    draft = service.create_run(query="Draft question")
+
+    started = service.update_run_progress(
+        draft["id"],
+        status="running",
+        control_state="running",
+        phase="planning",
+        progress_percent=10.0,
+        event="engine_started",
+    )
+
+    assert started["status"] == "running"
+    assert started["control_state"] == "running"
+    assert started["phase"] == "planning"
+    events = list(service.list_run_events(draft["id"]))
+    assert events[-1]["event"] == "engine_started"
+
+
+def test_update_run_progress_missing_run_raises(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    with pytest.raises(ValueError, match="research run not found"):
+        service.update_run_progress("local:research_run:nope", phase="collecting")
+
+
+# --- checkpoints (task-16482) -----------------------------------------------------
+
+def _launch_checkpoint_run(service, **kwargs):
+    return service.launch_run(query="Checkpoint question", **kwargs)
+
+
+def test_checkpoint_create_list_latest_pending(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = _launch_checkpoint_run(service)
+
+    checkpoint = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+
+    assert checkpoint["checkpoint_type"] == "plan_review"
+    assert checkpoint["status"] == "pending"
+    listed = service.list_checkpoints(run["id"])
+    assert [c["id"] for c in listed] == [checkpoint["id"]]
+    assert service.latest_pending_checkpoint(run["id"])["id"] == checkpoint["id"]
+
+
+def test_patch_and_approve_stores_patch_bumps_version_and_records_event(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = _launch_checkpoint_run(service)
+    checkpoint = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+
+    approved = service.patch_and_approve_checkpoint(
+        run["id"], checkpoint["id"], patch_payload={"limits": {"max_searches": 3}}
+    )
+
+    assert approved["status"] == "approved"
+    assert approved["resolution"] == "approved"
+    assert approved["user_patch"] == {"limits": {"max_searches": 3}}
+    assert approved["version"] == checkpoint["version"] + 1
+    assert service.latest_pending_checkpoint(run["id"]) is None
+    events = [e["event"] for e in service.list_run_events(run["id"])]
+    assert "checkpoint_approved" in events
+
+
+def test_patch_validation_rejects_unknown_keys_and_bad_inventory(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = _launch_checkpoint_run(service)
+    plan = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+    with pytest.raises(ValueError, match="unexpected patch keys"):
+        service.patch_and_approve_checkpoint(
+            run["id"], plan["id"], patch_payload={"bogus_key": 1}
+        )
+
+    sources = service.create_checkpoint(
+        run["id"],
+        checkpoint_type="sources_review",
+        proposed_payload={"source_ids": ["s1", "s2"]},
+    )
+    with pytest.raises(ValueError, match="not in the proposed inventory"):
+        service.patch_and_approve_checkpoint(
+            run["id"], sources["id"], patch_payload={"pinned_source_ids": ["sX"]}
+        )
+    with pytest.raises(ValueError, match="disjoint"):
+        service.patch_and_approve_checkpoint(
+            run["id"],
+            sources["id"],
+            patch_payload={"pinned_source_ids": ["s1"], "dropped_source_ids": ["s1"]},
+        )
+
+
+def test_approve_requires_pending_checkpoint(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = _launch_checkpoint_run(service)
+    checkpoint = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+    service.patch_and_approve_checkpoint(run["id"], checkpoint["id"])
+
+    with pytest.raises(ValueError, match="not pending"):
+        service.patch_and_approve_checkpoint(run["id"], checkpoint["id"])
+
+
+# --- external-DB transaction (task-16814) ------------------------------------------
+
+class FakeExternalResearchDB:
+    """Minimal external-DB double: transaction() yields a real sqlite conn
+    (delete_run's precedent interface)."""
+
+    def __init__(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(
+            """
+            CREATE TABLE research_runs (
+                id TEXT PRIMARY KEY, session_id TEXT, query TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                phase TEXT NOT NULL DEFAULT 'local_planning',
+                control_state TEXT NOT NULL DEFAULT 'running',
+                progress_percent REAL, progress_message TEXT,
+                source_policy TEXT NOT NULL DEFAULT 'balanced',
+                autonomy_mode TEXT NOT NULL DEFAULT 'checkpointed',
+                limits_json TEXT NOT NULL DEFAULT '{}',
+                provider_overrides_json TEXT NOT NULL DEFAULT '{}',
+                chat_handoff_json TEXT NOT NULL DEFAULT '{}',
+                follow_up_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0,
+                client_id TEXT NOT NULL DEFAULT 'local',
+                version INTEGER NOT NULL DEFAULT 1
+            );
+            """
+        )
+
+    def transaction(self):
+        return self.conn
+
+    def get_run(self, run_id):
+        row = self.conn.execute(
+            "SELECT * FROM research_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def close(self):
+        self.conn.close()
+
+
+def test_update_run_progress_external_db_wraps_in_transaction():
+    external = FakeExternalResearchDB()
+    now = "2026-08-16T00:00:00Z"
+    external.conn.execute(
+        "INSERT INTO research_runs (id, query, created_at, updated_at) "
+        "VALUES ('ext-run', 'External question', ?, ?)",
+        (now, now),
+    )
+    service = LocalResearchService(external)  # db object -> external mode
+
+    updated = service.update_run_progress(
+        "ext-run", phase="collecting", progress_percent=45.0,
+        event="progress", data={"phase": "collecting"},
+    )
+
+    assert updated["phase"] == "collecting"
+    assert updated["progress_percent"] == 45.0
+    assert updated["version"] == 2
+    external.close()
+
+
+def test_lease_operations_in_external_db_mode_do_not_raise():
+    """task-3 report finding 6: every lease operation called ``_connect()``
+    unconditionally, which raises ``RuntimeError`` in external-db mode
+    (``self.db is not None``, ``self.db_path is None``) -- so since
+    ``execute_run`` now always claims a lease, external-db mode was broken
+    outright. ``self.db`` has no lease columns and no lease API of its own
+    (the ``FakeExternalResearchDB`` double above matches that: only
+    ``transaction``/``get_run``/``close``), so a real, persisted,
+    cross-process lease cannot be implemented against it -- the service
+    degrades to an in-memory, per-instance lease instead of raising.
+    """
+    external = FakeExternalResearchDB()
+    now = "2026-08-16T00:00:00Z"
+    external.conn.execute(
+        "INSERT INTO research_runs (id, query, created_at, updated_at) "
+        "VALUES ('ext-run', 'External question', ?, ?)",
+        (now, now),
+    )
+    service = LocalResearchService(external)  # db object -> external mode
+
+    lease_id = service.claim_run("ext-run", worker_id="engine-a", lease_seconds=60)
+    assert lease_id is not None
+    assert service.holds_lease("ext-run", lease_id=lease_id) is True
+
+    # A second claim while the first is live must decline, not raise --
+    # "still functions single-executor" per the finding's fix direction.
+    declined = service.claim_run("ext-run", worker_id="engine-b", lease_seconds=60)
+    assert declined is None
+
+    assert service.renew_lease("ext-run", lease_id=lease_id, lease_seconds=60) is True
+    assert service.release_lease("ext-run", lease_id=lease_id) is True
+    assert service.holds_lease("ext-run", lease_id=lease_id) is False
+
+    # Released -- a new claim must now succeed.
+    second_lease = service.claim_run("ext-run", worker_id="engine-b", lease_seconds=60)
+    assert second_lease is not None
+    external.close()
+
+
+# --- versioned schema migration (Qodo PR-1822 finding 7) -------------------
+
+#: The research_runs shape as it shipped BEFORE the lease columns existed:
+#: what a genuinely pre-existing on-disk database carries.
+_PRE_LEASE_RUNS_DDL = """
+CREATE TABLE research_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    query TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    phase TEXT NOT NULL DEFAULT 'local_planning',
+    control_state TEXT NOT NULL DEFAULT 'running',
+    progress_percent REAL,
+    progress_message TEXT,
+    source_policy TEXT NOT NULL DEFAULT 'balanced',
+    autonomy_mode TEXT NOT NULL DEFAULT 'checkpointed',
+    limits_json TEXT NOT NULL DEFAULT '{}',
+    provider_overrides_json TEXT NOT NULL DEFAULT '{}',
+    chat_handoff_json TEXT NOT NULL DEFAULT '{}',
+    follow_up_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    client_id TEXT NOT NULL DEFAULT 'local',
+    version INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY(session_id) REFERENCES research_sessions(id)
+);
+"""
+
+
+def _make_pre_lease_database(tmp_path) -> "object":
+    """A database in the pre-lease v0 shape: research_runs without the
+    lease columns, one surviving run row, ``user_version`` 0."""
+    db_path = tmp_path / "research.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(_PRE_LEASE_RUNS_DDL)
+    conn.execute(
+        "INSERT INTO research_runs (id, query, created_at, updated_at) "
+        "VALUES ('legacy-run', 'A question paid for before leases', "
+        "'2026-08-01T00:00:00.000000Z', '2026-08-01T00:00:00.000000Z')"
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def _columns(conn, table):
+    return {
+        str(row["name"])
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+
+
+def test_a_pre_lease_database_upgrades_through_a_versioned_migration(tmp_path):
+    """Qodo PR-1822 finding 7: the lease columns were added by bare,
+    unversioned ALTERs at startup. The upgrade path must instead go
+    through a versioned migration that stamps ``PRAGMA user_version`` --
+    auditable, ordered, and refusing to run backwards -- like TTS's
+    ``migrations/`` and the repo's numbered SQL migrations. A pre-lease
+    database's data must survive the upgrade.
+    """
+    db_path = _make_pre_lease_database(tmp_path)
+    service = LocalResearchService(db_path)
+    # TASK-21105: the store opens (and migrates) on FIRST USE, not at
+    # construction; one operation is what upgrades the database now.
+    service.list_runs()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        columns = _columns(conn, "research_runs")
+        assert {"lease_owner", "lease_id", "leased_until", "lease_attempts"} <= columns
+        row = conn.execute(
+            "SELECT query, status FROM research_runs WHERE id = 'legacy-run'"
+        ).fetchone()
+        assert row["query"] == "A question paid for before leases"
+        assert row["status"] == "running"
+    finally:
+        conn.close()
+
+    # The upgraded database is fully operational, not just column-complete.
+    lease = service.claim_run("legacy-run", worker_id="engine-a", lease_seconds=60)
+    assert lease is not None
+    assert service.release_lease("legacy-run", lease_id=lease) is True
+
+
+def test_a_fresh_database_is_stamped_with_the_schema_version(tmp_path):
+    """Fresh databases must carry the same versioned stamp -- not a
+    versionless shape that the next migration then cannot find."""
+    # TASK-21105: first use, not construction, creates and stamps the file.
+    LocalResearchService(tmp_path / "research.db").list_runs()
+
+    conn = sqlite3.connect(tmp_path / "research.db")
+    conn.row_factory = sqlite3.Row
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert {"lease_owner", "lease_id", "leased_until", "lease_attempts"} <= _columns(
+            conn, "research_runs"
+        )
+    finally:
+        conn.close()
+
+
+def test_reopening_an_upgraded_database_is_an_idempotent_noop(tmp_path):
+    """Re-opening on the next app launch must neither re-ALTER nor drift
+    the version -- the migration runs once per database."""
+    db_path = _make_pre_lease_database(tmp_path)
+    # TASK-21105: each launch's first USE (not construction) is what runs
+    # the schema/migration path now; exercise two full open cycles.
+    LocalResearchService(db_path).list_runs()
+    LocalResearchService(db_path).list_runs()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_a_database_from_a_future_schema_version_is_refused(tmp_path):
+    """A database stamped by a NEWER service must not be silently
+    downgraded or half-used by older code: refuse loudly so the user
+    knows they need to update rather than risk corrupting data."""
+    db_path = _make_pre_lease_database(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA user_version = 99")
+    conn.commit()
+    conn.close()
+
+    # TASK-21105: the refusal now fires on first USE (construction no
+    # longer opens the database) -- still loud, still before any data
+    # from the newer schema is touched or written.
+    service = LocalResearchService(db_path)
+    with pytest.raises(RuntimeError, match="newer"):
+        service.list_runs()
+
+
+# ---------------------------------------------------------------------------
+# TASK-21127: held connections, transaction atomicity, shutdown lifecycle.
+# ---------------------------------------------------------------------------
+
+
+def _count_opens(monkeypatch):
+    """Count connections opened through the private-sqlite seam."""
+    opened: list[str] = []
+    real = local_research_service_module.connect_private_sqlite
+
+    def _counting(*args, **kwargs):
+        opened.append(threading.current_thread().name)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        local_research_service_module, "connect_private_sqlite", _counting
+    )
+    return opened
+
+
+def test_file_backed_service_holds_one_connection_for_many_operations(
+    tmp_path, monkeypatch
+):
+    """TASK-21127: the store used to open (and GC-leak) a fresh connection per
+    operation -- 87 per engine run. One held connection per thread now serves
+    every operation, so the seam is entered once."""
+    service = LocalResearchService(tmp_path / "research.db")
+    service.list_runs()  # first use: schema + this thread's held connection
+
+    opened = _count_opens(monkeypatch)
+    run = service.launch_run(query="held connections")
+    for index in range(10):
+        service.save_artifact(
+            run["id"],
+            artifact_name=f"a{index}.json",
+            content_type="application/json",
+            content={"i": index},
+        )
+        service.update_run_progress(run["id"], progress_percent=float(index))
+        service.get_run(run["id"])
+
+    assert opened == [], f"expected zero further opens, got {opened}"
+    assert len(service.list_artifacts(run["id"])) == 10
+    service.close()
+
+
+def test_held_connection_keeps_wal_and_normal_synchronous(tmp_path):
+    """The pragmas must hold on the LIVE held connection, not merely be issued
+    once at open, and WAL must be persistent in the file itself."""
+    db_path = tmp_path / "research.db"
+    service = LocalResearchService(db_path)
+    service.list_runs()
+
+    conn = service._connect()
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+    assert conn.isolation_level is None
+
+    independent = sqlite3.connect(db_path)
+    try:
+        assert independent.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    finally:
+        independent.close()
+    service.close()
+
+
+def test_close_waits_for_an_in_flight_operation_on_another_thread(tmp_path):
+    """TASK-21101's class: shutdown must not close a connection out from under
+    an operation still running on a worker thread."""
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="in flight")
+
+    entered = threading.Event()
+    release = threading.Event()
+    worker_error: list[BaseException] = []
+
+    def _slow_operation():
+        try:
+            with service._transaction(immediate=True) as conn:
+                entered.set()
+                release.wait(5)
+                conn.execute(
+                    "UPDATE research_runs SET progress_message = ? WHERE id = ?",
+                    ("done", run["id"]),
+                )
+        except BaseException as exc:  # noqa: BLE001 - reported to the assertion
+            worker_error.append(exc)
+
+    worker = threading.Thread(target=_slow_operation)
+    worker.start()
+    assert entered.wait(5)
+
+    closed = threading.Event()
+
+    def _close():
+        service.close()
+        closed.set()
+
+    closer = threading.Thread(target=_close)
+    closer.start()
+    assert not closed.wait(0.3), "close() returned while an operation was in flight"
+    release.set()
+    worker.join(5)
+    closer.join(5)
+    assert closed.is_set()
+    assert not worker_error, worker_error
+    assert service.get_run(run["id"])["progress_message"] == "done"
+    service.close()
+
+
+def test_close_leaves_a_wedged_operations_connection_open(tmp_path, monkeypatch):
+    """On a settle timeout the busy thread KEEPS its connection: closing it
+    anyway turns a slow shutdown into ProgrammingError inside live work."""
+    monkeypatch.setattr(
+        local_research_service_module, "_LIFECYCLE_SETTLE_TIMEOUT", 0.15
+    )
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="wedged")
+
+    entered = threading.Event()
+    release = threading.Event()
+    worker_error: list[BaseException] = []
+
+    def _wedged():
+        try:
+            with service._transaction(immediate=True) as conn:
+                entered.set()
+                release.wait(5)
+                conn.execute(
+                    "UPDATE research_runs SET progress_message = ? WHERE id = ?",
+                    ("survived", run["id"]),
+                )
+        except BaseException as exc:  # noqa: BLE001
+            worker_error.append(exc)
+
+    worker = threading.Thread(target=_wedged)
+    worker.start()
+    assert entered.wait(5)
+
+    service.close()  # settle wait expires; the busy connection must survive
+    release.set()
+    worker.join(5)
+
+    assert not worker_error, worker_error
+    assert service.get_run(run["id"])["progress_message"] == "survived"
+    service.close()
+
+
+def test_close_rearms_the_store_for_later_operations(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="re-arm")
+    service.close()
+
+    reopened = service.get_run(run["id"])
+    assert reopened is not None and reopened["query"] == "re-arm"
+    service.close()
+
+
+def test_memory_mode_survives_close_and_reuse():
+    """``:memory:`` shares ONE connection; closing it destroys the database, so
+    the re-armed store must rebuild the schema rather than raise."""
+    service = LocalResearchService(":memory:")
+    service.launch_run(query="memory")
+    service.close()
+
+    assert list(service.list_runs()) == []
+    fresh = service.launch_run(query="after close")
+    assert fresh["query"] == "after close"
+    service.close()
+
+
+def test_release_lease_reads_then_writes_in_one_transaction(tmp_path):
+    """release_lease SELECTs and then UPDATEs. With isolation_level=None a
+    DEFERRED begin opens a read snapshot whose later write raises
+    BUSY_SNAPSHOT ("database is locked") -- which SQLite's busy handler does
+    NOT retry. It must take the write lock up front."""
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="lease")
+    lease = service.claim_run(run["id"], worker_id="w1", lease_seconds=60.0)
+
+    # A second connection to the same file, holding a write transaction open,
+    # is what turns a deferred begin into an unretryable failure.
+    contender = LocalResearchService(tmp_path / "research.db")
+    other_run = contender.launch_run(query="contender")
+    with contender._transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE research_runs SET progress_message = ? WHERE id = ?",
+            ("holding", other_run["id"]),
+        )
+        # release_lease must WAIT for this (busy_timeout), not fail outright.
+        released: list[object] = []
+
+        def _release():
+            released.append(service.release_lease(run["id"], lease_id=lease))
+
+        releaser = threading.Thread(target=_release)
+        releaser.start()
+        time.sleep(0.05)
+    releaser.join(6)
+
+    assert released == [True]
+    assert service.get_run(run["id"])["lease_id"] is None
+    service.close()
+    contender.close()
+
+
+def test_concurrent_run_updates_never_lose_a_version_bump(tmp_path):
+    """Rule C: moving work off the loop removes the serialization the loop was
+    silently providing.
+
+    Every writer parks on a barrier released at the same instant, then all of
+    them race ``update_run_progress`` -- which reads ``version`` and writes
+    ``version + 1``. Under the shipped shape that pair is ONE ``BEGIN
+    IMMEDIATE`` transaction, so SQLite serialises them and the counter must
+    advance exactly once per call. The barrier is deliberately OUTSIDE the
+    transaction: parking inside it would wedge on the write lock the fix takes
+    up front, which is itself the proof there is no longer a window there.
+    """
+    writers = 8
+    rounds = 5
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="interleaving")
+    start_version = int(service.get_run(run["id"])["version"])
+
+    barrier = threading.Barrier(writers, timeout=15)
+    results: list[object] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def _writer(index: int):
+        try:
+            barrier.wait()
+            for attempt in range(rounds):
+                updated = service.update_run_progress(
+                    run["id"],
+                    progress_message=f"w{index}-{attempt}",
+                    event="progress",
+                )
+                with lock:
+                    results.append(updated)
+        except BaseException as exc:  # noqa: BLE001 - reported to the assertion
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_writer, args=(i,)) for i in range(writers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert not errors, errors
+    assert len(results) == writers * rounds
+    final_version = int(service.get_run(run["id"])["version"])
+    assert final_version == start_version + writers * rounds, (
+        f"{writers * rounds} writes all reported success but version advanced "
+        f"{final_version - start_version} time(s): a lost update"
+    )
+    service.close()
+
+
+class _RollbackRefusingConnection:
+    """Wraps a real connection and refuses exactly the ROLLBACK statement."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def execute(self, sql, *args, **kwargs):
+        if sql.strip().upper().startswith("ROLLBACK"):
+            raise sqlite3.OperationalError("rollback refused by the probe")
+        return self._inner.execute(sql, *args, **kwargs)
+
+
+def test_transaction_error_is_not_masked_by_a_failing_rollback(tmp_path):
+    """A ROLLBACK that itself fails must never replace the original error."""
+    service = LocalResearchService(tmp_path / "research.db")
+    service.list_runs()
+
+    class _Boom(RuntimeError):
+        pass
+
+    real_begin = LocalResearchService._begin
+
+    def _wrapping_begin(self, *, immediate=False):
+        return _RollbackRefusingConnection(real_begin(self, immediate=immediate))
+
+    LocalResearchService._begin = _wrapping_begin
+    try:
+        with pytest.raises(_Boom, match="the real error"):
+            with service._transaction():
+                raise _Boom("the real error")
+    finally:
+        LocalResearchService._begin = real_begin
+    # The connection is left mid-transaction; _begin's heal path clears it.
+    assert service.get_run("nope") is None
+    service.close()

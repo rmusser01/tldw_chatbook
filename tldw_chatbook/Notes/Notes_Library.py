@@ -3,6 +3,7 @@
 #
 # Imports
 import logging
+import re
 import threading
 import sqlite3  # For exception handling in _get_db
 import time
@@ -20,7 +21,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDBError,
     SchemaError,
 )
-from tldw_chatbook.config import chachanotes_db as global_db_from_config
+from tldw_chatbook.config import (
+    chachanotes_db as global_db_from_config,
+    load_console_library_migration_seed,
+)
 from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     verify_trusted_directory,
@@ -32,6 +36,15 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 # Functions:
 
 logger = logging.getLogger(__name__)
+
+_RESEARCH_RECEIPT_PROOF_PREFIX = "research-receipt-proof:"
+
+
+def _is_internal_research_keyword(row: Any) -> bool:
+    return isinstance(row, dict) and re.fullmatch(
+        rf"{re.escape(_RESEARCH_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}",
+        str(row.get("keyword") or ""),
+    ) is not None
 
 
 class NotesInteropService:
@@ -145,6 +158,7 @@ class NotesInteropService:
                 db_instance = CharactersRAGDB(
                     db_path=unified_db_file_path,  # Use the path from the unified DB template
                     client_id=user_id,  # Use the passed user_id as the client_id for this instance
+                    console_library_migration_seed=load_console_library_migration_seed(),
                 )
                 self._db_instances[user_id] = db_instance  # Cache it
                 logger.info(
@@ -167,6 +181,38 @@ class NotesInteropService:
                 ) from e
 
     # --- Note Methods ---
+
+    def note_transaction(self, user_id: str) -> Any:
+        """Return the canonical Notes transaction for one mutation owner."""
+
+        return self._get_db(user_id).transaction(immediate=True)
+
+    def add_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Store one private recovery proof outside all ordinary Notes metadata."""
+
+        return self._get_db(user_id).add_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
+
+    def has_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Verify one exact private recovery proof without returning its payload."""
+
+        return self._get_db(user_id).has_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
+
+    def remove_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Remove only the exact private proof held by the caller."""
+
+        return self._get_db(user_id).remove_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
 
     def add_note(
         self, user_id: str, title: str, content: str, note_id: Optional[str] = None
@@ -283,9 +329,113 @@ class NotesInteropService:
 
         duration = time.time() - start_time
         log_histogram("notes_library_count_notes_duration", duration)
-        log_counter("notes_library_count_notes_success", labels={"count": str(result)})
+        log_counter("notes_library_count_notes_success")
 
         return result
+
+    # --- Library read seams (task-1337) ---
+
+    def list_library_notes(
+        self, user_id: str, *, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """Page the active local notes library for agent-facing list tools.
+
+        Args:
+            user_id: User scope used to resolve the local notes database.
+            limit: Maximum number of notes to return.
+            offset: Number of notes to skip.
+
+        Returns:
+            A bounded page containing items, exact total, offset, and limit.
+
+        Raises:
+            CharactersRAGDBError: If the local notes database cannot be read.
+        """
+        start_time = time.time()
+        log_counter("notes_library_list_library_notes_attempt")
+
+        db = self._get_db(user_id)
+        payload = db.list_library_notes_page(limit=limit, offset=offset)
+
+        duration = time.time() - start_time
+        log_histogram("notes_library_list_library_notes_duration", duration)
+        log_counter(
+            "notes_library_list_library_notes_success",
+            labels={"count": str(len(payload["items"]))},
+        )
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def search_library_notes(
+        self, user_id: str, *, query: str, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """Search the active local notes library for agent-facing tools.
+
+        Args:
+            user_id: User scope used to resolve the local notes database.
+            query: Literal case-insensitive search text.
+            limit: Maximum number of notes to return.
+            offset: Number of matching notes to skip.
+
+        Returns:
+            A bounded page with exact total and match evidence.
+
+        Raises:
+            CharactersRAGDBError: If the local notes database cannot be read.
+        """
+        start_time = time.time()
+        log_counter("notes_library_search_library_notes_attempt")
+
+        db = self._get_db(user_id)
+        payload = db.search_library_notes_page(query=query, limit=limit, offset=offset)
+
+        duration = time.time() - start_time
+        log_histogram("notes_library_search_library_notes_duration", duration)
+        log_counter(
+            "notes_library_search_library_notes_success",
+            labels={"count": str(len(payload["items"]))},
+        )
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def get_library_note_text(
+        self, user_id: str, note_id: str, *, start: int = 0, max_chars: int = 8000
+    ) -> Optional[Dict[str, Any]]:
+        """Read a windowed text segment for one active note.
+
+        Args:
+            user_id: User scope used to resolve the local notes database.
+            note_id: Stable note identifier.
+            start: Zero-based character offset.
+            max_chars: Maximum characters to return.
+
+        Returns:
+            Bounded note metadata and text, or None when absent.
+
+        Raises:
+            CharactersRAGDBError: If the local notes database cannot be read.
+        """
+        start_time = time.time()
+        log_counter("notes_library_get_library_note_text_attempt")
+
+        db = self._get_db(user_id)
+        detail = db.get_library_note_text(note_id, start=start, max_chars=max_chars)
+
+        duration = time.time() - start_time
+        log_histogram("notes_library_get_library_note_text_duration", duration)
+        log_counter(
+            "notes_library_get_library_note_text_result",
+            labels={"found": str(detail is not None)},
+        )
+        return detail
 
     def update_note(
         self,
@@ -374,6 +524,54 @@ class NotesInteropService:
             )
             log_counter(
                 "notes_library_delete_note_error",
+                labels={"error_type": type(e).__name__},
+            )
+            raise
+
+    def restore_note(
+        self, user_id: str, note_id: str, expected_version: int
+    ) -> bool:
+        """Restore a soft-deleted note through the per-user database seam.
+
+        Args:
+            user_id: User identity used to select the unified DB client.
+            note_id: Stable note identity to restore.
+            expected_version: Version of the tombstone being restored.
+
+        Returns:
+            ``True`` when the note is restored or is already active.
+
+        Raises:
+            ConflictError: If the note is missing or its tombstone is stale.
+            CharactersRAGDBError: If the database operation fails.
+        """
+        start_time = time.time()
+        log_counter("notes_library_restore_note_attempt")
+
+        try:
+            db = self._get_db(user_id)
+            result = db.restore_note(
+                note_id=note_id, expected_version=expected_version
+            )
+            duration = time.time() - start_time
+            log_histogram(
+                "notes_library_restore_note_duration",
+                duration,
+                labels={"status": "success" if result else "conflict"},
+            )
+            log_counter(
+                "notes_library_restore_note_result", labels={"success": str(result)}
+            )
+            return bool(result)
+        except Exception as e:
+            duration = time.time() - start_time
+            log_histogram(
+                "notes_library_restore_note_duration",
+                duration,
+                labels={"status": "error"},
+            )
+            log_counter(
+                "notes_library_restore_note_error",
                 labels={"error_type": type(e).__name__},
             )
             raise
@@ -601,12 +799,19 @@ class NotesInteropService:
 
     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keywords_for_note(note_id=note_id)
+        return [
+            row
+            for row in db.get_keywords_for_note(note_id=note_id)
+            if not _is_internal_research_keyword(row)
+        ]
 
     def get_notes_for_keyword(
         self, user_id: str, keyword_id: int, limit: int = 50, offset: int = 0
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
+        keyword = db.get_keyword_by_id(keyword_id=keyword_id)
+        if _is_internal_research_keyword(keyword):
+            return []
         return db.get_notes_for_keyword(
             keyword_id=keyword_id, limit=limit, offset=offset
         )
@@ -623,19 +828,25 @@ class NotesInteropService:
         self, user_id: str, keyword_id: int
     ) -> Optional[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keyword_by_id(keyword_id=keyword_id)
+        row = db.get_keyword_by_id(keyword_id=keyword_id)
+        return None if _is_internal_research_keyword(row) else row
 
     def get_keyword_by_text(
         self, user_id: str, keyword_text: str
     ) -> Optional[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keyword_by_text(keyword_text=keyword_text)
+        row = db.get_keyword_by_text(keyword_text=keyword_text)
+        return None if _is_internal_research_keyword(row) else row
 
     def list_keywords(
         self, user_id: str, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.list_keywords(limit=limit, offset=offset)
+        return [
+            row
+            for row in db.list_keywords(limit=limit, offset=offset)
+            if not _is_internal_research_keyword(row)
+        ]
 
     def soft_delete_keyword(
         self, user_id: str, keyword_id: int, expected_version: int
@@ -649,7 +860,11 @@ class NotesInteropService:
         self, user_id: str, search_term: str, limit: int = 10
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.search_keywords(search_term=search_term, limit=limit)
+        return [
+            row
+            for row in db.search_keywords(search_term=search_term, limit=limit)
+            if not _is_internal_research_keyword(row)
+        ]
 
     # --- Character Card Methods ---
 
@@ -735,369 +950,6 @@ class NotesInteropService:
                 logger.debug(
                     f"No active DB instance found in cache for user context '{user_id}' to close."
                 )
-
-    # --- Sync-Related Methods ---
-
-    def get_notes_for_sync(
-        self, user_id: str, sync_root_folder: Path = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get notes that are configured for external sync.
-
-        Args:
-            user_id: User ID for database context
-            sync_root_folder: Optional filter by sync root folder
-
-        Returns:
-            List of note dictionaries with sync metadata
-        """
-        db = self._get_db(user_id)
-
-        try:
-            with db.transaction() as conn:
-                if sync_root_folder:
-                    cursor = conn.execute(
-                        """
-                        SELECT id, title, content, version, file_path_on_disk,
-                               relative_file_path_on_disk, sync_root_folder,
-                               last_synced_disk_file_hash, last_synced_disk_file_mtime,
-                               is_externally_synced, sync_strategy, sync_excluded,
-                               file_extension, last_modified, created_at
-                        FROM notes
-                        WHERE deleted = 0 AND sync_root_folder = ?
-                        ORDER BY last_modified DESC
-                    """,
-                        (str(sync_root_folder),),
-                    )
-                else:
-                    cursor = conn.execute("""
-                        SELECT id, title, content, version, file_path_on_disk,
-                               relative_file_path_on_disk, sync_root_folder,
-                               last_synced_disk_file_hash, last_synced_disk_file_mtime,
-                               is_externally_synced, sync_strategy, sync_excluded,
-                               file_extension, last_modified, created_at
-                        FROM notes
-                        WHERE deleted = 0 AND is_externally_synced = 1
-                        ORDER BY last_modified DESC
-                    """)
-
-                notes = []
-                for row in cursor:
-                    notes.append(
-                        {
-                            "id": row[0],
-                            "title": row[1],
-                            "content": row[2],
-                            "version": row[3],
-                            "file_path_on_disk": row[4],
-                            "relative_file_path_on_disk": row[5],
-                            "sync_root_folder": row[6],
-                            "last_synced_disk_file_hash": row[7],
-                            "last_synced_disk_file_mtime": row[8],
-                            "is_externally_synced": row[9],
-                            "sync_strategy": row[10],
-                            "sync_excluded": row[11],
-                            "file_extension": row[12],
-                            "last_modified": row[13],
-                            "created_at": row[14],
-                        }
-                    )
-
-                return notes
-
-        except Exception as e:
-            logger.error(f"Error getting notes for sync: {e}", exc_info=True)
-            raise CharactersRAGDBError(f"Failed to get notes for sync: {e}") from e
-
-    def get_unsynced_notes(
-        self, user_id: str, limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """
-        Get notes that are not currently synced to any external file.
-
-        Args:
-            user_id: User ID for database context
-            limit: Maximum number of notes to return
-
-        Returns:
-            List of note dictionaries
-        """
-        db = self._get_db(user_id)
-
-        try:
-            with db.transaction() as conn:
-                cursor = conn.execute(
-                    """
-                    SELECT id, title, content, version, last_modified, created_at
-                    FROM notes
-                    WHERE deleted = 0 
-                      AND (is_externally_synced = 0 OR is_externally_synced IS NULL)
-                      AND (sync_excluded = 0 OR sync_excluded IS NULL)
-                    ORDER BY last_modified DESC
-                    LIMIT ?
-                """,
-                    (limit,),
-                )
-
-                notes = []
-                for row in cursor:
-                    notes.append(
-                        {
-                            "id": row[0],
-                            "title": row[1],
-                            "content": row[2],
-                            "version": row[3],
-                            "last_modified": row[4],
-                            "created_at": row[5],
-                        }
-                    )
-
-                return notes
-
-        except Exception as e:
-            logger.error(f"Error getting unsynced notes: {e}", exc_info=True)
-            raise CharactersRAGDBError(f"Failed to get unsynced notes: {e}") from e
-
-    def update_note_sync_metadata(
-        self,
-        user_id: str,
-        note_id: str,
-        sync_metadata: Dict[str, Any],
-        expected_version: int,
-    ) -> bool:
-        """
-        Update sync-related metadata for a note.
-
-        Args:
-            user_id: User ID for database context
-            note_id: Note ID to update
-            sync_metadata: Dictionary containing sync fields to update
-            expected_version: Expected version for optimistic locking
-
-        Returns:
-            True if updated successfully, False otherwise
-        """
-        db = self._get_db(user_id)
-
-        try:
-            with db.transaction() as conn:
-                # Build update fields from sync_metadata
-                update_fields = []
-                values = []
-
-                allowed_fields = {
-                    "file_path_on_disk",
-                    "relative_file_path_on_disk",
-                    "sync_root_folder",
-                    "last_synced_disk_file_hash",
-                    "last_synced_disk_file_mtime",
-                    "is_externally_synced",
-                    "sync_strategy",
-                    "sync_excluded",
-                    "file_extension",
-                }
-
-                for field, value in sync_metadata.items():
-                    if field in allowed_fields:
-                        update_fields.append(f"{field} = ?")
-                        values.append(value)
-
-                if not update_fields:
-                    logger.warning("No valid sync metadata fields to update")
-                    return False
-
-                # Add version increment and timestamp
-                update_fields.append("version = ?")
-                values.append(expected_version + 1)
-
-                update_fields.append("last_modified = CURRENT_TIMESTAMP")
-
-                # Add WHERE clause parameters
-                values.extend([note_id, expected_version])
-
-                query = f"""
-                    UPDATE notes
-                    SET {", ".join(update_fields)}
-                    WHERE id = ? AND version = ? AND deleted = 0
-                """
-
-                cursor = conn.execute(query, values)
-
-                if cursor.rowcount == 0:
-                    logger.warning(
-                        f"No rows updated for note {note_id} - version mismatch or deleted"
-                    )
-                    return False
-
-                return True
-
-        except Exception as e:
-            logger.error(f"Error updating note sync metadata: {e}", exc_info=True)
-            return False
-
-    def link_note_to_file(
-        self,
-        user_id: str,
-        note_id: str,
-        file_path: Path,
-        sync_root_folder: Path,
-        sync_strategy: str = "bidirectional",
-    ) -> bool:
-        """
-        Link a note to an external file for syncing.
-
-        Args:
-            user_id: User ID for database context
-            note_id: Note ID to link
-            file_path: Absolute path to the file
-            sync_root_folder: Root folder for sync
-            sync_strategy: Sync strategy ('disk_to_db', 'db_to_disk', 'bidirectional')
-
-        Returns:
-            True if linked successfully
-        """
-        # Get current note version
-        note = self.get_note_by_id(user_id, note_id)
-        if not note:
-            logger.error(f"Note {note_id} not found")
-            return False
-
-        try:
-            relative_path = file_path.relative_to(sync_root_folder)
-        except ValueError:
-            logger.error(f"File {file_path} is not under sync root {sync_root_folder}")
-            return False
-
-        sync_metadata = {
-            "file_path_on_disk": str(file_path),
-            "relative_file_path_on_disk": str(relative_path),
-            "sync_root_folder": str(sync_root_folder),
-            "is_externally_synced": True,
-            "sync_strategy": sync_strategy,
-            "file_extension": file_path.suffix,
-        }
-
-        return self.update_note_sync_metadata(
-            user_id, note_id, sync_metadata, note["version"]
-        )
-
-    def unlink_note_from_file(self, user_id: str, note_id: str) -> bool:
-        """
-        Unlink a note from its external file.
-
-        Args:
-            user_id: User ID for database context
-            note_id: Note ID to unlink
-
-        Returns:
-            True if unlinked successfully
-        """
-        # Get current note version
-        note = self.get_note_by_id(user_id, note_id)
-        if not note:
-            logger.error(f"Note {note_id} not found")
-            return False
-
-        sync_metadata = {
-            "file_path_on_disk": None,
-            "relative_file_path_on_disk": None,
-            "last_synced_disk_file_hash": None,
-            "last_synced_disk_file_mtime": None,
-            "is_externally_synced": False,
-        }
-
-        return self.update_note_sync_metadata(
-            user_id, note_id, sync_metadata, note["version"]
-        )
-
-    def get_sync_status(self, user_id: str, note_id: str) -> Dict[str, Any]:
-        """
-        Get the sync status for a specific note.
-
-        Args:
-            user_id: User ID for database context
-            note_id: Note ID to check
-
-        Returns:
-            Dictionary containing sync status information
-        """
-        db = self._get_db(user_id)
-
-        try:
-            with db.transaction() as conn:
-                cursor = conn.execute(
-                    """
-                    SELECT id, title, version, file_path_on_disk,
-                           relative_file_path_on_disk, sync_root_folder,
-                           last_synced_disk_file_hash, last_synced_disk_file_mtime,
-                           is_externally_synced, sync_strategy, sync_excluded,
-                           file_extension, last_modified, created_at
-                    FROM notes
-                    WHERE id = ? AND deleted = 0
-                """,
-                    (note_id,),
-                )
-
-                row = cursor.fetchone()
-                if not row:
-                    return None
-
-                return {
-                    "id": row[0],
-                    "title": row[1],
-                    "version": row[2],
-                    "file_path_on_disk": row[3],
-                    "relative_file_path_on_disk": row[4],
-                    "sync_root_folder": row[5],
-                    "last_synced_disk_file_hash": row[6],
-                    "last_synced_disk_file_mtime": row[7],
-                    "is_externally_synced": row[8],
-                    "sync_strategy": row[9],
-                    "sync_excluded": row[10],
-                    "file_extension": row[11],
-                    "last_modified": row[12],
-                    "created_at": row[13],
-                }
-
-        except Exception as e:
-            logger.error(
-                f"Error getting sync status for note {note_id}: {e}", exc_info=True
-            )
-            raise CharactersRAGDBError(f"Failed to get sync status: {e}") from e
-
-    def set_note_sync_enabled(
-        self,
-        user_id: str,
-        note_id: str,
-        enabled: bool,
-        sync_strategy: str = "bidirectional",
-    ) -> bool:
-        """
-        Enable or disable sync for a specific note.
-
-        Args:
-            user_id: User ID for database context
-            note_id: Note ID to update
-            enabled: Whether to enable or disable sync
-            sync_strategy: Sync strategy when enabling
-
-        Returns:
-            True if updated successfully
-        """
-        # Get current note version
-        note = self.get_note_by_id(user_id, note_id)
-        if not note:
-            logger.error(f"Note {note_id} not found")
-            return False
-
-        sync_metadata = {"is_externally_synced": enabled}
-
-        if enabled:
-            sync_metadata["sync_strategy"] = sync_strategy
-
-        return self.update_note_sync_metadata(
-            user_id, note_id, sync_metadata, note["version"]
-        )
 
 
 #

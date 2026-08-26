@@ -22,6 +22,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
+from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
@@ -72,7 +73,7 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
 
 # Decision vocabulary (spec-verbatim, task-7-brief.md): the permission
 # decision under which one execution-log entry ran or stopped.
-# "allowed"/"approved" reached the tool (`execute_hub_tool()`/
+# "allowed"/"approved"/"approved-session" reached the tool (`execute_hub_tool()`/
 # `test_hub_tool()`, unified_control_plane_service.py); "denied"/
 # "denied-timeout" never did (`record_tool_decision()`, the Phase 5 agent
 # bridge's approval flow -- mcp_tool_provider.py); "downgraded" is a system
@@ -82,6 +83,7 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
 _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Allowed", "allowed"),
     ("Approved", "approved"),
+    ("Approved (session)", APPROVED_SESSION_DECISION),
     ("Denied", "denied"),
     ("Denied (timeout)", "denied-timeout"),
     ("Denied (no decision)", "denied-unresolved"),
@@ -107,6 +109,7 @@ _BLOCKED_DECISIONS = {"denied", "denied-timeout", "denied-unresolved"}
 _DECISION_KIND: dict[str, str] = {
     "allowed": "ready",
     "approved": "ready",
+    APPROVED_SESSION_DECISION: "ready",
     "denied": "error",
     "denied-timeout": "error",
     "downgraded": "warning",
@@ -245,7 +248,7 @@ def _outcome_text(entry: dict[str, Any]) -> str:
     attempted, timed run (mirrors `MCPInspector.show_tool_result()`'s own
     `blocked` status-line branch). "downgraded" is a system audit note, not
     a call outcome -- distinct copy so it doesn't read as a failed
-    execution. Everything else (allowed/approved) reflects the real `ok`
+    execution. Everything else (allowed/approved/approved-session) reflects the real `ok`
     outcome of an attempted call.
     """
     decision = str(entry.get("decision") or "")
@@ -259,7 +262,7 @@ def _outcome_text(entry: dict[str, Any]) -> str:
 class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Audit mode: execution-log table, filters, empty state."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPAuditMode {
         width: 1fr;
         height: 100%;
@@ -276,7 +279,7 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     Select-width lesson (`#mcp-tools-filter-server-slot Select`,
     mcp_tools_mode.py / _agentic_terminal.tcss) applies here too --
     `_conversations.tcss`'s bare `Select { width: 100%; }` rule always wins
-    over ANY rule targeting a `Select` in this widget's own DEFAULT_CSS
+    over ANY rule targeting a `Select` in this widget's own BUNDLED_CSS
     once the real app bundle is loaded (CSS_PATH always beats DEFAULT_CSS,
     regardless of selector specificity) -- so styling
     `#mcp-audit-filter-decision`/`#mcp-audit-filter-initiator` directly
@@ -693,7 +696,7 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     def _apply_subview_display(self) -> None:
         """Toggle the Executions/Findings pane visibility and the sub-view
         Buttons' `is-active` marker from `self._sub_view` -- the single
-        source of truth (see the DEFAULT_CSS comment above
+        source of truth (see the BUNDLED_CSS comment above
         `#mcp-audit-executions-view`/`#mcp-audit-findings-view` for why
         this isn't split across a CSS default too)."""
         executions_active = self._sub_view == "executions"

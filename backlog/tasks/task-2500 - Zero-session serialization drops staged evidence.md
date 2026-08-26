@@ -1,5 +1,5 @@
 ---
-id: task-2500
+id: TASK-2500
 title: Zero-session serialization drops staged evidence
 status: To Do
 assignee: []

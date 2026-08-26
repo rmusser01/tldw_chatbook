@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
@@ -15,8 +17,6 @@ from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchAction
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
-
-CONSOLE_CONTROL_BAR_HEIGHT = 1
 TOP_ACTION_IDS = {
     "new-tab",
     "settings",
@@ -57,6 +57,14 @@ FALLBACK_ACTIONS = (
         tooltip="Show visible Console actions and shortcuts",
     ),
 )
+
+
+class ConsoleAutoSpeakResumeRequested(Message):
+    """User requested resume after an automatic speech failure."""
+
+
+class ConsoleAutoSpeakRetryRequested(Message):
+    """User requested speech retry for the failed automatic reply."""
 
 
 def _summary_line(state: ConsoleControlState) -> str:
@@ -106,9 +114,17 @@ class ConsoleControlBar(Vertical):
         self.app_instance = app_instance
         self.actions = tuple(actions)
         self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
-        self.styles.height = CONSOLE_CONTROL_BAR_HEIGHT
-        self.styles.min_height = CONSOLE_CONTROL_BAR_HEIGHT
-        self.styles.max_height = CONSOLE_CONTROL_BAR_HEIGHT
+        self.auto_speak_enabled = False
+        self.auto_speak_paused = False
+        self.auto_speak_retry_available = False
+        self._set_recovery_height(False)
+
+    def _set_recovery_height(self, visible: bool) -> None:
+        """Set the exact bar height for its recovery-row visibility."""
+        height = 2 if visible else 1
+        self.styles.height = height
+        self.styles.min_height = height
+        self.styles.max_height = height
 
     @staticmethod
     def _compatibility_layout_widget(widget: Any) -> Any:
@@ -232,29 +248,66 @@ class ConsoleControlBar(Vertical):
             if action is not None and isinstance(child, Button):
                 self._sync_action_button(child, action)
 
+    def sync_auto_speak(
+        self,
+        *,
+        enabled: bool,
+        paused: bool,
+        retry_available: bool = False,
+    ) -> None:
+        """Render recovery actions for the active conversation's speech state.
+
+        Args:
+            enabled: Whether automatic reply speech is enabled.
+            paused: Whether automatic speech is paused after a failure.
+            retry_available: Whether the failed reply can be retried.
+        """
+        self.auto_speak_enabled = enabled is True
+        self.auto_speak_paused = paused is True
+        self.auto_speak_retry_available = retry_available is True
+        recovery_visible = self.auto_speak_enabled and self.auto_speak_paused
+        self._set_recovery_height(recovery_visible)
+        try:
+            row = self.query_one("#console-auto-speak-row", Horizontal)
+        except NoMatches:
+            return
+        retry = self.query_one("#console-auto-speak-retry", Button)
+        retry.display = (
+            self.auto_speak_enabled
+            and self.auto_speak_paused
+            and self.auto_speak_retry_available
+        )
+        resume = self.query_one("#console-auto-speak-resume", Button)
+        resume.display = recovery_visible
+        row.display = recovery_visible
+
     def compose(self) -> ComposeResult:
         with Horizontal(
             id="console-control-action-row", classes="console-control-action-row"
         ):
-            # TASK-2154.1 (LY-10): stand-in for the header status badge while
-            # compact-height mode hides #console-workbench-header. Display is
-            # Python-driven by ChatScreen._sync_console_compact_status_marker
-            # (hidden by default); it deliberately carries no
-            # `_workbench_action_id`, so `sync_actions` never removes it.
-            compact_status_marker = Static(
-                "",
-                id="console-compact-status-marker",
-                classes="console-compact-status-marker",
-                markup=False,
-            )
-            # `auto` is load-bearing: a bare Static defaults to width 1fr and
-            # would claim the whole action row, pushing the buttons off screen.
-            compact_status_marker.styles.width = "auto"
-            compact_status_marker.styles.display = "none"
-            compact_status_marker.display = False
-            yield compact_status_marker
             for action in self._visible_actions():
                 yield self._action(action)
+        with Horizontal(id="console-auto-speak-row") as speech_row:
+            speech_row.styles.height = 1
+            speech_row.styles.min_height = 1
+            speech_row.styles.max_height = 1
+            retry = Button(
+                "Retry speech",
+                id="console-auto-speak-retry",
+                compact=True,
+                tooltip="Retry speech for the reply that failed.",
+            )
+            retry.display = False
+            yield retry
+            resume = Button(
+                "Resume auto-speak",
+                id="console-auto-speak-resume",
+                compact=True,
+                tooltip="Resume speaking future replies automatically.",
+            )
+            resume.display = False
+            yield resume
+            speech_row.display = False
         yield self._compatibility_layout_widget(
             Static(
                 _summary_line(self.state),
@@ -328,3 +381,23 @@ class ConsoleControlBar(Vertical):
             return
         event.stop()
         self.post_message(WorkbenchActionRequested(action_id))
+
+    @on(Button.Pressed, "#console-auto-speak-resume")
+    def on_console_auto_speak_resume_pressed(self, event: Button.Pressed) -> None:
+        """Forward a user request to resume automatic speech.
+
+        Args:
+            event: Textual button-press event.
+        """
+        event.stop()
+        self.post_message(ConsoleAutoSpeakResumeRequested())
+
+    @on(Button.Pressed, "#console-auto-speak-retry")
+    def on_console_auto_speak_retry_pressed(self, event: Button.Pressed) -> None:
+        """Forward a user request to retry the failed reply.
+
+        Args:
+            event: Textual button-press event.
+        """
+        event.stop()
+        self.post_message(ConsoleAutoSpeakRetryRequested())

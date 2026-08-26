@@ -17,16 +17,22 @@ single-URL probe used by the settings modal and carries no host filter.
 from __future__ import annotations
 
 import asyncio
+import errno
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 import httpx
 
 from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
-
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    normalize_provider_key_for_contract,
+    resolve_provider_endpoint,
+)
 
 DISCOVERY_PROBE_TIMEOUT_SECONDS = 2.5
+MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
 DEFAULT_LLAMACPP_DISCOVERY_URL = "http://127.0.0.1:8080"
 DEFAULT_OLLAMA_DISCOVERY_URL = "http://127.0.0.1:11434"
 #: api_settings sections whose configured endpoints are eligible candidates.
@@ -52,9 +58,56 @@ _ENDPOINT_CONFIG_KEYS = (
     "api_endpoint",
     "endpoint",
 )
-#: Path suffixes stripped from configured endpoints so ``/v1/models`` appends
-#: cleanly (mirrors ``normalize_llamacpp_base_url``'s endpoint-path handling).
-_STRIPPED_PATH_SUFFIXES = ("/v1/models", "/v1", "/models")
+
+
+def normalize_probe_provider_key(provider: object) -> str:
+    """Return the established provider config-key spelling for probe routing."""
+    raw = str(provider or "").strip()
+    direct = normalize_provider_key_for_contract(raw)
+    if direct:
+        return direct
+    normalized = raw.lower().replace(" ", "_").replace("-", "_")
+    return normalize_provider_key_for_contract(normalized)
+
+
+def connect_error_is_refused(error: BaseException) -> bool:
+    """Return whether an exception chain contains ECONNREFUSED."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OSError) and current.errno == errno.ECONNREFUSED:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+class UnsupportedModelResponseEncoding(ValueError):
+    """The peer ignored identity encoding for a bounded models response."""
+
+
+async def read_bounded_model_response(response: httpx.Response) -> bytes | None:
+    """Read raw streamed bytes without allowing transparent decompression."""
+    content_encoding = response.headers.get("content-encoding", "identity")
+    if content_encoding.strip().casefold() not in {"", "identity"}:
+        raise UnsupportedModelResponseEncoding
+    content_length = response.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MODEL_PROBE_RESPONSE_MAX_BYTES:
+                return None
+        except ValueError:
+            pass
+
+    body = bytearray()
+    if response.is_stream_consumed:
+        buffered = response.content
+        return buffered if len(buffered) <= MODEL_PROBE_RESPONSE_MAX_BYTES else None
+    async for chunk in response.aiter_raw():
+        if len(body) + len(chunk) > MODEL_PROBE_RESPONSE_MAX_BYTES:
+            return None
+        body.extend(chunk)
+    return bytes(body)
 
 
 @dataclass(frozen=True)
@@ -96,10 +149,10 @@ def endpoint_display(base_url: str) -> str:
         base_url: Raw endpoint value from config or user input.
 
     Returns:
-        A display label suitable for status copy; falls back to the raw
-        stripped value only when the safe formatter yields nothing.
+        A display label suitable for status copy. Malformed values return a
+        bounded sentinel and are never echoed verbatim.
     """
-    return safe_endpoint_display(base_url) or str(base_url or "").strip()
+    return safe_endpoint_display(base_url)
 
 
 def normalize_probe_base_url(base_url: object) -> str | None:
@@ -113,23 +166,17 @@ def normalize_probe_base_url(base_url: object) -> str | None:
         The normalized URL string, or ``None`` when the value is not a usable
         http(s) endpoint.
     """
-    raw_url = str(base_url or "").strip()
-    if not raw_url:
+    resolution = resolve_provider_endpoint("llama_cpp", base_url)
+    persisted = resolution.persisted_endpoint
+    if persisted is None:
         return None
-    candidate = raw_url if "://" in raw_url else f"http://{raw_url}"
-    try:
-        parsed = urlparse(candidate)
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return None
-    path = parsed.path.rstrip("/")
-    lowered = path.lower()
-    for suffix in _STRIPPED_PATH_SUFFIXES:
-        if lowered.endswith(suffix):
-            path = path[: len(path) - len(suffix)]
-            break
-    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
+    if resolution.form == "origin" and persisted.endswith("/models"):
+        legacy_resolution = resolve_provider_endpoint(
+            "llama_cpp",
+            persisted.removesuffix("/models"),
+        )
+        return legacy_resolution.persisted_endpoint
+    return persisted
 
 
 def is_localhost_url(base_url: str) -> bool:
@@ -296,11 +343,12 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
         payload: Decoded JSON payload of any shape.
 
     Returns:
-        Ordered unique sanitized chat-capable model ids (possibly empty) when
-        the payload carries a recognizable models container, or ``None`` when
-        it does not look like a models endpoint at all — a JSON page from some
-        unrelated local service must not count as a detected LLM server
-        (PR #608 review) — or when every listed model is explicitly non-chat.
+        Ordered unique sanitized chat-capable model ids (empty only for an
+        actually empty listing) when the payload carries a recognizable models
+        container, or ``None`` when it does not look like a models endpoint at
+        all — a JSON page from some unrelated local service must not count as a
+        detected LLM server (PR #608 review) — or when every listed model is
+        explicitly non-chat.
     """
     entries: object = payload
     if isinstance(payload, Mapping):
@@ -308,32 +356,39 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
         entries = data if isinstance(data, list) else payload.get("models")
     if not isinstance(entries, list):
         return None
+    if not entries:
+        return ()
+
     model_ids: list[str] = []
-    saw_non_chat_entry = False
-    chat_candidate_count = 0
     for entry in entries:
         if _entry_declares_non_chat_task(entry):
-            saw_non_chat_entry = True
             continue
-        chat_candidate_count += 1
-        model_id: object = entry
+        sanitized = ""
         if isinstance(entry, Mapping):
-            model_id = entry.get("id") or entry.get("name") or entry.get("model")
-        if not isinstance(model_id, str):
+            for field in ("id", "name", "model"):
+                model_id = entry.get(field)
+                if isinstance(model_id, str):
+                    sanitized = _sanitize_model_id(model_id)
+                    if sanitized:
+                        break
+        elif isinstance(entry, str):
+            sanitized = _sanitize_model_id(entry)
+        if not sanitized:
             continue
-        sanitized = _sanitize_model_id(model_id)
-        if sanitized and sanitized not in model_ids:
+        if sanitized not in model_ids:
             model_ids.append(sanitized)
         if len(model_ids) >= MODEL_IDS_MAX_COUNT:
             break
-    if not model_ids and saw_non_chat_entry and chat_candidate_count == 0:
-        # EVERY entry was explicitly non-chat: this endpoint is a real API,
-        # just not a chat API. A listing that merely failed to yield ids (odd
-        # shapes, non-string ids) alongside a non-chat entry is NOT rejected --
-        # that would turn an unrecognized-but-plausible server into "no models
-        # endpoint" and hide a chat-capable host from discovery.
+    if not model_ids:
+        # A non-empty listing is only evidence of a model API when at least one
+        # chat-capable entry has a usable sanitized identifier.
         return None
     return tuple(model_ids)
+
+
+def model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
+    """Return bounded chat-capable model IDs from a recognized listing."""
+    return _model_ids_from_payload(payload)
 
 
 async def _get_models_payload(
@@ -358,18 +413,32 @@ async def _get_models_payload(
         must not register as a detected LLM server (PR #608 review).
     """
     try:
-        response = await http_client.get(url, timeout=timeout)
+        async with http_client.stream(
+            "GET",
+            url,
+            headers={"Accept-Encoding": "identity"},
+            timeout=timeout,
+            follow_redirects=False,
+        ) as response:
+            if response.status_code < 200 or response.status_code >= 300:
+                return (
+                    None,
+                    f"No models endpoint at {display} (HTTP {response.status_code}).",
+                )
+            body = await read_bounded_model_response(response)
+    except UnsupportedModelResponseEncoding:
+        return None, "Compressed models responses are not supported."
     except httpx.TimeoutException:
         return None, f"Timed out contacting {display}."
     except httpx.HTTPError:
         return None, f"No models endpoint at {display}."
-    except Exception:
+    except Exception:  # noqa: BLE001 - discovery must degrade for injected clients.
         return None, f"No models endpoint at {display}."
-    if response.status_code < 200 or response.status_code >= 300:
-        return None, f"No models endpoint at {display} (HTTP {response.status_code})."
+    if body is None:
+        return None, "Models response is too large."
     try:
-        payload = response.json()
-    except Exception:
+        payload = json.loads(body)
+    except (RecursionError, UnicodeDecodeError, ValueError):
         return None, f"No models endpoint at {display} (not a JSON API)."
     model_ids = _model_ids_from_payload(payload)
     if model_ids is None:
@@ -408,14 +477,22 @@ async def probe_models_endpoint(
         failure copy in ``detail``.
     """
     normalized = normalize_probe_base_url(base_url)
+    contract_provider = normalize_probe_provider_key(provider_key or "llama_cpp")
     if normalized is None:
         display = endpoint_display(base_url)
         return LocalModelProbeResult(
             ok=False,
-            base_url=str(base_url or "").strip(),
+            base_url="",
             detail=f"No models endpoint at {display}."
             if display
             else "Enter a base URL first.",
+        )
+    resolution = resolve_provider_endpoint(contract_provider, normalized)
+    if resolution.models_url is None:
+        return LocalModelProbeResult(
+            ok=False,
+            base_url=normalized,
+            detail=f"No models endpoint at {endpoint_display(normalized)}.",
         )
     display = endpoint_display(normalized)
     owns_client = http_client is None
@@ -423,14 +500,16 @@ async def probe_models_endpoint(
     try:
         model_ids, detail = await _get_models_payload(
             client,
-            f"{normalized}/v1/models",
+            resolution.models_url,
             timeout,
             display,
         )
-        if model_ids is None and provider_key in _OLLAMA_PROVIDER_KEYS:
+        if model_ids is None and contract_provider in _OLLAMA_PROVIDER_KEYS:
+            models_suffix = "/v1/models"
+            root = resolution.models_url.removesuffix(models_suffix)
             fallback_ids, _fallback_detail = await _get_models_payload(
                 client,
-                f"{normalized}/api/tags",
+                f"{root}/api/tags",
                 timeout,
                 display,
             )

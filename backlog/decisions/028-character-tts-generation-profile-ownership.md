@@ -4,6 +4,10 @@ Status: Accepted
 Date: 2026-07-26
 Amended: 2026-07-31 (TASK-1626, explicit sanitized portability); 2026-08-04
 (TASK-2450, seven-provider expansion — see amendment block below)
+Partially superseded: 2026-08-09 by
+[ADR-051](051-private-tts-clone-reference-assets.md), only for the new typed
+audio.cpp clone-reference/profile-v3 contract; all other profile ownership,
+assignment, and sanitized portability boundaries remain in force
 Related Tasks: TASK-710, TASK-763, TASK-1626, TASK-2450
 Extends: ADR-023
 Supersedes: N/A

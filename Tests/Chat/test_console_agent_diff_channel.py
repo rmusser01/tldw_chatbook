@@ -17,6 +17,7 @@ from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge, _pair_step_diff
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
 
@@ -38,7 +39,7 @@ class _ChunkGateway:
 class _AllowAllBuiltinGate:
     """Minimal ``BuiltinToolGate`` double that permits every tool."""
 
-    def check(self, tool):
+    def check(self, tool, run_id):
         return None
 
 
@@ -94,7 +95,13 @@ def _run(bridge, store, session, assistant_id):
     _run_id, outcome = bridge.run_reply(
         conversation_id="conv-1",
         session_id=session.id,
-        resolution=object(),
+        resolution=ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="",
+            model="test-model",
+            ready=True,
+            execution_key="llama_cpp",
+        ),
         assistant_message_id=assistant_id,
         model="test-model",
         session_system_prompt="",

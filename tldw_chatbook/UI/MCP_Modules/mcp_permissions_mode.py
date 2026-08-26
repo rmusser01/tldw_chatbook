@@ -86,7 +86,7 @@ _SERVER_PROFILES_POINTER = (
 # choice, not necessarily a fault, so it should read as "blocked" rather
 # than "alarm". `muted` has no color at all (the `dim` attribute only) --
 # used for a "—" no-data placeholder, the same visual weight `$text-muted`
-# gets elsewhere in this module (see `#mcp-perm-legend`'s DEFAULT_CSS rule
+# gets elsewhere in this module (see `#mcp-perm-legend`'s BUNDLED_CSS rule
 # above).
 _STATE_TEXT_STYLES: dict[str, str] = {
     "ready": "green",
@@ -325,7 +325,7 @@ def _tool_column_text(row: PermRow) -> str:
 class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Permissions mode: kill switch, matrix, policy preview."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPPermissionsMode {
         width: 1fr;
         height: 100%;
@@ -542,9 +542,25 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
     # -- data -----------------------------------------------------------
 
     async def update_matrix(
-        self, rows: list[PermRow], *, kill_switch: bool, preview: str, echo: str | None = None
+        self,
+        rows: list[PermRow],
+        *,
+        kill_switch: bool,
+        preview: str,
+        echo: str | None = None,
+        gate_breadcrumb: str | None = None,
     ) -> None:
         """Rebuild the matrix from a fresh `PermRow` list.
+
+        task-3240: `gate_breadcrumb`, when given, renders as a second line
+        under the fixed `_LEGEND_TEXT` -- the PRIMARY discoverability
+        breadcrumb for `[tools]`/`[console]` registration gates that are
+        off (`Agents.builtin_tool_gate.tool_gate_breadcrumb()`). This is
+        the always-visible legend, not a filterable `PermRow`: the matrix
+        filter hides zero-tool sections exactly when the breadcrumb would
+        matter most, and this Static is never filtered. Recomputed on
+        every call, same "the next ordinary render is how it clears"
+        contract as `echo` -- `None` (the default) shows the bare legend.
 
         `rows` is rendered in the exact order given -- pinning/grouping/
         sorting is the workbench's job (it derives rows from
@@ -610,6 +626,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._apply_filter()
 
         self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
+        legend_text = f"{_LEGEND_TEXT}\n{gate_breadcrumb}" if gate_breadcrumb else _LEGEND_TEXT
+        self.query_one("#mcp-perm-legend", Static).update(legend_text)
 
     def _apply_filter(self) -> None:
         """Re-render the matrix table from `self._all_rows` under the

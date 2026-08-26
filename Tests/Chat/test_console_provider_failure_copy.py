@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.console_provider_doubles import provider_resolution
 
 MMPROJ_BODY = (
     '{"error": {"message": "image input is not supported - '
@@ -69,7 +70,7 @@ def test_describe_stream_failure_never_emits_mdn_link_without_body():
 
 class _ExplodingGateway:
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+        return provider_resolution(ready=True, provider="llama_cpp", visible_copy="")
 
     async def stream_chat(self, _resolution, _messages, **_kwargs):
         raise _http_500(MMPROJ_BODY)

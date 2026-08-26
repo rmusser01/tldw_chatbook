@@ -44,7 +44,7 @@ def test_command_palette_has_one_entry_per_shell_destination():
 
     # One labeled palette command per destination; nothing else.
     assert command_tab_ids == TabNavigationProvider.navigation_tab_ids()
-    assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 13
+    assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 14
 
     # Legacy route ids are aliases, not separate labeled commands.
     legacy_tab_ids = set(ALL_TABS) - set(command_tab_ids)
@@ -65,6 +65,7 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
         for destination_id in (
             "console",
             "library",
+            "research",
             "personas",
             "watchlists_collections",
             "mcp",
@@ -78,14 +79,18 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
     assert {"media", "Media", "search", "Search", "study", "Study"} <= alias_terms[
         "library"
     ]
+    assert {"writing", "Writing", "ingest", "Ingest"} <= alias_terms["library"]
+    assert "research" not in alias_terms["library"]
     assert {
-        "writing",
-        "Writing",
         "research",
         "Research",
-        "ingest",
-        "Ingest",
-    } <= alias_terms["library"]
+        "research_workspace",
+        "research workspace",
+        "research runs",
+        "research sessions",
+        "deep research",
+        "notebook",
+    } <= alias_terms["research"]
     # Upstream retirements adopted on rebase: prompts and skills fold into Library.
     assert {"prompts", "skills"} <= alias_terms["library"]
     assert {

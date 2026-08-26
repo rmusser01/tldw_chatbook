@@ -5,8 +5,16 @@ This script demonstrates the new features:
 1. Enhanced chunking with character-level position tracking
 2. Hierarchical chunking with structure preservation
 3. Parent document retrieval
-4. PDF artifact cleaning
-5. Table serialization
+
+Note (chunking-engine-parity task 8, Q5 ruling): the bespoke PDF-artifact
+cleaning (DocumentStructureParser.clean_text) was DELETED with the retired
+home-grown structure parser — the feature was NOT ported anywhere. The
+vendored engine performs security-oriented input sanitization only, which
+is not a replacement for it.
+
+Note (chunking-template-parity PR 0): the bespoke table serialization
+(table_serializer.py) and its ``serialize_tables`` kwarg were deleted as
+dead code; tables are chunked as structural blocks by the vendored engine.
 """
 
 import pytest
@@ -137,7 +145,6 @@ async def test_enhanced_chunking():
         method="hierarchical",
         preserve_structure=True,
         clean_artifacts=True,
-        serialize_tables=True,
     )
 
     logger.info(f"Created {len(chunks)} hierarchical chunks")
@@ -237,69 +244,6 @@ async def test_enhanced_rag_service():
 
             if results_expanded[0].metadata.get("context_expanded"):
                 logger.info("✓ Context successfully expanded to parent chunk")
-
-
-@pytest.mark.asyncio
-async def test_table_serialization():
-    """Test table serialization functionality."""
-    from tldw_chatbook.RAG_Search.table_serializer import serialize_table, TableFormat
-
-    logger.info("\n=== Testing Table Serialization ===")
-
-    # Test markdown table
-    table_text = """
-| Product | Q1 Sales | Q2 Sales | Growth |
-|---------|----------|----------|--------|
-| Laptop  | 1000     | 1200     | 20%    |
-| Phone   | 2000     | 2500     | 25%    |
-| Tablet  | 500      | 600      | 20%    |
-"""
-
-    result = serialize_table(table_text, format=TableFormat.MARKDOWN, method="hybrid")
-
-    logger.info("Table serialization result:")
-    logger.info(f"  Rows: {result['metadata']['num_rows']}")
-    logger.info(f"  Columns: {result['metadata']['num_columns']}")
-
-    logger.info("\nEntity blocks:")
-    for block in result["entity_blocks"][:2]:
-        logger.info(f"  - {block['information_block']}")
-
-    logger.info("\nGenerated sentences:")
-    for sentence in result["sentences"][:3]:
-        logger.info(f"  - {sentence}")
-
-
-@pytest.mark.asyncio
-async def test_pdf_artifact_cleaning():
-    """Test PDF artifact cleaning."""
-    from tldw_chatbook.RAG_Search.enhanced_chunking_service import (
-        DocumentStructureParser,
-    )
-
-    logger.info("\n=== Testing PDF Artifact Cleaning ===")
-
-    parser = DocumentStructureParser()
-
-    # Test text with common PDF artifacts
-    pdf_text = """
-This is a test/period document with various/comma PDF artifacts/colon
-The number/five is written as text/period Also/comma we have/lparen parentheses/rparen
-Special characters like/dollar and/percent are common/period
-Sometimes we see glyph<123> or /A.cap patterns/period
-"""
-
-    cleaned_text, corrections = parser.clean_text(pdf_text)
-
-    logger.info(f"Original text length: {len(pdf_text)}")
-    logger.info(f"Cleaned text length: {len(cleaned_text)}")
-    logger.info(f"Corrections made: {len(corrections)}")
-
-    logger.info("\nFirst 5 corrections:")
-    for original, replacement in corrections[:5]:
-        logger.info(f"  '{original}' -> '{replacement}'")
-
-    logger.info(f"\nCleaned text preview:\n{cleaned_text[:200]}...")
 
 
 @pytest.mark.asyncio

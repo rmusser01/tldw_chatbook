@@ -1,0 +1,19 @@
+{
+  "models": {
+    "tts-1": "openai_official_tts-1",
+    "tts-1-hd": "openai_official_tts-1-hd",
+    "eleven_monolingual_v1": "elevenlabs_english_v1",
+    "kokoro": "local_kokoro_default_onnx"
+  },
+  "voices": {
+    "alloy": "alloy",
+    "echo": "echo",
+    "fable": "fable",
+    "onyx": "onyx",
+    "nova": "nova",
+    "shimmer": "shimmer",
+    "RachelEL": "21m00Tcm4TlvDq8ikWAM",
+    "k_bella": "af_bella",
+    "k_adam": "am_v0adam"
+  }
+}

@@ -66,19 +66,23 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
         border: round $surface;
     }
     
+    /* TASK-15450: `border-color` is not a Textual property and `margin` takes
+       integers, so these four declarations made the WHOLE stylesheet fail to
+       parse -- this dialog could not be opened at all without raising
+       StylesheetParseError and poisoning every later reparse. They are removed
+       rather than translated: nothing in this block has ever applied, so a
+       removal is the only provably inert repair. Same defect class as the
+       `font-size` declarations fixed elsewhere in this task. */
     .status-ok {
         background: $success-darken-3;
-        border-color: $success;
     }
     
     .status-warning {
         background: $warning-darken-3;
-        border-color: $warning;
     }
     
     .status-error {
         background: $error-darken-3;
-        border-color: $error;
     }
     
     .device-info {
@@ -120,7 +124,6 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
     }
     
     .help-item {
-        margin: 0.5 0;
     }
     
     .close-buttons {
@@ -218,7 +221,7 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
         """Initialize when dialog is shown."""
         self.run_worker(self._initialize_audio())
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="audio-troubleshooting-initialize")
     async def _initialize_audio(self):
         """Initialize audio system and enumerate devices."""
         log = self.query_one("#diagnostic-log", RichLog)

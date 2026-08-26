@@ -57,8 +57,12 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ProviderToolCalls,
 )
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from Tests.console_provider_doubles import provider_resolution, with_destination
 
 
 class _RequestBuilder:
@@ -226,13 +230,7 @@ class _RecordingGateway:
         self.messages_seen = None
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(
-            ready=True,
-            visible_copy="",
-            provider="llama_cpp",
-            model="test-model",
-            max_tokens=128,
-        )
+        return provider_resolution(max_tokens=128)
 
     async def stream_chat(self, _resolution, messages, signals=None):
         if self.builder_ref is not None:
@@ -294,7 +292,7 @@ class _ScriptedCitationGateway:
         *,
         mark_fallback_calls: frozenset[int] = frozenset(),
     ) -> None:
-        self.resolution = ConsoleProviderResolution(
+        self.resolution = with_destination(ConsoleProviderResolution(
             provider="openai",
             base_url="https://provider.invalid/v1",
             model="repair-model",
@@ -316,7 +314,7 @@ class _ScriptedCitationGateway:
             thinking_effort="high",
             thinking_budget_tokens=777,
             streaming=True,
-        )
+        ))
         self.scripts = scripts
         self.mark_fallback_calls = mark_fallback_calls
         self.calls: list[dict[str, Any]] = []
@@ -430,8 +428,19 @@ def _persisted_store(
     persistence: _ReadyCitationPersistence | None = None,
 ) -> ConsoleChatStore:
     store = ConsoleChatStore(persistence=persistence)
-    session = store.ensure_session(
-        settings=ConsoleSessionSettings(provider="llama_cpp")
+    # EPHEMERAL: these doubles record `create_message` calls, which is the
+    # citation-write seam under test. They predate `commit_durable_turn`, so a
+    # non-ephemeral MANUAL send is refused before any provider call -- and the
+    # tests then wait forever on an Event the refused turn never sets.
+    # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`, so
+    # an ephemeral session keeps the send on the `create_message` path these
+    # doubles actually observe.
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        ephemeral=True,
+    )
+    session.project_instruction_state = (
+        ProjectInstructionControlState.legacy_disabled()
     )
     session.persisted_conversation_id = "conversation-1"
     return store
@@ -492,6 +501,9 @@ def _recording_citation_store(
     store = _RecordingCitationStore(persistence=persistence)
     session = store.ensure_session(
         settings=ConsoleSessionSettings(provider="openai", model="repair-model")
+    )
+    session.project_instruction_state = (
+        ProjectInstructionControlState.legacy_disabled()
     )
     if persistence is not None:
         session.persisted_conversation_id = "conversation-1"
@@ -1459,12 +1471,21 @@ async def test_citation_repair_predispatch_exception_privacy_scrubs_session(
     else:
         monkeypatch.setattr(controller_module, "bound_messages_to_window", fail)
 
+    configuration = controller.resolve_turn_configuration_snapshot(session_id)
+    authority = await controller._capture_turn_library_authority(
+        session_id, configuration
+    )
+    turn_context = controller._finalize_turn_execution_context(
+        configuration, authority, gateway.resolution
+    )
+
     with pytest.raises(RuntimeError, match=_REPAIR_PROVIDER_EXCEPTION_SENTINEL):
         await controller._stream_assistant_response(
             resolution=gateway.resolution,
             provider_messages=[{"role": "user", "content": "question"}],
             assistant_message_id=assistant.id,
             citation_repair_session=repair_session,
+            turn_context=turn_context,
         )
 
     assert repair_session.contract is None

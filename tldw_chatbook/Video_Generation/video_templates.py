@@ -111,15 +111,17 @@ def get_all_video_templates() -> dict[str, VideoStyleTemplate]:
     templates: dict[str, VideoStyleTemplate] = dict(BUILTIN_VIDEO_TEMPLATES)
     for style_id, raw in _user_style_tables().items():
         if not isinstance(raw, dict):
-            logger.warning("video style {!r} is not a table; skipped", style_id)
+            logger.warning("video style is not a table; skipped")
             continue
         unknown = set(raw) - _STYLE_TOML_KEYS
         if unknown:
-            logger.warning("video style {!r} has unknown keys {}; skipped", style_id, unknown)
+            logger.warning(
+                "video style has unknown keys (count={}); skipped", len(unknown)
+            )
             continue
         prompt_suffix = str(raw.get("prompt_suffix") or "").strip()
         if not prompt_suffix:
-            logger.warning("video style {!r} has no prompt_suffix; skipped", style_id)
+            logger.warning("video style has no prompt_suffix; skipped")
             continue
         params = raw.get("default_params") or {}
         templates[str(style_id)] = VideoStyleTemplate(

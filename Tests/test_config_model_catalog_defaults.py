@@ -25,18 +25,46 @@ def _temporary_config(tmp_path, monkeypatch, toml_text):
         config_module._SETTINGS_CACHE_SOURCE = original_settings_cache_source
 
 
-def test_zai_provider_and_settings_defaults_exist():
+def test_kimi_zai_provider_and_settings_defaults_are_current():
     parsed = tomllib.loads(CONFIG_TOML_CONTENT)
-    assert isinstance(parsed["providers"].get("ZAI"), list)
+    assert parsed["providers"]["Moonshot"][0] == "kimi-k3"
+    assert parsed["providers"]["ZAI"][0] == "glm-5.2"
+
+    moonshot_settings = parsed["api_settings"]["moonshot"]
+    assert moonshot_settings == {
+        "api_key_env_var": "MOONSHOT_API_KEY",
+        "model": "kimi-k3",
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 4096,
+        "api_region": "international",
+        "api_base_url": "https://api.moonshot.ai/v1",
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 1.0,
+        "streaming": True,
+    }
     zai_settings = parsed["api_settings"]["zai"]
-    assert zai_settings["api_key_env_var"] == "ZAI_API_KEY"
-    assert zai_settings["api_base_url"] == "https://api.z.ai/api/paas/v4"
+    assert zai_settings == {
+        "api_key_env_var": "ZAI_API_KEY",
+        "model": "glm-5.2",
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 4096,
+        "api_base_url": "https://api.z.ai/api/paas/v4",
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 5,
+        "streaming": True,
+    }
 
 
 def test_model_catalog_defaults_exist():
     parsed = tomllib.loads(CONFIG_TOML_CONTENT)
     section = parsed["model_catalog"]
     assert section["auto_refresh_enabled"] is True
+    # Confirm-first (ADR-020 amendment): no online check before consent.
+    assert section["refresh_consent_recorded"] is False
     assert section["stale_after_hours"] == 24
     assert section["auto_refresh_disabled"] == []
     assert section["write_to_config"] == []
@@ -81,6 +109,23 @@ def test_bundled_provider_defaults_use_current_models():
         assert API_MODELS_BY_PROVIDER[provider] == providers[provider]
 
 
+def test_character_defaults_template_model_is_currently_served():
+    """TASK-19048: the shipped [character_defaults] default must be a served model.
+
+    The former default ``claude-3-haiku-20240307`` is RETIRED on the wire
+    (404 not_found_error, probe req_011CeEDXZ8iS29MZCgyySwQa), so a fresh
+    install's persona/character calls targeted a dead model. The replacement
+    is the retired id's served successor in the same cheap-fast haiku lineage
+    (TASK-19020 precedent). The template's own comment demands the model exist
+    in [providers.Anthropic], so that membership is pinned too.
+    """
+    parsed = tomllib.loads(CONFIG_TOML_CONTENT)
+    character_defaults = parsed["character_defaults"]
+    assert character_defaults["provider"] == "Anthropic"
+    assert character_defaults["model"] == "claude-haiku-4-5"
+    assert character_defaults["model"] in parsed["providers"]["Anthropic"]
+
+
 def test_load_settings_uses_current_models_when_legacy_api_models_are_omitted(
     tmp_path, monkeypatch
 ):
@@ -104,3 +149,18 @@ def test_load_settings_preserves_explicit_legacy_api_models(tmp_path, monkeypatc
         assert settings["anthropic_api"]["model"] == explicit_models["anthropic_model"]
         assert settings["deepseek_api"]["model"] == explicit_models["deepseek_model"]
         assert settings["openai_api"]["model"] == explicit_models["openai_model"]
+
+
+def test_load_settings_preserves_explicit_historical_kimi_glm_models(
+    tmp_path, monkeypatch
+):
+    config_text = """
+[api_settings.moonshot]
+model = "moonshot-v1-128k"
+
+[api_settings.zai]
+model = "glm-4.5"
+"""
+    with _temporary_config(tmp_path, monkeypatch, config_text) as settings:
+        assert settings["api_settings"]["moonshot"]["model"] == "moonshot-v1-128k"
+        assert settings["api_settings"]["zai"]["model"] == "glm-4.5"

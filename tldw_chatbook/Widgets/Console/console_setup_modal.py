@@ -62,16 +62,26 @@ _TYPING_LOCKED_HINT = (
     "Typing is locked until setup finishes — press Enter to continue setup."
 )
 
-# Snow tuning: modest density (~1 flake per 30-50 cells), gentle tick cadence
-# (0.15-0.25s), varied fall speed + a little horizontal wobble so the field
-# doesn't look mechanical. Mirrors the composer cursor-blink timer discipline:
-# created paused on mount, resumed only while blocking.
-_SNOW_TICK_INTERVAL = 0.2
+# Snow tuning: modest density (~1 flake per 30-50 cells), gentle tick cadence,
+# varied fall speed + a little horizontal wobble so the field doesn't look
+# mechanical. Mirrors the composer cursor-blink timer discipline: created
+# paused on mount, resumed only while blocking.
+#
+# TASK-21134: the cadence was 0.2 s (5 Hz) and cost a measured 15.8 ms of CPU
+# per tick -- ~7.9% of a core, burnt at idle by every not-yet-configured user,
+# against a 0.1% floor with the field frozen. The tick is expensive because the
+# backdrop covers the whole screen, so every repaint re-composites every line
+# of it; density and glyph count are irrelevant to that cost, only the repaint
+# RATE is. Halving the rate to 0.4 s and doubling the per-tick displacement
+# keeps the flakes drifting at the same cells-per-second (2-7 rows/s) for half
+# the CPU. Displacement and interval are therefore a matched pair: changing one
+# without the other changes how fast the snow appears to fall.
+_SNOW_TICK_INTERVAL = 0.4
 _SNOW_FLAKE_GLYPHS = ("·", "•", "*")  # ·, •, *
 _SNOW_DENSITY_CELLS = 40
-_SNOW_MIN_SPEED = 0.4
-_SNOW_MAX_SPEED = 1.4
-_SNOW_MAX_WOBBLE = 0.4
+_SNOW_MIN_SPEED = 0.8
+_SNOW_MAX_SPEED = 2.8
+_SNOW_MAX_WOBBLE = 0.8
 
 
 @dataclass
@@ -106,7 +116,7 @@ class ConsoleSetupBackdrop(Static):
     # bare test harness (no app-level stylesheet loaded); the real Console
     # stylesheet's ``.console-setup-modal-backdrop-snow`` rule (width/height
     # 100%) takes precedence wherever it is loaded.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSetupBackdrop {
         width: 1fr;
         height: 1fr;
@@ -123,6 +133,11 @@ class ConsoleSetupBackdrop(Static):
         kwargs.setdefault("id", CONSOLE_SETUP_MODAL_BACKDROP_ID)
         classes = kwargs.pop("classes", "")
         kwargs["classes"] = f"console-setup-modal-backdrop-snow {classes}".strip()
+        # TASK-21134: the field is only spaces and the three flake glyphs, none
+        # of which is markup. Parsing it as console markup on every repaint is
+        # pure waste, and a glyph set that grew a "[" would otherwise silently
+        # become a markup tag.
+        kwargs.setdefault("markup", False)
         super().__init__(**kwargs)
         self._rng = rng if rng is not None else random.Random()
         #: TASK-2154.10 (AC-04): when True the flake field renders one static
@@ -239,19 +254,30 @@ class ConsoleSetupBackdrop(Static):
                 # field doesn't look like it's raining in vertical lines.
                 flake.y = 0.0
                 flake.x = self._rng.uniform(0, max(width - 1, 0))
-        self._render_flakes()
+        self._render_flakes(layout=False)
 
-    def _render_flakes(self) -> None:
+    def _render_flakes(self, *, layout: bool = True) -> None:
+        """Repaint the flake field.
+
+        Args:
+            layout: Whether the repaint may also change the widget's size.
+                A tick passes ``False``: the field is always exactly
+                ``_field_height`` lines of ``_field_width`` columns, so a tick
+                cannot resize it, and arming a layout pass 2.5 times a second
+                for a decoration made the Console's idle screen re-layout
+                (TASK-21134). The resize path keeps ``True`` -- there the
+                field's dimensions really did just change.
+        """
         width, height = self._field_width, self._field_height
         if width <= 0 or height <= 0:
-            self.update("")
+            self.update("", layout=layout)
             return
         rows = [[" "] * width for _ in range(height)]
         for flake in self._flakes:
             fx, fy = int(flake.x), int(flake.y)
             if 0 <= fx < width and 0 <= fy < height:
                 rows[fy][fx] = flake.glyph
-        self.update("\n".join("".join(row) for row in rows))
+        self.update("\n".join("".join(row) for row in rows), layout=layout)
 
 
 def _coerce_card_state(value: object) -> ConsoleSetupCardState:

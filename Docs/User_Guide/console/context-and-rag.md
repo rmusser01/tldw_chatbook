@@ -11,40 +11,196 @@ reply back to its citations.
 
 ## Getting there
 
-Open Console with **Ctrl+2**. This page's surfaces: the **Chat Context**
-viewer (**Ctrl+Shift+P**), the **Inspector** rail on the right (click its
-handle to expand), the status chips above the composer, and the composer
-for `/prompt`, `/system`, and `/prefill`.
+Open Console with **Ctrl+2**. This page's surfaces: the **Conversation
+Inspector** (the token/cost chip, **Ctrl+Shift+P**, or the command
+palette's **Console: View chat context** entry), the **Inspector** rail on
+the right (click its handle to expand — a separate surface from the
+Conversation Inspector modal, despite the similar name), the composer for
+`/prompt`, `/system`, and `/prefill`, and the status chips above the
+composer.
 
 ## Layout tour
 
-![The Chat Context viewer](../images/console/context-modal.svg)
+![The Conversation Inspector's Next Send tab](../images/console/context-modal.svg)
 
 Where this page's controls live:
 
-- **The "Chat Context" viewer** (captured above) — a window over the
-  screen, opened with **Ctrl+Shift+P**.
+- **The Conversation Inspector** — a window over the screen with three
+  tabs (**Costs**, **Exchange**, **Next Send**), opened from the token/cost
+  chip, **Ctrl+Shift+P**, or the command palette. The screenshot above
+  shows its **Next Send** tab, carried over from the former standalone
+  "Chat Context" viewer this modal replaced.
 - **The Inspector rail** (right edge) — the "Sources" tray at the top, the
   retrieval-scope row beneath it, the "Prefill" rows when one is armed, the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom.
 - **The status chips** above the composer — "RAG: on/off", "Sources: N
   staged", and the "Scope: N" chip once retrieval is narrowed.
-- **The staged-evidence strip** — between the status chips and the
-  composer; shown only while something is staged (or right after a send
-  that used it).
+- **The staged-evidence strip** — at the top of the control deck, above
+  the status chips; shown only while something is staged (or right after
+  a send that used it).
 - **The composer** — where `/prompt`, `/system`, and `/prefill` are typed;
   the left rail's Model section carries the clickable `System:` line.
 
 ## Features & controls
 
-### The "Chat Context" viewer (Ctrl+Shift+P)
+### Reading long Context and Inspector sections
 
-Press **Ctrl+Shift+P** to open **Chat Context** — a read-only snapshot of
-what the model has seen and is about to see. The header carries an
-approximate token count (e.g. `(~1234 tokens)`) when a draft-based
-estimate exists; mid-stream a warning reads "A response is in progress;
-snapshot may change." Two tabs:
+Each open Context section keeps a complete reading body until it reaches its
+own ceiling:
+
+| Context section | Complete body before local scrolling |
+| --- | ---: |
+| Sessions | 15 rows |
+| Workspaces | 20 rows |
+| Conversations | 20 rows |
+| Model | 15 rows |
+| Agent | 15 rows |
+| Details | 15 rows |
+| Character | 35 rows |
+
+Inspector sections retain a 20-row ceiling. A shorter body hugs its content;
+a longer body stops at its ceiling and scrolls locally. Context does not shrink
+one open section to make a later section fit in the initial viewport. Instead,
+the rail keeps each complete body and scrolls as a whole when their combined
+height exceeds the terminal. The cues tell you which area to move:
+
+- **▼ more — scroll** means the current section has more content. Scroll over
+  that section, or Tab to it and use the arrow keys, Page Up/Page Down, Home,
+  or End.
+- **▼ more sections — scroll** means later rail sections remain below. Scroll
+  the whole Context or Inspector rail, not the section you are currently
+  reading.
+
+Tab and Shift+Tab continue in normal order through controls, an overflowing
+section, and controls inside it; sections that fit do not become extra Tab
+stops. In the Inspector, `n` and `p` move to the next or previous named section
+without wrapping. They work only while the Inspector has focus and never take
+over an editable field. The footer shows **n/p Sections** while this is active,
+and **F1** shows the full shortcut list.
+
+On short terminals, scroll Context as a whole to reach every header and
+complete open section. A section's local position and the rail's outer
+position are independent, so reading deep inside one section does not resize
+or truncate its neighbors. The full-width layout on larger terminals remains
+primary, with this same cell-based behavior as the terminal narrows or
+shortens.
+
+The **Project** status row (for Project Instructions) and retrieval **Scope**
+remain compact rows; they do not expand into separate 20-line sections.
+
+### Workspaces and conversation ownership
+
+The **Workspaces** section owns every named workspace and all conversations
+associated with it. Each workspace is a top-level branch in a native terminal
+Tree, and its conversations are children beneath it. The separate
+**Conversations** section contains only conversations assigned to the built-in
+Default workspace or to no workspace. A conversation therefore appears in one
+of these ordinary browsers, never both.
+
+Starred is an ordering and status property, not another copy of a
+conversation. Starred conversations sort first inside their one workspace or
+inside the flat Conversations list; the remaining entries follow by recency.
+Workspaces and Conversations also have independent search boxes. Workspaces
+search matches workspace names and associated conversation titles, including
+service results that have not yet been paged into an open branch. Conversations
+search covers only Default and unassigned records. Starting, clearing, or
+retrying one search does not replace the other search.
+
+Above the Tree, the active-workspace identity stays on one compact line and
+**Switch**, **New**, and **RAG** share one compact action strip. **Switch**
+is the authoritative route to every workspace, including **Default**, which is
+intentionally absent from the Tree. After switching to Default, the Tree stays
+available for switching back while Default conversations appear in the flat
+Conversations section.
+
+The Tree uses native disclosure and scrolling:
+
+- Select a workspace or conversation label with the pointer or **Enter**.
+  Selecting a workspace switches to it without also changing disclosure.
+- Toggle a workspace branch with its disclosure marker or **Space**. **Right**
+  expands a closed workspace, then moves to its first child when already open;
+  **Left** collapses an open workspace, then moves to its visible parent when
+  already closed. A boundary action that would land on the hidden Tree root
+  does nothing.
+- Use **Up/Down**, **Page Up/Page Down**, **Home**, and **End** for native Tree
+  navigation and paging within the section. A **Load more…** row fetches the
+  next bounded conversation page for that workspace; a failed page keeps
+  settled children in place and offers **Retry**.
+- While a markable conversation leaf has the Tree cursor, use the contextual
+  **Star**/**Unstar** action or press `s`. These controls do not intercept text
+  typed in either search box.
+- During Workspaces search, matching conversation results keep their parent
+  visible. Temporary disclosure changes made while searching are discarded
+  when the query is cleared, restoring the disclosure state from before the
+  search.
+
+### Character image containment
+
+The optional **Character** section uses up to a 35-row complete body so the image,
+name, reaction state, and action remain together. Valid character art is
+centered and shown complete with its aspect ratio preserved. It scales down
+when needed, but a smaller source is not enlarged merely to fill the available
+space. The image is never stretched or cropped. Missing, corrupt, or
+unsupported art leaves the character controls available rather than replacing
+them with a distorted image.
+
+### The Conversation Inspector
+
+Click the status row's cost chip, press **Ctrl+Shift+P**, or run
+**Console: View chat context** from the command palette to open the
+**Conversation Inspector** — one modal, three tabs, replacing the older
+separate cost breakdown and "Chat Context" viewer. The chip opens on
+**Costs**; Ctrl+Shift+P and the palette entry open on **Next Send**; once
+open you can switch tabs freely. `Escape` closes it from any tab.
+
+#### Costs
+
+Today's per-message token/dollar rows and totals — unchanged ground
+truth. Each row expands into that turn's individually captured provider
+calls (one per agent tool-loop iteration, or one for a direct send), each
+shown with its status and its own cost. Where a turn's per-call costs and
+its message-level total disagree (rounding, or a call with no priced
+usage), both figures are shown rather than silently reconciled; a call
+with no usable usage reads **unpriced**.
+
+#### Exchange
+
+The per-turn, per-call detail behind those numbers. Expand a turn, then a
+call, to reach collapsible sections: **System prompt**, **Messages**,
+**Tools**, **Response**, **Tool calls** (only shown when the response made
+any), and **Sampling & routing** (temperature, max tokens, seed, and
+similar parameters). Each call's title carries a status badge —
+`[stopped]`, `[error]`, or the normal `[complete]` — and a call captured
+during an abandoned regenerate additionally reads `[abandoned
+regeneration]`: regenerating keeps the earlier answer's captures rather
+than discarding them (see the response-variants section of
+[Branching & rewind](branching-and-rewind.md)). A call whose request had a
+value that isn't on the capture allowlist — this is how credentials like
+API keys are kept out of storage; see **Kill-switch & privacy** below —
+shows a line naming exactly what was dropped: "Omitted by capture policy:
+api_key".
+
+Per-piece token counts inside a call (e.g. "System prompt (~412 tokens
+est.)") are **estimates**, computed the same way the composer estimates
+your draft — they will never disagree with what the composer shows for
+the same text, but they are not what you were billed. Sitting alongside
+them, a **Reported usage** line (`in:… cache_r:… cache_w:… out:…`) carries
+the provider's own usage numbers where the provider sent any, with no `~`
+— that line is authoritative. Each call has its own **Copy JSON** and
+**Save to File** buttons (a temporary/ephemeral session blocks Save, same
+as elsewhere in Console).
+
+A turn with nothing captured — recorded before this feature existed, with
+capture disabled, or where capture itself failed — shows a plain row
+instead of a blank space: "No capture recorded for this turn (recorded
+before capture existed, capture disabled, or capture failed)."
+
+#### Next Send
+
+The former Ctrl+Shift+P "Chat Context" viewer, carried over intact: a
+read-only snapshot of what the model has seen and is about to see. Two
+sub-tabs:
 
 - **Current** — one collapsed section per transcript message, titled with
   its role and status; expand any to read the exact stored text. Empty
@@ -56,11 +212,79 @@ snapshot may change." Two tabs:
   will continue from this prefill; the agent loop (tools/MCP) is skipped
   for this send."), **Tools**, and **Staged Sources**.
 
-Footer controls: a **Raw JSON** checkbox, **Refresh** (also the `r` key),
-**Copy JSON**, **Save to File** (writes the payload to disk and shows the
-path), and **Close** (also `Escape`). Payloads over 1 MiB are not
-rendered inline — the viewer shows "Context exceeds 1 MiB. Use Save to
+The header carries an approximate token count (e.g. `(~1234 tokens)`) when
+a draft-based estimate exists; mid-stream a warning reads "A response is
+in progress; snapshot may change." Footer controls: a **Raw JSON**
+checkbox, **Refresh** (also the `r` key), **Copy JSON**, **Save to File**
+(writes the payload to disk and shows the path). Payloads over 1 MiB are
+not rendered inline — the viewer shows "Context exceeds 1 MiB. Use Save to
 File to view the full payload."
+
+### Project instructions
+
+The Inspector places a one-line **Project** status above **Sources**:
+**Off**, **Choose folder**, **None**, **N loaded**, or **Warning**. Select the
+row to open this viewer's metadata-only **Project Instructions** section. It
+shows whether the feature is enabled, the selected binding and locator match,
+override/standard precedence, relative source paths, scopes, byte counts,
+active or omitted outcomes, and deduplicated warning codes. Removed or
+retargeted bindings offer **Choose folder** and **Disable**; **Off** offers
+**Enable**. There is no automatic-file editor or second settings surface.
+
+The **Next Send** tab is the only automatic UI surface that may show the exact
+instruction body, and only as a disposable preview of the captured session's
+next request. Closing it discards the preview. **Copy JSON** and **Save to
+File** omit automatic instruction bodies. The transcript, rail, context
+metadata, warnings, run logs, and saved conversation state carry only
+content-free metadata. If you explicitly ask a file tool to read an
+`AGENTS.md`, its result is ordinary user-requested tool output and follows the
+normal logging and persistence rules.
+
+On the first send for a selected binding and provider destination, a notice
+lists only destination and source metadata and asks **Proceed**, **Cancel**,
+or **Disable**. Consent is repeated when the binding locator or provider/custom
+endpoint changes, but not for a model-only change at the same destination.
+Nested files may load later. Automatic sources are constrained independently
+to `[console] project_instructions_startup_max_bytes = 32768` at the binding
+root and `project_instructions_nested_max_bytes = 32768` for the run; a whole
+file must also fit the exact model request's token headroom. Omitted, stale,
+unsafe, unreadable, or outside-scope candidates produce content-free warnings.
+
+This behavior deliberately combines two ecosystems without pretending they
+are identical. Codex defines the `AGENTS.override.md` / `AGENTS.md` hierarchy
+and broad-to-specific composition. Claude Code inspired lazy path-sensitive
+loading, but its native project file is `CLAUDE.md`, not `AGENTS.md`. Chatbook
+adds its own selected-binding authority boundary and delivers automatic text
+as ephemeral user context rather than privileged policy.
+
+#### Kill-switch & privacy
+
+Every provider call Console makes is captured (request and response) and
+stored locally, per turn, so the Exchange tab has something to show —
+this is `config.toml`'s `[console] exchange_capture` setting, **on by
+default**. Set `exchange_capture = false` to turn capturing off; turns
+sent while it's off show the Exchange tab's "No capture recorded" row
+instead of call detail. Captures are local-only — compressed at rest, never
+synced to another device — and a temporary/ephemeral conversation's
+captures live only in memory for that session and are never written to
+disk. A stopped send keeps its partial content, marked `[stopped]`; an
+abandoned regenerate keeps its captures too, marked `[abandoned
+regeneration]`, rather than being dropped.
+
+Two honesty limits worth knowing before you treat a capture as "the exact
+bytes that went over the wire":
+
+- **Adapter-boundary capture.** Capture happens where Console hands a
+  request to the provider adapter, not at the raw HTTP layer — so
+  provider-internal framing and any prompt-caching markers an adapter
+  injects on its own are not visible in what you see here. The one
+  exception is a **llama.cpp** (local server) send: that branch builds its
+  own HTTP payload directly, so for llama.cpp its capture *is* the literal
+  wire payload.
+- **No fabricated history.** A turn that predates this feature, was sent
+  with capturing off, or hit a capture failure never shows fake or
+  guessed content — it shows the explicit "No capture recorded" row
+  described above.
 
 ### System prompt
 
@@ -85,6 +309,54 @@ ambiguous/unknown name, opens the **Insert prompt** picker ("Search
 prompts…"; empty state "No saved prompts yet — create them in Library ▸
 Prompts."). A large prompt body arrives in the composer as a collapsed
 paste token — click it (or press Enter on it) to unfurl.
+
+Saved Prompt System and User lanes may contain insertion-time variables such
+as `{customer}`. Names are case-sensitive and must match
+`[A-Za-z_][A-Za-z0-9_]*`: `{customer}` and `{Customer}` are different. The
+shared **Prompt variables** dialog lists each name once, in first-occurrence
+order across System then User, and reuses the one value everywhere that exact
+name appears. Blank values are valid. A value containing braces is inserted as
+text and is not scanned again.
+
+Use `{{` for a literal `{` and `}}` for a literal `}`. For example,
+`{{customer}}` inserts `{customer}`, while `{{{customer}}}` inserts the value
+inside literal braces. Invalid or unmatched forms such as `{first-name}`,
+`{ name }`, `{name`, and ordinary JSON object braces stay literal. A variable
+name may contain at most 64 characters, and one insertion may use at most 64
+unique names. If either limit is exceeded, **Apply** is disabled and the dialog
+says either `A Prompt variable name exceeds 64 characters.` or
+`This Prompt has more than 64 variables.`; **Use original placeholders**
+remains available.
+
+When a Prompt has a System lane, the dialog shows
+`Replace the current session System prompt with this System lane`, **Off** by
+default. Turning it on may add System-only variables without losing values
+already entered for shared or User-only variables. **Apply** inserts the filled
+active lanes; **Use original placeholders** inserts the selected lanes
+unchanged; **Cancel** changes nothing. A System-only Prompt, including one with
+a blank User lane, has no active lane until you turn this option on. If System
+is the only selected lane in a `/prompt` replacement, the captured draft is
+cleared as part of applying that Prompt. A variable-free User-only Prompt takes
+the direct guarded path without showing the dialog.
+
+Exact `/prompt` and picker insertion replace the complete draft captured when
+the command was dispatched or the picker opened, including its collapsed paste
+and inline-file segments. If that draft, the active session, or the authorized
+System prompt changes before application, nothing is applied and a warning asks
+you to open the Prompt and retry. Library **Use in Console** uses this same
+dialog but appends to the settled active draft instead of replacing it; a stale
+Library target session or authorized System prompt is likewise refused. A
+confirmed application expires if it has not been consumed at the 120-second
+boundary; a transient composer remount may retry only while that window remains
+open.
+
+Variable values and pending applications are memory-only: they are not saved as
+defaults or retained for the next insertion. Text you intentionally apply then
+follows the ordinary draft and session lifecycle. **Menu → Undo Prompt change**
+restores only the draft captured before the latest Prompt change; it does not
+undo a System change. If the live System change succeeds but its durable save
+does not, Console warns: `System prompt applied for this session, but the change
+could not be saved -- it may not survive a reload.`
 
 ### Response prefill (/prefill)
 
@@ -126,7 +398,7 @@ bulk **Select all matching** / **Clear shown** (large select-alls ask
 **Confirm** / **Cancel**), and a footer with a "N selected of M" count
 plus **Save**, **Clear scope**, and **Cancel**.
 
-Scope exists at two levels. The left rail's **RAG Scope** button sets a
+Scope exists at two levels. The left rail's **RAG** button sets a
 **workspace-level** scope ("Narrow RAG retrieval to items in this
 workspace"); a conversation's scope then narrows *within* it — items
 outside are suffixed "— outside workspace scope", and the effective scope
@@ -161,16 +433,49 @@ line — by default "Sources: Notes, Media, Conversations (Prompts off)" —
 and is editable: the **Library search** chip (or **Search Library** with
 nothing typed) opens the **Library search** settings modal, which carries
 the query box plus a toggle per source kind (**✓ Notes**, **○ Media**,
-**✓ Conversations**, **○ Prompts**). Running keeps the edited selection
-(it also survives leaving and returning to Console); **Cancel** discards
-it. Run stays disabled until there is both a query and at least one
-source kind. Note this is a different setting from **RAG scope** above:
-"Sources" picks the source *kinds*, "Scope" picks the *items*.
+**✓ Conversations**, **○ Prompts**) and the **Auto-retrieve on send**
+switch described below. Running keeps the edited query/source-kind
+selection (it also survives leaving and returning to Console); **Cancel**
+discards it. Run stays disabled until there is both a query and at least
+one source kind. Note this is a different setting from **RAG scope**
+above: "Sources" picks the source *kinds*, "Scope" picks the *items*.
+
+Both a manual **Search Library** run and auto-retrieve (below) search to
+the depth your **active RAG profile** specifies (`Settings ▸ RAG`'s
+**Default results** field) rather than a fixed count, so manual and
+automatic retrieval can't disagree about how many results come back.
+
+### Auto-retrieve on send
+
+The **Library search** settings modal also carries an **Auto-retrieve on
+send** switch, default **OFF**. Turn it on and every plain text send —
+never a slash command, a `$skill` invocation, a tool approval, or a
+regenerate — first runs a Library search using your draft as the
+query and stages whatever it finds into the staged-evidence strip before
+the send goes out: the same visible, consume-on-send pipeline a manual
+**Search Library** run produces, never invisible prompt injection. It's
+skipped automatically when evidence is already staged (a manual run or a
+Library "Use in Console" handoff), so a send can't double-retrieve.
+
+The switch persists the instant you flip it, unlike the query and
+source-kind edits in the same modal — closing with **Escape** or a
+backdrop click still keeps the change. If your resolved RAG scope comes
+back **empty**, auto-retrieve short-circuits with the same shared notice
+the manual path shows, rather than searching everything.
+
+While a send is retrieving, the staged-evidence strip briefly shows a
+"Retrieving…" state; the search is capped at a **5-second timeout**, and
+a send is never blocked on it. If retrieval times out, fails, or the RAG
+service is still starting up (a first-use embedding-model load can take a
+while), the send goes out without evidence and a quiet notice names which
+of the two happened — "still initializing" vs. "failed" — rather than
+staying silent. A zero-result outcome currently clears the in-flight
+placeholder with no further notice.
 
 The Inspector tray is not the only place staged evidence shows up: a
-**staged-evidence strip** sits on the main surface itself, between the
-status chips and the composer, so staging is visible without opening the
-Inspector at all. Staged, it lists the titles (up to three, "+N more"
+**staged-evidence strip** sits on the main surface itself, at the top of
+the control deck above the status chips, so staging is visible without
+opening the Inspector at all. Staged, it lists the titles (up to three, "+N more"
 beyond that) with an **Un-stage** button that drops the whole bundle in
 one click; after a send that used it, the strip briefly instead reads
 "Evidence sent with this message · N sources". Staged evidence rides only
@@ -235,24 +540,35 @@ Inspector shows what's in play:
 
 1. **Check exactly what the next send contains** — type your draft, press
    **Ctrl+Shift+P**, open **Next Send**, expand the folds; `r` refreshes.
-2. **Set a system prompt for this session** — type `/system`, write the
+2. **See exactly what a past turn sent and received** — open the
+   Conversation Inspector (chip or Ctrl+Shift+P), switch to **Exchange**,
+   expand the turn, then a call, then the section you want (System prompt,
+   Messages, Tools, Response, Tool calls, Sampling & routing).
+3. **Set a system prompt for this session** — type `/system`, write the
    prompt, press **Apply**; the rail's `System:` line now previews it.
    Name it and press **Save to Library** first to reuse it later.
-3. **Make the reply start with a fixed opening** — type
+4. **Make the reply start with a fixed opening** — type
    `/prefill Here is the summary:` and send; the reply continues from the
    last character. `/prefill pin …` keeps it; `/prefill clear` when done.
-4. **Narrow RAG to two documents** — expand the Inspector, press
+5. **Narrow RAG to two documents** — expand the Inspector, press
    **Narrow…** on the scope row, pick the **Media** tab, filter by title,
    click the two items, press **Save**. The strip shows **Scope: 2**.
-5. **Open a citation's source in Library** — click **Sources (N)** under
+6. **Open a citation's source in Library** — click **Sources (N)** under
    the reply, select an `[S1]` row, press **Open in Library**.
+7. **Have every send ground itself automatically** — click the **RAG**
+   chip (or **Run Library RAG**) to open **Library RAG** settings, turn on
+   **Auto-retrieve on send**, close the modal. It stays on across sends
+   until you flip it off; it's off by default.
 
 ## Keyboard & commands
 
 | Key / command | Action |
 |---|---|
-| Ctrl+Shift+P | Open the Chat Context viewer |
-| r / Escape (in the viewer) | Refresh the snapshot / close |
+| Ctrl+Shift+P | Open the Conversation Inspector on **Next Send** |
+| r (on **Next Send**) / Escape | Refresh the snapshot / close the Inspector |
+| Tab / Shift+Tab (in either rail) | Move through controls and any overflowing section in normal order |
+| Arrow keys / Page Up / Page Down / Home / End | Scroll within a focused overflowing section |
+| n / p (Inspector focused) | Move to the next / previous named section, without wrapping or taking over editable input |
 | `/prompt [name]` | Replace the draft with a saved prompt (picker when ambiguous) |
 | `/system [name]` | Edit the session system prompt, or apply a saved prompt's system part |
 | `/prefill [pin\|clear] [text]` | Set, pin, clear, or report the start of the assistant's reply |
@@ -265,13 +581,24 @@ Enter again to send as text."
 
 - `config.toml` `[rag]` (and legacy `[rag_search]`) — retrieval and
   processing settings; covered in
-  [Library ▸ Search & RAG](../library/search-and-rag.md).
+  [Library ▸ Search & RAG](../library/search-and-rag.md), including how
+  the active RAG profile now drives retrieval mode.
+- `config.toml` `[chat_defaults] rag_auto_retrieve_on_send` — the
+  persisted **Auto-retrieve on send** value (default `false`); the modal
+  is the supported way to change it.
+- `config.toml` `[console] exchange_capture` — the Conversation Inspector's
+  capture kill-switch (default `true`); set `false` to stop recording
+  per-call request/response detail for the Exchange tab.
+- [Settings ▸ RAG](../settings/rag.md) — the profile that both auto- and
+  manual Library RAG retrieval read for search mode and result depth.
 - [Library ▸ Prompts](../library/prompts.md) — where saved prompts are
   created and managed.
 - [Console orientation](../console.md) — layout tour, rails, and chips.
 - [Branching & rewind](branching-and-rewind.md) — how regenerate, edit &
   resend, and "Summarize up to here" change what history the model sees.
 - [Guide index](../index.md) — global keys and navigation.
+- [Agent runs & tools](agent-runs-and-tools.md#project-instructions-before-tools-run)
+  — lazy nested activation before review and execution.
 
 ## Quirks & troubleshooting
 
@@ -282,8 +609,27 @@ Enter again to send as text."
   `clear`) — those parse as subcommands. Rephrase, or pin then clear.
 - **"Scope: no sources" means zero-result retrieval.** The alert-styled
   state warns before you send into it — **Clear** or **Edit** the scope.
-- **The viewer's token count is a draft-derived estimate** — a guide, not
-  a billing meter.
+- **The Next Send viewer's token count is a draft-derived estimate** — a
+  guide, not a billing meter. The same is true of every per-piece token
+  count inside the Exchange tab's calls; only that tab's **Reported
+  usage** line comes from the provider itself.
+- **A capture is not a byte-for-byte wire log.** It's taken where Console
+  hands the request to the provider adapter, so adapter-internal HTTP
+  framing and any prompt-caching markers an adapter injects are not
+  visible — except on a llama.cpp (local server) send, where the capture
+  is the literal payload that went out.
+- **Turns before this feature (or with capture off) show "No capture
+  recorded"** on the Exchange tab rather than any reconstructed guess at
+  what was sent.
+- **Auto-retrieve fires on every plain-text send while it's on**,
+  including repeated sends in the same conversation — there's no
+  once-per-conversation memory yet, so an empty resolved scope re-shows
+  its notice on each send until you clear or edit the scope.
+- **Reranking-enabled profiles cost more per search.** If your active RAG
+  profile has reranking on, both auto- and manual Library RAG retrieval
+  spend one LLM provider call per candidate result (up to the profile's
+  **Rerank results** count) — see
+  [Settings ▸ RAG](../settings/rag.md#the-editing-card).
 
 —
 *Verified against c2cbb8081 — 2026-08-04 (PR-T1 live check S1-S6: staged
@@ -295,4 +641,29 @@ profile by an unrelated Library workspace-eligibility gate, so that part
 is verified at the code level, not live). Verified against e2c706303 —
 2026-08-06 (PR-T2, docs pass against shipped code/tests, live check
 pending Task 9): staged evidence now counts toward the context estimate
-and the cost chip (as an estimated `~` row) instead of reporting zero.*
+and the cost chip (as an estimated `~` row) instead of reporting zero.
+Verified against d6b6a738f — 2026-08-07 (RAG-port P0 live walkthrough, real
+Anthropic provider): flipping **Auto-retrieve on send** in the RAG chip
+modal writes `[chat_defaults] rag_auto_retrieve_on_send = true` at
+toggle time — before Esc, and Esc leaves it set. A plain-text send then
+showed "Auto-retrieving Library evidence for this message." with the chip
+reading `RAG: on · Sources: 1 staged` about a second in, then "Evidence
+sent with this message · 15 sources", and the model's own reply named the
+injected block back ("the evidence sections [S1] through [S15] …") — the
+end-to-end proof that retrieved evidence reaches the provider. A send
+beginning with a slash command fired no retrieval at all: no placeholder,
+no chip flip, no evidence line.*
+
+*Chip and strip positions re-verified against dev @ b6036515e — 2026-08-18
+(task-17662, after the bottom-stack programme moved the status chips above
+the composer and the staged-evidence strip above the status chips).*
+
+*Verified against dd4921901 — 2026-08-20 (task-18300 Task 11a, Conversation
+Inspector programme): the token/cost chip, Ctrl+Shift+P, and the palette's
+"Console: View chat context" entry now all open one Conversation Inspector
+modal (Costs / Exchange / Next Send tabs) in place of the former separate
+cost breakdown and "Chat Context" viewer; the retired viewer's content
+lives on unchanged as the Next Send tab. Docs pass against shipped
+code/tests (`console_conversation_inspector.py`, `console_exchange_
+capture.py`, the design spec's UI and Risks sections); live verification of
+the Exchange tab against a real provider is a separate, later pass.*

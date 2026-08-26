@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch
 from textual.app import App
 from textual.css.query import NoMatches
-from textual.widgets import Button, Checkbox, Input, OptionList, Select
+from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 
 from tldw_chatbook.Widgets import settings_splash_screen_viewer as splash_module
 from tldw_chatbook.Widgets.settings_splash_screen_viewer import (
@@ -179,3 +179,74 @@ async def test_settings_splash_viewer_default_select_persists_on_change(
 
         assert ("splash_screen", "card_selection", target) in saved
         assert viewer._config["card_selection"] == target
+
+
+@pytest.mark.asyncio
+async def test_failing_persist_worker_surfaces_error_without_crashing_the_app(
+    splash_app, monkeypatch
+):
+    """task-15470 review round: `_persist_splash_config_value` used to call
+    `self.call_from_thread(...)` on its failure path -- but `call_from_
+    thread` exists only on `App`, not on this `Vertical` widget. When the
+    config write actually raised, the `except` handler's own
+    `self.call_from_thread` call raised a SECOND, uncaught `AttributeError`
+    inside a `@work(thread=True)` worker -- fatal to the whole app by
+    default (`exit_on_error=True`). Textual re-raises that fatal exception
+    when `run_test()`'s context manager exits, so with the bug present this
+    test fails with an `AttributeError` traceback instead of ever reaching
+    the assertions below (confirmed by temporarily reverting the fix and
+    re-running this exact test).
+
+    Also pins the adjacent fix: a failed write must not leave `_config`
+    diverged from what is actually on disk -- the optimistic in-memory
+    update must revert.
+    """
+
+    def failing_save(section: str, key: str, value: object) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(splash_module, "save_setting_to_cli_config", failing_save)
+
+    async with splash_app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        viewer = splash_app.query_one(SettingsSplashScreenViewer)
+        previous = viewer._config["skip_on_keypress"]
+
+        checkbox = viewer.query_one("#settings-splash-skip-on-keypress", Checkbox)
+        checkbox.value = not previous
+        await pilot.pause()
+
+        status = viewer.query_one("#settings-splash-status", Static)
+        for _ in range(50):
+            if "Error saving skip_on_keypress" in str(status.renderable):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"failure status never appeared; last seen: {status.renderable!r}"
+            )
+
+        # The optimistic in-memory value must not diverge from what is
+        # actually on disk once the write is known to have failed.
+        assert viewer._config["skip_on_keypress"] == previous
+
+        # The app must still be alive and responsive -- not merely "the
+        # exception hasn't been re-raised yet" (that only happens when the
+        # `async with` block exits, below). Driving a second, independent
+        # control through a full failure-and-revert cycle proves the
+        # message loop, workers, and `call_from_thread` callbacks are all
+        # still functioning normally after the first failure.
+        other_checkbox = viewer.query_one("#settings-splash-enabled", Checkbox)
+        other_previous = viewer._config["enabled"]
+        other_checkbox.value = not other_previous
+
+        for _ in range(50):
+            if "Error saving enabled" in str(status.renderable):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "second control's failure status never appeared -- app "
+                f"stopped responding; last seen: {status.renderable!r}"
+            )
+        assert viewer._config["enabled"] == other_previous

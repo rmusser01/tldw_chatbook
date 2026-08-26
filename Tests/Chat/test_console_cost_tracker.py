@@ -52,6 +52,80 @@ def test_rows_without_usage_fall_back_to_estimates():
     assert snap.total_tokens > 0
 
 
+def test_fleet_tokens_fold_into_total_tokens_but_never_price():
+    """PR2b Task 5 (cost rollup): a sub-agent fleet's measured token spend
+    reaches the snapshot's ``total_tokens`` -- but never ``total_usd``,
+    since a fleet child's combined figure has no input/output split to
+    price accurately (see ``ConsoleCostSnapshot.fleet_tokens``'s
+    docstring)."""
+    usage = ProviderUsage(
+        uncached_input=1_000_000, output=1_000_000,
+        provider="anthropic", model="claude-sonnet-4-6",
+    )
+    snap = build_cost_snapshot(
+        [_msg(usage=usage)],
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        fleet_tokens=500,
+    )
+    assert snap.fleet_tokens == 500
+    assert snap.total_tokens == 2_000_000 + 500
+    # Unaffected: the primary transcript's own pricing stays exactly what
+    # it was without any fleet spend.
+    assert snap.total_usd == 18.0
+    assert snap.pricing_known is True
+
+
+def test_fleet_tokens_default_to_zero_and_are_backward_compatible():
+    """Every pre-Task-5 caller omits `fleet_tokens` -- byte-identical
+    totals to before this parameter existed."""
+    snap = build_cost_snapshot(
+        [_msg(content="x" * 400, usage=None)],
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+    assert snap.fleet_tokens == 0
+
+
+def test_fleet_tokens_tooltip_line_appears_in_tokens_only_mode():
+    snap = ConsoleCostSnapshot(None, 12_345, False, False, 2, fleet_tokens=750)
+    state = build_cost_state(
+        snap,
+        cache_state=ConsoleCacheState.NONE,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
+    )
+    assert "Sub-agents: 750 tok (not priced)" in state.tooltip
+
+
+def test_fleet_tokens_tooltip_line_appears_in_priced_mode():
+    snap = ConsoleCostSnapshot(0.48, 12000, True, False, 3, fleet_tokens=1200)
+    state = build_cost_state(
+        snap,
+        cache_state=ConsoleCacheState.NONE,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
+    )
+    assert "Sub-agents: 1.2k tok (not priced)" in state.tooltip
+
+
+def test_no_fleet_tokens_line_when_fleet_tokens_is_zero():
+    snap = ConsoleCostSnapshot(0.48, 12000, True, False, 3)
+    state = build_cost_state(
+        snap,
+        cache_state=ConsoleCacheState.NONE,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
+    )
+    assert "Sub-agents:" not in state.tooltip
+
+
 def test_unknown_model_yields_tokens_only():
     usage = ProviderUsage(
         uncached_input=100, provider="anthropic", model="mystery-9000"
@@ -389,8 +463,9 @@ def test_build_cost_rows_carries_audio_and_transcription_fields():
     assert row.audio_output == 90
     assert row.transcription_seconds == 2.5
     # cost_usd is the row's full total -- audio/transcription costs are
-    # already folded in (see console_cost_modal.py for the breakdown that
-    # keeps them visible rather than an undecomposable single figure).
+    # already folded in (see console_conversation_inspector.py's Costs tab
+    # for the breakdown that keeps them visible rather than an
+    # undecomposable single figure).
     assert row.cost_usd is not None and row.cost_usd > 0
 
 

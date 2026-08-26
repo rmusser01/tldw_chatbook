@@ -17,6 +17,10 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import (
@@ -24,7 +28,11 @@ from Tests.UI.test_console_dictation import (
     _ready_host,
     _wait_for_mic_label,
 )
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat import console_voice_input as voice_module
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_voice_input import VoiceCommand, VoiceFailed
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
@@ -44,7 +52,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 
-class _ComposerCSSApp(App[None]):
+class _ComposerCSSApp(ConsolidatedCSSApp):
     """Mount the composer with the production stylesheet for visual assertions."""
 
     CSS_PATH = str(_BUNDLED_STYLESHEET)
@@ -61,9 +69,16 @@ class FakeDictationService:
     -- at exactly the moment it wants them.
     """
 
-    def __init__(self, *, started: bool = True, start_error: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        started: bool = True,
+        start_error: str = "",
+        stop_exception: Exception | None = None,
+    ) -> None:
         self.started = started
         self.start_error = start_error
+        self.stop_exception = stop_exception
         self.start_calls = 0
         self.stop_calls = 0
         self.release_calls = 0
@@ -93,6 +108,13 @@ class FakeDictationService:
         # the (real) processing thread's loop; a test asserts it stays unset
         # to prove a stale error never bypassed the capture it was not for.
         self.stop_processing = threading.Event()
+        self.uses_deferred_dictation = False
+        self.waiting_for_executor = False
+        self.executor_results_emitted = 0
+
+    def reserve_deferred_dictation(self, capture_generation: int):
+        self.capture_generation = capture_generation
+        return SimpleNamespace(waiting_for_executor=self.waiting_for_executor)
 
     def _record_release(self) -> None:
         self.release_calls += 1
@@ -130,6 +152,8 @@ class FakeDictationService:
         self.stop_entered.set()
         if self.stop_gate is not None:
             self.stop_gate.wait(timeout=4)
+        if self.stop_exception is not None:
+            raise self.stop_exception
 
     def emit_partial(self, text: str) -> None:
         assert self.on_partial is not None, "start_dictation() has not run yet"
@@ -138,6 +162,13 @@ class FakeDictationService:
     def emit_final(self, text: str) -> None:
         assert self.on_final is not None, "start_dictation() has not run yet"
         self.on_final(text)
+
+    def emit_executor_result(self, *logical_segments: str) -> None:
+        """Deliver all logical boundaries returned by one executor request."""
+
+        self.executor_results_emitted += 1
+        for text in logical_segments:
+            self.emit_final(text)
 
     def emit_segment_transcribing(self, done: bool = False) -> None:
         assert self.on_segment_transcribing is not None, (
@@ -160,6 +191,20 @@ class FakeDictationService:
         self.on_error(RuntimeError(message))
 
 
+def _staged_image(name: str) -> PendingAttachment:
+    data = f"png-bytes-{name}".encode()
+    return PendingAttachment(
+        file_path=f"/tmp/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=data,
+        mime_type="image/png",
+        original_size=len(data),
+        processed_size=len(data),
+    )
+
+
 def _painted(widget) -> str:
     """Return the text the widget actually paints on its first (only) row.
 
@@ -175,6 +220,7 @@ def _patch_availability(
     monkeypatch,
     *,
     availability: voice_module.Availability | None = None,
+    provider: str = "faster-whisper",
 ) -> None:
     """Pretend a capture backend and a local provider are installed.
 
@@ -195,10 +241,10 @@ def _patch_availability(
         voice_module,
         "resolve",
         lambda: voice_module.EffectiveConfig(
-            provider="faster-whisper",
+            provider=provider,
             model=None,
             language="en",
-            configured_provider="faster-whisper",
+            configured_provider=provider,
             was_overridden=False,
         ),
     )
@@ -241,6 +287,210 @@ def _install_streaming_session(monkeypatch, service: FakeDictationService) -> li
         factory,
     )
     return sessions
+
+
+@pytest.mark.asyncio
+async def test_busy_parakeet_capture_stays_live_then_inserts_without_sending(
+    monkeypatch,
+):
+    """A reserved capture explains the wait and keeps the ordinary success tail."""
+    service = FakeDictationService()
+    service.uses_deferred_dictation = True
+    service.waiting_for_executor = True
+    service.start_gate = threading.Event()
+    _patch_availability(monkeypatch, provider="parakeet-onnx")
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
+            store = console._ensure_console_chat_store()
+            message_count = len(
+                store.messages_for_session(store.active_session_id)
+            )
+
+            await pilot.click("#console-dictation")
+            deadline = time.monotonic() + 4
+            while (
+                time.monotonic() < deadline
+                and composer._voice_preparing_message
+                != "Local transcription busy — dictation will run next."
+            ):
+                await pilot.pause(0.01)
+
+            assert console._console_dictation_state == "starting"
+            assert (
+                composer._voice_preparing_message
+                == "Local transcription busy — dictation will run next."
+            )
+
+            service.start_gate.set()
+            await _wait_for_mic_label(composer, pilot, "Dictating")
+            service.emit_final("queued dictation")
+            await pilot.pause(0.1)
+            await pilot.click("#console-dictation")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
+
+            assert composer.draft_text() == "queued dictation"
+            assert (
+                len(store.messages_for_session(store.active_session_id))
+                == message_count
+            )
+            assert service.start_calls == 1
+    finally:
+        service.start_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
+    monkeypatch,
+):
+    service = FakeDictationService()
+    service.uses_deferred_dictation = True
+    service.waiting_for_executor = True
+    service.start_gate = threading.Event()
+    _patch_availability(monkeypatch, provider="parakeet-onnx")
+    _install_streaming_session(monkeypatch, service)
+    monkeypatch.setattr(ConsoleHarness, "CSS_PATH", str(_BUNDLED_STYLESHEET))
+    _, host = _ready_host()
+
+    try:
+        async with host.run_test(size=(80, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+            await pilot.click("#console-dictation")
+            deadline = time.monotonic() + 4
+            while (
+                time.monotonic() < deadline
+                and composer._voice_preparing_message
+                != "Local transcription busy — dictation will run next."
+            ):
+                await pilot.pause(0.01)
+            await pilot.pause()
+
+            actions = composer.query_one("#console-composer-actions")
+            mic = composer.query_one("#console-dictation", Button)
+            assert "Local transcription busy — dictation will run next." in _painted(
+                composer.query_one("#console-voice-status", Static)
+            )
+            assert actions.region.width == 25
+            assert actions.region.right <= composer.region.right <= host.size.width
+            assert mic.region.right <= composer.region.right
+            assert mic.visible
+            assert not mic.disabled
+            click_offset = (
+                mic.region.x + mic.region.width // 2,
+                mic.region.y,
+            )
+            hit_widget, _ = host.screen.get_widget_at(*click_offset)
+            assert hit_widget is mic
+
+            # Textual deliberately ignores a second Click while the first
+            # press's short `-active` visual effect is still running. Wait
+            # for that stock button animation, not for layout: the capture
+            # must remain starting and the same Mic cell must stay targeted.
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and mic.has_class("-active"):
+                await pilot.pause(0.01)
+            assert console._console_dictation_state == "starting"
+            hit_widget, _ = host.screen.get_widget_at(*click_offset)
+            assert hit_widget is mic
+            assert await pilot.click(offset=click_offset) is True
+            await _wait_for_mic_label(composer, pilot, "Dictate")
+
+            assert console._console_dictation_state == "idle"
+            assert console._console_dictation_session is None
+            assert composer.query_one("#console-composer-collapse").display
+            assert composer.query_one("#console-composer-menu").display
+            assert composer.query_one("#console-command-visible-text").display
+            assert composer.query_one("#console-send-disabled-reason").display
+    finally:
+        service.start_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
+    monkeypatch,
+):
+    service = FakeDictationService()
+    service.uses_deferred_dictation = True
+    service.waiting_for_executor = True
+    service.start_gate = threading.Event()
+    _patch_availability(monkeypatch, provider="parakeet-onnx")
+    _install_streaming_session(monkeypatch, service)
+    monkeypatch.setattr(ConsoleHarness, "CSS_PATH", str(_BUNDLED_STYLESHEET))
+    _, host = _ready_host()
+
+    try:
+        async with host.run_test(size=(80, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            store = console._ensure_console_chat_store()
+            session = store.ensure_session()
+            staged = [_staged_image("one.png"), _staged_image("two.png")]
+            for attachment in staged:
+                assert store.add_pending_attachment(session.id, attachment)
+            console._sync_console_composer_action_state(can_save_chatbook=False)
+            await pilot.pause()
+
+            indicator = composer.query_one("#console-attachment-indicator", Static)
+            clear_button = composer.query_one("#console-clear-attachment", Button)
+            actions = composer.query_one("#console-composer-actions")
+            assert "2 files" in _painted(indicator)
+            assert clear_button.display
+            assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+            assert actions.region.width == 29
+
+            mic = composer.query_one("#console-dictation", Button)
+            mic.press()
+            deadline = time.monotonic() + 4
+            while (
+                time.monotonic() < deadline
+                and composer._voice_preparing_message
+                != "Local transcription busy — dictation will run next."
+            ):
+                await pilot.pause(0.01)
+            # Exercise the production refresh that re-applies the staged label
+            # after sync_dictation_state has restored the busy copy.
+            console._sync_console_composer_action_state(can_save_chatbook=False)
+            await pilot.pause()
+
+            assert "Local transcription busy — dictation will run next." in _painted(
+                composer.query_one("#console-voice-status", Static)
+            )
+            assert not indicator.display
+            assert not clear_button.display
+            assert actions.region.width == 25
+            assert actions.region.right <= composer.region.right <= host.size.width
+            assert mic.region.right <= composer.region.right
+            click_offset = (
+                mic.region.x + mic.region.width // 2,
+                mic.region.y,
+            )
+            hit_widget, _ = host.screen.get_widget_at(*click_offset)
+            assert hit_widget is mic
+
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and mic.has_class("-active"):
+                await pilot.pause(0.01)
+            assert await pilot.click(offset=click_offset) is True
+            await _wait_for_mic_label(composer, pilot, "Dictate")
+            await pilot.pause()
+
+            assert console._console_dictation_state == "idle"
+            assert store.pending_attachments(session.id) == staged
+            assert "2 files" in _painted(indicator)
+            assert indicator.display
+            assert clear_button.display
+            assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+            assert actions.region.width == 29
+    finally:
+        service.start_gate.set()
 
 
 @pytest.mark.asyncio
@@ -760,6 +1010,188 @@ def test_a_stale_speech_resumed_is_dropped_by_the_session_adapter():
     assert events == []
 
 
+def test_streaming_session_delegates_one_shot_retry_state():
+    calls: list[str] = []
+
+    class RetryController:
+        retry_available = True
+
+        def clear_retry(self) -> None:
+            calls.append("clear")
+            self.retry_available = False
+
+        def retry_segments_with_faster_whisper(self) -> tuple[str, ...]:
+            calls.append("retry")
+            self.retry_available = False
+            return ("recovered",)
+
+    session = dictation_module.ConsoleStreamingDictationSession(
+        on_event=lambda _session, _event: None,
+    )
+    session._controller = RetryController()
+
+    assert session.retry_available is True
+    assert session.retry_with_faster_whisper() == "recovered"
+    assert session.retry_available is False
+    session.clear_retry()
+    assert calls == ["retry", "clear"]
+
+
+def test_streaming_retry_merges_prefix_and_classifies_each_logical_segment():
+    events: list = []
+
+    class RetryController:
+        retry_available = True
+
+        def retry_segments_with_faster_whisper(self) -> tuple[str, ...]:
+            self.retry_available = False
+            return ("recovered words", "Console, stop.")
+
+        def clear_retry(self) -> None:
+            self.retry_available = False
+
+    session = dictation_module.ConsoleStreamingDictationSession(
+        on_event=lambda _session, event: events.append(event),
+    )
+    session._controller = RetryController()
+    session._handle_event(voice_module.VoiceFinal("prefix already finalized"))
+    events.clear()
+
+    transcript = session.retry_with_faster_whisper()
+
+    assert transcript == "prefix already finalized recovered words"
+    assert events == [
+        voice_module.VoiceFinal("recovered words"),
+        VoiceCommand("stop"),
+    ]
+    assert session.commands_consumed == 1
+    assert session.retry_available is False
+
+
+def test_streaming_retry_events_keep_the_generation_that_started_the_replay():
+    retry_started = threading.Event()
+    retry_release = threading.Event()
+    events: list = []
+
+    class RetryController:
+        retry_available = True
+
+        def retry_segments_with_faster_whisper(self) -> tuple[str, ...]:
+            retry_started.set()
+            retry_release.wait(timeout=2)
+            self.retry_available = False
+            return ("stale recovered words",)
+
+    session = dictation_module.ConsoleStreamingDictationSession(
+        on_event=lambda _session, event: events.append(event),
+    )
+    session._controller = RetryController()
+    session._capture_generation = 1
+    result: list[str] = []
+    thread = threading.Thread(
+        target=lambda: result.append(session.retry_with_faster_whisper())
+    )
+
+    thread.start()
+    assert retry_started.wait(timeout=2)
+    with session._lock:
+        session._capture_generation = 2
+        session._segments[:] = ["new capture words"]
+    retry_release.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert result == ["new capture words"]
+    assert events == []
+    assert session._segments == ["new capture words"]
+
+
+@pytest.mark.asyncio
+async def test_mounted_retry_keeps_prefix_and_routes_retried_stop_command(
+    monkeypatch,
+):
+    from tldw_chatbook.STT.contracts import BufferAudioSource
+    from tldw_chatbook.STT.dispatch_coordinator import (
+        RetryableDictationBuffer,
+        RetryableDictationFailure,
+    )
+
+    class RetryTranscriber:
+        def __init__(self) -> None:
+            self.texts = ["recovered suffix", "Console, stop."]
+            self.calls: list[dict] = []
+
+        def transcribe_buffer(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"text": self.texts.pop(0)}
+
+    retry_buffer = RetryableDictationBuffer(
+        BufferAudioSource(b"\x01\x00\x02\x00\x03\x00\x04\x00", 16_000, 1, 2),
+        (2, 4),
+    )
+    service = FakeDictationService(
+        stop_exception=RetryableDictationFailure(retry_buffer)
+    )
+    service.uses_deferred_dictation = True
+    service.transcription_service = RetryTranscriber()
+    service.language = "en"
+    _patch_availability(monkeypatch, provider="parakeet-onnx")
+    monkeypatch.setattr(
+        voice_module,
+        "installed_local_providers",
+        lambda: ("parakeet-onnx", "faster-whisper"),
+    )
+    monkeypatch.setattr(
+        voice_module,
+        "_faster_whisper_model_is_local",
+        lambda _model: True,
+    )
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+
+        async def confirm_retry(_dialog):
+            return True
+
+        console.app_instance.push_screen_wait = confirm_retry
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        message_count = len(store.messages_for_session(store.active_session_id))
+        stop_requests = 0
+        original_stop_request = console._dictation._request_console_dictation_stop
+
+        def count_stop_request() -> None:
+            nonlocal stop_requests
+            stop_requests += 1
+            original_stop_request()
+
+        monkeypatch.setattr(
+            console._dictation,
+            "_request_console_dictation_stop",
+            count_stop_request,
+        )
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        service.emit_final("prefix already finalized")
+        await pilot.pause()
+        await pilot.pause(0.6)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+
+        assert composer.draft_text() == ("prefix already finalized recovered suffix")
+        assert "Console" not in composer.draft_text()
+        assert stop_requests == 2
+        assert len(store.messages_for_session(store.active_session_id)) == message_count
+        assert len(service.transcription_service.calls) == 2
+        assert all(
+            call["local_files_only"] is True
+            for call in service.transcription_service.calls
+        )
+
+
 @pytest.mark.asyncio
 async def test_the_chip_shows_a_transcribing_indication_while_a_segment_is_in_flight(
     monkeypatch,
@@ -890,7 +1322,22 @@ async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeyp
         assert "Transcribing" in _painted(chip)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Dictate")
+        button = await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert console._console_dictation_state == "idle"
+        assert console._console_dictation_session is None
+        # Button deliberately ignores clicks while its ``-active`` press
+        # animation is running -- a fixed ~0.2s real-clock timer Textual
+        # owns, started when the click landed, independent of how long this
+        # capture's async stop-and-transcribe unwind (asyncio.to_thread +
+        # run_worker + a posted ConsoleDictationEvent) takes to reach
+        # "Dictate". Under load that unwind can outlast the button's own
+        # animation, so ``-active`` may already be gone by the time the
+        # label changes -- asserting it is still present raced exactly that
+        # (flaky ~50% of isolated runs under load, task-3400). Waiting for
+        # it to clear is the real precondition for the next click below and
+        # is a no-op if it already has.
+        while button.has_class("-active"):
+            await pilot.pause(0.01)
 
         # A fresh capture must start clean, with no leftover indication.
         await pilot.click("#console-dictation")
@@ -1586,15 +2033,8 @@ async def test_the_console_capture_is_given_a_bounded_pcm_budget(monkeypatch):
         await _wait_for_mic_label(composer, pilot, "Dictating")
 
         bound = service.factory_kwargs.get("max_buffer_bytes")
-        assert bound == dictation_module.CONSOLE_DICTATION_MAX_BYTES
-        # Derived from the session cap, not a magic number: 60s of 16kHz mono
-        # 16-bit PCM plus headroom, so the wall timer always ends an ordinary
-        # capture first and this stays a memory backstop.
-        assert bound >= int(
-            dictation_module.CONSOLE_DICTATION_SAMPLE_RATE
-            * dictation_module.CONSOLE_DICTATION_SAMPLE_WIDTH
-            * dictation_module.CONSOLE_DICTATION_MAX_SECONDS
-        )
+        # Hand-derived: 60 s × 16,000 Hz × mono × 2-byte samples.
+        assert bound == 1_920_000
         assert service.factory_kwargs.get("on_buffer_limit") is not None
 
 
@@ -1619,10 +2059,14 @@ async def test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread(
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("before after")
+        for _ in range(5):
+            composer.move_cursor_left()
 
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-
+        service.emit_final("all accepted pcm")
+        await pilot.pause()
         on_buffer_limit = service.factory_kwargs["on_buffer_limit"]
         returned = threading.Event()
 
@@ -1639,11 +2083,25 @@ async def test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread(
 
         await _wait_for_mic_label(composer, pilot, "Dictate")
         assert service.stop_calls == 1
-        assert any(
-            "Dictation limit reached" in str(call.args[0])
-            and call.kwargs.get("severity") == "warning"
+        assert composer.draft_text() == "before all accepted pcm after"
+        assert console._console_dictation_timer is None
+        assert console._console_dictation_elapsed_timer is None
+        assert [
+            (str(call.args[0]), call.kwargs.get("severity"))
             for call in notify.call_args_list
-        )
+        ] == [("Limit reached — press Mic to continue.", "warning")]
+
+        # Limit recovery is an explicit physical Mic press, never a timer or
+        # hidden reopen. The old capture stays stopped until this click.
+        await pilot.pause(0.2)
+        assert service.start_calls == 1
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        assert service.start_calls == 2
+        service.emit_final("second capture")
+        await pilot.pause()
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
 @pytest.mark.asyncio
@@ -1892,10 +2350,10 @@ async def test_capture_ending_command_is_kept_out_of_segments_but_forwarded(
 
         monkeypatch.setattr(session, "_on_event", _spy)
 
-        service.emit_final("dictated words")
-        service.emit_final("Console, stop.")
+        service.emit_executor_result("dictated words", "Console, stop.")
         await pilot.pause()
 
+        assert service.executor_results_emitted == 1
         assert session.commands_consumed == 1
         forwarded_commands = [
             event for event in received if isinstance(event, VoiceCommand)

@@ -48,6 +48,7 @@ def resolve_batch_stt_route(
     provider: object | None,
     language: object | None,
     target_language: object | None = None,
+    precision: object | None = None,
     parakeet_defaults_enabled: bool = False,
 ) -> BatchSTTRoute:
     """Resolve a batch STT request to its permitted local implementation.
@@ -56,6 +57,7 @@ def resolve_batch_stt_route(
         provider: Requested provider, or ``None`` for the semantic default.
         language: Requested source language, or ``None`` for English.
         target_language: Translation target, when requested.
+        precision: Optional Parakeet precision (``int8`` or ``f32``).
         parakeet_defaults_enabled: Whether the Parakeet default promotion gate is open.
 
     Returns:
@@ -82,6 +84,7 @@ def resolve_batch_stt_route(
             requested_provider,
             requested_language,
             normalized_target,
+            precision,
         )
 
     if requested_provider == _TRANSCRIBE_CPP_PROVIDER:
@@ -130,7 +133,12 @@ def resolve_batch_stt_route(
             normalized_target,
             "language_requires_faster_whisper",
         )
-    return _parakeet_route(requested_provider, requested_language, normalized_target)
+    return _parakeet_route(
+        requested_provider,
+        requested_language,
+        normalized_target,
+        precision,
+    )
 
 
 def _normalize_provider(provider: object | None) -> str:
@@ -160,10 +168,24 @@ def _normalize_target_language(language: object | None) -> str | None:
     return language.strip().lower() or None
 
 
+def _normalize_parakeet_precision(precision: object | None) -> str:
+    if precision is None:
+        return "int8"
+    if not isinstance(precision, str):
+        raise BatchSTTRoutingError("Parakeet precision must be a string.")
+    normalized = precision.strip().lower() or "int8"
+    if normalized not in {"int8", "f32"}:
+        raise BatchSTTRoutingError(
+            "Unsupported Parakeet precision; choose int8 or f32."
+        )
+    return normalized
+
+
 def _parakeet_route(
     requested_provider: str,
     requested_language: str,
     target_language: str | None,
+    precision: object | None,
 ) -> BatchSTTRoute:
     if target_language is not None:
         raise BatchSTTRoutingError(
@@ -185,7 +207,7 @@ def _parakeet_route(
         model=model,
         requested_language=requested_language,
         target_language=target_language,
-        precision="int8",
+        precision=_normalize_parakeet_precision(precision),
         local_files_only=True,
         reason="parakeet_v2_english"
         if model == PARAKEET_V2_MODEL

@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from loguru import logger
-from rich.console import RenderableType
+from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
+from rich.style import Style
 from rich.table import Table
 from textual import events, on
 from textual.app import ComposeResult
@@ -28,7 +29,11 @@ from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryE
 from ..Third_Party.textual_fspicker.path_maker import MakePath
 from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file
 from ..Utils.path_validation import validate_path_simple
-from ..config import get_cli_setting, save_setting_to_cli_config
+from ..config import (
+    get_cli_setting,
+    save_setting_to_cli_config,
+    save_settings_to_cli_config,
+)
 
 
 class RecentLocations:
@@ -59,8 +64,19 @@ class RecentLocations:
         except Exception as e:
             logger.error(f"Failed to save recent locations: {e}")
 
-    def add(self, path: Path, file_type: str = "file"):
-        """Add a path to recent locations"""
+    def add(self, path: Path, file_type: str = "file", *, persist: bool = True):
+        """Add a path to recent locations.
+
+        Args:
+            persist: When True (default), also writes to disk immediately
+                (synchronously, on whatever thread calls this). task-15470
+                review round: ``EnhancedFileDialog`` passes ``persist=False``
+                and coalesces the actual disk write with its last-directory
+                write into one deferred, off-event-loop mutation instead --
+                calling this with the default from a click handler
+                reproduces the exact bug that round found (a config
+                rewrite still firing on the click path).
+        """
         path_str = str(path.resolve())
 
         # Remove if already exists
@@ -76,7 +92,8 @@ class RecentLocations:
 
         # Trim to max
         self._recent = self._recent[:self.max_items]
-        self.save_to_config()
+        if persist:
+            self.save_to_config()
 
     def get_recent(self) -> List[Dict[str, Any]]:
         """Get recent locations"""
@@ -245,9 +262,6 @@ class PathBreadcrumbs(Horizontal):
     """
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     PathBreadcrumbs {
         height: 3;
@@ -273,11 +287,8 @@ class PathBreadcrumbs(Horizontal):
         text-style: underline;
     }
 
-    PathBreadcrumbs .breadcrumb-button:focus {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
+    /* .breadcrumb-button:focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
 
     PathBreadcrumbs .breadcrumb-separator {
         margin: 0;
@@ -426,8 +437,38 @@ def _human_readable_size(size: int) -> str:
     return f"{formatted} {unit}"
 
 
+def resolve_file_picker_start(
+    context: str,
+    remembered: Path | None,
+    *,
+    home: Path,
+) -> Path:
+    """Resolve a default picker location without overriding explicit callers.
+
+    Character imports start from their own remembered directory, then the
+    user's Documents directory, then home. Other contexts retain the legacy
+    ``.`` fallback; their remembered directories continue to be independent.
+    """
+    if remembered is not None:
+        try:
+            if remembered.is_dir():
+                return remembered
+        except OSError:
+            pass
+    if context == "character_import":
+        documents = home / "Documents"
+        try:
+            return documents if documents.is_dir() else home
+        except OSError:
+            return home
+    return Path(".")
+
+
 class FormattedDirectoryEntry(DirectoryEntry):
     """Directory entry with human-readable sizes and no size for directories."""
+
+    show_selection_marker = False
+    selected = False
 
     @staticmethod
     def _size(location: Path) -> str:
@@ -439,57 +480,117 @@ class FormattedDirectoryEntry(DirectoryEntry):
             entry_size = 0
         return _human_readable_size(entry_size)
 
+    def _as_renderable(self, location: Path) -> RenderableType:
+        marker = None
+        if self.show_selection_marker:
+            marker = "✓" if self.selected else " "
+        return _ResponsiveDirectoryRow(
+            marker=marker,
+            selected=self.selected,
+            icon=self.FOLDER_ICON if is_dir(location) else self.FILE_ICON,
+            name=self._name(location),
+            size=self._size(location),
+            modified=self._mtime(location),
+            name_style=self._style(self._styles.name, location),
+            size_style=self._style(self._styles.size, location),
+            time_style=self._style(self._styles.time, location),
+        )
 
-class MultiSelectDirectoryEntry(FormattedDirectoryEntry):
-    """A directory entry that renders a selection marker for multi-select."""
+    def row_renderable(self) -> RenderableType:
+        """Build the current prompt for public OptionList prompt replacement."""
+        return self._as_renderable(self.location)
+
+
+class _ResponsiveDirectoryRow:
+    """Rich renderable that removes secondary metadata before the name."""
+
+    SHOW_SIZE_AT = 35
+    SHOW_TIMESTAMP_AT = 56
+
+    def __init__(
+        self,
+        *,
+        marker: Optional[str],
+        selected: bool,
+        icon: RenderableType,
+        name: RenderableType,
+        size: RenderableType,
+        modified: RenderableType,
+        name_style: Any = None,
+        size_style: Any = None,
+        time_style: Any = None,
+    ) -> None:
+        self.marker = marker
+        self.selected = selected
+        self.icon = icon
+        self.name = name
+        self.size = size
+        self.modified = modified
+        self.name_style = name_style
+        self.size_style = size_style
+        self.time_style = time_style
+
+    def __rich_console__(
+        self,
+        _console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        show_size = options.max_width >= self.SHOW_SIZE_AT
+        show_timestamp = options.max_width >= self.SHOW_TIMESTAMP_AT
+        name_style = self.name_style or Style()
+        if self.selected:
+            name_style += Style(bold=True)
+        grid = Table.grid(expand=True)
+        grid.add_column(no_wrap=True, width=1)
+        cells: list[RenderableType] = [""]
+        if self.marker is not None:
+            grid.add_column(no_wrap=True, width=1, style=name_style)
+            cells.append(self.marker)
+        grid.add_column(no_wrap=True, width=3)
+        grid.add_column(
+            no_wrap=True,
+            overflow="ellipsis",
+            ratio=1,
+            style=name_style,
+        )
+        cells.extend((self.icon, self.name))
+        if show_size:
+            grid.add_column(
+                no_wrap=True,
+                justify="right",
+                width=10,
+                style=self.size_style,
+            )
+            cells.append(self.size)
+        if show_timestamp:
+            grid.add_column(
+                no_wrap=True,
+                justify="right",
+                width=20,
+                style=self.time_style,
+            )
+            cells.append(self.modified)
+        grid.add_column(no_wrap=True, width=1)
+        cells.append("")
+        grid.add_row(*cells)
+        yield grid
+
+
+class SelectableDirectoryEntry(FormattedDirectoryEntry):
+    """A directory entry with a fixed-width textual selection marker."""
+
+    show_selection_marker = True
 
     def __init__(self, location: Path, styles: Any, selected: bool = False) -> None:
         self.selected = selected
         super().__init__(location, styles)
 
-    def _as_renderable(self, location: Path) -> RenderableType:
-        """Render with an extra leading check-mark column."""
-        prompt = Table.grid(expand=True)
-        prompt.add_column(no_wrap=True, width=1)
-        prompt.add_column(
-            no_wrap=True,
-            width=1,
-            style=self._style(self._styles.name, location),
-        )
-        prompt.add_column(no_wrap=True, width=3)
-        prompt.add_column(
-            no_wrap=True,
-            justify="left",
-            ratio=1,
-            style=self._style(self._styles.name, location),
-        )
-        prompt.add_column(
-            no_wrap=True,
-            justify="right",
-            width=10,
-            style=self._style(self._styles.size, location),
-        )
-        prompt.add_column(
-            no_wrap=True,
-            justify="right",
-            width=20,
-            style=self._style(self._styles.time, location),
-        )
-        prompt.add_column(no_wrap=True, width=1)
-        marker = "✓" if self.selected else " "
-        prompt.add_row(
-            "",
-            marker,
-            self.FOLDER_ICON if is_dir(location) else self.FILE_ICON,
-            self._name(location),
-            self._size(location),
-            self._mtime(location),
-            "",
-        )
-        return prompt
+
+# Compatibility for callers and tests that imported the former name.
+MultiSelectDirectoryEntry = SelectableDirectoryEntry
 
 
-class SearchableDirectoryNavigation(DirectoryNavigation):
+class EnhancedDirectoryNavigation(DirectoryNavigation):
     """Directory navigation that also filters by a free-text search term.
 
     The base ``DirectoryNavigation`` references ``search_filter`` in its watch
@@ -500,7 +601,7 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
     Additional enhancements:
     - Type-ahead jumping to the next entry whose name starts with the typed
       prefix.
-    - Optional multi-select rendering via :class:`MultiSelectDirectoryEntry`.
+    - Persistent selection markers for character import and multi-select.
     - Uniform activation model (task-430 AC#2): a single-click / OptionList
       ``Selected`` event only highlights (and, for a file, fills the
       filename input) -- it never auto-navigates a directory. Opening
@@ -565,10 +666,61 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
                 continue
             yield cls, method
 
+    #: Debounce interval for search keystrokes -- matches the Console rail
+    #: conversation-search debounce (task-15454's 0.2 s reference).
+    SEARCH_DEBOUNCE_SECONDS = 0.2
+
     def __init__(self, location: Path | str = ".") -> None:
         super().__init__(location)
         self._type_ahead_buffer = ""
         self._type_ahead_timer: Optional[Timer] = None
+        self._search_debounce_timer: Optional[Timer] = None
+
+    def _watch_search_filter(self) -> None:
+        """Debounce repopulation while the user is typing a search query.
+
+        task-15471: the vendored base watcher repopulated synchronously per
+        keystroke -- a full rebuild (one stat per entry plus the option-list
+        rebuild, ~120 ms measured on a 1000-file directory) on the event
+        loop for every character typed. A keystroke now only (re)arms one
+        widget-owned timer; the rebuild runs once, after typing pauses.
+        `_repopulate_display` reads `self.search_filter` at fire time, so a
+        superseded fragment is never applied.
+        """
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
+        if not self.search_filter:
+            # Fix round (review minor 4): an emptied filter is a RESTORE --
+            # Esc / the Clear button / a programmatic reset -- and must
+            # repopulate immediately, not 200 ms later. Only live typing
+            # debounces.
+            self._repopulate_display()
+            return
+        self._search_debounce_timer = self.set_timer(
+            self.SEARCH_DEBOUNCE_SECONDS, self._apply_search_filter_after_debounce
+        )
+
+    def _apply_search_filter_after_debounce(self) -> None:
+        """Debounce timer callback: run the deferred repopulation."""
+        self._search_debounce_timer = None
+        self._repopulate_display()
+
+    def refresh_selection_markers(self) -> None:
+        """Refresh selection prompts through OptionList's public API."""
+        screen = self.screen
+        selected_paths = getattr(screen, "_selected_paths", set())
+        selected_path = getattr(screen, "_selected_path", None)
+        for index, option in enumerate(self.options):
+            if not isinstance(option, SelectableDirectoryEntry):
+                continue
+            selected = (
+                option.location in selected_paths or option.location == selected_path
+            )
+            if option.selected == selected:
+                continue
+            option.selected = selected
+            self.replace_option_prompt_at_index(index, option.row_renderable())
 
     def _restart_type_ahead_timer(self) -> None:
         """Reset the inactivity timeout that clears the type-ahead buffer."""
@@ -621,6 +773,10 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
                 event.stop()
                 event.prevent_default()
                 self.post_message(self.ToggleSelection(self))
+            elif getattr(self.screen, "context", "") == "character_import":
+                event.stop()
+                event.prevent_default()
+                self.action_select()
             return
 
         if not event.is_printable or not event.character or len(event.character) != 1:
@@ -663,30 +819,62 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         except Exception:
             pass
 
-        # Determine whether the hosting dialog is in multi-select mode.
+        # Determine which paths the hosting dialog currently marks selected.
         screen = self.screen
         multi_select = getattr(screen, "multi_select", False)
-        selected = getattr(screen, "_selected_paths", set()) if multi_select else set()
+        show_selection_marker = (
+            multi_select or getattr(screen, "context", "") == "character_import"
+        )
+        if multi_select:
+            selected = getattr(screen, "_selected_paths", set())
+        else:
+            selected_path = getattr(screen, "_selected_path", None)
+            selected = {selected_path} if selected_path is not None else set()
+
+        # One pass over the entries computes both the visible options and the
+        # filter-hidden count (task-15471). Previously a second full loop
+        # below re-ran ``is_file`` on EVERY entry -- one extra stat per entry
+        # per repopulate, unconditionally, even with no ``file_filter`` set
+        # (``is_file`` was first in that ``and`` chain). The per-entry
+        # predicates here are the vendored ``DirectoryNavigation.hide()``
+        # unrolled: filter check first (files only), then the dotfile/
+        # show-hidden rule, so the visible set is unchanged.
+        #
+        # The filter-hidden count (task-431 AC#2) still counts a real file
+        # that passes the show-hidden/dotfile check but fails the filter,
+        # guarded by an explicit "not already dotfile-hidden" check so
+        # dotfiles aren't double-counted as filter-hidden.
+        file_filter = self.file_filter
+        filter_hidden = 0
+        display_entries: list[DirectoryEntry] = []
+        for entry in self._entries:
+            location = entry.location
+            dot_hidden = self.is_hidden(location) and not self.show_hidden
+            fails_filter = False
+            if file_filter is not None and is_file(location):
+                fails_filter = not file_filter(location)
+                if fails_filter and not dot_hidden:
+                    filter_hidden += 1
+            if fails_filter or dot_hidden:
+                continue
+            if query and query not in location.name.lower():
+                continue
+            display_entries.append(
+                SelectableDirectoryEntry(location, styles, location in selected)
+                if show_selection_marker
+                else FormattedDirectoryEntry(location, styles)
+            )
 
         with self.app.batch_update():
             self.clear_options()
             if not self.is_root:
-                if multi_select:
-                    self.add_option(MultiSelectDirectoryEntry(self._location / "..", styles, False))
-                else:
-                    self.add_option(FormattedDirectoryEntry(self._location / "..", styles))
-            self.add_options(
-                self._sort(
-                    (
-                        MultiSelectDirectoryEntry(entry.location, styles, entry.location in selected)
-                        if multi_select
-                        else FormattedDirectoryEntry(entry.location, styles)
-                    )
-                    for entry in self._entries
-                    if not self.hide(entry.location)
-                    and (not query or query in entry.location.name.lower())
+                parent_entry = (
+                    SelectableDirectoryEntry(self._location / "..", styles, False)
+                    if show_selection_marker
+                    else FormattedDirectoryEntry(self._location / "..", styles)
                 )
-            )
+                self.add_option(parent_entry)
+            self.add_options(self._sort(display_entries))
         self._settle_highlight()
 
         # Restore the previous highlight if the entry still exists.
@@ -697,22 +885,6 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
                     break
 
         self.post_message(self.SearchCountChanged(self, self.option_count, query))
-
-        # Count entries excluded *specifically* by the active file_filter
-        # (task-431 AC#2) -- a real file that passes the show-hidden/dotfile
-        # check but fails the filter. Reuses the same filter-check condition
-        # as the vendored ``DirectoryNavigation.hide()`` (directory_navigation.py)
-        # rather than reinventing it, guarded by an explicit "not already
-        # dotfile-hidden" check so dotfiles aren't double-counted as
-        # filter-hidden.
-        filter_hidden = sum(
-            1
-            for entry in self._entries
-            if is_file(entry.location)
-            and not (self.is_hidden(entry.location) and not self.show_hidden)
-            and self.file_filter is not None
-            and not self.file_filter(entry.location)
-        )
         self.post_message(self.FilterHiddenCountChanged(self, filter_hidden))
 
     def _on_option_list_option_selected(
@@ -762,6 +934,10 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         """
         if getattr(event, "chain", 1) >= 2:
             self.action_open_highlighted()
+
+
+# Keep the established public name while exposing the clearer state-owning name.
+SearchableDirectoryNavigation = EnhancedDirectoryNavigation
 
 
 class EnhancedFileDialog(BaseFileDialog):
@@ -974,13 +1150,13 @@ class EnhancedFileDialog(BaseFileDialog):
         display: none;
     }
 
-    EnhancedFileDialog SearchableDirectoryNavigation > .option-list--option-highlighted {
+    EnhancedFileDialog EnhancedDirectoryNavigation > .option-list--option-highlighted {
         background: $primary 30%;
         color: $text;
         text-style: bold;
     }
 
-    EnhancedFileDialog SearchableDirectoryNavigation:focus > .option-list--option-highlighted {
+    EnhancedFileDialog EnhancedDirectoryNavigation:focus > .option-list--option-highlighted {
         background: $primary 50%;
         color: $text;
         text-style: bold;
@@ -1036,6 +1212,8 @@ class EnhancedFileDialog(BaseFileDialog):
         *[Binding(str(n), f"jump_bookmark('{n}')", f"Bookmark {n}", show=False) for n in range(1, 10)],
     ]
 
+    SAFE_MODAL_CONTENT = "#enhanced-file-dialog"
+
     show_bookmarks = reactive(False)
     show_hints = reactive(True)
 
@@ -1049,6 +1227,7 @@ class EnhancedFileDialog(BaseFileDialog):
         FileSystemPickerScreen._on_clear_search,
         FileSystemPickerScreen._on_directory_changed,
         FileSystemPickerScreen._on_path_input_submit,
+        FileSystemPickerScreen._cancel,
     }
 
     def _get_dispatch_methods(self, method_name: str, message: Message):
@@ -1078,8 +1257,20 @@ class EnhancedFileDialog(BaseFileDialog):
         # Normalize legacy list/tuple filters to a Filters instance so the
         # dialog can safely read ``self.filters.selections`` during compose.
         filters = self._normalize_filters(filters)
+        self.context = context
+        remembered_directory = self._get_last_directory()
+        caller_location = Path(location)
+        effective_location: Union[str, Path]
+        if caller_location == Path("."):
+            effective_location = resolve_file_picker_start(
+                context,
+                remembered_directory,
+                home=Path.home(),
+            )
+        else:
+            effective_location = location
         super().__init__(
-            location,
+            effective_location,
             title,
             select_button,
             cancel_button,
@@ -1098,11 +1289,10 @@ class EnhancedFileDialog(BaseFileDialog):
         self.context = context
         self.multi_select = multi_select
         self._selected_paths: set[Path] = set()
+        self._selected_path: Optional[Path] = None
         self.recent_locations = RecentLocations(context=context)
         self.bookmarks_manager = BookmarksManager(context=context)
-        self._last_directory = self._get_last_directory()
-        if self._last_directory is not None:
-            self._location = self._last_directory
+        self._last_directory = remembered_directory
 
     @staticmethod
     def _normalize_filters(
@@ -1128,19 +1318,60 @@ class EnhancedFileDialog(BaseFileDialog):
         """Get the last used directory for this context"""
         try:
             last_dir = get_cli_setting("filepicker", f"last_dir_{self.context}", None)
-            if last_dir and Path(last_dir).exists():
+            if last_dir and Path(last_dir).is_dir():
                 return Path(last_dir)
         except Exception:
             pass
         return None
 
-    def _save_last_directory(self, path: Path):
-        """Save the last used directory for this context"""
-        try:
-            dir_path = path if path.is_dir() else path.parent
-            save_setting_to_cli_config("filepicker", f"last_dir_{self.context}", str(dir_path))
-        except Exception as e:
-            logger.error(f"Failed to save last directory: {e}")
+    def _persist_recent_and_last_directory(
+        self, last_directory: Optional[Path]
+    ) -> None:
+        """Persist recent-locations and the last directory as ONE deferred write.
+
+        task-15470: this used to be two separate concerns, both firing a
+        full config.toml read+atomic-rewrite+cache-reload straight on the
+        event loop -- ``RecentLocations.add()`` persisted synchronously as
+        part of its own body (called from ``_add_to_recent`` on every
+        navigation, and from ``dismiss`` on every confirm), and
+        ``_save_last_directory`` did the same for the last-dir key
+        immediately next to it. Deferring only the last-dir half (the
+        first task-15470 pass) left the recent-locations write still
+        firing inline right beside it, neutering the fix for this click
+        path entirely (review round). Both callers now update
+        ``self.recent_locations`` in memory only (``persist=False``) and
+        hand off here, which does both writes as one atomic
+        ``save_settings_to_cli_config`` mutation instead of two separate
+        ones. ``EnhancedFileDialog`` is a ``ModalScreen``, so
+        ``self.app``/``run_worker`` are always available while it is open;
+        app ownership keeps dismissal from cancelling the pending write.
+        """
+        section_values: dict[str, dict[str, object]] = {
+            "filepicker": {
+                f"recent_{self.context}": self.recent_locations.get_recent(),
+            }
+        }
+        if last_directory is not None:
+            dir_path = (
+                last_directory if last_directory.is_dir() else last_directory.parent
+            )
+            section_values["filepicker"][f"last_dir_{self.context}"] = str(dir_path)
+
+        def persist() -> None:
+            try:
+                save_settings_to_cli_config(section_values)
+            except Exception as e:
+                logger.error(
+                    "Failed to persist file-picker recent/last-dir state: {}",
+                    type(e).__name__,
+                )
+
+        self.app.run_worker(
+            persist,
+            thread=True,
+            exit_on_error=False,
+            group="file-picker-persist",
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the enhanced file picker UI.
@@ -1155,7 +1386,7 @@ class EnhancedFileDialog(BaseFileDialog):
         from ..Third_Party.textual_fspicker.base_dialog import Dialog, InputBar
         from ..Third_Party.textual_fspicker.parts import DriveNavigation
 
-        with Dialog() as dialog:
+        with Dialog(id="enhanced-file-dialog") as dialog:
             dialog.border_title = self._title
 
             with Horizontal(id="dialog-body"):
@@ -1218,16 +1449,26 @@ class EnhancedFileDialog(BaseFileDialog):
                     # Input bar with buttons
                     with InputBar():
                         yield from self._input_bar()
-                        yield Button(
+                        select_button = Button(
                             self._label(self._select_button, "Select"),
                             id="select",
                             variant="primary",
                         )
-                        yield Button(
+                        if self.context == "character_import":
+                            select_button.tooltip = (
+                                "Import the selected character card."
+                            )
+                        yield select_button
+                        cancel_button = Button(
                             self._label(self._cancel_button, "Cancel"),
                             id="cancel",
                             variant="default",
                         )
+                        if self.context == "character_import":
+                            cancel_button.tooltip = (
+                                "Close without importing a character card."
+                            )
+                        yield cancel_button
 
     def on_mount(self) -> None:
         """Initialize the dialog on mount.
@@ -1469,7 +1710,13 @@ class EnhancedFileDialog(BaseFileDialog):
             self.show_bookmarks = False
             return
 
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
+
+    @on(Button.Pressed, "#cancel")
+    async def _cancel_safe(self, event: Button.Pressed) -> None:
+        """Route the visible Cancel button through terminal safe dismissal."""
+        event.stop()
+        await self.request_safe_cancel(source="visible")
 
     def _select_file(self, event: DirectoryNavigation.Selected) -> None:
         """No-op override of ``BaseFileDialog._select_file``.
@@ -1493,6 +1740,14 @@ class EnhancedFileDialog(BaseFileDialog):
             self._toggle_path_selection(event.path)
             return
 
+        if self.context == "character_import":
+            self._selected_path = event.path
+            try:
+                self.query_one(
+                    EnhancedDirectoryNavigation
+                ).refresh_selection_markers()
+            except Exception:
+                pass
         try:
             file_name = self.query_one("#filename-input", Input)
         except Exception:
@@ -1515,6 +1770,8 @@ class EnhancedFileDialog(BaseFileDialog):
             self._toggle_path_selection(event.path)
             return
 
+        if self.context == "character_import":
+            self._selected_path = event.path
         try:
             file_name = self.query_one("#filename-input", Input)
         except Exception:
@@ -1793,8 +2050,8 @@ class EnhancedFileDialog(BaseFileDialog):
 
     def _add_to_recent(self, path: Path, file_type: str) -> None:
         """Persist a recent location and refresh the list."""
-        self.recent_locations.add(path, file_type)
-        self._save_last_directory(path)
+        self.recent_locations.add(path, file_type, persist=False)
+        self._persist_recent_and_last_directory(path)
         self._load_recent_locations()
 
     def _update_bookmarks_list(self):
@@ -1854,23 +2111,18 @@ class EnhancedFileDialog(BaseFileDialog):
 
     def _file_list_header(self) -> RenderableType:
         """Return a column header matching DirectoryEntry's layout."""
-        grid = Table.grid(expand=True)
-        # Optional multi-select marker column.
-        if getattr(self, "multi_select", False):
-            grid.add_column(no_wrap=True, width=1)
-            grid.add_column(no_wrap=True, width=1)
-        else:
-            grid.add_column(no_wrap=True, width=1)
-        grid.add_column(no_wrap=True, width=3)
-        grid.add_column(no_wrap=True, ratio=1)
-        grid.add_column(no_wrap=True, justify="right", width=10)
-        grid.add_column(no_wrap=True, justify="right", width=20)
-        grid.add_column(no_wrap=True, width=1)
-        if self.multi_select:
-            grid.add_row("", "", "", "Name", "Size", "Modified", "")
-        else:
-            grid.add_row("", "", "Name", "Size", "Modified", "")
-        return grid
+        show_selection_marker = (
+            getattr(self, "multi_select", False)
+            or self.context == "character_import"
+        )
+        return _ResponsiveDirectoryRow(
+            marker="" if show_selection_marker else None,
+            selected=False,
+            icon="",
+            name="Name",
+            size="Size",
+            modified="Modified",
+        )
 
     def action_toggle_bookmarks(self) -> None:
         """Toggle bookmarks panel."""
@@ -2064,23 +2316,48 @@ class EnhancedFileDialog(BaseFileDialog):
         self.action_toggle_selection()
 
     def dismiss(self, result: Optional[Union[Path, List[Path]]]) -> None:
-        """Override dismiss to save recent location(s) and last directory."""
+        """Override dismiss to save recent location(s) and last directory.
+
+        task-15470 review round: this used to call ``recent_locations.add()``
+        (which persisted synchronously as part of its own body) directly on
+        the event loop, once per confirm -- the exact click-path config
+        rewrite the audit was about, still firing here even after
+        ``_save_last_directory`` (right below it) had already been deferred.
+        The in-memory update stays here (cheap, no I/O); persistence for
+        both recent-locations and the last directory is coalesced into one
+        deferred, off-loop write via `_persist_recent_and_last_directory`.
+        """
+        if self.context == "character_import":
+            if isinstance(result, Path) and result.is_file():
+                self.recent_locations.add(result, "file", persist=False)
+                self._persist_recent_and_last_directory(result)
+            super().dismiss(result)
+            return
         if isinstance(result, list):
             for path in result:
                 self.recent_locations.add(
-                    path, "file" if path.is_file() else "directory"
+                    path, "file" if path.is_file() else "directory", persist=False
                 )
         elif result:
             self.recent_locations.add(
-                result, "file" if result.is_file() else "directory"
+                result, "file" if result.is_file() else "directory", persist=False
             )
-            self._save_last_directory(result)
+        # Preserves the original ordering: dir_nav.location wins when the
+        # query succeeds (even for a list `result`, which never set one
+        # itself), otherwise a single non-list `result` is the fallback. A
+        # character import deliberately keeps that fallback so the next import
+        # opens beside the selected card rather than the currently viewed path.
+        last_directory: Optional[Path] = (
+            result if not isinstance(result, list) and result else None
+        )
+        if self.context != "character_import":
+            try:
+                dir_nav = self.query_one(SearchableDirectoryNavigation)
+                last_directory = dir_nav.location
+            except Exception:
+                pass
 
-        try:
-            dir_nav = self.query_one(SearchableDirectoryNavigation)
-            self._save_last_directory(dir_nav.location)
-        except Exception:
-            pass
+        self._persist_recent_and_last_directory(last_directory)
 
         super().dismiss(result)
 
@@ -2099,16 +2376,21 @@ class EnhancedFileOpen(EnhancedFileDialog):
         must_exist: bool = True,
         multi_select: bool = False,
         context: str = "file_open",
-        select_button: str = "Open",
+        select_button: Optional[str] = None,
         cancel_button: str = "Cancel",
         id: Optional[str] = None,
         classes: Optional[str] = None,
         name: Optional[str] = None,
     ):
+        effective_select_button = select_button
+        if effective_select_button is None:
+            effective_select_button = (
+                "Import" if context == "character_import" else "Open"
+            )
         super().__init__(
             location=location,
             title=title,
-            select_button=select_button,
+            select_button=effective_select_button,
             cancel_button=cancel_button,
             filters=filters,
             context=context,
@@ -2189,3 +2471,158 @@ class EnhancedFileSave(EnhancedFileDialog):
                 value=0,
                 id="file-filter"
             )
+
+
+class EnhancedSelectDirectory(EnhancedFileDialog):
+    """Enhanced directory selection dialog.
+
+    Mirrors the vendored ``SelectDirectory`` contract -- a directory-only
+    listing whose select button returns the directory currently viewed --
+    on the ``EnhancedFileDialog`` chrome (breadcrumbs, search, bookmarks,
+    hints, per-context remembered start directory), so screens that use the
+    enhanced family everywhere keep a single picker look (TASK-16477).
+    """
+
+    # The file-flow select button would query the (absent) filename input;
+    # this dialog replaces it with the viewed-directory confirm below.
+    _SUPPRESSED_BASE_HANDLERS = {
+        *EnhancedFileDialog._SUPPRESSED_BASE_HANDLERS,
+        EnhancedFileDialog._on_select_button,
+    }
+
+    def __init__(
+        self,
+        location: Union[str, Path] = ".",
+        title: str = "Select directory",
+        *,
+        select_button: str = "Select",
+        cancel_button: str = "Cancel",
+        context: str = "directory_select",
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
+        """Initialise the directory selection dialog.
+
+        Args:
+            location: Optional starting location; ``"."`` resolves through
+                the per-context remembered start directory.
+            title: Dialog title.
+            select_button: Label for the confirm button.
+            cancel_button: Label for the cancel button.
+            context: Persistence context key (last-dir / recents).
+            id: Optional Textual widget id.
+            classes: Optional Textual widget classes.
+            name: Optional Textual widget name.
+
+        Notes:
+            Directory picking never takes file filters or multi-select;
+            both are fixed off by this constructor.
+        """
+        super().__init__(
+            location=location,
+            title=title,
+            select_button=select_button,
+            cancel_button=cancel_button,
+            filters=None,
+            context=context,
+            multi_select=False,
+            id=id,
+            classes=classes,
+            name=name,
+        )
+
+    def on_mount(self) -> None:
+        """Restrict the listing to directories once the DOM is ready.
+
+        The MRO walk still invokes ``EnhancedFileDialog.on_mount`` and
+        ``FileSystemPickerScreen.on_mount`` (breadcrumb init) for this Mount
+        event; see ``EnhancedFileDialog.on_mount``'s docstring.
+        """
+        nav = self.query_one(SearchableDirectoryNavigation)
+        nav.show_files = False
+        self._sync_dir_path_input(nav.location)
+
+    def _input_bar(self) -> ComposeResult:
+        """Provide the path input for direct navigation."""
+        from textual.widgets import Input
+
+        yield Input(id="dir-path-input", placeholder="Type path or select below")
+
+    def _dir_nav(self) -> SearchableDirectoryNavigation:
+        return self.query_one(SearchableDirectoryNavigation)
+
+    def _sync_dir_path_input(self, location: Path) -> None:
+        try:
+            self.query_one("#dir-path-input", Input).value = str(location)
+        except Exception:
+            pass
+
+    def _shortcut_hint_text(self) -> str:
+        """Directory-mode hints: Enter descends, the select button confirms."""
+        select_hint = self._label(self._select_button, "Select")
+        hints = [
+            "Ctrl+B Bookmarks",
+            "Ctrl+R Recent",
+            "Ctrl+F Search",
+            "Ctrl+L Path",
+            "1-9 Jump",
+            "Enter Open",
+            f"{select_hint} use this folder",
+            "Esc Cancel",
+            "? Hide",
+        ]
+        return "  ".join(hints)
+
+    @on(DirectoryNavigation.Changed)
+    def _sync_dir_path_on_nav_change(self, event: DirectoryNavigation.Changed) -> None:
+        """Keep the path input in step with breadcrumb navigation."""
+        self._sync_dir_path_input(event.control.location)
+
+    @on(Input.Submitted, "#dir-path-input")
+    def _on_dir_path_submit(self, event: Input.Submitted) -> None:
+        """Navigate to the typed path, mirroring the vendored dialog.
+
+        Validation mirrors ``_on_path_input_submit`` (the Ctrl+L bar):
+        a local file picker navigates the user's own filesystem, so
+        ``validate_path_simple`` is deliberately NOT applied here -- it
+        rejects legitimate ``~/``, ``../``, and shell-metacharacter path
+        segments and would break navigation. The one input that is never
+        a valid path (a NUL byte) is rejected explicitly before any
+        ``Path`` construction, which would otherwise raise a bare
+        ``ValueError`` out of this handler (Qodo review, TASK-16478).
+        """
+        event.stop()
+        value = event.value.strip()
+        if not value:
+            return
+        if "\x00" in value:
+            self._set_error("Path cannot contain null characters.")
+            self.query_one("#dir-path-input", Input).focus()
+            return
+        try:
+            target = MakePath.of(value).expanduser()
+            if not target.is_absolute():
+                target = self._dir_nav().location / target
+            target = target.resolve()
+        except (RuntimeError, OSError, ValueError) as error:
+            self._set_error(str(error))
+            self.query_one("#dir-path-input", Input).focus()
+            return
+        if target.is_dir():
+            self._dir_nav().location = target
+            return
+        if target.exists():
+            # A real path that is not a directory is a different mistake
+            # than a nonexistent one; the vendored SelectDirectory
+            # distinguishes them too.
+            self._set_error(f"Not a directory: {target.name}")
+        else:
+            self._set_error(f"Path not found: {value}")
+        self.query_one("#dir-path-input", Input).focus()
+
+    @on(Button.Pressed, "#select")
+    def _select_viewed_directory(self, event: Button.Pressed) -> None:
+        """Return the directory currently being viewed."""
+        event.stop()
+        self.dismiss(result=self._dir_nav().location)

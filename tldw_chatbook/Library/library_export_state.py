@@ -33,7 +33,6 @@ from tldw_chatbook.Library.library_export_scope import ExportScope, export_scope
 EXPORT_HEADER_COPY = "Export bundle (.zip)"
 COUNTING_COPY = "Counting…"
 EMPTY_SCOPE_COPY = "Nothing to export in this scope."
-MEDIA_QUALITY_HELPER_COPY = "original copies full media files into the zip"
 CHOOSE_DESTINATION_COPY = "Choose destination…"
 DESTINATION_PLACEHOLDER_COPY = "No destination chosen"
 EXPORT_BUTTON_COPY = "Export bundle (.zip)"
@@ -55,6 +54,34 @@ EXPORT_BUTTON_NO_DESTINATION_TOOLTIP = "Choose a destination before exporting."
 # is the cheapest one, matching the design spec.
 MEDIA_QUALITY_OPTIONS = ("thumbnail", "compressed", "original")
 DEFAULT_MEDIA_QUALITY = "thumbnail"
+
+# task-2859 item 3: the helper line used to be one FIXED sentence describing
+# "original" quality ("original copies full media files into the zip"),
+# shown verbatim no matter which option the cycle button actually had
+# selected -- so picking "thumbnail ▸" was captioned with a description of
+# "original". Each option now gets its own honest caption.
+_MEDIA_QUALITY_HELPER_COPY: dict[str, str] = {
+    "thumbnail": "keeps a small preview image instead of the full file",
+    "compressed": "shrinks media files before adding them to the zip",
+    "original": "copies full media files into the zip",
+}
+
+
+def media_quality_helper_copy(media_quality: str) -> str:
+    """Return the helper line describing ``media_quality``'s actual effect.
+
+    Args:
+        media_quality: The quality control's current value (one of
+            ``MEDIA_QUALITY_OPTIONS``).
+
+    Returns:
+        The matching one-line caption, or the "original" caption for an
+        unrecognized value (the safest/most conservative description).
+    """
+    return _MEDIA_QUALITY_HELPER_COPY.get(
+        media_quality, _MEDIA_QUALITY_HELPER_COPY["original"]
+    )
+
 
 # Scope kinds whose export includes media at all -- everything and
 # media-scoped exports show the quality control + helper line;
@@ -118,9 +145,9 @@ class LibraryExportFormState:
             destination, and no export already running.
         show_media_fields: Whether the quality control + its helper line
             should render at all -- only for scopes that can contain
-            media (``"everything"``/``"media"``); a conversations- or
-            notes-only scope never touches media, so the quality control
-            would be a dead knob.
+            media (``"everything"``/``"media"``); a conversations-,
+            notes-, or Prompts-only scope never touches media, so the
+            quality control would be a dead knob.
         empty_scope_line: ``EMPTY_SCOPE_COPY`` once counts have landed and
             total to zero, else ``""``.
         overwrite_line: ``"Overwrites {destination filename}"`` when the
@@ -152,6 +179,9 @@ class LibraryExportFormState:
     empty_scope_line: str = ""
     overwrite_line: str = ""
     last_export_line: str = ""
+    # task-14902: True while the quality chooser's direct-pick strip
+    # renders below its (still-visible) opener button.
+    quality_choices_visible: bool = False
 
 
 def build_library_export_form_state(
@@ -167,15 +197,16 @@ def build_library_export_form_state(
     status_line: str = "",
     error_line: str = "",
     last_export_line: str = "",
+    quality_choices_visible: bool = False,
 ) -> LibraryExportFormState:
     """Build the export canvas's full display state.
 
     Args:
         scope: What this export will include.
         counts: The full-query counts for ``scope`` (keys "media"/
-            "conversations"/"notes"), or ``None`` while the counts worker
-            is still running -- ``counts_loading`` and the ``"Counting…"``
-            scope line both derive from this being ``None``.
+            "conversations"/"notes"/"prompts"), or ``None`` while the
+            counts worker is still running -- ``counts_loading`` and the
+            ``"Counting…"`` scope line both derive from this being ``None``.
         name: The export name field's current text.
         description: The description field's current text.
         media_quality: The quality control's current value.
@@ -227,6 +258,7 @@ def build_library_export_form_state(
         empty_scope_line=empty_scope_line,
         overwrite_line=overwrite_line,
         last_export_line=last_export_line,
+        quality_choices_visible=quality_choices_visible,
     )
 
 
@@ -306,31 +338,6 @@ def format_last_export_line(
     else:
         relative = f"{int(elapsed // _SECONDS_PER_DAY)}d ago"
     return f"Last export: {clean_path} · {relative}"
-
-
-def next_media_quality(current: str) -> str:
-    """Cycle the media-quality control to its next option, wrapping around.
-
-    Mirrors the media canvas's type-filter cycle button
-    (``handle_library_media_type_filter_pressed``) -- a plain ``Select``
-    widget did not render reliably in the deployed TUI (see that
-    handler's docstring), so every Library form control that picks among
-    a small fixed set of options uses this same cycle-button convention
-    instead, including this one.
-
-    Args:
-        current: The current quality value.
-
-    Returns:
-        The next value in ``MEDIA_QUALITY_OPTIONS``, wrapping to the first
-        after the last; ``MEDIA_QUALITY_OPTIONS[0]`` when ``current`` is
-        not a recognized option.
-    """
-    try:
-        index = MEDIA_QUALITY_OPTIONS.index(current)
-    except ValueError:
-        return MEDIA_QUALITY_OPTIONS[0]
-    return MEDIA_QUALITY_OPTIONS[(index + 1) % len(MEDIA_QUALITY_OPTIONS)]
 
 
 def normalize_export_destination(path: Path) -> Path:

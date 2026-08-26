@@ -1,4 +1,5 @@
 import inspect
+import json
 
 import pytest
 
@@ -26,7 +27,12 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.console_roleplay_metadata import (
+    ConsoleRoleplayContext,
+    merge_console_roleplay_context,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
@@ -50,6 +56,24 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_roleplay_version_readers_reject_boolean_versions(
+        self, db_instance: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+    ):
+        service = ChatPersistenceService(db_instance)
+        monkeypatch.setattr(
+            db_instance,
+            "get_message_by_id",
+            lambda _message_id: {"version": True, "deleted": False},
+        )
+        monkeypatch.setattr(
+            db_instance,
+            "get_conversation_by_id",
+            lambda _conversation_id: {"version": False, "deleted": False},
+        )
+
+        assert service.get_message_version("message") is None
+        assert service.get_conversation_version("conversation") is None
+
     def test_create_conversation_documents_public_contract(self):
         method = ChatPersistenceService.create_conversation
         doc = inspect.getdoc(method)
@@ -62,7 +86,7 @@ class TestChatPersistenceService:
         assert "Omitting" in doc
         assert "``None`` explicitly" in doc
         assert "explicit normalized" in doc
-        assert "best-effort" in doc
+        assert "post-commit projection" in doc
         assert "Returns:" in doc
         assert "Raises:" in doc
 
@@ -1609,6 +1633,93 @@ class TestChatPersistenceService:
                 system_prompt="Anything",
             )
 
+    def test_roleplay_system_projection_guard_refuses_revoked_prompt_ownership(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            system_prompt="Speak with Alpha.",
+        )
+        context = ConsoleRoleplayContext(
+            user_name_override=None,
+            character_system_template="Speak with {{user}}.",
+        )
+        record = db_instance.get_conversation_by_id(conversation_id)
+        db_instance.update_conversation(
+            conversation_id,
+            {"metadata": merge_console_roleplay_context(record["metadata"], context)},
+            expected_version=record["version"],
+        )
+
+        # A manual prompt edit revokes the trusted template before the stale
+        # projection reaches the real persistence adapter.
+        record = db_instance.get_conversation_by_id(conversation_id)
+        db_instance.update_conversation(
+            conversation_id,
+            {
+                "system_prompt": "User-authored prompt.",
+                "metadata": merge_console_roleplay_context(
+                    record["metadata"], ConsoleRoleplayContext()
+                ),
+            },
+            expected_version=record["version"],
+        )
+
+        assert service.update_conversation_system_prompt(
+            conversation_id=conversation_id,
+            system_prompt="Speak with Bravo.",
+            expected_roleplay_context=context,
+            expected_system_prompts=("Speak with Alpha.",),
+            allow_source_owned_repair=True,
+        ) is False
+        durable = db_instance.get_conversation_by_id(conversation_id)
+        assert durable["system_prompt"] == "User-authored prompt."
+        assert "console_roleplay_context" not in json.loads(durable["metadata"])
+
+    def test_roleplay_greeting_projection_guard_refuses_revoked_provenance(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console"
+        )
+        source = "Hello {{user}}."
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Hello Alpha.",
+            metadata_json=MessageMetadata(
+                template_kind="character_greeting", template_source=source
+            ).to_json(),
+        )
+        current = db_instance.get_message_by_id(message_id)
+        db_instance.update_message(
+            message_id,
+            {
+                "content": "User-edited greeting.",
+                "metadata_json": MessageMetadata().to_json(),
+            },
+            expected_version=current["version"],
+        )
+
+        assert service.update_message_content(
+            message_id=message_id,
+            content="Hello Bravo.",
+            image_data=None,
+            image_mime_type=None,
+            metadata_json=MessageMetadata(
+                template_kind="character_greeting", template_source=source
+            ).to_json(),
+            expected_roleplay_template_source=source,
+            expected_message_contents=("Hello Alpha.",),
+            allow_source_owned_repair=True,
+        ) is False
+        durable = db_instance.get_message_by_id(message_id)
+        assert durable["content"] == "User-edited greeting."
+        assert MessageMetadata.from_json(durable["metadata_json"]).template_kind == ""
+
     def test_workspace_conversation_requires_existing_workspace(
         self,
         db_instance: CharactersRAGDB,
@@ -1626,7 +1737,7 @@ class TestChatPersistenceService:
                 conversation_title="Missing workspace chat",
             )
 
-    def test_workspace_conversation_links_membership(
+    def test_workspace_conversation_projects_membership_after_chat_commit(
         self,
         db_instance: CharactersRAGDB,
         tmp_path,
@@ -1642,6 +1753,9 @@ class TestChatPersistenceService:
             workspace_id="ws-a",
             conversation_title="Workspace planning",
         )
+        assert registry.list_workspace_conversations("ws-a") == ()
+
+        service.project_workspace_membership(conversation_id)
 
         conversations = registry.list_workspace_conversations("ws-a")
         assert [conversation.item_id for conversation in conversations] == [
@@ -1649,7 +1763,7 @@ class TestChatPersistenceService:
         ]
         assert conversations[0].title == "Workspace planning"
 
-    def test_workspace_conversation_link_failure_soft_deletes_created_conversation(
+    def test_workspace_projection_failure_keeps_durable_authority_for_retry(
         self,
         db_instance: CharactersRAGDB,
         tmp_path,
@@ -1671,20 +1785,21 @@ class TestChatPersistenceService:
             workspace_registry=FailingMembershipRegistry(),
         )
 
+        conversation_id = service.create_conversation(
+            scope_type="workspace",
+            workspace_id="ws-a",
+            conversation_title="Partially linked workspace chat",
+        )
         with pytest.raises(RuntimeError, match="membership write failed"):
-            service.create_conversation(
-                scope_type="workspace",
-                workspace_id="ws-a",
-                conversation_title="Partially linked workspace chat",
-            )
+            service.project_workspace_membership(conversation_id)
 
         rows = db_instance.execute_query(
             "SELECT id, deleted FROM conversations WHERE title = ?",
             ("Partially linked workspace chat",),
         ).fetchall()
         assert len(rows) == 1
-        assert rows[0]["deleted"] == 1
-        assert db_instance.get_conversation_by_id(rows[0]["id"]) is None
+        assert rows[0]["deleted"] == 0
+        assert db_instance.get_conversation_by_id(rows[0]["id"])["workspace_id"] == "ws-a"
 
     def test_fork_conversation_rejects_unresolved_workspace_scope_without_assert(
         self,
@@ -2302,3 +2417,68 @@ class TestChatPersistenceService:
         assert [entry["position"] for entry in extra] == [1]
         assert extra[0]["data"] == b"img-1"
         assert extra[0]["display_name"] == "b.jpg"
+
+
+class _RoleplayConflictDB:
+    """Small optimistic-lock seam whose first write preserves a sibling."""
+
+    def __init__(self, *, conflicts: int) -> None:
+        self.row = {
+            "version": 1,
+            "metadata": json.dumps({"existing": {"kept": True}}),
+        }
+        self.conflicts_remaining = conflicts
+        self.update_attempts = 0
+
+    def get_conversation_by_id(self, conversation_id: str):
+        assert conversation_id == "conv-1"
+        return dict(self.row)
+
+    def update_conversation(self, conversation_id, payload, *, expected_version):
+        assert conversation_id == "conv-1"
+        assert expected_version == self.row["version"]
+        self.update_attempts += 1
+        if self.conflicts_remaining:
+            self.conflicts_remaining -= 1
+            metadata = json.loads(self.row["metadata"])
+            metadata["concurrent_sibling"] = {"kept": True}
+            self.row = {
+                "version": self.row["version"] + 1,
+                "metadata": json.dumps(metadata),
+            }
+            raise ConflictError("concurrent write")
+        self.row = {
+            "version": self.row["version"] + 1,
+            "metadata": payload["metadata"],
+        }
+        return True
+
+
+def test_update_roleplay_context_retries_once_and_preserves_concurrent_sibling():
+    db = _RoleplayConflictDB(conflicts=1)
+    service = ChatPersistenceService(db)
+
+    assert service.update_conversation_roleplay_context(
+        conversation_id="conv-1",
+        user_name_override="Rowan",
+        character_system_template="Speak to {{user}}.",
+    ) is True
+
+    assert db.update_attempts == 2
+    saved = json.loads(db.row["metadata"])
+    assert saved["concurrent_sibling"] == {"kept": True}
+    assert saved["console_roleplay_context"]["user_name_override"] == "Rowan"
+
+
+def test_update_roleplay_context_propagates_second_conflict():
+    db = _RoleplayConflictDB(conflicts=2)
+    service = ChatPersistenceService(db)
+
+    with pytest.raises(ConflictError, match="concurrent write"):
+        service.update_conversation_roleplay_context(
+            conversation_id="conv-1",
+            user_name_override="Rowan",
+            character_system_template="Speak to {{user}}.",
+        )
+
+    assert db.update_attempts == 2

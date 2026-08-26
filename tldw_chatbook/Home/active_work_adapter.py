@@ -407,7 +407,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             return HomeControlResult(
                 action=action,
                 status=HomeControlResultStatus.HANDLED,
-                message="Opening Library ingest job details.",
+                message="Opening Library import job details.",
                 target_route=target_route or "library",
                 target_id=target_id,
             )

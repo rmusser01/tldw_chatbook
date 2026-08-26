@@ -7,6 +7,7 @@
 # content; the copy actions live in their own bottom bar.
 #
 # Imports
+import asyncio
 import re
 from collections import Counter, deque
 from typing import TYPE_CHECKING, Iterable, NamedTuple, Optional
@@ -17,6 +18,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
+from textual.timer import Timer
 from textual.widgets import Button, Input, RichLog, Static
 from rich.text import Text
 
@@ -31,6 +33,30 @@ if TYPE_CHECKING:
 #: Bounded record buffer mirroring app._log_records (kept in sync by the
 #: app's PersistentLogHandler via ``append_record``).
 MAX_LOG_RECORDS = 10000
+
+#: Debounce for the free-text filter `Input` -- mirrors the picker/filter
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). Every render
+#: pass rescans up to `MAX_LOG_RECORDS` buffered records, so it must not run
+#: on every keystroke (task-15476).
+FILTER_DEBOUNCE_SECONDS = 0.2
+
+#: Debounce for PERSISTING the saved-filter state (task-21124) -- distinct
+#: from `FILTER_DEBOUNCE_SECONDS`, which debounces re-RENDERING. A level-chip
+#: click used to fire two sequential synchronous `save_setting_to_cli_config`
+#: calls on the event loop -- two full config.toml read-rewrite-reload cycles
+#: (four fsyncs) per click, each holding the global config write lock. Chip
+#: clicks now mark the filter state dirty and (re)arm this timer; the actual
+#: write is ONE batched atomic mutation dispatched off the loop, and
+#: `on_unmount` force-flushes any pending state (mirrors the task-15470
+#: dictation-settings debounce shape, including its value).
+LOGS_FILTER_SAVE_DEBOUNCE_SECONDS = 0.6
+
+#: Cap the RichLog rendered slice: a filter matching thousands of buffered
+#: records must not clear+rewrite the widget with all of them on every
+#: render pass. The status line discloses when the cap trims output
+#: (task-15476, AC #2); the most RECENT matches are kept, mirroring the
+#: buffer's own oldest-evicted-first policy.
+MAX_RENDERED_LINES = 1000
 
 #: Level chips are THRESHOLDS, ordered by severity, matching the journalctl
 #: convention: each chip shows its level and above. "Info+" hides DEBUG/TRACE
@@ -97,7 +123,7 @@ def _display_message(record: LogRecord) -> str:
 class LogsWindow(Container):
     """Logs destination: filter bar, log view, status line, action bar."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LogsWindow {
         layout: vertical;
     }
@@ -153,6 +179,34 @@ class LogsWindow(Container):
         self._pending_while_paused = 0
         self._rendered_count = 0
         self._loaded_from_app = False
+        # task-15476: how many records the active filter actually matched
+        # (>= _rendered_count once MAX_RENDERED_LINES trims the render),
+        # the records actually written to the RichLog on the last render
+        # pass (n/N error-jump indexes against this, not the full matched
+        # set, since that's all that's really on screen to scroll to), and
+        # a one-entry cache so re-rendering with the same filter text does
+        # not recompile the same regex.
+        self._visible_total = 0
+        self._last_rendered: list[LogRecord] = []
+        self._compiled_pattern_cache: tuple[str, "re.Pattern | None"] | None = None
+        self._filter_debounce_timer: Timer | None = None
+        # task-21124: debounce state for the saved-filter persist -- see
+        # `LOGS_FILTER_SAVE_DEBOUNCE_SECONDS`. `_persisted_filter_state` is
+        # the last state known to be on disk (seeded by `load_from_app`);
+        # comparing against it instead of a bare dirty flag means neither the
+        # mount-time restore nor a click-and-click-back sequence produces a
+        # write.
+        self._filter_save_timer: Timer | None = None
+        self._filter_persist_worker = None
+        self._persisted_filter_state: dict[str, str] | None = None
+        # Mirror of the filter Input's value, kept current by
+        # `_on_filter_text_changed` and the `load_from_app` restore. The
+        # persist snapshot reads THIS, never the DOM: during teardown the
+        # Input may already be unmounted, and a DOM query degrading to ""
+        # there made the unmount flush clobber the user's saved filter with
+        # an empty string (caught by test_saved_filter_roundtrip while
+        # building task-21124).
+        self._filter_text = ""
 
     # ------------------------------------------------------------------
     # Composition
@@ -168,10 +222,21 @@ class LogsWindow(Container):
                 )
             yield Input(placeholder="Filter logs (regex ok)…", id="logs-filter-text")
             yield Button("Pause", id="logs-pause")
+        # TASK-19555: this text used to say, flatly, "copy the logs and share
+        # them when asking for help" -- an invitation to put an unfiltered
+        # session transcript on the clipboard. Credentials and the account
+        # name are now stripped at the sink, but file names, note titles and
+        # search terms are still in there, so the invitation says what it is
+        # inviting and points at the action the user can actually read first.
         yield Static(
             "No log entries yet.\n"
-            "Something not working? Reproduce the problem, then copy the logs "
-            "and share them when asking for help.",
+            "Something not working? Reproduce the problem, filter to the "
+            "lines that matter, then use Copy visible logs — you share "
+            "exactly what you can see.\n"
+            "Recognised API-key formats and your account name are removed; "
+            "file names, titles and search terms are not, so read before you "
+            "share. Copy all (redacted) shares timings, loggers and error "
+            "types only.",
             id="logs-empty-state",
         )
         yield RichLog(
@@ -191,7 +256,9 @@ class LogsWindow(Container):
                 variant="primary",
             )
             yield Button(
-                "Copy all",
+                # The label must not promise more than the artifact carries
+                # (TASK-19555): "Copy all" now yields the metadata-only form.
+                "Copy all (redacted)",
                 id="copy-logs-button",
                 classes="logs-action-button",
             )
@@ -213,7 +280,12 @@ class LogsWindow(Container):
                 self._level_chip = saved_chip
             saved_text = get_cli_setting("logs", "last_filter", "")
             if saved_text:
+                self._filter_text = saved_text
                 self.query_one("#logs-filter-text", Input).value = saved_text
+            # Baseline for change detection (task-21124): what we just
+            # restored is, by definition, what is persisted -- so neither
+            # the restore itself nor an unmount without edits writes.
+            self._persisted_filter_state = self._filter_state_snapshot()
         except Exception:  # noqa: BLE001 - config read must never block logs
             pass
         app_records: Iterable[tuple] = getattr(
@@ -227,21 +299,107 @@ class LogsWindow(Container):
         self._level_counts = Counter(record.level for record in self._records)
         self._render_view()
 
-    def save_filter_state(self) -> None:
-        """Persist the current filter text and level chip (UX-077)."""
-        try:
-            from ..config import save_setting_to_cli_config
+    def _filter_state_snapshot(self) -> dict[str, str]:
+        """Capture the persistable filter state on the event-loop thread.
 
-            save_setting_to_cli_config(
-                "logs", "last_filter", self.query_one("#logs-filter-text", Input).value
-            )
-            save_setting_to_cli_config("logs", "last_level_chip", self._level_chip)
+        Prefers the live Input (an un-dispatched `Input.Changed` may not
+        have reached the `_filter_text` mirror yet); falls back to the
+        mirror when the Input is already unmounted at teardown, where a
+        degrade-to-"" would clobber the user's saved filter (see
+        `_filter_text`).
+        """
+        try:
+            self._filter_text = self.query_one("#logs-filter-text", Input).value
+        except Exception:  # noqa: BLE001 - teardown: mirror keeps last value
+            pass
+        return {
+            "last_filter": self._filter_text,
+            "last_level_chip": self._level_chip,
+        }
+
+    def _write_filter_state(self, snapshot: dict[str, str]) -> None:
+        """Persist a pre-captured filter snapshot with ONE atomic write.
+
+        task-21124: replaces two sequential `save_setting_to_cli_config`
+        calls (two full config rewrites, four fsyncs) with one batched
+        mutation. Safe to call from a worker thread: touches only the
+        passed-in snapshot.
+        """
+        try:
+            from ..config import save_settings_to_cli_config
+
+            save_settings_to_cli_config({"logs": snapshot})
+            self._persisted_filter_state = snapshot
         except Exception:  # noqa: BLE001 - config write must never break navigation
             pass
 
-    def on_unmount(self) -> None:
-        """Save the filter state when the screen is left."""
-        self.save_filter_state()
+    def save_filter_state(self) -> None:
+        """Persist the current filter text and level chip (UX-077), now.
+
+        Synchronous, immediate form -- the debounced path
+        (`_persist_filter_state`) is what UI event handlers use.
+        """
+        self._write_filter_state(self._filter_state_snapshot())
+
+    def _persist_filter_state(self) -> None:
+        """Schedule a debounced, batched, off-loop filter-state save.
+
+        task-21124: the single gate chip clicks go through -- see
+        `LOGS_FILTER_SAVE_DEBOUNCE_SECONDS`. A no-op when the current state
+        already matches what is persisted (e.g. click away and back).
+        """
+        if self._filter_state_snapshot() == self._persisted_filter_state:
+            return
+        if self._filter_save_timer is not None:
+            self._filter_save_timer.stop()
+        self._filter_save_timer = self.set_timer(
+            LOGS_FILTER_SAVE_DEBOUNCE_SECONDS,
+            self._flush_filter_state_after_debounce,
+        )
+
+    def _flush_filter_state_after_debounce(self) -> None:
+        """Debounce timer callback: hand the actual write to a worker."""
+        self._filter_save_timer = None
+        self._filter_persist_worker = self.run_worker(
+            self._persist_filter_state_off_loop(),
+            exclusive=True,
+            group="logs-filter-persist",
+        )
+
+    async def _persist_filter_state_off_loop(self) -> None:
+        """Write the filter state on a worker thread, off the event loop.
+
+        Snapshots on the main thread before handing the write to
+        `to_thread`, so a further chip click cannot race the worker's read
+        (same shape as the task-15470 dictation persist).
+        """
+        snapshot = self._filter_state_snapshot()
+        if snapshot == self._persisted_filter_state:
+            return
+        await asyncio.to_thread(self._write_filter_state, snapshot)
+
+    async def on_unmount(self) -> None:
+        """Flush any pending filter-state change when the screen is left.
+
+        Also picks up filter-TEXT edits, which (as before task-21124) are
+        persisted only at unmount -- but now only when the state actually
+        changed, where the old code rewrote the config file on every exit
+        from the Logs screen. If a debounced write is in flight, waits for
+        it rather than dispatching a second writer against the same file.
+        """
+        if self._filter_save_timer is not None:
+            self._filter_save_timer.stop()
+            self._filter_save_timer = None
+        # Capture before any await: after the wait the Input may be gone.
+        snapshot = self._filter_state_snapshot()
+        worker = self._filter_persist_worker
+        if worker is not None and not worker.is_finished:
+            try:
+                await worker.wait()
+            except Exception:  # noqa: BLE001 - flush must never break teardown
+                pass
+        if snapshot != self._persisted_filter_state:
+            await asyncio.to_thread(self._write_filter_state, snapshot)
 
     def append_record(self, level: str, name: str, message: str) -> None:
         """Receive one live log record from the app's logging handler.
@@ -285,16 +443,26 @@ class LogsWindow(Container):
             record, self._level_chip, text, self._compile_pattern(text)
         )
 
-    @staticmethod
-    def _compile_pattern(text: str) -> "re.Pattern | None":
+    def _compile_pattern(self, text: str) -> "re.Pattern | None":
         """Compile the filter text as a regex; invalid input falls back to
-        plain substring matching (None means: use substring)."""
+        plain substring matching (None means: use substring).
+
+        Cached on ``text`` (task-15476, AC #2): the level-chip buttons and
+        the debounced text filter both re-render through this on every
+        settle, and re-compiling the same pattern each time is pure waste.
+        """
+        cached = self._compiled_pattern_cache
+        if cached is not None and cached[0] == text:
+            return cached[1]
         if not text:
-            return None
-        try:
-            return re.compile(text, re.IGNORECASE)
-        except re.error:
-            return None
+            pattern = None
+        else:
+            try:
+                pattern = re.compile(text, re.IGNORECASE)
+            except re.error:
+                pattern = None
+        self._compiled_pattern_cache = (text, pattern)
+        return pattern
 
     def _visible_records(self) -> list[LogRecord]:
         text = self.query_one("#logs-filter-text", Input).value
@@ -306,11 +474,19 @@ class LogsWindow(Container):
         ]
 
     def _render_view(self) -> None:
-        """Re-render the log view from the record buffer."""
+        """Re-render the log view from the record buffer.
+
+        Caps the rendered slice to the most recent `MAX_RENDERED_LINES`
+        filter matches (task-15476, AC #2): a filter matching thousands of
+        the buffered records must not clear+rewrite the RichLog with all of
+        them. `_update_status_line` discloses the truncation.
+        """
         log_widget = self.query_one("#app-log-display", RichLog)
         empty_state = self.query_one("#logs-empty-state", Static)
         if not self._records:
             self._rendered_count = 0
+            self._visible_total = 0
+            self._last_rendered = []
             empty_state.display = "block"
             log_widget.display = False
         else:
@@ -318,9 +494,16 @@ class LogsWindow(Container):
             log_widget.display = True
             log_widget.clear()
             visible = self._visible_records()
-            for record in visible:
+            capped = (
+                visible[-MAX_RENDERED_LINES:]
+                if len(visible) > MAX_RENDERED_LINES
+                else visible
+            )
+            for record in capped:
                 log_widget.write(_styled_line(record))
-            self._rendered_count = len(visible)
+            self._rendered_count = len(capped)
+            self._visible_total = len(visible)
+            self._last_rendered = capped
             log_widget.scroll_end()
         self._update_status_line()
         self._update_filter_chips()
@@ -351,10 +534,17 @@ class LogsWindow(Container):
             chip.set_class(chip_id == self._level_chip, "is-active")
 
     def _update_status_line(self) -> None:
-        """Honest accounting of what's shown, filtered, and paused."""
+        """Honest accounting of what's shown, filtered, capped, and paused."""
         total = len(self._records)
         shown = self._rendered_count
         parts = [f"Showing {shown} of {total} lines"]
+        if self._visible_total > shown:
+            # task-15476 AC #2: the filter matched more than the rendered
+            # cap -- say so, rather than silently showing a partial result.
+            parts.append(
+                f"(filter matched {self._visible_total}; "
+                f"showing most recent {shown})"
+            )
         if total >= MAX_LOG_RECORDS:
             parts.append(f"(buffer keeps last {MAX_LOG_RECORDS:,})")
         if self._paused:
@@ -397,10 +587,24 @@ class LogsWindow(Container):
         if chip_id and chip_id != self._level_chip:
             self._level_chip = chip_id
             self._render_view()
-            self.save_filter_state()
+            # task-21124: debounced, batched, off-loop -- never a
+            # synchronous double config rewrite on the click.
+            self._persist_filter_state()
 
     @on(Input.Changed, "#logs-filter-text")
     def _on_filter_text_changed(self, event: Input.Changed) -> None:
+        """Debounced (task-15476): a render pass rescans up to
+        `MAX_LOG_RECORDS` buffered records and clears+rewrites the RichLog,
+        so it must not run on every keystroke."""
+        self._filter_text = event.value
+        if self._filter_debounce_timer is not None:
+            self._filter_debounce_timer.stop()
+        self._filter_debounce_timer = self.set_timer(
+            FILTER_DEBOUNCE_SECONDS, self._apply_filter_text_debounced
+        )
+
+    def _apply_filter_text_debounced(self) -> None:
+        self._filter_debounce_timer = None
         self._render_view()
 
     @on(Button.Pressed, "#logs-pause")
@@ -436,16 +640,29 @@ class LogsWindow(Container):
             )
             return
         self.app.copy_to_clipboard("\n".join(record.message for record in records))
+        # TASK-19555: this is the deliberate, filtered action, so the payload
+        # stays descriptive -- but the notification names the residual
+        # exposure rather than leaving the user to discover it in a bug report.
         self.app.notify(
-            f"Copied {len(records)} visible log lines to clipboard!",
+            f"Copied {len(records)} visible log lines. Recognised key formats "
+            "and your account name were removed; file names and search terms "
+            "were not.",
             title="Clipboard",
             severity="information",
-            timeout=4,
+            timeout=6,
         )
 
     @on(Button.Pressed, "#copy-logs-button")
     def _on_copy_all(self) -> None:
-        """Copy the full session log (unbounded buffer) to the clipboard."""
+        """Copy the redacted session log to the clipboard.
+
+        The app's ``PersistentLogHandler`` fills ``_log_buffer`` with the
+        metadata-only form of each record (TASK-19555): this action exports
+        thousands of lines the user has never read, so it carries timestamps,
+        loggers, levels and exception types, and no message bodies. Sharing
+        actual log text is the job of "Copy visible logs", where the user can
+        see what they are sharing first.
+        """
         buffer = getattr(self.app_instance, "_log_buffer", None)
         if not buffer:
             self.app.notify(
@@ -457,10 +674,11 @@ class LogsWindow(Container):
             return
         self.app.copy_to_clipboard("\n".join(buffer))
         self.app.notify(
-            f"Copied {len(buffer)} log entries to clipboard!",
+            f"Copied {len(buffer)} redacted log entries — timings, loggers "
+            "and error types only. Use Copy visible logs to share log text.",
             title="Clipboard",
             severity="information",
-            timeout=4,
+            timeout=6,
         )
 
     # ------------------------------------------------------------------
@@ -498,10 +716,17 @@ class LogsWindow(Container):
         self._jump_to_error(-1)
 
     def _error_row_indices(self) -> list[int]:
-        """Indices of error/critical records within the current view."""
+        """Indices of error/critical records within the RENDERED view.
+
+        Indexed against `_last_rendered` (what `_render_view` actually
+        wrote to the RichLog), not the full filtered match set: when
+        `MAX_RENDERED_LINES` trims the render, an index computed from the
+        full match set could point past what the widget can `scroll_to`
+        (task-15476).
+        """
         return [
             index
-            for index, record in enumerate(self._visible_records())
+            for index, record in enumerate(self._last_rendered)
             if record.level in ("ERROR", "CRITICAL")
         ]
 

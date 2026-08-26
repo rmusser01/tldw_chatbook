@@ -11,13 +11,17 @@ from dataclasses import replace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
-class _ConsoleHarness(App):
+class _ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance) -> None:
         super().__init__()
         self.app_instance = app_instance

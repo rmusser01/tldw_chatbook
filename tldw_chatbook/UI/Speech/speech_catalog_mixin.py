@@ -35,8 +35,8 @@ from textual import work
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
-from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.TTS import STTSGeneratedAudio, get_tts_service
+from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot
+from tldw_chatbook.TTS import STTSPlaygroundResultProjection, get_tts_service
 from tldw_chatbook.TTS.adapter_types import (
     TTSOperationError,
     TTSProviderCatalog,
@@ -51,6 +51,19 @@ from tldw_chatbook.TTS.legacy_catalogs import (
 )
 from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbePurpose,
+    probe_settings_endpoint,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    build_provider_test_fingerprint,
+    load_global_speech_tts_state,
+    process_provider_test_evidence_store,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    ProviderTestFingerprint,
+    SpeechTTSConnectionState,
+)
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
@@ -63,6 +76,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     SelectValue,
     controls_from_catalog,
     controls_from_profile_preset,
+    pinned_no_catalog_check_option,
     preset_has_no_catalog_check,
     profile_availability_from_catalog,
     provider_options,
@@ -87,6 +101,90 @@ class SpeechCatalogMixin:
             An awaitable yielding the TTS service.
         """
         return get_tts_service()
+
+    @staticmethod
+    def _catalog_test_fingerprint(
+        service: object,
+        provider_id: str,
+        configuration_revision: int,
+    ) -> tuple[ProviderTestFingerprint, str] | None:
+        """Capture one saved catalog identity before provider work starts."""
+
+        saved_revision = getattr(service, "saved_configuration_revision", None)
+        if not callable(saved_revision):
+            return None
+        try:
+            revision = saved_revision(provider_id)
+            if revision != configuration_revision:
+                return None
+            values = get_runtime_config_snapshot().values
+            state = load_global_speech_tts_state(
+                values if isinstance(values, Mapping) else {}
+            )
+            fingerprint = build_provider_test_fingerprint(
+                state,
+                provider_id=provider_id,
+                saved_revision=revision,
+            )
+            base_url = state.providers[provider_id].get("base_url", "")
+            if type(base_url) is not str:
+                return None
+            return fingerprint, base_url
+        except Exception:  # noqa: BLE001 - catalog evidence is best effort
+            return None
+
+    async def _openai_catalog_test_state(
+        self,
+        captured: tuple[ProviderTestFingerprint, str] | None,
+    ) -> SpeechTTSConnectionState | None:
+        """Run the explicit OpenAI-compatible TTS catalog operation."""
+
+        if captured is None:
+            return None
+        _fingerprint, base_url = captured
+        outcome = await probe_settings_endpoint(
+            base_url,
+            provider="openai",
+            purpose=SettingsEndpointProbePurpose.TTS_CATALOG,
+        )
+        return SpeechTTSConnectionState(outcome.state)
+
+    def _record_catalog_test_state(
+        self,
+        service: object,
+        captured: tuple[ProviderTestFingerprint, str] | None,
+        state: SpeechTTSConnectionState | None,
+    ) -> None:
+        """Publish catalog evidence only while its saved identity is current."""
+
+        if captured is None or state is None:
+            return
+        fingerprint, base_url = captured
+        saved_revision = getattr(service, "saved_configuration_revision", None)
+        configuration_revision = getattr(service, "configuration_revision", None)
+        try:
+            if (
+                not callable(saved_revision)
+                or not callable(configuration_revision)
+                or saved_revision(fingerprint.provider_id)
+                != fingerprint.saved_revision
+                or configuration_revision(fingerprint.provider_id)
+                != fingerprint.saved_revision
+            ):
+                return
+            current = self._catalog_test_fingerprint(
+                service,
+                fingerprint.provider_id,
+                fingerprint.saved_revision,
+            )
+            if current != (fingerprint, base_url):
+                return
+            process_provider_test_evidence_store(self.app).record_catalog(
+                fingerprint,
+                state,
+            )
+        except Exception:  # noqa: BLE001 - evidence cannot fail catalog loading
+            return
 
     def _cli_setting(self, *args: Any, **kwargs: Any) -> Any:
         """Read a config setting.
@@ -280,6 +378,26 @@ class SpeechCatalogMixin:
             if preset is not None and preset.provider_id == provider_id:
                 self._profile_configuration_revision = configuration_revision
             self._set_provider_status("Loading selected provider models…")
+            catalog_test = self._catalog_test_fingerprint(
+                service,
+                provider_id,
+                configuration_revision,
+            )
+            catalog_test_state = (
+                await self._openai_catalog_test_state(catalog_test)
+                if provider_id == "openai"
+                else None
+            )
+            if catalog_test_state is not None:
+                if not self._catalog_token_is_current(token):
+                    if self._catalog_request_is_latest(token):
+                        self._mark_stale_catalog_result(token)
+                    return
+                self._record_catalog_test_state(
+                    service,
+                    catalog_test,
+                    catalog_test_state,
+                )
             catalog = await service.get_catalog(provider_id, refresh=refresh)
             if not self._catalog_token_is_current(token):
                 if self._catalog_request_is_latest(token):
@@ -291,7 +409,6 @@ class SpeechCatalogMixin:
                     "The selected provider returned an incompatible catalog",
                 )
                 return
-
             self._profile_preview_loading = False
             previous_catalog = self._catalogs.get(provider_id)
             if (
@@ -802,6 +919,51 @@ class SpeechCatalogMixin:
         self._set_provider_status(f"{display_name} settings changed; refresh models")
         self._sync_generate_enabled()
 
+    def _seeded_axis_value(self, axis: str, provider_id: str) -> str | None:
+        """Return the pane's seeded value for one axis, provider-guarded.
+
+        The host pane is seeded with the user's saved global/Studio axis
+        selection (`axis_values` for the session, `axis_defaults` for the
+        persisted default — see `_seed_axis_defaults`, which already applies
+        exact-mode-only and absence discipline). Legacy providers must
+        consult that seed before substituting the hardcoded catalog default,
+        or a saved exact custom selection (a custom OpenAI-compatible
+        endpoint's model/voice, TASK-15421) is silently replaced with
+        `tts-1`/`alloy`.
+
+        The seed is honoured only when it was saved for this provider —
+        axis values are scoped to the provider they were saved with, and
+        applying an OpenAI model name to another provider would mislabel
+        it as that provider's default.
+
+        Deliberately reads ``axis_defaults`` ONLY, never ``axis_values``:
+        the defaults are written once at construction from the saved
+        configuration, while the session values are mirrored from every
+        Select change — after a provider switch they transiently pair the
+        new provider id with the previous provider's still-displayed model
+        and voice, which would let stale carryover masquerade as a saved
+        custom selection. In-session explicit choices are already carried
+        by the per-provider control snapshots, not by this seed.
+
+        Args:
+            axis: The axis control id, e.g. ``"tts-model-select"``.
+            provider_id: Provider whose catalog is being applied.
+
+        Returns:
+            The saved default, or ``None`` when absent, blank, or saved
+            for a different provider. Hosts without axis defaults return
+            ``None``.
+        """
+        source = getattr(self, "axis_defaults", None)
+        if not isinstance(source, dict):
+            return None
+        if source.get("tts-provider-select") != provider_id:
+            return None
+        seeded = source.get(axis)
+        if isinstance(seeded, str) and seeded:
+            return seeded
+        return None
+
     def _apply_catalog(
         self,
         provider_id: str,
@@ -833,7 +995,10 @@ class SpeechCatalogMixin:
                         else None
                     )
                 else:
-                    selected_model = LEGACY_DEFAULT_MODELS.get(provider_id)
+                    selected_model = (
+                        self._seeded_axis_value("tts-model-select", provider_id)
+                        or LEGACY_DEFAULT_MODELS.get(provider_id)
+                    )
             selected_voice = snapshot.get("voice_id")
             if selected_voice is None:
                 if provider_id == AUDIO_CPP_PROVIDER_ID:
@@ -848,11 +1013,47 @@ class SpeechCatalogMixin:
                         else None
                     )
                 else:
-                    selected_voice = LEGACY_DEFAULT_VOICES.get(provider_id)
+                    selected_voice = (
+                        self._seeded_axis_value("tts-voice-select", provider_id)
+                        or LEGACY_DEFAULT_VOICES.get(provider_id)
+                    )
             selected_format = snapshot.get("response_format")
             if selected_format is None:
                 selected_format = self._cli_setting("app_tts", "default_format", None)
             speed = self._snapshot_speed(snapshot)
+            if provider_id == "openai":
+                # A custom (non-catalog) OpenAI id is pinned downstream
+                # (TASK-15421), so stale cross-provider carryover must be
+                # laundered HERE: on a provider switch the transient control
+                # snapshot can record the previous provider's still-displayed
+                # values under this provider's key, and the first-catalog
+                # fallback that used to clean those up no longer runs for
+                # openai. The only legitimate custom id is the provider-
+                # guarded seed — the playground offers no free-text entry.
+                catalog_model_ids = {model.model_id for model in catalog.models}
+                if (
+                    isinstance(selected_model, str)
+                    and selected_model not in catalog_model_ids
+                    and selected_model
+                    != self._seeded_axis_value("tts-model-select", provider_id)
+                ):
+                    selected_model = self._seeded_axis_value(
+                        "tts-model-select", provider_id
+                    ) or LEGACY_DEFAULT_MODELS.get(provider_id)
+                catalog_voice_ids = {
+                    voice
+                    for model in catalog.models
+                    for voice in model.voices
+                }
+                if (
+                    isinstance(selected_voice, str)
+                    and selected_voice not in catalog_voice_ids
+                    and selected_voice
+                    != self._seeded_axis_value("tts-voice-select", provider_id)
+                ):
+                    selected_voice = self._seeded_axis_value(
+                        "tts-voice-select", provider_id
+                    ) or LEGACY_DEFAULT_VOICES.get(provider_id)
         pending_voice = self._pending_voice_selections.get(provider_id)
         if pending_voice is not None and preset is None:
             selected_voice = pending_voice
@@ -910,6 +1111,19 @@ class SpeechCatalogMixin:
                 speed=speed,
             )
         if voice_choices is not None:
+            # This display-label projection must not clobber a custom voice
+            # `controls_from_catalog` pinned for a custom OpenAI-compatible
+            # endpoint (TASK-15421) -- carry the pin across the swap.
+            if (
+                provider_id == "openai"
+                and isinstance(controls.selected_voice_id, str)
+                and controls.selected_voice_id
+                not in {value for _label, value in voice_choices}
+            ):
+                voice_choices = (
+                    *voice_choices,
+                    pinned_no_catalog_check_option(controls.selected_voice_id),
+                )
             controls = replace(controls, voice_options=voice_choices)
         if preset is None and voice_discovery_pending and pending_voice is not None:
             model_changed = (
@@ -1553,7 +1767,10 @@ class SpeechCatalogMixin:
             )
             return
         artifact = getattr(state, "artifact", None)
-        if isinstance(artifact, STTSGeneratedAudio) and artifact.path.exists():
+        if (
+            type(artifact) is STTSPlaygroundResultProjection
+            and artifact.path.exists()
+        ):
             self._store_delivered_artifact(artifact, announce=False)
         active_operation_id = getattr(state, "active_operation_id", None)
         if getattr(state, "generation_active", False) and isinstance(

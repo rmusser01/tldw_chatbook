@@ -251,6 +251,12 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -301,6 +307,12 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         await pilot.pause()
 
         await pilot.click("#library-create-local-workspace")
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -343,6 +355,12 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = service.get_active_workspace()
@@ -518,12 +536,81 @@ async def test_library_create_workspace_notification_names_console_retarget() ->
         notifications: list[str] = []
         app.notify = lambda message, **kwargs: notifications.append(str(message))
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
         await pilot.pause(0.3)
 
         assert any(
             "made it active" in message and "Console" in message
             for message in notifications
         ), f"expected an activation-aware creation toast, got {notifications!r}"
+
+
+@pytest.mark.asyncio
+async def test_create_workspace_recomposes_after_activation_failure() -> None:
+    """Finding 2: activation failure must not skip the depth-state
+    invalidation, rail-scroll preservation, or recompose seam -- the
+    workspace WAS created (it just could not be switched to), so the rail
+    must still be rebuilt to show it exists.
+
+    Pinned by monkeypatching the real registry service's
+    set_active_workspace to raise, then spying on
+    LibraryScreen._invalidate_library_workspace_depth_state to prove the
+    seam is (or is not) reached.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        def _boom(workspace_id: str) -> None:
+            raise RuntimeError("simulated activation failure")
+
+        app.workspace_registry_service.set_active_workspace = _boom
+
+        invalidate_calls: list[bool] = []
+        original_invalidate = screen._invalidate_library_workspace_depth_state
+
+        def _tracking_invalidate() -> None:
+            invalidate_calls.append(True)
+            original_invalidate()
+
+        screen._invalidate_library_workspace_depth_state = _tracking_invalidate
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause(0.3)
+
+        # The workspace was created despite the activation failure.
+        created = [
+            workspace
+            for workspace in app.workspace_registry_service.list_workspaces()
+            if workspace.name == "Workspace 1"
+        ]
+        assert created, "workspace creation itself must have succeeded"
+
+        assert invalidate_calls, (
+            "activation failure must not skip the depth-state invalidation "
+            "and recompose seam -- the created workspace must still show "
+            "up in the rail"
+        )
+        assert any(
+            "could not be activated" in message for message in notifications
+        ), f"expected an activation-failure notice, got {notifications!r}"
 
 
 @pytest.mark.asyncio
@@ -571,9 +658,97 @@ async def test_create_workspace_preserves_rail_scroll() -> None:
         assert scrolled_to > 0
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
         await pilot.pause(0.6)
 
         rail = screen.query_one("#library-rail")
         assert float(rail.scroll_y) > 0, (
             "rail scroll reset to top after the create-workspace recompose"
         )
+
+
+@pytest.mark.asyncio
+async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate() -> (
+    None
+):
+    """TASK-15423: an eligible conversation hands off despite a blocked row.
+
+    The single-item actions used the aggregate `context_handoff_enabled`
+    (`blocked_count == 0` across ALL visible rows), so one
+    foreign-workspace item anywhere in the Library blocked "Open in
+    Console" for every conversation — including fully eligible ones the
+    same session had handed off before the foreign item appeared.
+    """
+    from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [{"title": "Workspace B research note", "id": "note-cross"}]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [{"title": "Workspace A chat", "id": "chat-local"}]
+    )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-a", name="Workspace A"
+    )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-b", name="Workspace B"
+    )
+    app.workspace_registry_service.set_active_workspace("workspace-a")
+    app.workspace_registry_service.link_membership(
+        "workspace-b",
+        item_type="note",
+        item_id="note-cross",
+        title="Workspace B research note",
+    )
+    app.workspace_registry_service.link_membership(
+        "workspace-a",
+        item_type="conversation",
+        item_id="chat-local",
+        title="Workspace A chat",
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        state = screen._library_workspace_depth_state(refresh=True)
+        for _ in range(100):
+            if state.source_rows:
+                break
+            await pilot.pause(0.05)
+            state = screen._library_workspace_depth_state(refresh=True)
+        assert state.source_rows, "library sources never loaded into the depth state"
+        assert state.context_handoff_enabled is False, (
+            "the seed must keep the aggregate gate closed for this test "
+            "to prove per-item gating"
+        )
+
+        payload = ChatHandoffPayload(
+            source="library",
+            item_type="conversation",
+            title="Workspace A chat",
+            body="Conversation: Workspace A chat",
+            source_id="chat-local",
+        )
+        screen._selected_conversation_handoff_payload = lambda: payload
+        staged: list = []
+        app.open_chat_with_handoff = (
+            lambda p, action_label="": staged.append((p, action_label))
+        )
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        screen._open_selected_conversation_handoff()
+
+        assert staged, (
+            "the eligible conversation must hand off; it was blocked by "
+            f"the aggregate gate instead: {notifications}"
+        )
+        assert staged[0][0] is payload

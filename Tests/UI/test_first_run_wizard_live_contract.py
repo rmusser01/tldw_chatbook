@@ -36,33 +36,75 @@ Two empirically-found traps drove the choices below:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import fields
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from textual.widgets import Button, Input, RadioButton, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    OptionList,
+    RadioButton,
+    RadioSet,
+    Static,
+)
 
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
     _test_cli_setting,
 )
-from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
-from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    FirstRunSetupWizard,
-    SetupWizardContainer,
-    _SettlingGuardedConfirmationDialog,
+from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    ConsoleFirstChatIntent,
+    HandoffChannel,
 )
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+    SETUP_COMPLETED_KEY,
+    SETUP_DRAFT_KEYS,
+    SETUP_STARTED_KEY,
+    STEP_APPEARANCE,
     STEP_MODEL,
+    STEP_NOTES,
+    STEP_PROTECT,
     STEP_PROVIDER,
     STEP_SUMMARY,
+    STEP_TOOLS,
+    STEP_VOICE,
     STEP_WELCOME,
+    TRACK_FULL,
     TRACK_QUICK,
     WIZARD_STATE_SECTION,
-    SETUP_STARTED_KEY,
+    FirstRunProviderDraft,
+    ProviderCredentialDraft,
+    build_first_run_model_discovery_key,
+)
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    FirstRunSetupWizard,
+    ModelStep,
+    NotesSyncStep,
+    ProviderStep,
+    SetupWizardContainer,
+    SpeechSetupStep,
+    ToolsStep,
+    VoiceSetupStep,
+    _SettlingGuardedConfirmationDialog,
 )
 
 
@@ -90,6 +132,25 @@ def _press(screen, selector: str) -> None:
     screen.query_one(selector, Button).press()
 
 
+def _capture_navigation_messages(monkeypatch, app) -> list[NavigateToScreen]:
+    messages: list[NavigateToScreen] = []
+    original_post_message = app.post_message
+
+    def capture(message):
+        if isinstance(message, NavigateToScreen):
+            messages.append(message)
+        return original_post_message(message)
+
+    monkeypatch.setattr(app, "post_message", capture)
+    return messages
+
+
+def _raising_compose_step(self):
+    """Generator-shaped compose helper that fails before yielding widgets."""
+    raise RuntimeError("sensitive compose detail")
+    yield  # pragma: no cover
+
+
 def _select_radio(screen, selector: str) -> None:
     """Select a RadioButton by selector (mirrors what a click toggles)."""
     screen.query_one(selector, RadioButton).value = True
@@ -104,6 +165,73 @@ def _build_fresh_wizard_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
     return app
+
+
+def _persist_complete_custom_provider_setup() -> None:
+    """Persist a credential-free provider/model pair through the real API."""
+
+    assert save_settings_to_cli_config(
+        {
+            "api_settings.custom": {
+                "api_url": "http://127.0.0.1:8080/v1",
+                "model": "model-a",
+            },
+            "chat_defaults": {"provider": "custom", "model": "model-a"},
+            WIZARD_STATE_SECTION: {
+                SETUP_STARTED_KEY: True,
+                SETUP_COMPLETED_KEY: True,
+            },
+        }
+    )
+
+
+def _live_first_chat_session_snapshot(
+    session: ConsoleChatSession,
+) -> dict[str, object]:
+    snapshot = {
+        item.name: deepcopy(getattr(session, item.name))
+        for item in fields(ConsoleChatSession)
+        if item.name not in {"rag_scope_holder", "todo_store"}
+    }
+    snapshot["rag_scope_holder"] = deepcopy(session.rag_scope_holder.scope)
+    snapshot["todo_store"] = deepcopy(session.todo_store.export_snapshot())
+    return snapshot
+
+
+def _live_console_projection(console: ChatScreen) -> dict[str, object]:
+    store = console._ensure_console_chat_store()
+    composer = console.query_one("#console-native-composer")
+    return {
+        "active_session_id": store.active_session_id,
+        "sessions": tuple(
+            _live_first_chat_session_snapshot(session)
+            for session in store.sessions()
+        ),
+        "provider_label": str(
+            console.query_one("#console-provider-label", Static).renderable
+        ),
+        "model_label": str(
+            console.query_one("#console-model-label", Static).renderable
+        ),
+        "tabs": tuple(
+            (
+                str(tab.id),
+                str(getattr(tab, "label", "")),
+                tuple(sorted(tab.classes)),
+            )
+            for tab in console.query(".console-session-tab")
+        ),
+        "composer_draft": composer.draft_text(),
+    }
+
+
+def _pending_first_chat(app) -> ConsoleFirstChatIntent | None:
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    if claim is None:
+        return None
+    value = claim.value
+    app.pending_handoffs.release(claim)
+    return value if isinstance(value, ConsoleFirstChatIntent) else None
 
 
 async def _open_settings_diagnostics(pilot) -> None:
@@ -155,13 +283,13 @@ async def test_fresh_config_splash_disabled_wizard_auto_offers(
 
 
 # ---------------------------------------------------------------------------
-# 2. Esc -> confirm -> Finish later -> dismissed; next boot shows the resume
+# 2. Mid-flow Esc -> confirm -> Exit setup -> next boot shows recovery
 #    toast instead of re-pushing (checklist item 4).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_escape_finish_later_dismisses_and_next_boot_resumes_via_toast(
+async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
@@ -173,6 +301,20 @@ async def test_escape_finish_later_dismisses_and_next_boot_resumes_via_toast(
             )
             await pilot.pause(0.2)
 
+            _press(app.screen, "#wizard-next")
+            await pilot.pause(0.2)
+            assert (
+                app.screen.query_one(SetupWizardContainer)
+                .steps[
+                    app.screen.query_one(SetupWizardContainer).current_step
+                ]
+                .config.id
+                == STEP_PROVIDER
+            )
+            assert str(app.screen.query_one("#wizard-cancel", Button).label) == (
+                "Exit setup"
+            )
+
             await pilot.press("escape")
             await pilot.pause(0.2)
             # The confirm dialog is on top; the wizard must still be mounted.
@@ -182,12 +324,15 @@ async def test_escape_finish_later_dismisses_and_next_boot_resumes_via_toast(
             # `isinstance` captures the real contract (a confirm dialog is
             # up) without pinning to the exact subclass name.
             assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
-            _press(app.screen, "#confirm-button")  # confirm_label="Finish later"
+            assert str(app.screen.query_one("#confirm-button", Button).label) == (
+                "Exit setup"
+            )
+            _press(app.screen, "#confirm-button")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
             # Dismissed back onto whatever was underneath (Home), not
-            # navigated anywhere -- Escape/Finish-later carries no exit route.
+            # navigated anywhere -- Exit setup carries no exit route.
             assert app.current_tab == "home"
 
             # The started flag is persisted by a `@work(thread=True)` worker
@@ -215,32 +360,1308 @@ async def test_escape_finish_later_dismisses_and_next_boot_resumes_via_toast(
     )
 
     # Next boot: a fresh TldwCli instance reading that SAME real persisted
-    # state (setup_started True, setup_completed absent) must show the
-    # resume toast and must NOT re-push the wizard.
+    # checkpoint must offer bounded recovery and must NOT directly re-push
+    # the wizard.
     app2 = _build_test_app(first_run_setup_completed=False)
     app2.app_config = persisted_config
     app2._initial_tab_value = "chat"
-
-    notifications: list[dict] = []
-
-    def record_notify(message, *args, **kwargs):
-        notifications.append({"message": str(message), "severity": kwargs.get("severity")})
-
-    monkeypatch.setattr(app2, "notify", record_notify)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app2.run_test(size=(140, 40)) as pilot2:
             await _wait_until(
                 pilot2,
-                lambda: getattr(app2, "_initial_screen_pushed", False) is True,
+                lambda: type(app2.screen).__name__ == "SetupRecoveryDialog",
             )
-            await pilot2.pause(0.3)
             assert type(app2.screen).__name__ != "FirstRunSetupWizard"
-            assert any(
-                "Finish setup" in note["message"]
-                or "Settings" in note["message"]
-                for note in notifications
-            ), notifications
+            assert app2.current_tab == "home"
+
+
+@pytest.mark.asyncio
+async def test_recovery_dialog_has_exact_labels_initial_focus_and_credential_reentry():
+    from textual.app import App
+    from tldw_chatbook.UI.Wizards.first_run_recovery_dialog import SetupRecoveryDialog
+
+    class RecoveryHost(App):
+        def on_mount(self):
+            self.push_screen(SetupRecoveryDialog())
+
+    app = RecoveryHost()
+    async with app.run_test(size=(60, 20)):
+        dialog = app.screen
+        buttons = {
+            button.id.removeprefix("setup-recovery-"): button
+            for button in dialog.query(Button)
+        }
+
+        assert {action: str(button.label) for action, button in buttons.items()} == {
+            "resume": "Resume",
+            "start_over": "Start over",
+            "later": "Later",
+        }
+        assert app.focused is buttons["resume"]
+        assert "credentials" in dialog.message.lower()
+        assert "not retained" in dialog.message.lower()
+        assert "re-enter" in dialog.message.lower()
+        assert dialog.query_one("Container").region.width <= app.size.width
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("interaction", "expected"),
+    [("enter", "resume"), ("escape", "later"), ("start_over", "start_over")],
+)
+async def test_recovery_dialog_keyboard_and_button_actions(interaction, expected):
+    from textual.app import App
+    from tldw_chatbook.UI.Wizards.first_run_recovery_dialog import SetupRecoveryDialog
+
+    results = []
+
+    class RecoveryHost(App):
+        def on_mount(self):
+            self.push_screen(SetupRecoveryDialog(), results.append)
+
+    app = RecoveryHost()
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        if interaction == "start_over":
+            app.screen.query_one("#setup-recovery-start_over", Button).press()
+        else:
+            await pilot.press(interaction)
+        await _wait_until(pilot, lambda: bool(results))
+
+    assert results == [expected]
+
+
+@pytest.mark.asyncio
+async def test_successful_step_checkpoints_once_after_commit_before_navigation():
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_PROVIDER
+
+    events: list[str] = []
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    step = container.steps[container._step_index_for_id(STEP_PROVIDER)]
+
+    async def commit():
+        events.append("commit")
+        return True, ""
+
+    step.commit = commit
+    step.get_step_data = lambda: {"provider_value": "openai"}
+    container.current_step = container._step_index_for_id(STEP_PROVIDER)
+    container.wizard_data = {}
+    container.track = TRACK_QUICK
+    container.active_ids = (STEP_PROVIDER, STEP_MODEL)
+    container._set_advancing = lambda active: None
+    container._next_active_index = lambda current: container._step_index_for_id(STEP_MODEL)
+    container.show_step = lambda index: events.append("navigate")
+
+    async def checkpoint(next_step_id):
+        events.append(f"checkpoint:{next_step_id}")
+        return True
+
+    container.persist_setup_checkpoint = checkpoint
+
+    await container._advance()
+
+    assert events == ["commit", f"checkpoint:{STEP_MODEL}", "navigate"]
+
+
+@pytest.mark.asyncio
+async def test_failed_step_commit_does_not_checkpoint_or_navigate():
+    events: list[str] = []
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    step = container.steps[container._step_index_for_id(STEP_PROVIDER)]
+
+    async def commit():
+        events.append("commit")
+        return False, "save failed"
+
+    step.commit = commit
+    step.get_step_data = lambda: {"provider_value": "openai"}
+    step.show_step_error = lambda message: events.append("error")
+    container.current_step = container._step_index_for_id(STEP_PROVIDER)
+    container.wizard_data = {}
+    container.track = TRACK_QUICK
+    container._set_advancing = lambda active: None
+
+    async def checkpoint(next_step_id):
+        events.append("checkpoint")
+        return True
+
+    container.persist_setup_checkpoint = checkpoint
+    container.show_step = lambda index: events.append("navigate")
+
+    await container._advance()
+
+    assert events == ["commit", "error"]
+
+
+@pytest.mark.asyncio
+async def test_completion_marks_complete_and_clears_draft_atomically():
+    calls = []
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    container._finalized = False
+    container._dismiss_screen = lambda result: calls.append(("dismiss", result))
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        calls.append(("commit", settings, delete_keys))
+        return True
+
+    container.commit_config = commit_config
+
+    await container._finalize(None)
+
+    assert calls[0] == (
+        "commit",
+        {"first_run": {SETUP_COMPLETED_KEY: True}},
+        {"first_run": SETUP_DRAFT_KEYS},
+    )
+    assert calls[1][0] == "dismiss"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["finish", "skip"])
+async def test_completion_write_failure_keeps_wizard_open_and_retains_draft(operation):
+    events = []
+    retained_draft = object()
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    container._finalized = False
+    container.resume_draft = retained_draft
+    container.current_step = 0
+    container.steps[0].show_step_error = lambda message: events.append(
+        ("error", message)
+    )
+    container._dismiss_screen = lambda result: events.append(("dismiss", result))
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        events.append(("commit", settings, delete_keys))
+        return False
+
+    container.commit_config = commit_config
+
+    if operation == "finish":
+        await container._finalize("chat")
+    else:
+        await container._skip_entirely()
+
+    assert [event[0] for event in events] == ["commit", "error"]
+    assert "could not be saved" in events[1][1].lower()
+    assert container._finalized is False
+    assert container.resume_draft is retained_draft
+
+
+def _draft_mutation_race_container():
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    app_instance = SimpleNamespace(app_config=_attempted_model_resume_config())
+    draft = read_setup_draft(app_instance.app_config)
+    assert draft is not None
+    container = SetupWizardContainer(app_instance, resume_draft=draft)
+    clear_write_started = asyncio.Event()
+    release_clear_write = asyncio.Event()
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        first_run = settings.get("first_run", {})
+        if set(first_run) == {"resume_attempted"}:
+            clear_write_started.set()
+            await release_clear_write.wait()
+        container._mirror_into_app_config(settings, delete_keys)
+        return True
+
+    container.commit_config = commit_config
+    return container, clear_write_started, release_clear_write
+
+
+@pytest.mark.asyncio
+async def test_marker_clear_serializes_with_newer_next_step_checkpoint():
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    container, clear_started, release_clear = _draft_mutation_race_container()
+    clear_task = asyncio.create_task(container.clear_resume_attempt(STEP_MODEL))
+    await asyncio.wait_for(clear_started.wait(), timeout=1.0)
+    container.wizard_data = {
+        STEP_WELCOME: {"track": "quick"},
+        STEP_PROVIDER: {"provider_key": "openai", "provider_value": "openai"},
+        STEP_MODEL: {"model_id": "newest-model"},
+    }
+    checkpoint_task = asyncio.create_task(
+        container.persist_setup_checkpoint(STEP_SUMMARY)
+    )
+    await asyncio.sleep(0)
+    assert checkpoint_task.done() is False
+
+    release_clear.set()
+    assert await clear_task is True
+    assert await checkpoint_task is True
+
+    newest = read_setup_draft(container.app_instance.app_config)
+    assert newest is not None
+    assert newest.active_step_id == STEP_SUMMARY
+    assert newest.values[STEP_MODEL] == {"model_id": "newest-model"}
+    assert newest.resume_attempted is False
+
+
+@pytest.mark.asyncio
+async def test_marker_clear_serializes_with_finish_later_checkpoint():
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    container, clear_started, release_clear = _draft_mutation_race_container()
+    clear_task = asyncio.create_task(container.clear_resume_attempt(STEP_MODEL))
+    await asyncio.wait_for(clear_started.wait(), timeout=1.0)
+    container.current_step = container._step_index_for_id(STEP_MODEL)
+    container.wizard_data = {
+        STEP_WELCOME: {"track": "quick"},
+        STEP_PROVIDER: {"provider_key": "openai", "provider_value": "openai"},
+        STEP_MODEL: {"model_id": "finish-later-model"},
+    }
+    finish_later_task = asyncio.create_task(container.persist_current_checkpoint())
+    await asyncio.sleep(0)
+    assert finish_later_task.done() is False
+
+    release_clear.set()
+    assert await clear_task is True
+    assert await finish_later_task is True
+
+    newest = read_setup_draft(container.app_instance.app_config)
+    assert newest is not None
+    assert newest.active_step_id == STEP_MODEL
+    assert newest.values[STEP_MODEL] == {"model_id": "finish-later-model"}
+    assert newest.resume_attempted is False
+
+
+@pytest.mark.asyncio
+async def test_marker_clear_serializes_with_completion_delete():
+    container, clear_started, release_clear = _draft_mutation_race_container()
+    container._finalized = False
+    container._dismiss_screen = MagicMock()
+    clear_task = asyncio.create_task(container.clear_resume_attempt(STEP_MODEL))
+    await asyncio.wait_for(clear_started.wait(), timeout=1.0)
+    completion_task = asyncio.create_task(container._finalize(None))
+    await asyncio.sleep(0)
+    assert completion_task.done() is False
+
+    release_clear.set()
+    assert await clear_task is True
+    await completion_task
+
+    first_run = container.app_instance.app_config["first_run"]
+    assert first_run[SETUP_COMPLETED_KEY] is True
+    assert not (set(first_run) & set(SETUP_DRAFT_KEYS))
+    container._dismiss_screen.assert_called_once()
+
+
+def _completion_first_race_container():
+    container, _, _ = _draft_mutation_race_container()
+    completion_write_applied = asyncio.Event()
+    release_completion_write = asyncio.Event()
+    writes = []
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        writes.append((settings, delete_keys))
+        container._mirror_into_app_config(settings, delete_keys)
+        first_run = settings.get(WIZARD_STATE_SECTION, {})
+        if first_run.get(SETUP_COMPLETED_KEY) is True:
+            completion_write_applied.set()
+            await release_completion_write.wait()
+        return True
+
+    container.commit_config = commit_config
+    container._finalized = False
+    container._dismiss_screen = MagicMock()
+    return container, completion_write_applied, release_completion_write, writes
+
+
+@pytest.mark.asyncio
+async def test_completed_setup_seals_queued_next_step_checkpoint():
+    container, completion_applied, release_completion, writes = (
+        _completion_first_race_container()
+    )
+    container.wizard_data = {
+        STEP_WELCOME: {"track": "quick"},
+        STEP_PROVIDER: {"provider_key": "openai", "provider_value": "openai"},
+        STEP_MODEL: {"model_id": "queued-model"},
+    }
+
+    completion_task = asyncio.create_task(container._finalize(None))
+    await asyncio.wait_for(completion_applied.wait(), timeout=1.0)
+    checkpoint_task = asyncio.create_task(
+        container.persist_setup_checkpoint(STEP_SUMMARY)
+    )
+    await asyncio.sleep(0)
+    assert checkpoint_task.done() is False
+
+    release_completion.set()
+    await completion_task
+    assert await checkpoint_task is False
+
+    first_run = container.app_instance.app_config[WIZARD_STATE_SECTION]
+    assert first_run[SETUP_COMPLETED_KEY] is True
+    assert not (set(first_run) & set(SETUP_DRAFT_KEYS))
+    assert len(writes) == 1
+    container._dismiss_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_completed_setup_seals_queued_finish_later_checkpoint():
+    container, completion_applied, release_completion, writes = (
+        _completion_first_race_container()
+    )
+    container.current_step = container._step_index_for_id(STEP_MODEL)
+    container.wizard_data = {
+        STEP_WELCOME: {"track": "quick"},
+        STEP_PROVIDER: {"provider_key": "openai", "provider_value": "openai"},
+        STEP_MODEL: {"model_id": "finish-later-queued-model"},
+    }
+
+    completion_task = asyncio.create_task(container._finalize(None))
+    await asyncio.wait_for(completion_applied.wait(), timeout=1.0)
+    finish_later_task = asyncio.create_task(container.persist_current_checkpoint())
+    await asyncio.sleep(0)
+    assert finish_later_task.done() is False
+
+    release_completion.set()
+    await completion_task
+    assert await finish_later_task is False
+
+    first_run = container.app_instance.app_config[WIZARD_STATE_SECTION]
+    assert first_run[SETUP_COMPLETED_KEY] is True
+    assert not (set(first_run) & set(SETUP_DRAFT_KEYS))
+    assert len(writes) == 1
+    container._dismiss_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_completion_does_not_seal_draft_mutations_and_can_retry():
+    container, _, _ = _draft_mutation_race_container()
+    save_results = iter((False, True))
+    writes = []
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        writes.append((settings, delete_keys))
+        saved = next(save_results)
+        if saved:
+            container._mirror_into_app_config(settings, delete_keys)
+        return saved
+
+    container.commit_config = commit_config
+    container._finalized = False
+    container._dismiss_screen = MagicMock()
+
+    await container._finalize(None)
+    assert container._draft_mutations_terminal is False
+    container._dismiss_screen.assert_not_called()
+
+    await container._finalize(None)
+    assert container._draft_mutations_terminal is True
+    first_run = container.app_instance.app_config[WIZARD_STATE_SECTION]
+    assert first_run[SETUP_COMPLETED_KEY] is True
+    assert not (set(first_run) & set(SETUP_DRAFT_KEYS))
+    assert len(writes) == 2
+    container._dismiss_screen.assert_called_once()
+
+
+@pytest.mark.parametrize("save_result", [False, RuntimeError("private-value")])
+def test_started_flag_mirrors_only_after_success_and_logs_bounded_failure(
+    monkeypatch, save_result
+):
+    from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+
+    app_instance = SimpleNamespace(app_config={"first_run": {"unrelated": "keep"}})
+    screen = SimpleNamespace(app_instance=app_instance)
+    warning = MagicMock()
+
+    def save(*args, **kwargs):
+        if isinstance(save_result, Exception):
+            raise save_result
+        return save_result
+
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+    monkeypatch.setattr(wizard_module.logger, "warning", warning)
+
+    FirstRunSetupWizard._persist_started_flag.__wrapped__(screen)
+
+    assert app_instance.app_config["first_run"] == {"unrelated": "keep"}
+    warning.assert_called_once()
+    rendered_log = repr(warning.call_args)
+    assert "category=persistence" in rendered_log
+    assert "private-value" not in rendered_log
+
+
+def test_prompt_branch_returns_true_to_defer_lower_priority_startup_offers(
+    monkeypatch,
+):
+    """Finding 3 (final review 2026-08-17): the recovery-dialog "prompt"
+    branch must also return True from ``_maybe_offer_first_run_wizard`` --
+    app.py only defers the lower-priority project-.SKILLS import offer when
+    this method returns True (see the ``if not wizard_offered:`` call site),
+    so previously only the wizard's own "offer" branch stopped the skills
+    offer from stacking on top of a just-pushed screen; the "prompt" branch
+    (``SetupRecoveryDialog``) did not, letting the skills modal stack on
+    top of the recovery dialog.
+    """
+    from tldw_chatbook.app import TldwCli
+    import tldw_chatbook.UI.Wizards.first_run_setup_state as state_module
+
+    monkeypatch.setattr(
+        state_module, "setup_recovery_action", lambda app_config, environ: "prompt"
+    )
+
+    scheduled: list = []
+    fake = SimpleNamespace(app_config={}, _first_run_startup_action_scheduled=False)
+    fake.call_after_refresh = lambda cb: scheduled.append(cb)
+    fake._push_first_run_recovery_dialog = lambda: None
+
+    result = TldwCli._maybe_offer_first_run_wizard(fake)
+
+    assert result is True
+    assert fake._first_run_startup_action_scheduled is True
+    assert scheduled == [fake._push_first_run_recovery_dialog]
+
+
+@pytest.mark.asyncio
+async def test_resume_marks_attempt_before_pushing_restored_wizard(monkeypatch):
+    from tldw_chatbook.app import TldwCli
+
+    app_config = {
+        "first_run": {
+            "setup_started": True,
+            "draft_version": 1,
+            "draft_track": "quick",
+            "active_step_id": "model",
+            "draft_values": {
+                "welcome": {"track": "quick"},
+                "provider": {"provider_value": "openai"},
+            },
+            "resume_attempted": False,
+        }
+    }
+    events = []
+    fake = SimpleNamespace(app_config=app_config)
+    fake._mirror_first_run_setup_mutation = lambda settings, deletes: events.append(
+        ("mirror", settings, deletes)
+    )
+    fake._handle_first_run_wizard_result = lambda result: None
+    fake.push_screen = lambda screen, callback: events.append(("push", screen, callback))
+
+    def save(settings, *, delete_keys=None):
+        events.append(("save", settings, delete_keys))
+        return True
+
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+
+    await TldwCli._apply_first_run_recovery_result(fake, "resume")
+
+    assert [event[0] for event in events] == ["save", "mirror", "push"]
+    assert events[0][1]["first_run"]["resume_attempted"] is True
+    pushed_wizard = events[2][1]
+    assert pushed_wizard.resume_draft.active_step_id == STEP_MODEL
+    assert pushed_wizard.resume_draft.resume_attempted is True
+    assert pushed_wizard.resume_draft.values["provider"] == {
+        "provider_value": "openai"
+    }
+
+
+@pytest.mark.asyncio
+async def test_start_over_deletes_only_draft_keys_and_pushes_clean_wizard(monkeypatch):
+    from tldw_chatbook.app import TldwCli
+
+    fake = SimpleNamespace(
+        app_config={
+            "first_run": {
+                "setup_started": True,
+                "setup_completed": False,
+                "unrelated": "keep",
+                **{key: "stale" for key in SETUP_DRAFT_KEYS},
+            }
+        }
+    )
+    events = []
+    fake._mirror_first_run_setup_mutation = lambda settings, deletes: (
+        TldwCli._mirror_first_run_setup_mutation(fake, settings, deletes)
+    )
+    fake._handle_first_run_wizard_result = lambda result: None
+    fake.push_screen = lambda screen, callback: events.append((screen, callback))
+
+    mutations = []
+
+    def save(settings, *, delete_keys=None):
+        mutations.append((settings, delete_keys))
+        return True
+
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+
+    await TldwCli._apply_first_run_recovery_result(fake, "start_over")
+
+    assert mutations == [({}, {"first_run": SETUP_DRAFT_KEYS})]
+    assert fake.app_config["first_run"] == {
+        "setup_started": True,
+        "setup_completed": False,
+        "unrelated": "keep",
+    }
+    assert len(events) == 1
+    assert events[0][0].resume_draft is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_later_performs_no_mutation_or_push(monkeypatch):
+    from tldw_chatbook.app import TldwCli
+
+    fake = SimpleNamespace(app_config={})
+    fake.push_screen = MagicMock()
+    save = MagicMock()
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+
+    await TldwCli._apply_first_run_recovery_result(fake, "later")
+
+    save.assert_not_called()
+    fake.push_screen.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_failure", [False, RuntimeError("save-failed")])
+async def test_recovery_save_failure_reprompts_then_succeeds_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, first_failure
+):
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    app.app_config["first_run"]["resume_attempted"] = False
+    app._initial_tab_value = "chat"
+    save_attempts = 0
+
+    def save(settings, *, delete_keys=None):
+        nonlocal save_attempts
+        save_attempts += 1
+        if save_attempts == 1:
+            if isinstance(first_failure, Exception):
+                raise first_failure
+            return first_failure
+        return True
+
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "SetupRecoveryDialog"
+            )
+            _press(app.screen, "#setup-recovery-resume")
+            await _wait_until(pilot, lambda: save_attempts == 1)
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "SetupRecoveryDialog"
+            )
+            assert save_attempts == 1
+            assert sum(
+                type(screen).__name__ == "SetupRecoveryDialog"
+                for screen in app.screen_stack
+            ) == 1
+
+            _press(app.screen, "#setup-recovery-resume")
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+
+            assert save_attempts >= 2
+            assert sum(
+                type(screen).__name__ == "FirstRunSetupWizard"
+                for screen in app.screen_stack
+            ) == 1
+            assert not any(
+                type(screen).__name__ == "SetupRecoveryDialog"
+                for screen in app.screen_stack
+            )
+
+
+def _attempted_model_resume_config():
+    return {
+        "first_run": {
+            "setup_started": True,
+            "setup_completed": False,
+            "draft_version": 1,
+            "draft_track": "quick",
+            "active_step_id": "model",
+            "draft_values": {
+                "welcome": {"track": "quick"},
+                "provider": {
+                    "provider_key": "openai",
+                    "provider_value": "openai",
+                },
+            },
+            "resume_attempted": True,
+        }
+    }
+
+
+def _attempted_full_appearance_resume_config():
+    return {
+        "first_run": {
+            "setup_started": True,
+            "setup_completed": False,
+            "draft_version": 1,
+            "draft_track": "full",
+            "active_step_id": "appearance",
+            "draft_values": {
+                "welcome": {"track": "full"},
+                "provider": {
+                    "provider_key": "openai",
+                    "provider_value": "openai",
+                },
+                "model": {"model_id": "gpt-resume-test"},
+                "appearance": {
+                    "theme": "textual-light",
+                    "splash_card": "",
+                },
+                "protect-keys": {"encryption_enabled": True},
+            },
+            "resume_attempted": True,
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_sparse_model_resume_preserves_persisted_prefill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "persisted-prefill-model",
+    }
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None and STEP_MODEL not in draft.values
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one(SetupWizardContainer)
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                .config.id
+                == STEP_MODEL,
+            )
+            model_step = app.screen.query_one(SetupWizardContainer).steps[
+                app.screen.query_one(SetupWizardContainer)._step_index_for_id(STEP_MODEL)
+            ]
+            assert model_step.get_step_data() == {
+                "model_id": "persisted-prefill-model"
+            }
+            assert (
+                model_step.query_one("#setup-model-custom", Input).value
+                == "persisted-prefill-model"
+            )
+
+
+@pytest.mark.asyncio
+async def test_sparse_appearance_resume_preserves_persisted_theme(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_full_appearance_resume_config()
+    app.app_config["first_run"]["draft_values"].pop(STEP_APPEARANCE)
+    app.app_config["general"] = {"default_theme": "textual-light"}
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None and STEP_APPEARANCE not in draft.values
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one(SetupWizardContainer)
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                .config.id
+                == STEP_APPEARANCE,
+            )
+            appearance = app.screen.query_one(SetupWizardContainer).steps[
+                app.screen.query_one(SetupWizardContainer)._step_index_for_id(
+                    STEP_APPEARANCE
+                )
+            ]
+            assert appearance.selected_theme == "textual-light"
+            assert [
+                getattr(button, "_theme_name", "")
+                for button in appearance.query("#setup-theme-choice RadioButton")
+                if button.value
+            ] == ["textual-light"]
+
+
+@pytest.mark.asyncio
+async def test_partial_appearance_restore_preserves_absent_splash_sibling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from dataclasses import replace
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_full_appearance_resume_config()
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one(SetupWizardContainer)
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                .config.id
+                == STEP_APPEARANCE,
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            appearance = container.steps[
+                container._step_index_for_id(STEP_APPEARANCE)
+            ]
+            splash_buttons = [
+                button
+                for button in appearance.query("#setup-splash-choice RadioButton")
+                if not str(button.label).startswith("Surprise me")
+            ]
+            assert splash_buttons
+            retained_splash = splash_buttons[0]
+            retained_splash.value = True
+            appearance.selected_splash_card = str(retained_splash.label)
+            partial_values = dict(draft.values)
+            partial_values[STEP_APPEARANCE] = {"theme": "textual-dark"}
+            partial = replace(draft, values=partial_values)
+
+            assert container._restore_resume_controls(partial) is True
+
+            assert appearance.selected_theme == "textual-dark"
+            assert appearance.selected_splash_card == str(retained_splash.label)
+            assert retained_splash.value is True
+
+
+@pytest.mark.asyncio
+async def test_resumed_target_restores_then_clears_attempt_after_mount(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_full_appearance_resume_config()
+    app._initial_tab_value = "chat"
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                and app.screen.query_one(SetupWizardContainer)
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                .config.id
+                == "appearance",
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            assert container.track == "full"
+            assert container.wizard_data[STEP_PROVIDER]["provider_value"] == "openai"
+            assert app.screen.query_one("#setup-track-full", RadioButton).value is True
+            assert app.screen.query_one("#setup-track-quick", RadioButton).value is False
+
+            provider_step = container.steps[container._step_index_for_id(STEP_PROVIDER)]
+            assert provider_step.selected_provider_key == "openai"
+            provider_choice = provider_step.query_one(
+                "#setup-provider-choice", OptionList
+            )
+            assert provider_choice.highlighted_option.provider_key == "openai"
+
+            model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+            assert model_step.selected_model_id == "gpt-resume-test"
+            assert (
+                model_step.query_one("#setup-model-custom", Input).value
+                == "gpt-resume-test"
+            )
+            notes_step = container.steps[container._step_index_for_id(STEP_NOTES)]
+            assert notes_step.get_step_data() == {}
+            assert not notes_step.query("#setup-notes-enable")
+
+            appearance_step = container.steps[
+                container._step_index_for_id(STEP_APPEARANCE)
+            ]
+            assert appearance_step.get_step_data() == {
+                "theme": "textual-light",
+                "splash_card": "",
+            }
+            selected_themes = [
+                getattr(button, "_theme_name", "")
+                for button in appearance_step.query("#setup-theme-choice RadioButton")
+                if button.value
+            ]
+            assert selected_themes == ["textual-light"]
+            selected_splash = [
+                str(button.label)
+                for button in appearance_step.query("#setup-splash-choice RadioButton")
+                if button.value
+            ]
+            assert selected_splash == ["Surprise me (random)"]
+
+            protect_step = container.steps[
+                container._step_index_for_id(STEP_PROTECT)
+            ]
+            assert protect_step.get_step_data() == {"encryption_enabled": True}
+            assert "Encryption enabled" in str(
+                protect_step.query_one("#setup-protect-status", Static).renderable
+            )
+            await _wait_until(
+                pilot,
+                lambda: app.app_config["first_run"]["resume_attempted"] is False,
+            )
+
+
+@pytest.mark.asyncio
+async def test_resume_control_restore_failure_keeps_attempt_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+
+    def fail_restore(*args, **kwargs):
+        raise RuntimeError("control-value-must-not-log")
+
+    monkeypatch.setattr(SetupWizardContainer, "_restore_radio_selection", fail_restore)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await pilot.pause(0.3)
+
+            assert app.app_config["first_run"]["resume_attempted"] is True
+
+
+def test_resume_target_mount_failure_log_is_value_free_and_does_not_clear(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import SetupDraft
+
+    draft = SetupDraft(
+        version=1,
+        track="quick",
+        active_step_id=STEP_MODEL,
+        values={"model": {"model_id": "draft-private-model-value"}},
+        resume_attempted=True,
+    )
+    target = SimpleNamespace(config=SimpleNamespace(id=STEP_MODEL), compose_failed=False)
+    screen = SimpleNamespace(call_after_refresh=MagicMock())
+    warning = MagicMock()
+
+    def fail_show_step(index):
+        raise RuntimeError("exception-private-value")
+
+    container = SimpleNamespace(
+        resume_draft=draft,
+        active_ids=(STEP_MODEL,),
+        steps=[target],
+        screen=screen,
+        _restore_resume_controls=lambda candidate: True,
+        _step_index_for_id=lambda step_id: 0,
+        show_step=fail_show_step,
+    )
+    monkeypatch.setattr(wizard_module.logger, "warning", warning)
+
+    SetupWizardContainer._restore_resume_target(container)
+
+    warning.assert_called_once()
+    rendered_log = repr(warning.call_args)
+    assert "category=mount" in rendered_log
+    assert STEP_MODEL not in rendered_log
+    assert "draft-private-model-value" not in rendered_log
+    assert "exception-private-value" not in rendered_log
+    assert draft.resume_attempted is True
+    screen.call_after_refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resume_target_change_before_after_refresh_keeps_attempt_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+    callbacks = []
+    wizard = FirstRunSetupWizard(app, resume_draft=draft)
+    original_call_after_refresh = wizard.call_after_refresh
+
+    def capture_resume_callback(callback, *args):
+        if callback.__name__ == "_clear_resume_attempt_after_target_mount":
+            callbacks.append((callback, args))
+            return True
+        return original_call_after_refresh(callback, *args)
+
+    wizard.call_after_refresh = capture_resume_callback
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(wizard)
+            await _wait_until(pilot, lambda: bool(callbacks))
+            container = wizard.query_one(SetupWizardContainer)
+            container.show_step(container._step_index_for_id(STEP_WELCOME))
+            scheduled = []
+            wizard.run_worker = lambda awaitable, **kwargs: scheduled.append(awaitable)
+
+            callback, args = callbacks.pop()
+            assert callback.__name__ == "_clear_resume_attempt_after_target_mount"
+            callback(*args)
+            if scheduled:
+                await scheduled.pop()
+            await pilot.pause(0.2)
+
+            assert app.app_config["first_run"]["resume_attempted"] is True
+
+
+@pytest.mark.asyncio
+async def test_failed_resumed_mount_leaves_attempt_and_next_launch_on_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        read_setup_draft,
+        setup_recovery_action,
+    )
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    app._initial_tab_value = "chat"
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+
+    def fail_model_compose(self):
+        raise RuntimeError("bounded test mount failure")
+
+    monkeypatch.setattr(ModelStep, "compose_step", fail_model_compose)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "FirstRunSetupWizard",
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            model = container.steps[container._step_index_for_id(STEP_MODEL)]
+            await _wait_until(pilot, lambda: model.compose_failed)
+            await pilot.pause(0.2)
+            assert app.app_config["first_run"]["resume_attempted"] is True
+
+    assert setup_recovery_action(app.app_config, {}) == "home"
+
+    app2 = _build_test_app(first_run_setup_completed=False)
+    app2.app_config = app.app_config
+    app2._initial_tab_value = "chat"
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app2.run_test(size=(120, 40)) as pilot2:
+            await _wait_until(
+                pilot2, lambda: getattr(app2, "_initial_screen_pushed", False) is True
+            )
+            await pilot2.pause(0.2)
+            assert app2.current_tab == TAB_HOME
+            assert type(app2.screen).__name__ not in {
+                "FirstRunSetupWizard",
+                "SetupRecoveryDialog",
+            }
+
+
+@pytest.mark.asyncio
+async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+    navigation_messages = _capture_navigation_messages(monkeypatch, app)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
+
+            navigation_messages.clear()
+            _press(app.screen, "#setup-step-manual")
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "SettingsScreen"
+                and app.current_tab == "settings",
+            )
+            await _wait_until(
+                pilot,
+                lambda: getattr(app.screen, "active_category", None)
+                == "providers-models",
+            )
+
+            first_run = app.app_config[WIZARD_STATE_SECTION]
+            assert first_run.get(SETUP_COMPLETED_KEY) is not True
+            draft = read_setup_draft(app.app_config)
+            assert draft is not None
+            assert draft.active_step_id == STEP_PROVIDER
+            assert draft.values[STEP_WELCOME] == {"track": TRACK_QUICK}
+            assert len(navigation_messages) == 1
+            assert navigation_messages[0].screen_name == "settings"
+            assert navigation_messages[0].screen_context == {
+                "category": "providers-models"
+            }
+
+
+@pytest.mark.parametrize(
+    ("step_type", "step_id"),
+    ((ToolsStep, STEP_TOOLS), (NotesSyncStep, STEP_NOTES)),
+)
+@pytest.mark.asyncio
+async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    step_type,
+    step_id: str,
+) -> None:
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=True)
+    app._initial_tab_value = "home"
+    monkeypatch.setattr(step_type, "compose_step", _raising_compose_step)
+    results: list[dict[str, object]] = []
+    navigation_messages = _capture_navigation_messages(monkeypatch, app)
+
+    def handle_result(result):
+        results.append(result)
+        app.handle_first_run_wizard_result(result)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            app.app_config[WIZARD_STATE_SECTION][SETUP_COMPLETED_KEY] = False
+            wizard = FirstRunSetupWizard(app, rerun=True)
+            await app.push_screen(wizard, handle_result)
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            container.select_track(TRACK_FULL)
+            container.wizard_data[STEP_WELCOME] = {"track": TRACK_FULL}
+            container.show_step(container._step_index_for_id(step_id))
+            await pilot.pause(0.2)
+
+            navigation_messages.clear()
+            _press(app.screen, "#setup-step-manual")
+            await _wait_until(pilot, lambda: bool(results))
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "SettingsScreen"
+                and getattr(app.screen, "active_category", None)
+                == "advanced-config",
+            )
+
+            assert results == [
+                {
+                    "completed": False,
+                    "exit_route": "settings",
+                    "exit_context": {"category": "advanced-config"},
+                }
+            ]
+            assert (
+                app.app_config[WIZARD_STATE_SECTION].get(SETUP_COMPLETED_KEY)
+                is False
+            )
+            draft = read_setup_draft(app.app_config)
+            assert draft is not None
+            assert draft.active_step_id == step_id
+            assert draft.values[STEP_WELCOME] == {"track": TRACK_FULL}
+            assert len(navigation_messages) == 1
+            assert navigation_messages[0].screen_name == "settings"
+            assert navigation_messages[0].screen_context == {
+                "category": "advanced-config"
+            }
+
+
+@pytest.mark.parametrize(
+    "result",
+    (
+        {"completed": False, "exit_route": "forged", "exit_context": {}},
+        {"completed": False, "exit_route": "settings", "exit_context": {}},
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": "forged"},
+        },
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": object()},
+        },
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": "diagnostics", "extra": "forged"},
+        },
+        {"completed": True, "exit_route": TAB_CHAT, "exit_context": {"x": 1}},
+    ),
+)
+def test_first_run_result_callback_rejects_untrusted_route_context(result):
+    from tldw_chatbook.app import TldwCli
+
+    receiver = SimpleNamespace(post_message=MagicMock())
+    TldwCli._handle_first_run_wizard_result(receiver, result)
+    receiver.post_message.assert_not_called()
+
+
+def test_first_run_result_callback_rejects_objects_without_comparing_them():
+    from tldw_chatbook.app import TldwCli
+
+    class ForgedValue:
+        def __eq__(self, _other):
+            raise AssertionError("untrusted equality must not run")
+
+        def __hash__(self):
+            return 1
+
+    receiver = SimpleNamespace(post_message=MagicMock())
+    for result in (
+        {"completed": False, "exit_route": ForgedValue(), "exit_context": {}},
+        {
+            "completed": True,
+            "exit_route": TAB_CHAT,
+            "exit_context": ForgedValue(),
+        },
+    ):
+        TldwCli._handle_first_run_wizard_result(receiver, result)
+    receiver.post_message.assert_not_called()
+
+
+def test_first_run_result_callback_keeps_same_tab_context_navigation():
+    from tldw_chatbook.app import TldwCli
+
+    receiver = SimpleNamespace(current_tab="settings", post_message=MagicMock())
+    TldwCli._handle_first_run_wizard_result(
+        receiver,
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": "providers-models"},
+        },
+    )
+
+    message = receiver.post_message.call_args.args[0]
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_name == "settings"
+    assert message.screen_context == {"category": "providers-models"}
+
+
+@pytest.mark.asyncio
+async def test_first_run_result_callback_remounts_same_tab_home_after_completion():
+    """Await Home remount before scheduling the deferred catalog decision."""
+    from tldw_chatbook.app import TldwCli
+
+    events: list[str] = []
+    worker_coroutines = []
+
+    async def record_navigation(_message) -> None:
+        await asyncio.sleep(0)
+        events.append("navigation-complete")
+
+    def record_schedule(**_kwargs) -> None:
+        events.append("catalog-scheduled")
+
+    def capture_worker(work, **kwargs) -> None:
+        worker_coroutines.append(work)
+        assert kwargs == {
+            "group": "first-run-exit-navigation",
+            "exclusive": True,
+            "exit_on_error": False,
+        }
+
+    receiver = SimpleNamespace(
+        current_tab=TAB_HOME,
+        handle_screen_navigation=AsyncMock(side_effect=record_navigation),
+        _schedule_startup_model_catalog_refresh=MagicMock(
+            side_effect=record_schedule
+        ),
+        post_message=MagicMock(
+            side_effect=AssertionError("completed navigation must use its worker")
+        ),
+        run_worker=capture_worker,
+    )
+    try:
+        TldwCli._handle_first_run_wizard_result(
+            receiver,
+            {
+                "completed": True,
+                "exit_route": TAB_HOME,
+                "exit_context": None,
+            },
+        )
+
+        assert len(worker_coroutines) == 1
+        receiver.handle_screen_navigation.assert_not_awaited()
+        receiver._schedule_startup_model_catalog_refresh.assert_not_called()
+
+        await worker_coroutines[0]
+
+        receiver.handle_screen_navigation.assert_awaited_once()
+        message = receiver.handle_screen_navigation.await_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_HOME
+        assert message.screen_context == {}
+        receiver._schedule_startup_model_catalog_refresh.assert_called_once_with(
+            after_setup_completion=True
+        )
+        assert events == ["navigation-complete", "catalog-scheduled"]
+        receiver.post_message.assert_not_called()
+    finally:
+        for worker in worker_coroutines:
+            worker.close()
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +1674,14 @@ async def test_escape_finish_later_dismisses_and_next_boot_resumes_via_toast(
 async def test_full_track_skip_everything_leaves_app_usable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from tldw_chatbook.UI.Screens.home_screen import HomeScreen
+
+    readiness = {"console": False}
+    monkeypatch.setattr(
+        HomeScreen,
+        "_home_console_provider_ready",
+        lambda _self: readiness["console"],
+    )
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
@@ -260,13 +1689,24 @@ async def test_full_track_skip_everything_leaves_app_usable(
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
+            original_home = app.screen_stack[-2]
+            assert original_home.__class__.__name__ == "HomeScreen"
+            await _wait_until(
+                pilot,
+                lambda: original_home._home_content_snapshot is not None
+                and not original_home._home_content_snapshot.console_ready,
+            )
             container = app.screen.query_one(SetupWizardContainer)
             await pilot.pause(0.2)
 
             _select_radio(app.screen, "#setup-track-full")
             await pilot.pause(0.1)
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
-            await pilot.pause(0.2)
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
 
             seen_step_ids: list[str] = []
             for _ in range(12):
@@ -275,16 +1715,20 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 if step_id == STEP_SUMMARY:
                     break
                 seen_step_ids.append(step_id)
+                previous_step = container.current_step
                 _press(app.screen, "#wizard-next")
-                await pilot.pause(0.2)
+                await _wait_until(
+                    pilot, lambda: container.current_step != previous_step
+                )
             else:
                 raise AssertionError("never reached the summary step")
 
-            # TASK-1301: Speech transcription joins the FULL track right
-            # after RAG; every step here is skip-safe with nothing selected.
+            # Voice follows Model in both tracks; Speech transcription joins
+            # the FULL track right after RAG. Every step remains skip-safe.
             assert seen_step_ids == [
                 "provider",
                 "model",
+                "voice",
                 "rag",
                 "speech",
                 "tools",
@@ -292,36 +1736,45 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 "appearance",
             ]
 
-            # Exit via "Explore on my own" (TAB_HOME) to prove the app is
-            # usable afterwards, not just that the wizard closed.
+            # Exit via "Explore Home" (TAB_HOME) to prove the app is
+            # usable afterwards, not just that the wizard closed. Change the
+            # readiness seam after Home's original mount so only a freshly
+            # mounted Home can observe the completed setup state.
+            readiness["console"] = True
             _press(app.screen, "#setup-exit-home")
-            await _wait_until(
-                pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
-            )
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == TAB_HOME
-                and app.screen.__class__.__name__ == "HomeScreen",
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and app.screen is not original_home
+                and bool(app.screen.query("#nav-console")),
+            )
+            refreshed_home = app.screen
+            await _wait_until(
+                pilot,
+                lambda: refreshed_home._home_content_snapshot is not None
+                and refreshed_home._home_content_snapshot.console_ready
+                and refreshed_home._current_dashboard_input is not None
+                and refreshed_home._current_dashboard_input.console_ready
+                and bool(refreshed_home.query("#home-start-conversation")),
             )
 
             # "Fully usable": the shell nav still works after the wizard.
-            _press(app.screen, "#nav-console")
+            _press(refreshed_home, "#nav-console")
             await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
             assert app.current_tab == TAB_CHAT
 
 
 # ---------------------------------------------------------------------------
-# 4. Re-run entry over Settings -> finishing via "Done" returns to Settings
-#    (exit_route None path; checklist item 6, partial -- prefill/"configured"
-#    copy is covered at the unit level in Tests/Wizards/).
+# 4. Re-run entry over Settings -> Review settings returns to Settings.
 # ---------------------------------------------------------------------------
 
 
 async def _open_rerun_wizard_from_settings(pilot):
     """Drive the real Settings ▸ Diagnostics ▸ "Run setup wizard" button.
 
-    Returns the pushed FirstRunSetupWizard screen. Shared by the "Done" and
-    "Go to Console" re-entry tests below.
+    Returns the pushed FirstRunSetupWizard screen. Shared by the Summary
+    destination tests below.
     """
     app = pilot.app
     await _wait_until(
@@ -343,18 +1796,59 @@ async def _open_rerun_wizard_from_settings(pilot):
 
 async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWizardContainer":
     # Quick track is pre-selected; walk welcome -> provider -> model ->
-    # summary without picking anything (every step is skip-safe).
-    for _ in range(3):
-        _press(wizard_screen, "#wizard-next")
-        await pilot.pause(0.2)
+    # voice -> summary without picking anything (every step is skip-safe).
     container = wizard_screen.query_one(SetupWizardContainer)
+    for _ in range(4):
+        previous_step = container.current_step
+        _press(wizard_screen, "#wizard-next")
+        await _wait_until(pilot, lambda: container.current_step != previous_step)
     step = container.steps[container.current_step]
     assert step.config.id == STEP_SUMMARY
     return container
 
 
+async def _open_rerun_wizard_over_console(app, pilot) -> tuple[ChatScreen, object]:
+    await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
+    console = app.screen
+    app.push_screen(
+        FirstRunSetupWizard(app, rerun=True),
+        app.handle_first_run_wizard_result,
+    )
+    await _wait_until(
+        pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+    )
+    wizard_screen = app.screen
+    await pilot.pause(0.2)
+    await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
+    await _wait_until(
+        pilot,
+        lambda: str(
+            wizard_screen.query_one("#setup-exit-chat", Button).label
+        )
+        == "Start chatting",
+    )
+    return console, wizard_screen
+
+
+async def _seed_live_console_user_draft(console: ChatScreen, pilot):
+    store = console._ensure_console_chat_store()
+    user = store.create_session(
+        title="Preserved user work",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="preserved-user-model",
+            source="user",
+        ),
+    )
+    store.set_session_draft(user.id, "preserve this exact mounted draft")
+    await console._sync_native_console_chat_ui()
+    console._focus_console_composer_if_needed(force=True)
+    await pilot.pause()
+    return store, user
+
+
 @pytest.mark.asyncio
-async def test_rerun_over_settings_done_returns_to_settings(
+async def test_rerun_over_settings_review_settings_returns_to_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _prepare_clean_environment(monkeypatch, tmp_path)
@@ -366,31 +1860,30 @@ async def test_rerun_over_settings_done_returns_to_settings(
         async with app.run_test(size=(180, 55)) as pilot:
             wizard_screen = await _open_rerun_wizard_from_settings(pilot)
             await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
-            # Rerun summary exposes "Done"/"Go to Console", not the first-run
-            # exit pair -- "Done" is the exit_route=None path.
-            assert len(app.screen.query("#setup-exit-done")) == 1
+            assert [
+                str(app.screen.query_one(selector, Button).label)
+                for selector in (
+                    "#setup-exit-chat",
+                    "#setup-exit-home",
+                    "#setup-exit-settings",
+                )
+            ] == ["Review provider setup", "Explore Home", "Review settings"]
 
-            _press(app.screen, "#setup-exit-done")
+            _press(app.screen, "#setup-exit-settings")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # the final-review fix wave wired a result callback onto this push
-            # (settings_screen.py's handle_run_setup_wizard now passes
-            # app_instance.handle_first_run_wizard_result), but "Done"'s
-            # exit_route is None -- _handle_first_run_wizard_result() is a
-            # no-op for a falsy exit_route, so this must still simply pop
-            # back to Settings with no navigation side effect.
             assert type(app.screen).__name__ == "SettingsScreen"
             assert app.current_tab == "settings"
 
 
 @pytest.mark.asyncio
-async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
+async def test_rerun_over_settings_start_chatting_navigates_to_chat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Final-review finding 2: before the fix, both re-entry pushes
     (Settings' button and the command palette) omitted the result
-    callback, so a truthy exit_route off the Summary step's "Go to Console"
+    callback, so a truthy exit_route off the Summary step's "Start chatting"
     button was silently dropped -- the button looked live but did nothing.
     Now that settings_screen.py's push wires
     app_instance.handle_first_run_wizard_result, this must actually
@@ -398,6 +1891,7 @@ async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
     test_full_track_skip_everything_leaves_app_usable above.
     """
     _prepare_clean_environment(monkeypatch, tmp_path)
+    _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
 
@@ -405,18 +1899,188 @@ async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
         async with app.run_test(size=(180, 55)) as pilot:
             wizard_screen = await _open_rerun_wizard_from_settings(pilot)
             await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
-            assert len(app.screen.query("#setup-exit-chat")) == 1
+            await _wait_until(
+                pilot,
+                lambda: str(
+                    app.screen.query_one("#setup-exit-chat", Button).label
+                )
+                == "Start chatting",
+            )
 
             _press(app.screen, "#setup-exit-chat")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # Dismiss pops back to Settings first; the exit_route is applied
-            # via a separately-queued NavigateToScreen message (same race
-            # noted in test_back_next_mashing_... above) -- wait for the
-            # final tab rather than racing the first screen-stack pop.
             await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
             assert app.current_tab == TAB_CHAT
+            assert isinstance(app.screen, ChatScreen)
+            assert app.screen.is_mounted
+
+
+@pytest.mark.asyncio
+async def test_mounted_wizard_producer_to_console_consumer_preserves_user_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    _persist_complete_custom_provider_setup()
+    app = _build_test_app(first_run_setup_completed=True)
+    app._initial_tab_value = "chat"
+    staged: list[ConsoleFirstChatIntent] = []
+    real_stage = app.pending_handoffs.stage_reserved_console_first_chat
+
+    def record_producer_stage(intent: ConsoleFirstChatIntent) -> int:
+        staged.append(intent)
+        return real_stage(intent)
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "stage_reserved_console_first_chat",
+        record_producer_stage,
+    )
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 55)) as pilot:
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
+            console = app.screen
+            store, user = await _seed_live_console_user_draft(console, pilot)
+            existing_before = {
+                session.id: _live_first_chat_session_snapshot(session)
+                for session in store.sessions()
+            }
+            console, wizard_screen = await _open_rerun_wizard_over_console(
+                app, pilot
+            )
+
+            _press(wizard_screen, "#setup-exit-chat")
+            await _wait_until(pilot, lambda: len(staged) == 1)
+            target_id = staged[0].session_id
+            await _wait_until(
+                pilot,
+                lambda: app.screen is console
+                and store.active_session_id == target_id
+                and not app.pending_handoffs.has_pending(
+                    HandoffChannel.CONSOLE_FIRST_CHAT
+                ),
+            )
+
+            assert staged[0].provider == "custom"
+            assert staged[0].model == "model-a"
+            assert store.session_settings(target_id).provider == "custom"
+            assert store.session_settings(target_id).model == "model-a"
+            assert {
+                session.id: _live_first_chat_session_snapshot(session)
+                for session in store.sessions()
+                if session.id in existing_before
+            } == existing_before
+            assert store.session_draft(user.id) == "preserve this exact mounted draft"
+            assert _pending_first_chat(app) is None
+
+
+@pytest.mark.asyncio
+async def test_mounted_wizard_stage_failure_leaves_console_and_focus_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    _persist_complete_custom_provider_setup()
+    app = _build_test_app(first_run_setup_completed=True)
+    app._initial_tab_value = "chat"
+    stage_attempts: list[ConsoleFirstChatIntent] = []
+
+    def fail_producer_stage(intent: ConsoleFirstChatIntent) -> int:
+        stage_attempts.append(intent)
+        raise RuntimeError("injected stage failure")
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "stage_reserved_console_first_chat",
+        fail_producer_stage,
+    )
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 55)) as pilot:
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
+            console = app.screen
+            store, _user = await _seed_live_console_user_draft(console, pilot)
+            console_before = _live_console_projection(console)
+            console, wizard_screen = await _open_rerun_wizard_over_console(
+                app, pilot
+            )
+            start_button = wizard_screen.query_one("#setup-exit-chat", Button)
+            start_button.focus()
+            await pilot.pause()
+            focus_before = app.focused
+
+            start_button.press()
+            await _wait_until(pilot, lambda: len(stage_attempts) == 1)
+            await pilot.pause(0.2)
+
+            assert app.screen is wizard_screen
+            assert app.focused is focus_before is start_button
+            assert _live_console_projection(console) == console_before
+            assert store.active_session_id == console_before["active_session_id"]
+            assert _pending_first_chat(app) is None
+
+
+@pytest.mark.asyncio
+async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    _persist_complete_custom_provider_setup()
+    app = _build_test_app(first_run_setup_completed=True)
+    app._initial_tab_value = "chat"
+    staged: list[ConsoleFirstChatIntent] = []
+    real_stage = app.pending_handoffs.stage_reserved_console_first_chat
+
+    def stage_then_publish(intent: ConsoleFirstChatIntent) -> int:
+        revision = real_stage(intent)
+        staged.append(intent)
+        assert save_settings_to_cli_config(
+            {"general": {"task5_generation_race": "published-after-stage"}}
+        )
+        return revision
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "stage_reserved_console_first_chat",
+        stage_then_publish,
+    )
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 55)) as pilot:
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
+            console = app.screen
+            store, _user = await _seed_live_console_user_draft(console, pilot)
+            console_before = _live_console_projection(console)
+            focus_before = app.focused
+            console, wizard_screen = await _open_rerun_wizard_over_console(
+                app, pilot
+            )
+            navigation_messages = _capture_navigation_messages(monkeypatch, app)
+
+            _press(wizard_screen, "#setup-exit-chat")
+            await _wait_until(pilot, lambda: len(staged) == 1)
+            await _wait_until(
+                pilot,
+                lambda: app.screen is not wizard_screen
+                and app.pending_handoffs.has_pending(
+                    HandoffChannel.CONSOLE_FIRST_CHAT
+                ),
+            )
+            await _wait_until(
+                pilot, lambda: _live_console_projection(console) == console_before
+            )
+            await _wait_until(pilot, lambda: app.focused is focus_before)
+            await pilot.pause(0.2)
+
+            assert navigation_messages == []
+            assert app.screen is console
+            assert console.is_mounted
+            assert all(
+                session.id != staged[0].session_id for session in store.sessions()
+            )
+            assert _pending_first_chat(app) == staged[0]
 
 
 # ---------------------------------------------------------------------------
@@ -504,13 +2168,71 @@ async def test_wizard_navigation_visible_at_80x24(
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
-            # TASK-2154.9 (FR-01): the cancel button now carries its
-            # consequence as the label -- "Finish later" (same dialog as
-            # Esc) -- so the rendered frame is checked for that wording.
-            for expected in ("Back", "Next", "Finish later"):
+            for expected in ("Back", "Next", "Skip setup"):
                 assert expected in rendered_text, (
                     f"{expected!r} button text missing from the rendered frame"
                 )
+
+
+@pytest.mark.parametrize("track", [TRACK_QUICK, TRACK_FULL])
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@pytest.mark.parametrize("size", [(80, 24), (120, 40), (177, 45)])
+@pytest.mark.asyncio
+async def test_voice_step_controls_are_stable_and_scroll_reachable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    track: str,
+    theme: str,
+    size: tuple[int, int],
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app.theme = theme
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=size) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            container.select_track(track)
+            await pilot.pause(0.1)
+            voice_index = container._step_index_for_id(STEP_VOICE)
+            assert voice_index is not None
+            container.show_step(voice_index)
+            await pilot.pause(0.2)
+
+            step = container.steps[voice_index]
+            assert isinstance(step, VoiceSetupStep)
+            assert step.virtual_size.height > step.container_size.height
+
+            controls = (
+                step.query_one("#setup-voice-endpoint", Input),
+                step.query_one("#setup-voice-auth"),
+                step.query_one("#setup-voice-model", Input),
+                step.query_one("#setup-voice-voice", Input),
+                step.query_one("#setup-voice-sample", Input),
+                step.query_one("#setup-voice-test", Button),
+                step.query_one("#setup-voice-default", Checkbox),
+            )
+            assert all(control.region.width > 0 for control in controls)
+            assert all(control.region.right <= size[0] for control in controls)
+
+            for control in controls:
+                control.focus()
+                await pilot.pause(0.2)
+                assert control.region.y >= 0
+                assert control.region.bottom <= size[1]
+                assert control in app.screen._compositor.visible_widgets, (
+                    f"{control.id} was not painted after focus: "
+                    f"control={control.region}, step={step.region}, "
+                    f"viewport={step.container_size}, virtual={step.virtual_size}, "
+                    f"offset={step.scroll_offset}"
+                )
+
+            for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+                button = app.screen.query_one(selector, Button)
+                assert button.region.right <= size[0]
+                assert button.region.bottom <= size[1]
 
 
 # ---------------------------------------------------------------------------
@@ -558,8 +2280,12 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
             await pilot.pause(0.3)
             container = app.screen.query_one(SetupWizardContainer)
             assert container.steps[container.current_step].config.id == STEP_PROVIDER
+            provider_step = container.steps[container.current_step]
+            assert isinstance(provider_step, ProviderStep)
+            provider_step.select_provider("openai")
+            await pilot.pause(0.2)
 
-            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            key_input = app.screen.query_one("#setup-provider-api-key", Input)
             region = key_input.region
             assert region.width > 0 and region.height > 0, (
                 f"key Input has an empty region at 120x40: {region}"
@@ -588,26 +2314,78 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
 
 
 @pytest.mark.asyncio
-async def test_summary_exit_buttons_visible_at_120x40_full_track(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_exact_draft_model_controls_remain_keyboard_visible_in_compact_view(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, size: tuple[int, int]
 ) -> None:
-    """TASK-1495 AC #3: the Full-track Summary step's exit buttons ("Start
-    chatting" / "Explore on my own") must be on screen at 120x40 after
-    walking the entire 8-step full track -- these could previously render
-    below the same non-scrolling fold as the Provider step's key Input,
-    just reached via a longer path (more accumulated summary rows).
-    SetupWizardContainer.show_step() (unrelated to this fix) auto-focuses
-    the incoming step's first focusable descendant -- Summary's first exit
-    Button -- and Textual's own Screen.set_focus(scroll_visible=True) then
-    scrolls it into view, but only because ".setup-step" is now an actual
-    scroll region at all (TASK-1495's CSS change); before the fix nothing
-    under the step was scrollable, so focus-follows-into-view had nothing
-    to work with.
-    """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=size) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            draft = FirstRunProviderDraft(
+                "custom",
+                "https://compact.example/v1/chat/completions",
+                ProviderCredentialDraft("none", "", 4),
+            )
+            key = build_first_run_model_discovery_key(draft)
+            assert container.stage_provider_setup(draft)
+            container.wizard_data[STEP_PROVIDER] = {
+                "provider_key": "custom",
+                "provider_value": "custom",
+            }
+            container._first_run_selected_provider_models = {
+                key: ("compact-model-a", "compact-model-b")
+            }
+            model_index = container._step_index_for_id(STEP_MODEL)
+            assert model_index is not None
+            container.show_step(model_index)
+            await pilot.pause(0.2)
+
+            model_step = container.steps[model_index]
+            assert isinstance(model_step, ModelStep)
+            choices = model_step.query_one("#setup-model-choice", RadioSet)
+            first_choice = choices.query_one("#setup-model-option-0", RadioButton)
+            first_choice.focus()
+            await pilot.pause()
+            assert app.focused is first_choice
+            await pilot.press("enter")
+            await pilot.pause()
+            assert choices.pressed_button is not None
+            assert getattr(choices.pressed_button, "_model_id", None) in {
+                "compact-model-a",
+                "compact-model-b",
+            }
+
+            manual = model_step.query_one("#setup-model-custom", Input)
+            manual.focus()
+            await pilot.pause(0.2)
+            assert manual in app.screen._compositor.visible_widgets
+            assert manual.region.right <= size[0]
+            assert manual.region.bottom <= size[1]
+            footer_top = min(
+                app.screen.query_one(selector, Button).region.y
+                for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel")
+            )
+            assert manual.region.bottom <= footer_top
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_summary_three_actions_visible_and_focused_on_full_track(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    """Summary keeps exactly three actions visible, unique, and focused."""
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
@@ -617,14 +2395,21 @@ async def test_summary_exit_buttons_visible_at_120x40_full_track(
             _select_radio(app.screen, "#setup-track-full")
             await pilot.pause(0.1)
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
-            await pilot.pause(0.2)
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
 
             for _ in range(10):
                 step = container.steps[container.current_step]
                 if step.config.id == STEP_SUMMARY:
                     break
+                previous_step = container.current_step
                 _press(app.screen, "#wizard-next")
-                await pilot.pause(0.2)
+                await _wait_until(
+                    pilot, lambda: container.current_step != previous_step
+                )
             else:
                 raise AssertionError("never reached the summary step")
 
@@ -644,29 +2429,41 @@ async def test_summary_exit_buttons_visible_at_120x40_full_track(
 
             exit_chat = app.screen.query_one("#setup-exit-chat", Button)
             exit_home = app.screen.query_one("#setup-exit-home", Button)
-            from textual.widgets import Button as _B
-            all_buttons = [w for w in app.screen._compositor.visible_widgets if isinstance(w, _B)]
+            exit_settings = app.screen.query_one("#setup-exit-settings", Button)
+            assert [
+                button.id
+                for button in app.screen.query(".setup-summary-actions Button")
+            ] == ["setup-exit-chat", "setup-exit-home", "setup-exit-settings"]
+            assert app.focused is exit_chat
+            assert container.query_one("#wizard-next", Button).display is False
+            assert container.query_one("#wizard-cancel", Button).display is False
             strips = app.screen._compositor.render_strips()
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
             for button, label in (
-                (exit_chat, "Open Console"),
-                (exit_home, "Explore on my own"),
+                (exit_chat, "Review provider setup"),
+                (exit_home, "Explore Home"),
+                (exit_settings, "Review settings"),
             ):
                 region = button.region
                 assert region.width > 0 and region.height > 0, (
                     f"{label!r} exit button has an empty region: {region}"
                 )
-                assert region.y >= 0 and region.bottom <= 40 and region.right <= 120, (
-                    f"{label!r} exit button clipped at 120x40: {region}"
+                assert (
+                    region.y >= 0
+                    and region.bottom <= size[1]
+                    and region.right <= size[0]
+                ), (
+                    f"{label!r} exit button clipped at {size[0]}x{size[1]}: {region}"
                 )
                 assert button in app.screen._compositor.visible_widgets, (
                     f"{label!r} exit button's region looked on-screen but the "
                     "compositor never painted it"
                 )
-            assert "Open Console" in rendered_text
-            assert "Explore on my own" in rendered_text
+            assert "Review provider setup" in rendered_text
+            assert "Explore Home" in rendered_text
+            assert "Review settings" in rendered_text
 
 
 @pytest.mark.asyncio
@@ -695,16 +2492,23 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             _select_radio(app.screen, "#setup-track-full")
             await pilot.pause(0.1)
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
-            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
 
-            for _ in range(4):
-                step = app.screen.query_one(SetupWizardContainer).steps[
-                    app.screen.query_one(SetupWizardContainer).current_step
-                ]
+            for _ in range(5):
+                step = container.steps[container.current_step]
                 if step.config and step.config.id == "speech":
                     break
+                previous_step = container.current_step
                 _press(app.screen, "#wizard-next")
-                await pilot.pause(0.2)
+                await _wait_until(
+                    pilot,
+                    lambda: container.current_step != previous_step,
+                )
             else:
                 raise AssertionError("never reached the speech step")
 
@@ -716,20 +2520,40 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             # mounted (query finds it) a beat before Textual's own layout
             # pass gives it a non-empty region, so wait for the region too
             # -- otherwise this flakes with Region(0, 0, 0, 0).
-            def _install_button_laid_out() -> bool:
-                buttons = app.screen.query("#setup-speech-install")
-                return bool(buttons) and buttons[0].region.height > 0
+            def _speech_actions_ready() -> bool:
+                install = app.screen.query("#setup-speech-install")
+                disk = app.screen.query("#setup-speech-use-from-disk")
+                return (
+                    bool(install)
+                    and install[0].region.height > 0
+                    and bool(disk)
+                    and disk[0].region.height > 0
+                    and not disk[0].disabled
+                )
 
-            await _wait_until(pilot, _install_button_laid_out, timeout_seconds=10.0)
+            await _wait_until(pilot, _speech_actions_ready, timeout_seconds=10.0)
 
             install_button = app.screen.query_one("#setup-speech-install", Button)
-            region = install_button.region
-            assert region.width > 0 and region.height > 0, (
-                f"install button has an empty region at 120x40: {region}"
-            )
-            assert region.y >= 0, f"install button clipped above row 0: {region}"
-            assert region.bottom <= 40, f"install button clipped past row 40: {region}"
-            assert region.right <= 120, f"install button clipped past column 120: {region}"
+            disk_button = app.screen.query_one("#setup-speech-use-from-disk", Button)
+            for button, label in (
+                (disk_button, "Use model from disk"),
+                (install_button, "Review and install"),
+            ):
+                region = button.region
+                assert region.width > 0 and region.height > 0, (
+                    f"{label} button has an empty region at 120x40: {region}"
+                )
+                assert region.y >= 0, f"{label} button clipped above row 0: {region}"
+                assert region.bottom <= 40, (
+                    f"{label} button clipped past row 40: {region}"
+                )
+                assert region.right <= 120, (
+                    f"{label} button clipped past column 120: {region}"
+                )
+                assert button in app.screen._compositor.visible_widgets, (
+                    f"{label} button's region looked on-screen, but the compositor "
+                    "never painted it"
+                )
 
             # Cross-check against the actual compositor output -- region
             # alone does not prove the compositor painted it (see this
@@ -743,9 +2567,158 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
+            assert "Use model from disk" in rendered_text, (
+                "external-directory button's label never reached the rendered frame"
+            )
             assert "Review and install" in rendered_text, (
                 "install button's label never reached the rendered frame"
             )
+
+            # Mounted production flow: the real affordance must push the real
+            # directory picker, not a test-only stand-in.
+            disk_button.press()
+            await _wait_until(pilot, lambda: isinstance(app.screen, SelectDirectory))
+            assert isinstance(app.screen, SelectDirectory)
+
+
+@pytest.mark.asyncio
+async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(80, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            _select_radio(app.screen, "#setup-track-full")
+            await pilot.pause(0.1)
+            container = app.screen.query_one(SetupWizardContainer)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
+            while container.steps[container.current_step].config.id != "speech":
+                previous_step = container.current_step
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: container.current_step != previous_step
+                )
+
+            step = container.steps[container.current_step]
+            assert isinstance(step, SpeechSetupStep)
+            worker = MagicMock(is_finished=False)
+            step._external_selection_worker = worker
+            step._external_selection_token = (1, id(step))
+            step._external_busy = True
+            step._external_status = "Verifying model files…"
+            step.refresh(recompose=True)
+            await _wait_until(
+                pilot,
+                lambda: len(app.screen.query("#setup-speech-cancel-external")) == 1,
+            )
+            cancel = app.screen.query_one("#setup-speech-cancel-external", Button)
+            await _wait_until(pilot, lambda: cancel.region.height > 0)
+            assert cancel.region.right <= 80 and cancel.region.bottom <= 40
+            assert cancel in app.screen._compositor.visible_widgets
+
+            cancel.focus()
+            await pilot.press("enter")
+            await _wait_until(pilot, lambda: not step._external_busy)
+
+            assert step._external_busy is False
+            assert "prior source is unchanged" in step._external_status.lower()
+            worker.cancel.assert_called_once_with()
+            disk = step.query_one("#setup-speech-use-from-disk", Button)
+            await _wait_until(pilot, lambda: app.focused is disk)
+
+            await pilot.press("enter")
+            await _wait_until(pilot, lambda: isinstance(app.screen, SelectDirectory))
+
+
+@pytest.mark.parametrize("attempt", ["back", "finish-later"])
+@pytest.mark.asyncio
+async def test_external_commit_fences_back_and_finish_later_until_handoff_settles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    attempt: str,
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            _select_radio(app.screen, "#setup-track-full")
+            _press(app.screen, "#wizard-next")
+            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            while container.steps[container.current_step].config.id != "speech":
+                _press(app.screen, "#wizard-next")
+                await pilot.pause(0.2)
+
+            step = container.steps[container.current_step]
+            assert isinstance(step, SpeechSetupStep)
+            prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+            source_commit = SimpleNamespace(
+                section_values={"transcription": {"parakeet_external_sources": {}}}
+            )
+            source_service = MagicMock()
+            source_service.prepare_config_commit.return_value = source_commit
+            owners = {"setup-speech-live-handoff"}
+            source_service.release_scope.side_effect = owners.discard
+            source_service.accept_committed.side_effect = lambda commit: None
+            app._parakeet_source_service = source_service
+            step._pending_external_selection = prepared
+            token = (1, id(step))
+            step._external_selection_token = token
+            step._external_scope_ids[token] = "setup-speech-live-handoff"
+            write_started = asyncio.Event()
+            allow_write = asyncio.Event()
+
+            async def delayed_commit(values, *, after_write=None):
+                write_started.set()
+                await allow_write.wait()
+                if after_write is not None:
+                    after_write()
+                return True
+
+            container.commit_config = delayed_commit
+            _press(app.screen, "#wizard-next")
+            await asyncio.wait_for(write_started.wait(), timeout=2)
+            if attempt == "back":
+                _press(app.screen, "#wizard-back")
+            else:
+                _press(app.screen, "#wizard-cancel")
+            await pilot.pause()
+            stayed_on_speech = (
+                type(app.screen).__name__ == "FirstRunSetupWizard"
+                and container.steps[container.current_step].config.id == "speech"
+            )
+            nav_fenced = (
+                all(
+                    app.screen.query_one(selector, Button).disabled
+                    for selector in ("#wizard-back", "#wizard-cancel")
+                )
+                if type(app.screen).__name__ == "FirstRunSetupWizard"
+                else False
+            )
+            owner_retained = owners == {"setup-speech-live-handoff"}
+            allow_write.set()
+            await _wait_until(
+                pilot,
+                lambda: source_service.accept_committed.call_count == 1,
+            )
+
+            assert stayed_on_speech
+            assert nav_fenced
+            assert owner_retained
+            assert owners == set()
 
 
 # ---------------------------------------------------------------------------
@@ -799,7 +2772,7 @@ async def test_navigation_and_focus_stay_stable_at_80x24(
             # measures zero height at this exact size -- see this section's
             # docstring) must not crash the wizard or break the focus chain,
             # even though there is currently no room to actually show it.
-            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            key_input = app.screen.query_one("#setup-provider-api-key", Input)
             key_input.focus()
             await pilot.pause(0.2)
             assert container.is_running, "focusing an off-screen widget crashed the wizard"
@@ -812,10 +2785,9 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
 ) -> None:
     """TASK-1496 AC #1: "focusing any wizard widget scrolls it into view."
 
-    100x30 keeps the wizard's fixed chrome overhead (see this section's
-    docstring) from swallowing the ENTIRE step viewport the way it does at
-    80x24, while staying small enough that Provider's own content (even
-    capped per TASK-1495) still overflows the step's ~5-row box -- exactly
+    100x24 keeps enough horizontal room to avoid excessive wrapping while
+    staying small enough that Provider's own content (even capped per
+    TASK-1495) genuinely overflows the step viewport -- exactly
     the condition this fix's ".setup-step { overflow-y: auto }" targets.
     Textual's own Screen.set_focus (invoked by Widget.focus(), the default
     for both a real Tab press and this test's explicit call) already
@@ -826,7 +2798,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(100, 30)) as pilot:
+        async with app.run_test(size=(100, 24)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
@@ -838,16 +2810,34 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
             await pilot.pause(0.3)
             container = app.screen.query_one(SetupWizardContainer)
             assert container.steps[container.current_step].config.id == STEP_PROVIDER
+            provider_step = container.steps[container.current_step]
+            assert isinstance(provider_step, ProviderStep)
 
-            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            async def discover_many():
+                return tuple(
+                    DiscoveredLocalServer(
+                        "llama_cpp", f"http://127.0.0.1:{8080 + index}"
+                    )
+                    for index in range(8)
+                )
+
+            provider_step._local_discover = discover_many
+            provider_step.select_provider("llama_cpp")
+            provider_step.query_one(
+                "#setup-provider-auth-toggle", Collapsible
+            ).collapsed = False
+            provider_step.query_one("#setup-provider-detect", Button).press()
+            await pilot.pause(0.2)
+
+            key_input = app.screen.query_one("#setup-provider-api-key", Input)
             region_before = key_input.region
             fits_before = (
                 region_before.y >= 0
-                and region_before.bottom <= 30
+                and region_before.bottom <= 24
                 and region_before.right <= 100
             )
             assert not fits_before, (
-                "test assumption broken: key Input already fits at 100x30 "
+                "test assumption broken: key Input already fits at 100x24 "
                 f"without any scroll ({region_before}) -- this test needs "
                 "genuine overflow to prove the scroll-into-view fix"
             )
@@ -857,7 +2847,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
 
             region_after = key_input.region
             assert region_after.width > 0 and region_after.height > 0
-            assert region_after.y >= 0 and region_after.bottom <= 30, (
+            assert region_after.y >= 0 and region_after.bottom <= 24, (
                 f"key Input still clipped after focusing it: {region_after}"
             )
             assert region_after.right <= 100
@@ -870,7 +2860,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
                 button = app.screen.query_one(widget_id, Button)
                 region = button.region
                 assert region.width > 0 and region.height > 0
-                assert region.right <= 100 and region.bottom <= 30
+                assert region.right <= 100 and region.bottom <= 24
 
 
 # ---------------------------------------------------------------------------
@@ -943,6 +2933,16 @@ async def test_back_next_mashing_across_provider_model_does_not_double_advance(
             else:
                 raise AssertionError("mashing left the wizard unable to complete")
 
+            _persist_complete_custom_provider_setup()
+            summary = container.steps[container.current_step]
+            summary.on_show()
+            await _wait_until(
+                pilot,
+                lambda: str(
+                    app.screen.query_one("#setup-exit-chat", Button).label
+                )
+                == "Start chatting",
+            )
             _press(app.screen, "#setup-exit-chat")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
@@ -1020,7 +3020,7 @@ async def test_ctrl_n_ctrl_b_do_not_crash_and_move_one_step(
             assert container.track == TRACK_QUICK
             assert container.steps[container.current_step].config.id == STEP_PROVIDER
 
-            app.screen.query_one("#setup-provider-key-input", Input).focus()
+            app.screen.query_one("#setup-provider-api-key", Input).focus()
             await pilot.pause(0.1)
 
             await pilot.press("ctrl+n")  # provider -> model

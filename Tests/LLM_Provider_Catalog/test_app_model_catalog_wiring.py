@@ -10,10 +10,14 @@ Covers two things:
    test).
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from textual.app import App
 from textual.screen import Screen
 
+from tldw_chatbook import config as config_module
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
     ModelCatalogRefreshed,
     ProviderRefreshOutcome,
@@ -21,8 +25,6 @@ from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
     format_refresh_notification,
     forward_model_catalog_refreshed,
 )
-from tldw_chatbook.app import TldwCli
-
 
 # ---------------------------------------------------------------------------
 # Routing: App.post_message must be forwarded DOWN to a mounted screen handler
@@ -112,6 +114,10 @@ def _stub(
     monkeypatch, *, settings=None, report=None, error=None, disk_store=_DEFAULT_DISK_STORE
 ):
     """Build a stub app + service and pin tldw_chatbook.app.load_settings."""
+    if settings is None:
+        # Consent defaults to recorded so refresh-path tests exercise the
+        # refresh itself; consent gating has its own dedicated tests below.
+        settings = {"model_catalog": {"refresh_consent_recorded": True}}
     monkeypatch.setattr("tldw_chatbook.app.load_settings", lambda: settings or {})
     service = _StubCatalogService(report=report, error=error)
     app = _StubApp(
@@ -128,6 +134,147 @@ async def test_refresh_skips_when_auto_refresh_disabled(monkeypatch):
         settings={"model_catalog": {"auto_refresh_enabled": False}},
     )
     await TldwCli._refresh_model_catalogs(app)
+    assert service.calls == []
+    assert app.posted_messages == []
+    assert app.notifications == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_skips_when_consent_not_recorded(monkeypatch):
+    """ADR-020 amendment: enabled alone must not trigger network calls."""
+    app, service = _stub(
+        monkeypatch,
+        settings={"model_catalog": {"auto_refresh_enabled": True}},
+    )
+    await TldwCli._refresh_model_catalogs(app)
+    assert service.calls == []
+    assert app.posted_messages == []
+    assert app.notifications == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_skips_when_consent_is_garbage(monkeypatch):
+    """Only an explicit boolean true counts as consent."""
+    app, service = _stub(
+        monkeypatch,
+        settings={"model_catalog": {"refresh_consent_recorded": "yes"}},
+    )
+    await TldwCli._refresh_model_catalogs(app)
+    assert service.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Consent handler: TldwCli._handle_model_catalog_consent against a stub self
+# ---------------------------------------------------------------------------
+
+
+class _ConsentHost:
+    """Minimal self for the unbound consent-handler coroutine."""
+
+    def __init__(self):
+        self.run_worker = MagicMock()
+        self._refresh_model_catalogs = AsyncMock()
+        self.notifications = []
+
+    def notify(self, message, *, title=None, severity=None):
+        self.notifications.append((message, title, severity))
+
+
+@pytest.mark.asyncio
+async def test_consent_allow_persists_consent_and_schedules_refresh(monkeypatch):
+    saved = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config", saved
+    )
+    host = _ConsentHost()
+
+    await TldwCli._handle_model_catalog_consent(host, True)
+
+    saved.assert_called_once_with(
+        {"model_catalog": {"refresh_consent_recorded": True}}
+    )
+    host.run_worker.assert_called_once_with(
+        host._refresh_model_catalogs,
+        exclusive=True,
+        group="model-catalog-refresh",
+    )
+    assert host.notifications == []
+
+
+@pytest.mark.asyncio
+async def test_consent_deny_persists_disabled_and_skips_refresh(monkeypatch):
+    saved = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config", saved
+    )
+    host = _ConsentHost()
+
+    await TldwCli._handle_model_catalog_consent(host, False)
+
+    saved.assert_called_once_with(
+        {
+            "model_catalog": {
+                "refresh_consent_recorded": True,
+                "auto_refresh_enabled": False,
+            }
+        }
+    )
+    host.run_worker.assert_not_called()
+    assert len(host.notifications) == 1
+    assert host.notifications[0][1] == "Model catalog"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("junk", ["yes", 1, "true"])
+async def test_consent_truthy_non_bool_is_treated_as_deny(monkeypatch, junk):
+    """Only the boolean True counts as consent, mirroring the parser."""
+    saved = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config", saved
+    )
+    host = _ConsentHost()
+
+    await TldwCli._handle_model_catalog_consent(host, junk)
+
+    # Deny shape: consent recorded with the check disabled, no refresh.
+    assert saved.call_args.args[0]["model_catalog"]["auto_refresh_enabled"] is False
+    host.run_worker.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_consent_allow_still_refreshes_when_persist_fails(monkeypatch):
+    saved = MagicMock(return_value=False)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config", saved
+    )
+    host = _ConsentHost()
+
+    await TldwCli._handle_model_catalog_consent(host, True)
+
+    # Session choice honoured (refresh runs) but the user is told the
+    # answer wasn't persisted, so they'll be asked again next launch.
+    host.run_worker.assert_called_once()
+    assert host.notifications[0][2] == "warning"
+
+
+@pytest.mark.asyncio
+async def test_refresh_honors_disabled_setting_from_canonical_config(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "model-catalog-disabled.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert config_module.save_settings_to_cli_config(
+        {"model_catalog": {"auto_refresh_enabled": False}}
+    )
+
+    settings = config_module.load_settings(force_reload=True)
+    assert settings["model_catalog"]["auto_refresh_enabled"] is False
+
+    service = _StubCatalogService(report=RefreshReport())
+    app = _StubApp(disk_store=object(), service=service)
+    await TldwCli._refresh_model_catalogs(app)
+
     assert service.calls == []
     assert app.posted_messages == []
     assert app.notifications == []
@@ -199,6 +346,36 @@ async def test_refresh_notifies_with_warning_severity_on_write_failure(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_refresh_notifies_with_warning_severity_on_disk_write_failure(
+    monkeypatch,
+):
+    endpoint_canary = "https://user:disk-secret@example.test/v1?token=disk-secret"
+    exception_canary = f"ValueError({endpoint_canary})"
+    report = RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI",
+                status="refreshed",
+                new_model_ids=(endpoint_canary,),
+                error_kind=exception_canary,
+            ),
+        ),
+        disk_write_failed=True,
+    )
+    app, _service = _stub(monkeypatch, report=report)
+
+    await TldwCli._refresh_model_catalogs(app)
+
+    expected = format_refresh_notification(report)
+    assert expected is not None
+    assert len(expected) < 500
+    assert endpoint_canary not in expected
+    assert exception_canary not in expected
+    assert "disk-secret" not in expected
+    assert app.notifications == [(expected, "Model catalog", "warning")]
+
+
+@pytest.mark.asyncio
 async def test_refresh_posts_model_catalog_refreshed_for_refreshed_and_baseline(
     monkeypatch,
 ):
@@ -256,7 +433,7 @@ async def test_refresh_swallows_and_logs_errors(monkeypatch):
     # Context: the provider list keys being refreshed + the exception type name.
     assert (
         "Model catalog auto-refresh failed "
-        "(OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, ZAI): RuntimeError"
+        "(OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, QwenCloud, ZAI): RuntimeError"
     ) in text
     # No traceback (diagnose=True would dump frame locals) and no exception
     # message, which may carry endpoint URLs or credentials.

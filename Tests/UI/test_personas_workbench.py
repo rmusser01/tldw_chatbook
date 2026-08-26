@@ -3,34 +3,48 @@
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 import inspect
 import json
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 from uuid import UUID
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
+from Tests.UI.background_signals import wait_for_background_signal
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     CharacterCardImportOutcome,
     CharacterCardTTSInspection,
 )
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_MODE,
     TAB_LIBRARY,
+)
+from tldw_chatbook.Persona_Buddy import (
+    PersonaBuddyController,
+    PersonaBuddyPreferences,
+    PersonaBuddySelection,
 )
 from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.TTS import (
@@ -51,6 +65,7 @@ from tldw_chatbook.TTS import (
     TTSProfilePageSnapshot,
 )
 from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
+from tldw_chatbook.TTS.profile_service import TTSProfileDependencyProjection
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     LocalPersonaProfileCreate,
     LocalPersonaProfileUpdate,
@@ -60,9 +75,14 @@ from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, Shortcu
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.UI.tts_profile_recovery import dependency_recovery_actions
+from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
+    PersonaBuddyWidget,
+)
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
+    PersonaBuddyActionRequested,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
@@ -175,7 +195,7 @@ def stub_characters(monkeypatch):
     patch_character_paging(monkeypatch)
 
 
-class PersonasTestApp(App):
+class PersonasTestApp(ConsolidatedCSSApp):
     def __init__(self, mock_app_instance):
         super().__init__()
         self._mock = mock_app_instance
@@ -214,9 +234,7 @@ class PersonasTestApp(App):
     async def _ensure_tts_profile_service(self):
         """Delegate the real app's private lazy loader when a test provides it."""
 
-        loader = self.__dict__["_mock"].__dict__.get(
-            "_ensure_tts_profile_service"
-        )
+        loader = self.__dict__["_mock"].__dict__.get("_ensure_tts_profile_service")
         if not callable(loader):
             return None
         result = loader()
@@ -235,6 +253,21 @@ class StyledPersonasTestApp(PersonasTestApp):
         / "css"
         / "tldw_cli_modular.tcss"
     )
+
+
+class PersonaBuddyWorkbenchApp(PersonasTestApp):
+    """Workbench harness using the real app-to-screen Buddy reconciliation."""
+
+    reconcile_persona_buddy_view = TldwCli.reconcile_persona_buddy_view
+    _persona_buddy_authority = staticmethod(TldwCli._persona_buddy_authority)
+    is_persona_buddy_confirmed_unavailable = (
+        TldwCli.is_persona_buddy_confirmed_unavailable
+    )
+    confirm_persona_buddy_unavailable = TldwCli.confirm_persona_buddy_unavailable
+
+    def __init__(self, mock_app_instance) -> None:
+        super().__init__(mock_app_instance)
+        self._persona_buddy_unavailable_authority = None
 
 
 def _row_text(item) -> str:
@@ -295,10 +328,7 @@ def _shared_pane_publication(screen) -> dict[str, object]:
     rendered_rows = tuple(
         (
             str(row.id),
-            tuple(
-                str(static.renderable)
-                for static in row.query(Static).results()
-            ),
+            tuple(str(static.renderable) for static in row.query(Static).results()),
         )
         for row in library.query(".personas-library-row").results()
     )
@@ -335,9 +365,7 @@ def _observe_shared_mode_render(
     """Mark a real mode renderer as started and stamp owner-distinct labels."""
     library = screen.query_one("#personas-library-pane")
     method_name = (
-        "_render_dictionary_rows"
-        if mode == "dictionaries"
-        else "_render_lore_rows"
+        "_render_dictionary_rows" if mode == "dictionaries" else "_render_lore_rows"
     )
     original_render = getattr(screen, method_name)
     owner_sort = f"Sort: {mode} owner"
@@ -729,7 +757,9 @@ class TestWorkbenchShell:
             screen = await _mounted(pilot)
             lore_chip = screen.query_one("#personas-mode-lore", Button)
             # F-038: chip tooltips carry their Ctrl+N jump key.
-            assert lore_chip.tooltip == "Lore — world facts injected on keywords. (Ctrl+4)"
+            assert (
+                lore_chip.tooltip == "Lore — world facts injected on keywords. (Ctrl+4)"
+            )
             assert "soon" not in str(lore_chip.label).lower()
             char_chip = screen.query_one("#personas-mode-characters", Button)
             assert "soon" not in str(char_chip.label).lower()
@@ -1237,9 +1267,7 @@ class TestPersonasMode:
             screen = await self._enter_personas_mode(pilot)
 
             empty = screen.query_one("#personas-library-empty", Static)
-            assert (
-                str(empty.renderable) == "No personas yet - use New to add one."
-            )
+            assert str(empty.renderable) == "No personas yet - use New to add one."
             assert not list(screen.query("#personas-service-error"))
 
     async def test_profile_selection_shows_card(
@@ -1346,9 +1374,7 @@ class TestPersonasMode:
             screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
 
-            description = screen.query_one(
-                "#personas-editor-description", TextArea
-            )
+            description = screen.query_one("#personas-editor-description", TextArea)
             personality_traits = screen.query_one(
                 "#personas-editor-personality-traits", TextArea
             )
@@ -1446,12 +1472,14 @@ class TestPersonasMode:
 
             request = stub_scope_service.create_persona_profile.await_args.args[0]
             assert isinstance(request, PersonaProfileCreate)
-            assert request.model_dump().keys().isdisjoint(
-                {"description", "personality_traits"}
+            assert (
+                request.model_dump()
+                .keys()
+                .isdisjoint({"description", "personality_traits"})
             )
-            assert stub_scope_service.create_persona_profile.await_args.kwargs["mode"] == (
-                "server"
-            )
+            assert stub_scope_service.create_persona_profile.await_args.kwargs[
+                "mode"
+            ] == ("server")
 
     async def test_server_profile_edit_blocks_and_omits_local_only_fields(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1470,8 +1498,7 @@ class TestPersonasMode:
 
             assert screen.query_one("#personas-editor-description").disabled is True
             assert (
-                screen.query_one("#personas-editor-personality-traits").disabled
-                is True
+                screen.query_one("#personas-editor-personality-traits").disabled is True
             )
             screen.post_message(
                 PersonaProfileSaveRequested(
@@ -1490,12 +1517,14 @@ class TestPersonasMode:
 
             request = stub_scope_service.update_persona_profile.await_args.args[1]
             assert isinstance(request, PersonaProfileUpdate)
-            assert request.model_dump().keys().isdisjoint(
-                {"description", "personality_traits"}
+            assert (
+                request.model_dump()
+                .keys()
+                .isdisjoint({"description", "personality_traits"})
             )
-            assert stub_scope_service.update_persona_profile.await_args.kwargs["mode"] == (
-                "server"
-            )
+            assert stub_scope_service.update_persona_profile.await_args.kwargs[
+                "mode"
+            ] == ("server")
 
     async def test_double_save_creates_once(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -2761,7 +2790,9 @@ class TestImportExport:
                     created=True,
                     availability="available",
                     loaded=LoadedTTSProfile(7, profile),
-                    assignment=CharacterTTSAssignment(character_ref, profile.profile_id),
+                    assignment=CharacterTTSAssignment(
+                        character_ref, profile.profile_id
+                    ),
                 )
 
         source = tmp_path / "portable-card.json"
@@ -2769,14 +2800,17 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "inspect_character_card_tts_attachment",
-            lambda source_bytes: events.append("inspect")
-            or CharacterCardTTSInspection(portable),
+            lambda source_bytes: (
+                events.append("inspect") or CharacterCardTTSInspection(portable)
+            ),
         )
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda source_bytes: events.append("character_write")
-            or CharacterCardImportOutcome(1, True, portable, None),
+            lambda source_bytes: (
+                events.append("character_write")
+                or CharacterCardImportOutcome(1, True, portable, None)
+            ),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -2899,8 +2933,7 @@ class TestImportExport:
                 screen,
                 "_resolve_import_collision_choice",
                 AsyncMock(
-                    side_effect=lambda _plan: events.append("collision_choice")
-                    or None
+                    side_effect=lambda _plan: events.append("collision_choice") or None
                 ),
             )
 
@@ -2929,7 +2962,9 @@ class TestImportExport:
                 options=profile.options,
             ),
         )
-        observation = PortableProfileAvailabilityObservation(7, 3, portable, "available")
+        observation = PortableProfileAvailabilityObservation(
+            7, 3, portable, "available"
+        )
 
         class _Service:
             async def observe_portable_profile(self, _profile):
@@ -3347,6 +3382,11 @@ class TestImportExport:
             "import_character_card_with_outcome",
             persist_character,
         )
+        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+            list_character_dictionaries=AsyncMock(
+                return_value={"dictionaries": []}
+            )
+        )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
         log_messages: list[str] = []
@@ -3516,13 +3556,23 @@ class TestImportExport:
 
 
 class _FtsStubDB:
-    """Captures the MATCH term handed to search_character_cards."""
+    """Captures the MATCH term handed to search_character_cards.
+
+    TASK-19558: `search_character_cards` used to compute a `safe_search_term`
+    and bind the RAW one, so a caller-built prefix expression reached MATCH
+    only through the plain-text parameter. The plain-text parameter now
+    quotes what it is given, and a caller-built expression travels through
+    `fts_match_query` -- which is what `calls` records here, so these tests
+    still assert on the expression SQLite actually sees.
+    """
 
     def __init__(self):
         self.calls: list[tuple[str, int]] = []
+        self.plain_terms: list[str] = []
 
-    def search_character_cards(self, search_term, limit=10):
-        self.calls.append((search_term, limit))
+    def search_character_cards(self, search_term, limit=10, fts_match_query=None):
+        self.plain_terms.append(search_term)
+        self.calls.append((fts_match_query, limit))
         return [{"id": 1, "name": "Match"}]
 
 
@@ -3541,6 +3591,12 @@ class TestFtsTermSafety:
         results = character_handler_module.search_characters_fts("sam")
         assert [term for term, _ in stub_db.calls] == ['"sam"*']
         assert results and results[0]["name"] == "Match"
+        # The raw term is still passed positionally, but when
+        # `fts_match_query` is supplied `search_term` is UNUSED by
+        # `search_character_cards` -- not even in its error message, which
+        # reports the expression that was actually run. Recorded here only so
+        # a future change that starts using it is visible.
+        assert stub_db.plain_terms == ["sam"]
 
     async def test_apostrophe_term_is_safe(self, stub_db):
         character_handler_module.search_characters_fts("O'Brien")
@@ -4090,8 +4146,11 @@ class TestConsoleActions:
                 screen.query_one("#personas-attach-to-console", Button).disabled is True
             )
             assert screen.query_one("#personas-start-chat", Button).disabled is True
-            assert "Chat now and Send to Console draft blocked: prompts are not attachable" in str(
-                screen.query_one("#personas-readiness-console", Static).renderable
+            assert (
+                "Chat now and Send to Console draft blocked: prompts are not attachable"
+                in str(
+                    screen.query_one("#personas-readiness-console", Static).renderable
+                )
             )
 
     async def test_readiness_surfaces_reflect_unready_character_provider(
@@ -4170,9 +4229,7 @@ class TestConsoleActions:
                 screen.query_one("#personas-attach-to-console", Button).disabled
                 is False
             )
-            assert (
-                screen.query_one("#personas-start-chat", Button).disabled is False
-            )
+            assert screen.query_one("#personas-start-chat", Button).disabled is False
 
     async def test_readiness_blocked_when_handoff_provider_unready_despite_ready_character_provider(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -4215,11 +4272,10 @@ class TestConsoleActions:
             )
             # Per-intent gating (task-523): Chat now disabled, Send to Console
             # draft enabled.
+            assert screen.query_one("#personas-start-chat", Button).disabled is True
             assert (
-                screen.query_one("#personas-start-chat", Button).disabled is True
-            )
-            assert (
-                screen.query_one("#personas-attach-to-console", Button).disabled is False
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
             )
 
     async def test_readiness_ready_when_handoff_provider_ready_despite_unready_character_provider(
@@ -4311,30 +4367,27 @@ class TestConsoleActions:
 
         assert observed_enabled == [True]
 
-    async def test_character_save_pushes_console_gate_before_reload(
+    async def test_character_save_updates_console_gate_without_detached_reload(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
-        """Save completion should expose valid Console actions before reload awaits."""
+        """Save completion owns presentation without an unfenced reload worker."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
 
-            observed_enabled: list[bool] = []
-
-            async def observe_load(_character_id):
-                observed_enabled.append(
-                    not screen.query_one("#personas-attach-to-console", Button).disabled
-                )
-
+            load_character = AsyncMock()
             monkeypatch.setattr(
-                screen.character_handler, "load_character", observe_load
+                screen.character_handler, "load_character", load_character
             )
 
             await screen._after_character_save("1", "Detective Sam")
             await pilot.pause()
 
-        assert observed_enabled == [True]
+            assert not screen.query_one(
+                "#personas-attach-to-console", Button
+            ).disabled
+            load_character.assert_not_awaited()
 
     async def test_profile_save_pushes_console_gate_before_row_render(
         self,
@@ -4503,17 +4556,11 @@ class TestConsoleActions:
             ),
         )
 
-        row_dto = SimpleNamespace(
-            model_dump=Mock(return_value=dict(server_row))
-        )
-        detail_dto = SimpleNamespace(
-            model_dump=Mock(return_value=dict(server_card))
-        )
+        row_dto = SimpleNamespace(model_dump=Mock(return_value=dict(server_row)))
+        detail_dto = SimpleNamespace(model_dump=Mock(return_value=dict(server_card)))
         scope_service = SimpleNamespace(
             list_characters=AsyncMock(return_value=[row_dto]),
-            search_characters=AsyncMock(
-                return_value={"items": [row_dto], "total": 1}
-            ),
+            search_characters=AsyncMock(return_value={"items": [row_dto], "total": 1}),
             get_character=AsyncMock(return_value=detail_dto),
         )
         mock_app_instance.app_config = {
@@ -4562,9 +4609,7 @@ class TestConsoleActions:
             assert "Remote Elara: Remote hello from Remote Elara." in (
                 screen.query_one(PersonasPreviewPane).transcript_text()
             )
-            assert (
-                screen.query_one("#personas-character-attachments").display is False
-            )
+            assert screen.query_one("#personas-character-attachments").display is False
             assert (
                 screen.query_one("#personas-card-edit-character", Button).disabled
                 is True
@@ -4710,9 +4755,7 @@ class TestConsoleActions:
             }
             screen._sync_title_and_console_actions()
             await pilot.pause()
-            assert not screen.query_one("#personas-header").has_class(
-                "status-blocked"
-            )
+            assert not screen.query_one("#personas-header").has_class("status-blocked")
             ready_color = badge.styles.color
 
         assert blocked_color != ready_color
@@ -4901,7 +4944,9 @@ class TestServerCharacterSourceIsolation:
             switch = asyncio.create_task(
                 screen.handle_runtime_backend_changed("server")
             )
-            await started.wait()
+            await wait_for_background_signal(
+                started, switch, what="the runtime-backend switch"
+            )
             await pilot.pause()
 
             assert screen._characters == []
@@ -4959,9 +5004,9 @@ class TestServerCharacterSourceIsolation:
             ):
                 control = screen.query_one(control_id, Button)
                 assert control.disabled is True, control_id
-                assert control.tooltip == (
-                    "Server characters are read-only here."
-                ), control_id
+                assert control.tooltip == ("Server characters are read-only here."), (
+                    control_id
+                )
 
     async def test_server_footer_does_not_advertise_local_character_creation(
         self, mock_app_instance, stub_characters
@@ -5243,7 +5288,9 @@ class TestServerCharacterSourceIsolation:
         screen._display_character_page = display
 
         load = asyncio.create_task(screen._reload_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, load, what="the character page reload"
+        )
         screen.state.runtime_source = "server"
         release.set()
         await load
@@ -5276,7 +5323,9 @@ class TestServerCharacterSourceIsolation:
         screen._notify = notify
 
         load = asyncio.create_task(screen._reload_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, load, what="the character page reload"
+        )
         await screen.handle_runtime_backend_changed("server")
         assert screen._characters == []
         assert screen._character_total == 0
@@ -5324,7 +5373,9 @@ class TestServerCharacterSourceIsolation:
         screen._display_character_page = display
 
         stale = asyncio.create_task(screen._reload_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, stale, what="the stale character page reload"
+        )
         screen.state.page_offset = 50
         await screen._reload_character_page()
         assert screen._characters == [{"id": 50, "name": "Newer offset winner"}]
@@ -5372,7 +5423,9 @@ class TestServerCharacterSourceIsolation:
         )
 
         older_x = asyncio.create_task(screen._reload_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, older_x, what="the older character page reload"
+        )
         screen.state.search_query = "y"
         await screen._reload_character_page()
         screen.state.search_query = ""
@@ -5429,7 +5482,9 @@ class TestServerCharacterSourceIsolation:
             screen.state.tag_filter = "older-tag"
 
             stale = asyncio.create_task(screen._reload_character_page())
-            await stale_render_started.wait()
+            await wait_for_background_signal(
+                stale_render_started, stale, what="the stale character page render"
+            )
 
             screen.state.sort_key = "name_asc"
             screen.state.tag_filter = None
@@ -5529,10 +5584,7 @@ class TestServerCharacterSourceIsolation:
                     return 1
                 if function is personas_screen_module.get_character_page_for_ui:
                     return [{"id": 7, "name": "Older Character Publication"}]
-                if (
-                    function
-                    is PersonasScreen._list_world_books_with_counts
-                ):
+                if function is PersonasScreen._list_world_books_with_counts:
                     return [
                         {
                             "id": 91,
@@ -5545,9 +5597,7 @@ class TestServerCharacterSourceIsolation:
 
             async def block_after_character_publication(rows, **kwargs):
                 await original_update_rows(rows, **kwargs)
-                if tuple(row.name for row in rows) == (
-                    "Older Character Publication",
-                ):
+                if tuple(row.name for row in rows) == ("Older Character Publication",):
                     stale_render_started.set()
                     await release_stale_render.wait()
 
@@ -5567,10 +5617,14 @@ class TestServerCharacterSourceIsolation:
             screen.state.tag_filter = "older-tag"
 
             stale = asyncio.create_task(screen._reload_character_page())
-            await stale_render_started.wait()
+            await wait_for_background_signal(
+                stale_render_started, stale, what="the stale character page render"
+            )
 
             newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
-            await mode_render_started.wait()
+            await wait_for_background_signal(
+                mode_render_started, newer_mode, what="the newer mode render"
+            )
             await pilot.pause()
 
             release_stale_render.set()
@@ -5646,9 +5700,7 @@ class TestServerCharacterSourceIsolation:
                 raise AssertionError(f"Unexpected to_thread function: {function!r}")
 
             async def block_before_character_publication(rows, **kwargs):
-                if tuple(row.name for row in rows) == (
-                    "Older Character Publication",
-                ):
+                if tuple(row.name for row in rows) == ("Older Character Publication",):
                     character_writer_entered.set()
                     await release_character_writer.wait()
                 await original_update_rows(rows, **kwargs)
@@ -5666,13 +5718,17 @@ class TestServerCharacterSourceIsolation:
             screen._character_db = lambda: object()
             screen._count_cache_key = None
 
-            stale_character = asyncio.create_task(
-                screen._reload_character_page()
+            stale_character = asyncio.create_task(screen._reload_character_page())
+            await wait_for_background_signal(
+                character_writer_entered,
+                stale_character,
+                what="the stale character page reload",
             )
-            await character_writer_entered.wait()
 
             newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
-            await mode_render_started.wait()
+            await wait_for_background_signal(
+                mode_render_started, newer_mode, what="the newer mode render"
+            )
             await pilot.pause()
 
             release_character_writer.set()
@@ -5779,18 +5835,26 @@ class TestServerCharacterSourceIsolation:
             screen._count_cache_key = None
             screen.state.tag_filter = "older-tag"
 
-            stale_character = asyncio.create_task(
-                screen._reload_character_page()
+            stale_character = asyncio.create_task(screen._reload_character_page())
+            await wait_for_background_signal(
+                initial_character_published,
+                stale_character,
+                what="the initial character publication",
             )
-            await initial_character_published.wait()
 
             screen.state.tag_filter = None
             await screen._reload_character_page()
             release_initial_character.set()
-            await cleanup_writer_entered.wait()
+            await wait_for_background_signal(
+                cleanup_writer_entered,
+                stale_character,
+                what="the stale reload's cleanup writer",
+            )
 
             newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
-            await mode_render_started.wait()
+            await wait_for_background_signal(
+                mode_render_started, newer_mode, what="the newer mode render"
+            )
             await pilot.pause()
 
             release_cleanup_writer.set()
@@ -5901,7 +5965,9 @@ class TestServerCharacterSourceIsolation:
             )
 
             stale_fetch = asyncio.create_task(screen._apply_mode(source_mode))
-            await fetch_started.wait()
+            await wait_for_background_signal(
+                fetch_started, stale_fetch, what="the stale shared-mode fetch"
+            )
 
             library = screen.query_one("#personas-library-pane")
             if owner_change == "query":
@@ -6038,7 +6104,9 @@ class TestServerCharacterSourceIsolation:
             )
 
             older_x_request = asyncio.create_task(render(query="x"))
-            await fetch_started.wait()
+            await wait_for_background_signal(
+                fetch_started, older_x_request, what="the older render request"
+            )
 
             screen.state.search_query = "y"
             await render(query="y")
@@ -6141,7 +6209,9 @@ class TestServerCharacterSourceIsolation:
             )
 
             older_request = asyncio.create_task(render())
-            await fetch_started.wait()
+            await wait_for_background_signal(
+                fetch_started, older_request, what="the older render request"
+            )
 
             await screen._apply_mode("prompts")
             await screen._apply_mode(source_mode)
@@ -6254,7 +6324,9 @@ class TestServerCharacterSourceIsolation:
             )
             generation_before = screen._dictionary_lore_request_generation
             valid_request = asyncio.create_task(valid_render(query="owner"))
-            await fetch_started.wait()
+            await wait_for_background_signal(
+                fetch_started, valid_request, what="the valid render request"
+            )
             accepted_generation = screen._dictionary_lore_request_generation
 
             if stale_callback == "wrong-mode":
@@ -6307,8 +6379,7 @@ class TestServerCharacterSourceIsolation:
                 )
                 expected_cache = prior_cache
                 expected_recovery = (
-                    "Dictionaries could not be loaded.\n"
-                    "Switch modes and back to retry."
+                    "Dictionaries could not be loaded.\nSwitch modes and back to retry."
                     if valid_mode == "dictionaries"
                     else "Lore books could not be loaded.\n"
                     "Switch modes and back to retry."
@@ -6367,7 +6438,9 @@ class TestServerCharacterSourceIsolation:
         screen._notify = notify
 
         older_x = asyncio.create_task(screen._reload_server_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, older_x, what="the older server character page load"
+        )
         mock_app_instance.active_server_id = "target-y"
         await screen._reload_server_character_page()
         mock_app_instance.active_server_id = "target-x"
@@ -6410,7 +6483,9 @@ class TestServerCharacterSourceIsolation:
         screen._character_total = 1
 
         load = asyncio.create_task(screen._reload_server_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, load, what="the server character page load"
+        )
         if changed_dimension == "source":
             screen.state.runtime_source = "local"
         elif changed_dimension == "target":
@@ -6424,9 +6499,7 @@ class TestServerCharacterSourceIsolation:
         elif changed_dimension == "tag":
             screen.state.tag_filter = "new-tag"
         else:
-            screen.state.page_offset = (
-                personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
-            )
+            screen.state.page_offset = personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
         release.set()
         await load
 
@@ -6460,7 +6533,9 @@ class TestServerCharacterSourceIsolation:
         screen._character_total = 1
 
         load_a = asyncio.create_task(screen._reload_server_character_page())
-        await started_a.wait()
+        await wait_for_background_signal(
+            started_a, load_a, what="the target-A server character page load"
+        )
         mock_app_instance.active_server_id = "target-b"
         await screen._reload_server_character_page()
         assert screen._characters == [{"id": 2, "name": "Target B"}]
@@ -6951,9 +7026,7 @@ class TestPreviewIntegration:
     async def _readout_text(self, screen):
         from textual.widgets import Static as _Static
 
-        return str(
-            screen.query_one("#personas-preview-provider", _Static).renderable
-        )
+        return str(screen.query_one("#personas-preview-provider", _Static).renderable)
 
     async def test_provider_readout_shows_character_and_fallback(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -7034,10 +7107,7 @@ class TestPreviewIntegration:
 
             assert fake.selections[0].provider == "anthropic"
             assert fake.selections[0].explicit_model is None
-            assert (
-                fake.selections[0].configured_model
-                == "claude-3-5-haiku-latest"
-            )
+            assert fake.selections[0].configured_model == "claude-3-5-haiku-latest"
 
     async def test_provider_readout_normalizes_whitespace_defaults(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -7506,9 +7576,7 @@ class TestPreviewIntegration:
                 "max_tokens": 321,
             },
             "api_settings": {
-                "llama_cpp": {
-                    "api_url": "http://127.0.0.1:8181/v1/chat/completions"
-                }
+                "llama_cpp": {"api_url": "http://127.0.0.1:8181/v1/chat/completions"}
             },
         }
         fake = ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
@@ -8404,9 +8472,7 @@ class TestBulkLibraryActions:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_all_characters",
-            lambda: [
-                dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)
-            ],
+            lambda: [dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)],
         )
 
         async def _confirm(name: str) -> bool:
@@ -8450,6 +8516,37 @@ class TestBulkLibraryActions:
             message.startswith("Exported 2 items") and severity == "information"
             for message, severity in notifications
         )
+
+    async def test_bulk_export_marked_pushes_enhanced_directory_picker(
+        self, mock_app_instance, stub_characters, stub_conversations, tmp_path
+    ):
+        """The marked-rows JSON export must use the enhanced picker family
+        (TASK-16477): same chrome as every other Roleplay dialog, and it
+        remembers its start directory per context."""
+        from tldw_chatbook.Widgets.enhanced_file_picker import (
+            EnhancedSelectDirectory,
+        )
+
+        pushed: list[object] = []
+
+        async def _fake_push_screen_wait(picker):
+            pushed.append(picker)
+            return tmp_path
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            pilot.app.push_screen_wait = AsyncMock(side_effect=_fake_push_screen_wait)
+            screen.query_one("#personas-export-json", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert len(pushed) == 1
+        picker = pushed[0]
+        assert isinstance(picker, EnhancedSelectDirectory)
+        assert picker._title == "Export 2 items as JSON"
+        assert picker.context == "character_export_dir"
 
     async def test_footer_discloses_sort_key_in_sortable_modes(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -8584,33 +8681,34 @@ class TestPersonaHumanIdentityRemoval:
             context_capture,
         ):
             assert context_capture is authority_capture
-            return await authority_resolver(
-                expected_server_id=expected_server_id
-            )
+            return await authority_resolver(expected_server_id=expected_server_id)
 
-        class _CapturingStore:
+        class _CapturingStore(ConsoleChatStore):
+            """Real in-memory Console store that records what was appended.
+
+            task-14920: this was a hand-rolled stub implementing only
+            ``create_session``/``append_message``. Once the handoff started
+            seeding the greeting through
+            ``ConsoleChatStore.seed_character_roleplay`` (commit a6cc05d8b),
+            the stub no longer had the method production calls, and the
+            handoff's ``except Exception`` swallowed the ``AttributeError``
+            -- so this test silently asserted "no greeting" instead of
+            failing on a stale double. Subclassing the real store keeps the
+            greeting expansion under production's control.
+            """
+
             def __init__(self):
+                super().__init__()
                 self.session = None
                 self.messages = []
 
-            def create_session(
-                self,
-                *,
-                title,
-                workspace_id,
-                settings,
-                **identity,
-            ):
-                self.session = SimpleNamespace(
-                    id="session-1",
-                    title=title,
-                    workspace_id=workspace_id,
-                    settings=settings,
-                    **identity,
-                )
+            def create_session(self, **kwargs):
+                self.session = super().create_session(**kwargs)
                 return self.session
 
-            def append_message(self, session_id, *, role, content, persist):
+            def append_message(
+                self, session_id, *, role, content, persist=False, **kwargs
+            ):
                 self.messages.append(
                     {
                         "session_id": session_id,
@@ -8619,12 +8717,17 @@ class TestPersonaHumanIdentityRemoval:
                         "persist": persist,
                     }
                 )
+                return super().append_message(
+                    session_id,
+                    role=role,
+                    content=content,
+                    persist=persist,
+                    **kwargs,
+                )
 
         runtime_app = SimpleNamespace(
             app_config=legacy_human_config.mapping,
-            active_server_id=(
-                server_target_id if runtime_source == "server" else None
-            ),
+            active_server_id=(server_target_id if runtime_source == "server" else None),
             chachanotes_db=db,
             character_persona_scope_service=server_profile_service,
             local_character_persona_service=local_profile_service,
@@ -8726,9 +8829,7 @@ class TestPersonaHumanIdentityRemoval:
             stub_scope_service.list_persona_profiles = AsyncMock(
                 return_value={"items": [renamed], "total": 1}
             )
-            await screen._after_profile_save(
-                {"id": "p-1", "name": "Chronicler"}
-            )
+            await screen._after_profile_save({"id": "p-1", "name": "Chronicler"})
             await pilot.pause()
             assert screen.state.selected_entity_name == "Chronicler"
 
@@ -8813,8 +8914,7 @@ class TestCharactersEmptyStateGuidance:
             assert screen.state.selected_entity_name == "Detective Sam"
             assert screen.query_one("#ccp-character-card-view").display is True
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             assert "Selected: Detective Sam" in str(
                 screen.query_one("#personas-selected-name", Static).renderable
@@ -8925,8 +9025,7 @@ class TestCharactersEmptyStateGuidance:
             # guidance is hidden from the start...
             assert screen.state.selected_entity_id == "1"
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             # ...and stays hidden when the selection moves to another row.
             await pilot.click("#personas-library-row-character-2")
@@ -8935,8 +9034,7 @@ class TestCharactersEmptyStateGuidance:
             await pilot.pause()
             assert screen.state.selected_entity_id == "2"
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             assert screen.query_one("#ccp-character-card-view").display is True
 
@@ -8949,14 +9047,12 @@ class TestCharactersEmptyStateGuidance:
             await screen._apply_mode("lore")
             await pilot.pause()
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             await screen._apply_mode("characters")
             await pilot.pause()
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is True
+                screen.query_one("#personas-characters-empty", Static).display is True
             )
 
     async def test_guidance_returns_after_delete(
@@ -8971,8 +9067,7 @@ class TestCharactersEmptyStateGuidance:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             self._bypass_confirm(screen, True)
             screen.query_one("#personas-delete", Button).press()
@@ -8981,8 +9076,7 @@ class TestCharactersEmptyStateGuidance:
             await pilot.pause()
             assert not screen.state.selected_entity_id
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is True
+                screen.query_one("#personas-characters-empty", Static).display is True
             )
 
 
@@ -9526,7 +9620,9 @@ class TestDirtyTracking:
             footer = screen.query_one(AppFooterStatus)
             # task-445: unavailable hints are dropped entirely rather than
             # rendered with a literal "unavailable" suffix.
-            assert "ctrl+enter send to console draft" not in footer.shortcut_text.lower()
+            assert (
+                "ctrl+enter send to console draft" not in footer.shortcut_text.lower()
+            )
             await screen._import_character_from_path(str(source))
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -9624,7 +9720,7 @@ class TestConfirmationDialogEscape:
 
         results: list[bool] = []
 
-        class DialogApp(App):
+        class DialogApp(ConsolidatedCSSApp):
             def on_mount(self) -> None:
                 self.push_screen(ConfirmationDialog(), callback=results.append)
 
@@ -9713,8 +9809,7 @@ class TestImportExportFilters:
             assert "Markdown Files" in filter_by_name
             assert filter_by_name["Character Cards"](Path("character.md")) is False
             assert (
-                filter_by_name["Character Cards"](Path("character.markdown"))
-                is False
+                filter_by_name["Character Cards"](Path("character.markdown")) is False
             )
             assert filter_by_name["Markdown Files"](Path("character.md")) is True
             assert filter_by_name["Markdown Files"](Path("character.markdown")) is True
@@ -9749,7 +9844,6 @@ class TestImportExportFilters:
             assert card_images(Path("x.png")) is True
             assert card_images(Path("x.webp")) is True
             assert card_images(Path("x.json")) is False
-
 
     async def test_export_json_filters_are_callable(
         self, mock_app_instance, stub_characters
@@ -9870,7 +9964,9 @@ async def test_character_row_meta_prefers_a_description_snippet_over_the_date() 
     assert "archivist of a drowned library" in rows[0].meta
 
 
-async def test_character_row_meta_falls_back_to_the_date_without_a_description() -> None:
+async def test_character_row_meta_falls_back_to_the_date_without_a_description() -> (
+    None
+):
     """Characters with no description keep their previous date meta line."""
     rows = personas_screen_module.PersonasScreen._build_library_rows(
         [{"id": 3, "name": "Blank", "last_modified": "2026-07-26T10:00:00"}],
@@ -9906,7 +10002,7 @@ async def test_inspector_pane_exposes_an_avatar_thumbnail_holder() -> None:
         PersonasInspectorPane,
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         def compose(self):
             yield PersonasInspectorPane()
 
@@ -9926,7 +10022,7 @@ async def test_inspector_avatar_thumbnail_mounts_and_clears() -> None:
         PersonasInspectorPane,
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         def compose(self):
             yield PersonasInspectorPane()
 
@@ -10006,6 +10102,7 @@ def _character_tts_availability(
     state: str = "available",
     configuration_revision: int = 4,
     catalog_revision: int | None = 8,
+    dependency: TTSProfileDependencyProjection | None = None,
 ) -> TTSProfileAvailabilitySnapshot:
     recovery = {
         "available": "none",
@@ -10021,6 +10118,7 @@ def _character_tts_availability(
                 profile_id=profile.profile_id,
                 state=state,  # type: ignore[arg-type]
                 recovery_action=recovery,  # type: ignore[arg-type]
+                dependency=dependency or TTSProfileDependencyProjection(),
             )
             for profile in page.profiles
         ),
@@ -10034,10 +10132,12 @@ class _CharacterTTSProfileService:
         page: TTSProfilePageSnapshot,
         assigned: LoadedCharacterTTSAssignment,
         availability_state: str = "available",
+        dependency: TTSProfileDependencyProjection | None = None,
     ) -> None:
         self.page = page
         self.assigned = assigned
         self.availability_state = availability_state
+        self.dependency = dependency
         self.assignment_count_value = 1
         self.get_calls: list[CharacterRef] = []
         self.availability_calls: list[TTSProfilePageSnapshot] = []
@@ -10047,6 +10147,8 @@ class _CharacterTTSProfileService:
         self.detach_calls: list[tuple[CharacterTTSAssignment, int]] = []
         self.update_calls: list[tuple[LoadedTTSProfile, TTSProfileDraft]] = []
         self.set_error: BaseException | None = None
+        self.extra_profiles: dict[UUID, LoadedTTSProfile] = {}
+        self.get_profile_calls: list[UUID] = []
 
     async def get_assigned_profile(
         self, character_ref: CharacterRef
@@ -10061,6 +10163,13 @@ class _CharacterTTSProfileService:
         assert offset == 0
         return self.page
 
+    async def get_profile(self, profile_id: UUID) -> LoadedTTSProfile:
+        self.get_profile_calls.append(profile_id)
+        loaded = self.extra_profiles.get(profile_id)
+        if loaded is None:
+            raise ProfileRepositoryError("missing")
+        return loaded
+
     async def observe_availability(
         self, page: TTSProfilePageSnapshot
     ) -> TTSProfileAvailabilitySnapshot:
@@ -10068,6 +10177,7 @@ class _CharacterTTSProfileService:
         return _character_tts_availability(
             page,
             state=self.availability_state,
+            dependency=self.dependency,
         )
 
     async def assignment_count(self, loaded: LoadedTTSProfile) -> int:
@@ -10119,7 +10229,7 @@ class _CharacterTTSProfileService:
         )
 
 
-class _CharacterTTSWidgetHost(App[None]):
+class _CharacterTTSWidgetHost(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.actions: list[CharacterTTSActionRequested] = []
@@ -10188,12 +10298,13 @@ async def test_character_tts_widget_renders_disabled_global_and_broken_assignmen
         assert "Unavailable" in str(
             widget.query_one(".personas-character-tts-status", Static).renderable
         )
-        assert widget.query_one(
-            ".personas-character-tts-remove", Button
-        ).disabled is False
-        assert str(
-            widget.query_one(".personas-character-tts-edit", Button).label
-        ) == "Repair"
+        assert (
+            widget.query_one(".personas-character-tts-remove", Button).disabled is False
+        )
+        assert (
+            str(widget.query_one(".personas-character-tts-edit", Button).label)
+            == "Repair"
+        )
 
 
 async def test_character_tts_widget_emits_id_only_intents_for_available_profiles() -> (
@@ -10238,6 +10349,154 @@ async def test_character_tts_widget_emits_id_only_intents_for_available_profiles
         assert app.actions[0].profile_id == available.profile_id
         assert vars(app.actions[0]).keys() >= {"action", "profile_id"}
         assert "authority" not in vars(app.actions[0])
+
+
+async def test_character_tts_widget_refuses_dependency_blocked_inactive_profile() -> (
+    None
+):
+    profile = _character_tts_profile(1)
+    blocked = CharacterTTSProfileOption(
+        profile.profile_id,
+        profile.display_name,
+        "available",
+        dependency=TTSProfileDependencyProjection(
+            reason="recipe_missing",
+            display="Needs compatible model",
+            action="open_audio_cpp_settings",
+        ),
+    )
+    app = _CharacterTTSWidgetHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(blocked,),
+                selected_profile_id=None,
+                status="Using the global speech default.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        selector = widget.query_one(Select)
+
+        assert "Needs compatible model" in next(
+            str(label)
+            for label, value in selector._options
+            if value == str(profile.profile_id)
+        )
+        selector.value = str(profile.profile_id)
+        await pilot.pause()
+
+        assert app.actions == []
+        assert selector.value == "__global__"
+
+
+async def test_character_tts_widget_renders_and_dispatches_shared_recovery_truth() -> (
+    None
+):
+    profile = _character_tts_profile(1)
+    dependency = TTSProfileDependencyProjection(
+        reason="recipe_mismatch",
+        display="Needs compatible model",
+        action="open_audio_cpp_settings",
+        advisory="recipe_provenance_unavailable",
+        advisory_display="Recipe provenance unavailable",
+        advisory_action="generate_new_profile",
+    )
+    option = CharacterTTSProfileOption(
+        profile.profile_id,
+        profile.display_name,
+        "available",
+        dependency=dependency,
+    )
+    app = _CharacterTTSWidgetHost()
+
+    async with app.run_test(size=(40, 24)) as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(option,),
+                selected_profile_id=profile.profile_id,
+                status="Needs compatible model. Recipe provenance unavailable.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        actions = dependency_recovery_actions(dependency)
+        blocker = widget.query_one(".personas-character-tts-dependency-primary", Button)
+        advisory = widget.query_one(
+            ".personas-character-tts-dependency-advisory", Button
+        )
+        assert (str(blocker.label), blocker.tooltip) == (
+            actions[0].label,
+            actions[0].tooltip,
+        )
+        assert (str(advisory.label), advisory.tooltip) == (
+            actions[1].label,
+            actions[1].tooltip,
+        )
+        action_area = widget.query_one(".personas-character-tts-actions")
+        assert widget.region.width == 40
+        for button in (blocker, advisory):
+            assert button.region.width == action_area.region.width
+            assert action_area.region.contains_region(button.region), str(button.label)
+
+        selector = widget.query_one(Select)
+        selector.focus()
+        focused_recovery: list[str] = []
+        for _ in range(5):
+            await pilot.press("tab")
+            focused = app.focused
+            if focused in (blocker, advisory):
+                assert isinstance(focused, Button)
+                focused_recovery.append(str(focused.label))
+                await pilot.press("enter")
+
+        await pilot.pause()
+
+        assert focused_recovery == [actions[0].label, actions[1].label]
+        assert [(message.action, message.profile_id) for message in app.actions] == [
+            ("open_audio_cpp_settings", profile.profile_id),
+            ("generate_new_profile", profile.profile_id),
+        ]
+
+
+async def test_character_tts_suggestion_is_guidance_not_assignment() -> None:
+    profile = _character_tts_profile(1)
+    option = CharacterTTSProfileOption(
+        profile.profile_id,
+        profile.display_name,
+        "available",
+    )
+    app = _CharacterTTSWidgetHost()
+    async with app.run_test() as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(option,),
+                selected_profile_id=None,
+                suggested_profile_id=profile.profile_id,
+                status="Using the global speech default.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        selector = widget.query_one(Select)
+
+        assert selector.value == "__global__"
+        assert app.actions == []
+        assert "Suggested" in next(
+            str(label)
+            for label, value in selector._options
+            if value == str(profile.profile_id)
+        )
+
+        selector.value = str(profile.profile_id)
+        await pilot.pause()
+
+        assert [(message.action, message.profile_id) for message in app.actions] == [
+            ("assign", profile.profile_id)
+        ]
 
 
 async def test_character_tts_widget_accepts_unverified_profile_assignment_without_laundering_it() -> (
@@ -10352,9 +10611,7 @@ def _configure_character_tts_app(
             "extensions": {},
         },
     )
-    mock_app_instance._ensure_tts_profile_service = AsyncMock(
-        return_value=service
-    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(return_value=service)
 
 
 async def test_character_tts_population_requires_one_generation_and_observes_off_page_assignment(
@@ -10364,9 +10621,7 @@ async def test_character_tts_population_requires_one_generation_and_observes_off
 ) -> None:
     # F-031: an empty library keeps first-paint auto-select from consuming
     # this state machine's exact-call seams before the explicit select below.
-    monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: []
-    )
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -10419,6 +10674,151 @@ async def test_character_tts_population_requires_one_generation_and_observes_off
         assert screen.query_one("#ccp-character-editor-view").display is False
         assert card_control.presentation_state.assignment_count == 4
         assert "Unavailable" in card_control.presentation_state.status
+        actions = card_control.query_one(".personas-character-tts-actions")
+        for button in actions.query(Button):
+            if button.display:
+                assert actions.region.contains_region(button.region), str(button.label)
+
+
+async def test_roleplay_profile_suggestion_requires_character_choice_and_exact_fresh_revision(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = replace(_character_tts_profile(1), revision=2)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(7, None),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    suggestion = personas_screen_module.CharacterTTSProfileSuggestion(
+        profile_id=profile.profile_id,
+        repository_generation=7,
+        profile_revision=2,
+    )
+    app = PersonasTestApp(mock_app_instance)
+    screen = PersonasScreen(mock_app_instance)
+    screen.apply_navigation_context(
+        {"view": "characters", "voice_profile_suggestion": suggestion}
+    )
+
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.state.selected_entity_id is None
+        assert service.set_calls == []
+
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        state = screen._character_tts_presentation
+        assert state.selected_profile_id is None
+        assert state.suggested_profile_id == profile.profile_id
+        assert service.set_calls == []
+        selector = screen.query_one(
+            "#personas-character-card-tts .personas-character-tts-profile",
+            Select,
+        )
+        assert selector.value == "__global__"
+        assert app.focused is selector
+        actions = screen.query_one(
+            "#personas-character-card-tts .personas-character-tts-actions"
+        )
+        for button in actions.query(Button):
+            if button.display:
+                assert actions.region.contains_region(button.region), str(button.label)
+
+        selector.value = str(profile.profile_id)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+
+        assert service.set_calls == [
+            (
+                screen._character_tts_snapshot.character_ref,
+                LoadedTTSProfile(7, profile),
+                None,
+            )
+        ]
+        assert screen._character_tts_profile_suggestion is None
+
+
+async def test_roleplay_profile_suggestion_clears_when_generation_or_revision_is_stale(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = replace(_character_tts_profile(1), revision=3)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(7, (profile,), 1),
+        assigned=LoadedCharacterTTSAssignment(7, None),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    suggestion = personas_screen_module.CharacterTTSProfileSuggestion(
+        profile_id=profile.profile_id,
+        repository_generation=7,
+        profile_revision=2,
+    )
+    app = PersonasTestApp(mock_app_instance)
+    screen = PersonasScreen(mock_app_instance)
+    screen.apply_navigation_context(
+        {"view": "characters", "voice_profile_suggestion": suggestion}
+    )
+
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        assert screen._character_tts_profile_suggestion is None
+        assert screen._character_tts_presentation.suggested_profile_id is None
+        assert service.set_calls == []
+
+
+async def test_roleplay_profile_suggestion_resolves_exact_profile_beyond_first_page(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    first_page = _character_tts_profile(1)
+    suggested_profile = replace(_character_tts_profile(51), revision=2)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(7, (first_page,), 51),
+        assigned=LoadedCharacterTTSAssignment(7, None),
+    )
+    service.extra_profiles[suggested_profile.profile_id] = LoadedTTSProfile(
+        7,
+        suggested_profile,
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    suggestion = personas_screen_module.CharacterTTSProfileSuggestion(
+        profile_id=suggested_profile.profile_id,
+        repository_generation=7,
+        profile_revision=2,
+    )
+    app = PersonasTestApp(mock_app_instance)
+    screen = PersonasScreen(mock_app_instance)
+    screen.apply_navigation_context(
+        {"view": "characters", "voice_profile_suggestion": suggestion}
+    )
+
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        assert service.get_profile_calls == [suggested_profile.profile_id]
+        assert (
+            screen._character_tts_presentation.suggested_profile_id
+            == suggested_profile.profile_id
+        )
+        assert screen._character_tts_presentation.selected_profile_id is None
+        assert service.set_calls == []
 
 
 async def test_character_tts_population_rejects_mixed_repository_generations(
@@ -10461,9 +10861,7 @@ async def test_character_tts_off_page_assignment_requires_matching_capability_re
     monkeypatch,
 ) -> None:
     # F-031: empty library - see the population-generation test above.
-    monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: []
-    )
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -10568,9 +10966,7 @@ async def test_character_tts_server_principal_change_rejects_late_population(
     mock_app_instance.runtime_backend = "server"
     mock_app_instance.active_server_id = "server-a"
     mock_app_instance.server_context_provider = provider
-    mock_app_instance._ensure_tts_profile_service = AsyncMock(
-        return_value=service
-    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(return_value=service)
 
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test() as pilot:
@@ -10593,7 +10989,9 @@ async def test_character_tts_server_principal_change_rejects_late_population(
                 "server",
             )
         )
-        await started.wait()
+        await wait_for_background_signal(
+            started, task, what="the character TTS refresh worker"
+        )
         if final_authority_check == "error":
             provider.raise_on_check = True
         else:
@@ -10606,8 +11004,7 @@ async def test_character_tts_server_principal_change_rejects_late_population(
         assert screen._character_tts_snapshot is None
         assert screen._character_tts_presentation.controls_enabled is False
         assert (
-            screen._character_tts_presentation.status
-            == "Save/reopen before assigning."
+            screen._character_tts_presentation.status == "Save/reopen before assigning."
         )
 
 
@@ -10617,9 +11014,7 @@ async def test_character_tts_local_authority_change_rejects_late_population(
     monkeypatch,
 ) -> None:
     # F-031: empty library - see the population-generation test above.
-    monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: []
-    )
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
     profile = _character_tts_profile(1)
     original_ref = CharacterRef(
         source="local",
@@ -10657,9 +11052,7 @@ async def test_character_tts_local_authority_change_rejects_late_population(
             "extensions": {},
         },
     )
-    mock_app_instance._ensure_tts_profile_service = AsyncMock(
-        return_value=service
-    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(return_value=service)
     app = PersonasTestApp(mock_app_instance)
 
     async with app.run_test() as pilot:
@@ -10701,9 +11094,7 @@ async def test_character_tts_missing_local_authority_disables_without_profile_re
     )
     mock_app_instance.runtime_backend = "local"
     mock_app_instance.chachanotes_db = object()
-    mock_app_instance._ensure_tts_profile_service = AsyncMock(
-        return_value=service
-    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(return_value=service)
     app = PersonasTestApp(mock_app_instance)
 
     async with app.run_test() as pilot:
@@ -10759,9 +11150,7 @@ async def test_character_tts_assign_and_detach_use_exact_observed_tokens(
         await screen._select_character("1", "Detective Sam")
         await pilot.app.workers.wait_for_complete()
 
-        screen.post_message(
-            CharacterTTSActionRequested("assign", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("assign", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.set_calls == [
@@ -10832,9 +11221,7 @@ async def test_character_tts_assignment_worker_accepts_unverified_profile(
         await screen._select_character("1", "Detective Sam")
         await pilot.app.workers.wait_for_complete()
 
-        screen.post_message(
-            CharacterTTSActionRequested("assign", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("assign", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.set_calls == [
@@ -10964,9 +11351,7 @@ async def test_character_tts_assignment_worker_still_refuses_unavailable_profile
         await screen._select_character("1", "Detective Sam")
         await pilot.app.workers.wait_for_complete()
 
-        screen.post_message(
-            CharacterTTSActionRequested("assign", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("assign", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.set_calls == []
@@ -10998,19 +11383,45 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
                 profile=profile,
             ),
         ),
+        dependency=TTSProfileDependencyProjection(
+            reason="recipe_missing",
+            display="Needs compatible model",
+            action="open_audio_cpp_settings",
+            advisory="recipe_provenance_unavailable",
+            advisory_display="Recipe provenance unavailable",
+            advisory_action="generate_new_profile",
+        ),
     )
     _configure_character_tts_app(mock_app_instance, service)
     app = _NavCaptureApp(mock_app_instance)
 
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:
         screen = await _mounted(pilot)
         await pilot.app.workers.wait_for_complete()
         await screen._select_character("1", "Detective Sam")
         await pilot.app.workers.wait_for_complete()
 
-        screen.post_message(
-            CharacterTTSActionRequested("preview", profile.profile_id)
+        character_tts = screen.query_one(
+            "#personas-character-card-tts", PersonasCharacterTTSWidget
         )
+        action_area = character_tts.query_one(".personas-character-tts-actions")
+        blocker = character_tts.query_one(
+            ".personas-character-tts-dependency-primary", Button
+        )
+        advisory = character_tts.query_one(
+            ".personas-character-tts-dependency-advisory", Button
+        )
+        character_tts.query_one(
+            ".personas-character-tts-recovery-actions"
+        ).scroll_visible()
+        await pilot.pause()
+        assert character_tts.region.width <= 40
+        for button in (blocker, advisory):
+            assert button.display is True
+            assert button.region.width == action_area.region.width
+            assert action_area.region.contains_region(button.region), str(button.label)
+
+        screen.post_message(CharacterTTSActionRequested("preview", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -11019,6 +11430,46 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
         assert type(preset) is TTSPlaygroundSelectionPreset
         assert preset.model_id == profile.model_id
         assert preset.voice_id == profile.voice_id
+
+        blocker.press()
+        await pilot.pause()
+        assert app.nav_routes[-1] == "settings"
+        assert app.nav_contexts[-1]["category"] == "speech-tts"
+
+        advisory.press()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        assert app.nav_routes[-1] == "stts"
+        recovery_preset = app.nav_contexts[-1]["profile_preset"]
+        assert type(recovery_preset) is TTSPlaygroundSelectionPreset
+        assert recovery_preset.model_id == profile.model_id
+
+        snapshot = screen._character_tts_snapshot
+        assert snapshot is not None
+        pending = TTSProfileDependencyProjection(
+            reason="recipe_pending_apply",
+            display="Compatible model saved; apply settings",
+            action="open_speech_lab_apply",
+        )
+        screen._character_tts_snapshot = replace(
+            snapshot,
+            availability=tuple(
+                replace(item, dependency=pending) for item in snapshot.availability
+            ),
+        )
+        for operation in ("open_speech_lab_apply",):
+            screen.post_message(
+                CharacterTTSActionRequested(operation, profile.profile_id)
+            )
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            assert app.nav_routes[-1] == "stts"
+            recovery_preset = app.nav_contexts[-1]["profile_preset"]
+            assert type(recovery_preset) is TTSPlaygroundSelectionPreset
+            assert recovery_preset.model_id == profile.model_id
+            assert recovery_preset.voice_id == profile.voice_id
+        assert service.set_calls == []
+        assert service.detach_calls == []
 
         screen.post_message(CharacterTTSActionRequested("create", None))
         await pilot.pause()
@@ -11034,9 +11485,7 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
             options=profile.options,
         )
         pilot.app.push_screen_wait = AsyncMock(return_value=draft)
-        screen.post_message(
-            CharacterTTSActionRequested("edit", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("edit", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.update_calls == [
@@ -11090,9 +11539,7 @@ async def test_character_tts_preview_rechecks_local_authority(
         assert screen._character_tts_snapshot is not None
 
         authority_reader.return_value = "different-local-authority"
-        screen.post_message(
-            CharacterTTSActionRequested("preview", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("preview", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
 
@@ -11126,9 +11573,7 @@ async def test_character_tts_conflict_refreshes_and_stale_selection_cannot_publi
         await pilot.app.workers.wait_for_complete()
         reads_before = len(service.get_calls)
 
-        screen.post_message(
-            CharacterTTSActionRequested("assign", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("assign", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert len(service.get_calls) > reads_before
@@ -11192,3 +11637,811 @@ async def test_character_soft_delete_never_detaches_tts_assignment(
         await pilot.app.workers.wait_for_complete()
 
         assert service.detach_calls == []
+
+
+def _configure_persona_buddy(
+    mock_app_instance,
+    records: dict[str, dict],
+    *,
+    preferences: PersonaBuddyPreferences | None = None,
+) -> PersonaBuddyController:
+    def local_record(persona_id: str):
+        record = records.get(str(persona_id))
+        return dict(record) if record is not None else None
+
+    async def scoped_record(persona_id: str, *, mode: str):
+        assert mode == "local"
+        record = local_record(persona_id)
+        if record is None:
+            raise ValueError("persona missing")
+        return record
+
+    scope = SimpleNamespace(
+        local_service=SimpleNamespace(get_persona_profile=local_record),
+        list_persona_profiles=AsyncMock(
+            return_value={
+                "items": [dict(item) for item in records.values()],
+                "total": len(records),
+            }
+        ),
+        get_persona_profile=AsyncMock(side_effect=scoped_record),
+        delete_persona_profile=AsyncMock(
+            return_value={"status": "deleted", "persona_id": "p-1"}
+        ),
+    )
+    controller = PersonaBuddyController(
+        preferences=preferences,
+        local_persona_service=scope.local_service,
+        preference_writer=lambda _preferences: True,
+    )
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.character_persona_scope_service = scope
+    mock_app_instance.persona_buddy_controller = controller
+    mock_app_instance.reconcile_persona_buddy_view = AsyncMock(return_value=True)
+    return controller
+
+
+async def test_workbench_highlight_never_retargets_buddy(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {
+        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
+        "p-2": {
+            **PROFILE,
+            "id": "p-2",
+            "name": "Navigator",
+            "version": 5,
+            "is_active": True,
+            "deleted": False,
+        },
+    }
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-2", "Navigator")
+        await pilot.pause()
+
+        assert controller.snapshot().selection == PersonaBuddySelection("local", "p-1")
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+
+async def test_floating_buddy_close_refreshes_active_personas_inspector(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            open=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    persisted: list[PersonaBuddyPreferences] = []
+    controller._preference_writer = lambda preferences: (
+        persisted.append(preferences) or True
+    )
+
+    async def unresolved_until_closed(*, cols: int, lines: int):
+        return None
+
+    controller.resolve_current_visual = unresolved_until_closed
+    app = PersonaBuddyWorkbenchApp(mock_app_instance)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        await app.reconcile_persona_buddy_view()
+        await pilot.pause()
+
+        assert screen.query_one(PersonaBuddyWidget).is_attached
+        assert screen.query_one("#personas-buddy-close", Button).disabled is False
+        assert screen.query_one("#personas-buddy-show", Button).disabled is True
+
+        await pilot.click("#persona-buddy-close")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert controller.current_preferences().open is False
+        assert persisted[-1].open is False
+        assert not list(screen.query(PersonaBuddyWidget))
+        show = screen.query_one("#personas-buddy-show", Button)
+        close = screen.query_one("#personas-buddy-close", Button)
+        assert show.disabled is False
+        assert close.disabled is True
+        assert close.tooltip == "Buddy is already closed."
+
+
+async def test_stale_personas_screen_reconcile_skips_screen_local_buddy_hook(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    _configure_persona_buddy(
+        mock_app_instance,
+        {},
+        preferences=PersonaBuddyPreferences(open=False),
+    )
+    app = PersonaBuddyWorkbenchApp(mock_app_instance)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        stale = await _mounted(pilot)
+        await app.switch_screen(PersonasScreen(app))
+        hook = Mock(wraps=stale.sync_persona_buddy_reconciled_state)
+        stale.sync_persona_buddy_reconciled_state = hook
+
+        await stale.reconcile_persona_buddy_view()
+
+        hook.assert_not_called()
+
+
+@pytest.mark.parametrize("compact", (False, True), ids=("normal", "compact"))
+async def test_real_80x24_workbench_scrolls_each_buddy_action_into_view_and_runs_it(
+    mock_app_instance,
+    stub_characters,
+    compact: bool,
+) -> None:
+    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            open=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        workbench = screen.query_one("#personas-workbench")
+        workbench.set_class(compact, "personas-workbench-compact")
+        for pane_id in (
+            "#personas-library-pane",
+            "#personas-work-area",
+            "#personas-inspector-pane",
+        ):
+            screen.query_one(pane_id).set_class(
+                compact, "personas-workbench-compact-pane"
+            )
+        await pilot.pause()
+
+        inspector = screen.query_one("#personas-inspector-pane")
+        expectations = (
+            ("#personas-buddy-close", "Close Buddy", True, False),
+            ("#personas-buddy-show", "Show Buddy", True, True),
+            ("#personas-buddy-disable", "Disable Buddy", False, True),
+            ("#personas-buddy-use", "Use for Buddy", True, True),
+        )
+        for button_id, label, enabled, opened in expectations:
+            button = screen.query_one(button_id, Button)
+            assert str(button.label) == label
+            assert button.disabled is False
+            button.focus(scroll_visible=True)
+            await pilot.pause(0.5)
+
+            assert pilot.app.focused is button
+            assert button.region.y >= max(0, inspector.content_region.y)
+            assert button.region.bottom <= min(24, inspector.content_region.bottom)
+
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            preferences = controller.current_preferences()
+            assert preferences.enabled is enabled
+            assert preferences.open is opened
+
+
+async def test_explicit_replacement_is_required(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {
+        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
+        "p-2": {
+            **PROFILE,
+            "id": "p-2",
+            "name": "Navigator",
+            "version": 5,
+            "is_active": True,
+            "deleted": False,
+        },
+    }
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-2", "Navigator")
+        await pilot.pause()
+        assert not screen.query_one("#personas-buddy-use", Button).disabled
+        for button_id in (
+            "#personas-buddy-show",
+            "#personas-buddy-close",
+            "#personas-buddy-disable",
+        ):
+            button = screen.query_one(button_id, Button)
+            assert button.disabled is True
+            assert button.tooltip == "Select the Persona currently used by Buddy"
+
+        await screen._select_profile("p-1", "Archivist")
+        assert screen.query_one("#personas-buddy-use", Button).disabled is False
+        assert screen.query_one("#personas-buddy-close", Button).disabled is False
+        assert screen.query_one("#personas-buddy-disable", Button).disabled is False
+        show = screen.query_one("#personas-buddy-show", Button)
+        assert show.disabled is True
+        assert show.tooltip == "Buddy is already open."
+
+        await screen._select_profile("p-2", "Navigator")
+
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="show", source="local", persona_id="p-2", revision=5
+            )
+        )
+        await pilot.pause()
+        assert controller.snapshot().selection == PersonaBuddySelection("local", "p-1")
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="use", source="local", persona_id="p-2", revision=5
+            )
+        )
+        await pilot.pause()
+
+        snapshot = controller.snapshot()
+        assert snapshot.selection == PersonaBuddySelection("local", "p-2")
+        assert snapshot.enabled is True
+        assert snapshot.open is True
+        mock_app_instance.reconcile_persona_buddy_view.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_enabled", "expected_open"),
+    (
+        ("show", True, True),
+        ("close", True, False),
+        ("disable", False, True),
+    ),
+)
+async def test_buddy_visibility_actions_preserve_explicit_selection(
+    mock_app_instance,
+    stub_characters,
+    action: str,
+    expected_enabled: bool,
+    expected_open: bool,
+) -> None:
+    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        {"p-1": record},
+        preferences=PersonaBuddyPreferences(
+            enabled=action != "show",
+            open=action != "show",
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action=action, source="local", persona_id="p-1", revision=2
+            )
+        )
+        await pilot.pause()
+
+        preferences = controller.current_preferences()
+        assert preferences.selection == PersonaBuddySelection("local", "p-1")
+        assert preferences.enabled is expected_enabled
+        assert preferences.open is expected_open
+
+
+@pytest.mark.parametrize("failure", ("false", "raise", "cancel"))
+async def test_buddy_action_writer_failure_leaves_memory_and_durable_state_unchanged(
+    mock_app_instance,
+    stub_characters,
+    failure: str,
+) -> None:
+    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    initial = PersonaBuddyPreferences(
+        enabled=True,
+        open=True,
+        selection=PersonaBuddySelection("local", "p-1"),
+    )
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        {"p-1": record},
+        preferences=initial,
+    )
+    durable = initial
+
+    def writer(preferences: PersonaBuddyPreferences) -> bool:
+        nonlocal durable
+        if failure == "false":
+            return False
+        if failure == "raise":
+            raise RuntimeError("writer failed")
+        raise asyncio.CancelledError
+
+    controller._preference_writer = writer
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="close", source="local", persona_id="p-1", revision=2
+            )
+        )
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert durable == initial
+        assert controller.current_preferences() == initial
+        assert screen.state.has_unsaved_changes is False
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+
+async def test_buddy_action_persists_before_applying_memory_or_reconciling(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    initial = PersonaBuddyPreferences(
+        enabled=True,
+        open=True,
+        selection=PersonaBuddySelection("local", "p-1"),
+    )
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        {"p-1": record},
+        preferences=initial,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    durable = initial
+
+    def writer(preferences: PersonaBuddyPreferences) -> bool:
+        nonlocal durable
+        entered.set()
+        release.wait(timeout=5)
+        durable = preferences
+        return True
+
+    controller._preference_writer = writer
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="close", source="local", persona_id="p-1", revision=2
+            )
+        )
+        assert await asyncio.to_thread(entered.wait, 2)
+
+        assert durable == initial
+        assert controller.current_preferences() == initial
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+        release.set()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert durable.open is False
+        assert controller.current_preferences() == durable
+        mock_app_instance.reconcile_persona_buddy_view.assert_awaited_once()
+
+
+async def test_disabled_deleted_missing_persona_hides_but_preserves_enabled_selection(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    records = {"p-1": record}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    resolved = []
+
+    async def reconcile():
+        resolved.append(await controller.resolve_current_visual(cols=80, lines=24))
+        return True
+
+    mock_app_instance.reconcile_persona_buddy_view.side_effect = reconcile
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        before = controller.snapshot().profile_generation
+
+        for unavailable_record in (
+            {**record, "is_active": False},
+            {**record, "deleted": True},
+            None,
+        ):
+            if unavailable_record is None:
+                records.pop("p-1")
+            else:
+                records["p-1"] = unavailable_record
+            await screen._refresh_persona_buddy_lifecycle("p-1")
+
+        snapshot = controller.snapshot()
+        assert snapshot.profile_generation == before + 3
+        assert snapshot.enabled is True
+        assert snapshot.selection == PersonaBuddySelection("local", "p-1")
+        assert mock_app_instance.reconcile_persona_buddy_view.await_count == 3
+        assert [visual.available for visual in resolved] == [False, False, False]
+        assert {visual.reason for visual in resolved} == {
+            "persona_buddy_persona_unavailable"
+        }
+
+
+async def test_restore_reresolves_same_selection(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    record = {**PROFILE, "version": 3, "is_active": False, "deleted": False}
+    records = {"p-1": record}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            open=True,
+            collapsed=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    resolved = []
+
+    async def reconcile():
+        resolved.append(await controller.resolve_current_visual(cols=80, lines=24))
+        return True
+
+    mock_app_instance.reconcile_persona_buddy_view.side_effect = reconcile
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        before = controller.snapshot().profile_generation
+        await screen._refresh_persona_buddy_lifecycle("p-1")
+        records["p-1"] = {
+            **record,
+            "version": 4,
+            "is_active": True,
+            "deleted": False,
+        }
+        await screen._refresh_persona_buddy_lifecycle("p-1")
+
+        preferences = controller.current_preferences()
+        assert preferences.selection == PersonaBuddySelection("local", "p-1")
+        assert preferences.enabled is True
+        assert preferences.open is True
+        assert preferences.collapsed is True
+        assert controller.snapshot().profile_generation == before + 2
+        assert [visual.reason for visual in resolved] == [
+            "persona_buddy_persona_unavailable",
+            "persona_buddy_binding_unavailable",
+        ]
+
+
+async def test_buddy_action_fetch_aba_cannot_apply_or_reconcile(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {
+        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
+        "p-2": {
+            **PROFILE,
+            "id": "p-2",
+            "name": "Navigator",
+            "version": 5,
+            "is_active": True,
+            "deleted": False,
+        },
+    }
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def fetch(persona_id: str, *, mode: str):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                await release.wait()
+            return dict(records[persona_id])
+
+        mock_app_instance.character_persona_scope_service.get_persona_profile = fetch
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="close", source="local", persona_id="p-1", revision=2
+            )
+        )
+        await started.wait()
+        await screen._select_profile("p-2", "Navigator")
+        await screen._select_profile("p-1", "Archivist")
+        release.set()
+        await pilot.pause()
+
+        assert controller.current_preferences().open is True
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+
+async def test_incomplete_profile_fetch_disables_cached_buddy_actions(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
+    _configure_persona_buddy(mock_app_instance, records)
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        mock_app_instance.character_persona_scope_service.get_persona_profile = (
+            AsyncMock(side_effect=RuntimeError("service unavailable"))
+        )
+        await screen._select_profile("p-1", "Archivist")
+
+        for button in screen.query(".persona-buddy-action").results(Button):
+            assert button.disabled is True
+            assert (
+                button.tooltip
+                == "Persona details are unavailable. Refresh and try again."
+            )
+
+
+async def test_local_save_and_delete_refresh_only_the_same_buddy_selection(
+    monkeypatch,
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        mock_app_instance.character_persona_scope_service.delete_persona_profile = (
+            AsyncMock()
+        )
+        refresh = AsyncMock()
+        monkeypatch.setattr(screen, "_refresh_persona_buddy_lifecycle", refresh)
+        monkeypatch.setattr(screen, "_after_delete", AsyncMock())
+        monkeypatch.setattr(
+            screen.persona_handler,
+            "refresh_persona_list",
+            AsyncMock(return_value=[]),
+        )
+
+        screen.state.active_mode = "characters"
+        await screen._after_profile_save(
+            {**PROFILE, "id": "p-1", "version": 3}, source="local"
+        )
+        await screen._delete_entity("persona", "p-1", 3)
+
+        assert refresh.await_args_list == [call("p-1"), call("p-1")]
+
+
+async def test_server_profile_durable_changes_never_refresh_local_buddy(
+    monkeypatch,
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        mock_app_instance.character_persona_scope_service.delete_persona_profile = (
+            AsyncMock()
+        )
+        refresh = AsyncMock()
+        monkeypatch.setattr(screen, "_refresh_persona_buddy_lifecycle", refresh)
+        monkeypatch.setattr(screen, "_after_delete", AsyncMock())
+        monkeypatch.setattr(
+            screen.persona_handler,
+            "refresh_persona_list",
+            AsyncMock(return_value=[]),
+        )
+        monkeypatch.setattr(screen.persona_handler, "current_mode", lambda: "server")
+
+        screen.state.active_mode = "characters"
+        await screen._after_profile_save(
+            {**PROFILE, "id": "p-1", "version": 3}, source="server"
+        )
+        await screen._delete_entity("persona", "p-1", 3)
+
+        refresh.assert_not_awaited()
+
+
+async def test_stale_buddy_action_does_not_refresh_replaced_workbench_selection(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {
+        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
+        "p-2": {
+            **PROFILE,
+            "id": "p-2",
+            "name": "Navigator",
+            "version": 5,
+            "is_active": True,
+            "deleted": False,
+        },
+    }
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_writer(_preferences):
+        started.set()
+        release.wait(timeout=5)
+        return True
+
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    controller._preference_writer = blocked_writer
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="close", source="local", persona_id="p-1", revision=2
+            )
+        )
+        while not started.is_set():
+            await asyncio.sleep(0)
+        assert controller.current_preferences().open is True
+        await screen._select_profile("p-2", "Navigator")
+        await screen._select_profile("p-1", "Archivist")
+        release.set()
+        await pilot.pause()
+
+        assert controller.current_preferences().open is True
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+
+async def test_newer_buddy_action_wins_serialized_persistence_and_reconcile(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
+    started = threading.Event()
+    release = threading.Event()
+    writes = []
+
+    def blocked_first_writer(preferences):
+        writes.append(preferences)
+        if len(writes) == 1:
+            started.set()
+            release.wait(timeout=5)
+        return True
+
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    controller._preference_writer = blocked_first_writer
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="close", source="local", persona_id="p-1", revision=2
+            )
+        )
+        while not started.is_set():
+            await asyncio.sleep(0)
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="show", source="local", persona_id="p-1", revision=2
+            )
+        )
+        await pilot.pause()
+        release.set()
+        await pilot.pause()
+
+        assert [preferences.open for preferences in writes] == [False, True]
+        assert controller.current_preferences().open is True
+        mock_app_instance.reconcile_persona_buddy_view.assert_awaited_once()
+
+
+async def test_persona_json_export_excludes_buddy_preferences(
+    mock_app_instance,
+    stub_characters,
+    tmp_path,
+) -> None:
+    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    _configure_persona_buddy(mock_app_instance, {"p-1": record})
+    mock_app_instance.app_config = {
+        "persona_buddy": {
+            "enabled": True,
+            "source": "local",
+            "local_persona_id": "p-1",
+            "open": False,
+            "collapsed": True,
+            "x": 17,
+            "y": 9,
+            "width": 42,
+            "height": 14,
+        }
+    }
+    app = PersonasTestApp(mock_app_instance)
+    target = tmp_path / "persona.json"
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        await screen._export_selected_character(str(target), fmt="json")
+
+    exported = json.loads(target.read_text(encoding="utf-8"))
+    assert exported == record
+    assert "persona_buddy" not in exported

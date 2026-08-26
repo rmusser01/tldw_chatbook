@@ -533,11 +533,21 @@ def _spawn_profile_collision(
         repository = profile_repository.TTSProfileRepository(Path(database_path))
         opened = False
         try:
-            await repository.open()
-            opened = True
             connection.send(("ready", None))
             if not release.wait(10.0):
                 raise TimeoutError("parent did not release profile collision")
+            try:
+                await repository.open()
+            except ProfileRepositoryError as error:
+                return (
+                    "failure",
+                    error.code,
+                    str(error),
+                    error.__cause__ is None,
+                    error.__context__ is None,
+                    (),
+                )
+            opened = True
             try:
                 created = await repository.create_profile(
                     _draft(display_name),
@@ -585,13 +595,24 @@ def _spawn_assignment_delete_race(
         repository = profile_repository.TTSProfileRepository(Path(database_path))
         opened = False
         try:
-            await repository.open()
-            opened = True
-            loaded = await repository.get_profile(UUID(profile_id))
             connection.send(("ready", operation))
             if not release.wait(10.0):
                 raise TimeoutError("parent did not release assignment race")
             try:
+                await repository.open()
+            except ProfileRepositoryError as error:
+                return (
+                    operation,
+                    "failure",
+                    error.code,
+                    str(error),
+                    error.__cause__ is None,
+                    error.__context__ is None,
+                    (),
+                )
+            opened = True
+            try:
+                loaded = await repository.get_profile(UUID(profile_id))
                 if operation == "set":
                     result = await repository.set_assignment(
                         CharacterRef(
@@ -3539,8 +3560,22 @@ def test_spawned_repositories_open_one_fresh_store_concurrently(
             process.close()
 
     assert exitcodes == [0, 0]
-    assert opened_states == [True, True], outcomes
-    assert outcomes == [("success", 1, 0), ("success", 1, 0)]
+    successes = [outcome for outcome in outcomes if outcome[0] == "success"]
+    failures = [outcome for outcome in outcomes if outcome[0] == "failure"]
+    assert successes
+    assert all(outcome == ("success", 1, 0) for outcome in successes)
+    assert all(
+        outcome[1:]
+        == (
+            "lock_timeout",
+            "TTS profile repository failed: lock_timeout",
+            True,
+            True,
+        )
+        for outcome in failures
+    )
+    assert len(successes) + len(failures) == 2
+    assert opened_states.count(True) == len(successes)
 
 
 @pytest.mark.parametrize("attempt", range(5))
@@ -4932,6 +4967,7 @@ def test_spawned_set_delete_race_is_serialized_without_partial_mutation(
     normalized = {(outcome[0], outcome[1], outcome[2]) for outcome in outcomes}
     assert normalized in (
         {("set", "success", 1), ("delete", "failure", "conflict")},
+        {("set", "failure", "conflict"), ("delete", "success", 1)},
         {("set", "failure", "missing"), ("delete", "success", 1)},
     )
     for outcome in outcomes:

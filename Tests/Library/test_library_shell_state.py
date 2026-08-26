@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SKILLS,
@@ -101,7 +102,7 @@ def test_shell_sections_rows_and_targets_are_fixed():
         shell.sections[1].rows[0].target_id,
     ) == (
         "canvas",
-        "notes-create",
+        LIBRARY_CANVAS_KIND_NOTES_CREATE,
     )
     # F-017: the Study rows are handoffs ("Continue in Study"), grouped in
     # their own section -- not under Create, which is for making things.
@@ -133,7 +134,7 @@ def test_empty_selection_yields_landing_canvas():
     assert shell.canvas_kind == "empty"
     assert (
         shell.canvas_empty_copy
-        == "Search everything, pick a section on the left, or add something new."
+        == "Search everything, pick a section, or add something new."
     )
 
 
@@ -149,7 +150,7 @@ def test_jargon_rows_carry_plain_language_subtitles():
         for row in section.rows
     }
     assert subtitles["browse-media"] == "your files"
-    assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "AI asks"
+    assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "reuse"
     assert subtitles[LIBRARY_ROW_BROWSE_SKILLS] == "AI add-ons"
     assert subtitles["browse-collections"] == "item sets"
     assert subtitles["browse-search"] == "find all"
@@ -345,6 +346,7 @@ def test_browse_prompts_row_targets_prompts_canvas():
 
 
 def test_create_note_row_targets_notes_create_canvas():
+    assert LIBRARY_CANVAS_KIND_NOTES_CREATE == "notes-create"
     shell = build_library_shell_state(
         LibraryShellInput(), selected_row_id="create-note"
     )
@@ -355,8 +357,11 @@ def test_create_note_row_targets_notes_create_canvas():
         if r.row_id == "create-note"
     )
     assert row.target_kind == "canvas"
-    assert row.target_id == "notes-create"
-    assert (shell.canvas_kind, shell.canvas_target) == ("notes-create", "")
+    assert row.target_id == LIBRARY_CANVAS_KIND_NOTES_CREATE
+    assert (shell.canvas_kind, shell.canvas_target) == (
+        LIBRARY_CANVAS_KIND_NOTES_CREATE,
+        "",
+    )
     assert shell.selected_row_id == "create-note"
 
 

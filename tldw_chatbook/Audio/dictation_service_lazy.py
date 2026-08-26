@@ -180,6 +180,10 @@ class LazyLiveDictationService:
     #: built via `__new__` without going through `start_dictation()` needs
     #: this class-level default too.
     on_segment_transcribing: Optional[Callable[[bool], None]] = None
+    _dictation_handle: Optional[Any] = None
+    _dictation_capture_generation: Optional[int] = None
+    _dictation_next_sequence: int = 0
+    _deferred_limit_reported: bool = False
     #: Same `__new__`-safety reasoning again: `_audio_callback` reads both of
     #: these unconditionally on every frame, so a service built via `__new__`
     #: without going through `start_dictation()` needs class-level defaults
@@ -211,6 +215,7 @@ class LazyLiveDictationService:
         audio_backend: Optional[str] = None,
         max_buffer_bytes: Optional[int] = None,
         on_buffer_limit: Optional[Callable[[], None]] = None,
+        transcription_service_factory: Optional[Callable[[], Any]] = None,
     ):
         """Initialize dictation service with lazy loading.
 
@@ -233,6 +238,8 @@ class LazyLiveDictationService:
             on_buffer_limit: Invoked once when `max_buffer_bytes` is reached,
                 from a daemon notification thread the recorder spawns. Ignored
                 unless `max_buffer_bytes` is set.
+            transcription_service_factory: Optional app-owned facade factory,
+                invoked only when transcription is first needed.
         """
         self.transcription_provider = transcription_provider
         self.transcription_model = transcription_model
@@ -242,6 +249,7 @@ class LazyLiveDictationService:
         self.audio_backend_preference = audio_backend
         self.max_buffer_bytes = max_buffer_bytes
         self.on_buffer_limit = on_buffer_limit
+        self._transcription_service_factory = transcription_service_factory
 
         # Lazy-loaded services
         self._audio_service = None
@@ -267,6 +275,10 @@ class LazyLiveDictationService:
 
         # Streaming transcriber
         self.streaming_transcriber = None
+        self._dictation_handle = None
+        self._dictation_capture_generation = None
+        self._dictation_next_sequence = 0
+        self._deferred_limit_reported = False
 
         # Callbacks
         self.on_partial_transcript = None
@@ -388,9 +400,7 @@ class LazyLiveDictationService:
             what lets a pause finalize a segment instead of ambient noise
             holding `last_speech_time` fresh forever.
         """
-        raw = get_cli_setting(
-            "dictation.vad_aggressiveness", cls.VAD_AGGRESSIVENESS
-        )
+        raw = get_cli_setting("dictation.vad_aggressiveness", cls.VAD_AGGRESSIVENESS)
         try:
             aggressiveness = int(raw)
         except (TypeError, ValueError, OverflowError):
@@ -534,9 +544,14 @@ class LazyLiveDictationService:
             and self._transcription_init_error is None
         ):
             try:
-                from ..Local_Ingestion.transcription_service import TranscriptionService
+                factory = getattr(self, "_transcription_service_factory", None)
+                if factory is None:
+                    from ..Local_Ingestion.transcription_service import (
+                        TranscriptionService,
+                    )
 
-                self._transcription_service = TranscriptionService()
+                    factory = TranscriptionService
+                self._transcription_service = factory()
                 logger.info("Transcription service initialized successfully")
             except Exception as e:
                 self._transcription_init_error = str(e)
@@ -551,6 +566,79 @@ class LazyLiveDictationService:
             raise TranscriptionInitializationError(self._transcription_init_error)
 
         return self._transcription_service
+
+    @property
+    def uses_deferred_dictation(self) -> bool:
+        """Return whether this exact capture reserved shared Parakeet."""
+
+        return (
+            self.transcription_provider == "parakeet-onnx"
+            and self._dictation_handle is not None
+        )
+
+    def reserve_deferred_dictation(self, capture_generation: int) -> Any | None:
+        """Reserve shared Parakeet execution before model preparation."""
+
+        if self.transcription_provider != "parakeet-onnx":
+            return None
+        facade = self.transcription_service
+        if not bool(getattr(facade, "uses_deferred_local_stt_dispatch", False)):
+            return None
+        if (
+            self._dictation_handle is not None
+            and self._dictation_capture_generation == capture_generation
+        ):
+            return self._dictation_handle
+        if self._dictation_handle is not None:
+            self._dictation_handle.cancel()
+
+        recorder = self._audio_service
+        sample_rate = getattr(recorder, "sample_rate", None) or 16_000
+        channels = getattr(recorder, "channels", None) or 1
+        self._dictation_capture_generation = capture_generation
+        self._dictation_next_sequence = 0
+        self._deferred_limit_reported = False
+        self._dictation_handle = facade.begin_dictation_capture(
+            capture_generation=capture_generation,
+            model=self.transcription_model,
+            language=self.language,
+            sample_rate=sample_rate,
+            channels=channels,
+            sample_width=2,
+            on_logical_segment=(
+                lambda sequence, text, _generation=capture_generation: (
+                    self._handle_deferred_logical_segment(
+                        _generation,
+                        sequence,
+                        text,
+                    )
+                )
+            ),
+        )
+        return self._dictation_handle
+
+    def _handle_deferred_logical_segment(
+        self,
+        capture_generation: int,
+        sequence: int,
+        text: str,
+    ) -> None:
+        """Publish one ordered callback only for the owning capture."""
+
+        if (
+            capture_generation != self._dictation_capture_generation
+            or self._dictation_handle is None
+            or sequence != self._dictation_next_sequence
+        ):
+            return
+        self._dictation_next_sequence += 1
+        if not (text or "").strip():
+            self._notify_segment_transcribing(done=True)
+            self._notify_segment_no_final()
+            return
+        self._handle_partial_text(text)
+        self._notify_segment_transcribing(done=True)
+        self._finalize_current_segment()
 
     def start_dictation(
         self,
@@ -651,6 +739,7 @@ class LazyLiveDictationService:
             self.current_transcript = ""
             self.audio_buffer = []
             self.captured_bytes = 0
+            self._deferred_limit_reported = False
             # A repeat capture on a reused service instance must not inherit
             # the previous capture's "already saw a first frame" state -- its
             # own very first frame is capture start again, not a resume.
@@ -1180,6 +1269,20 @@ class LazyLiveDictationService:
         # a dead capture without it.
         self._notify_segment_transcribing(done=False)
         audio_data = b"".join(segment_audio)
+        handle = self._dictation_handle
+        if handle is not None:
+            status = handle.append_segment(audio_data)
+            if (
+                getattr(status, "value", status) == "limit_reached"
+                and not self._deferred_limit_reported
+            ):
+                self._deferred_limit_reported = True
+                if self.on_buffer_limit is not None:
+                    try:
+                        self.on_buffer_limit()
+                    except Exception as exc:
+                        logger.error("Buffer-limit callback error: {}", exc)
+            return
         # Snapshot before the call and compare after, rather than reading
         # `current_transcript` alone post-call: this call is the only writer
         # while it runs (this thread, sequential with `_finalize_current_
@@ -1273,13 +1376,22 @@ class LazyLiveDictationService:
             return []
 
     def set_buffer_duration(self, duration_ms: int):
-        """Set audio buffer duration dynamically."""
+        """Set audio buffer duration dynamically (in-memory only).
+
+        task-21124: this used to ALSO write `dictation.buffer_duration_ms`
+        to config.toml synchronously -- a full read-rewrite-reload cycle
+        holding the global config write lock, fired once per parsing
+        keystroke from `Dictation_Window_Improved.on_input_changed` (its
+        caller), and once more on every service init. Persistence of this
+        exact key already belongs to the owning widget, which batches it
+        into its debounced task-15470 settings snapshot (with an unmount
+        flush) -- the write here was a duplicate that turned each keystroke
+        into an event-loop config rewrite. The service now only updates its
+        in-memory value.
+        """
         self.buffer_duration_ms = max(
             100, min(2000, duration_ms)
         )  # Clamp between 100-2000ms
-        save_setting_to_cli_config(
-            "dictation", "buffer_duration_ms", self.buffer_duration_ms
-        )
         logger.info(f"Buffer duration set to {self.buffer_duration_ms}ms")
 
     def _process_audio_buffer(self, audio_data: bytes):
@@ -1480,9 +1592,24 @@ class LazyLiveDictationService:
                 return DictationResult(transcript="", segments=[], duration=0.0)
             self.state = DictationState.IDLE
 
+        # Quiesce the producer before asking the processing thread to drain.
+        # Otherwise a recorder callback can enqueue PCM after the processor's
+        # final drain and after the deferred handle has been sealed.
+        recorder = self._audio_service
+        if recorder is not None:
+            try:
+                recorder.stop_recording()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.opt(exception=True).warning("Failed to release audio capture")
+
         # Stop processing
         if self.stop_processing:
             self.stop_processing.set()
+            # Wake the loop immediately if it is inside its 100 ms queue
+            # poll. Deferred Parakeet keeps native inference off this thread,
+            # so stop should not spend its 50 ms regression budget waiting
+            # for an otherwise idle timeout to elapse.
+            self.processing_queue.put(("stop", b""))
 
         # Wait for the processing thread to drain and transcribe what is left.
         # The old hard-coded 2.0s was shorter than a single warm transcription,
@@ -1499,6 +1626,18 @@ class LazyLiveDictationService:
                     "audio still in flight was dropped",
                     self.stop_join_timeout_seconds,
                 )
+
+        # Deferred Parakeet inference is intentionally outside the processing
+        # thread's bounded join. The processing thread only appends/seals PCM;
+        # this blocking stop worker owns the native completion wait.
+        deferred_error: BaseException | None = None
+        handle = self._dictation_handle
+        if handle is not None and transcription_complete:
+            try:
+                handle.finish()
+                handle.wait()
+            except BaseException as exc:  # returned through the blocking API
+                deferred_error = exc
 
         # Finalize any remaining transcript
         self._finalize_current_segment()
@@ -1518,26 +1657,43 @@ class LazyLiveDictationService:
             transcription_complete=transcription_complete,
         )
 
-        # Release capture explicitly. The non-lazy service does this in its own
-        # stop_dictation; this one never did, so every successful stop left the
-        # microphone live. Use the private attribute, not the `audio_service`
-        # property -- reading the property lazily CONSTRUCTS a recorder, which
-        # would open an audio device during teardown.
-        recorder = self._audio_service
-        if recorder is not None:
-            try:
-                recorder.stop_recording()
-            except Exception:  # noqa: BLE001 - teardown must never raise
-                logger.opt(exception=True).warning("Failed to release audio capture")
-
         # Cleanup
         self._cleanup()
+
+        if deferred_error is None and handle is not None and transcription_complete:
+            self._dictation_handle = None
+            self._dictation_capture_generation = None
 
         word_count = len(result.transcript.split()) if result.transcript else 0
         logger.info(
             f"Dictation stopped. Words: {word_count}, Duration: {result.duration:.1f}s"
         )
+        if deferred_error is not None:
+            raise deferred_error
         return result
+
+    def abandon(self) -> None:
+        """Cancel deferred work and release capture without joining threads."""
+
+        recorder = self._audio_service
+        if recorder is not None:
+            try:
+                recorder.stop_recording()
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Failed to release abandoned audio capture"
+                )
+        self.stop_processing.set()
+        handle, self._dictation_handle = self._dictation_handle, None
+        self._dictation_capture_generation = None
+        if handle is not None:
+            try:
+                handle.cancel()
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Failed to cancel abandoned deferred dictation"
+                )
+        self._cleanup()
 
     def pause_dictation(self):
         """Pause dictation (temporarily stop processing)."""

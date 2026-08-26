@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import functools
+import os
+import re
+from dataclasses import dataclass, replace
 from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
+    build_local_thinking_payload_fields,
     resolve_console_provider_identity,
     supported_console_provider_catalog,
     supported_console_provider_readiness_keys,
@@ -25,8 +29,11 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
+from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
+from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
@@ -57,6 +64,7 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "oobabooga",
         "openai",
         "openrouter",
+        "qwencloud",
         "tabbyapi",
         "vllm",
         "zai",
@@ -89,12 +97,12 @@ CONSOLE_MODEL_TOKEN_LIMITS = {
     "mistral-medium": 32000,
     "mistral-small": 32000,
     "mixtral-8x7b": 32000,
-    "default": 4096,
+    "default": 8001,
 }
 CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS = {
     "anthropic": 100000,
     "google": 30720,
-    "openai": 4096,
+    "openai": 8001,
     "mistral": 32000,
 }
 _REASONING_EFFORT_VALUES = frozenset(
@@ -103,6 +111,31 @@ _REASONING_EFFORT_VALUES = frozenset(
 _REASONING_SUMMARY_VALUES = frozenset({"auto", "concise", "detailed", "none"})
 _VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
 _THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "max"})
+_LEGACY_CHAT_PROVIDER_ALIASES = {
+    "openai_compatible": "openai",
+}
+# Generation-aware: dotted Qwen3.x generations consume effort levels;
+# original Qwen3 is a thinking toggle only. The dotted-Qwen regex in
+# reasoning_effort_hint_for_model enforces generation specificity; needle
+# order within this table is immaterial (no needle contains another).
+_REASONING_EFFORT_MODEL_HINTS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("gpt-oss", frozenset({"low", "medium", "high"})),
+    ("qwen3", frozenset({"none"})),
+)
+# "none" and "high" are live-verified on dotted Qwens: "none" is consumed
+# via our enable_thinking=false mapping, and the template aliases "high" to
+# "xhigh" — neither must warn as unconsumed.
+_QWEN_DOTTED_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh", "none"})
+# local-llm sends compose llama.cpp-family wire fields (chat_template_kwargs
+# reasoning/enable_thinking + reasoning_budget_tokens), so its users need the
+# --jinja/b9982 requirements note too.
+_LLAMA_CPP_FAMILY_PROVIDERS = frozenset(
+    {"llama_cpp", "local_llamacpp", "local_llamafile", "local_llm"}
+)
+_LLAMACPP_THINKING_REQUIREMENTS_NOTE = (
+    "Thinking controls on llama.cpp need llama-server started with --jinja; "
+    "per-request reasoning_budget_tokens needs llama.cpp b9982 or newer."
+)
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -175,6 +208,16 @@ class ConsoleSessionSettings:
     pinned_prefill: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class EffectiveChatConfiguration:
+    """Canonical provider, model, and endpoint selected for a chat session."""
+
+    provider: str
+    model: str | None
+    base_url: str | None
+    model_source: str
+
+
 @dataclass(frozen=True)
 class ConsoleSettingsOption:
     """Selectable settings option for provider and model controls."""
@@ -201,6 +244,8 @@ class ConsoleSettingsContextEstimate:
     label: str
     staged_source_count: int = 0
     staged_context_summary: str = ""
+    token_limit_verified: bool | None = None
+    token_limit_source: str = ""
 
 
 @dataclass(frozen=True)
@@ -375,17 +420,14 @@ def build_default_console_session_settings(
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
     )
-    configured_provider = provider_config_key(
-        _string_value(provider) or _string_setting(chat_defaults, "provider")
+    effective = resolve_effective_chat_configuration(
+        app_config,
+        provider=provider,
+        model=model,
     )
+    configured_provider = effective.provider
     provider_settings = _provider_settings(app_config, configured_provider)
-    configured_model = _first_string(
-        model,
-        provider_settings.get("model"),
-        provider_settings.get("api_model"),
-        provider_settings.get("default_model"),
-        chat_defaults.get("model"),
-    )
+    configured_model = effective.model
     model_profile = _model_default_profile(provider_settings, configured_model)
     # TASK-342: [console.provider_defaults.<provider>] holds ONLY values the
     # Console's Save-as-default wrote, so it outranks everything except a
@@ -403,7 +445,7 @@ def build_default_console_session_settings(
     return ConsoleSessionSettings(
         provider=configured_provider,
         model=configured_model,
-        base_url=_default_base_url(configured_provider, provider_settings),
+        base_url=effective.base_url,
         temperature=_float_setting_from_sources(default_sources, "temperature", 0.7),
         top_p=_float_setting_from_sources(default_sources, "top_p", 0.95),
         min_p=_optional_float_setting_from_sources(default_sources, "min_p"),
@@ -431,6 +473,162 @@ def build_default_console_session_settings(
         ),
         streaming=_bool_setting_from_sources(default_sources, "streaming", True),
     )
+
+
+def default_console_session_settings(
+    app_config: Mapping[str, object],
+    provider: str | None = None,
+    model: str | None = None,
+) -> ConsoleSessionSettings:
+    """The default settings snapshot a NEW Console session starts from.
+
+    `build_default_console_session_settings` plus the one rule that always
+    accompanied it at the screen's call site: a llama.cpp session takes no
+    `base_url` from configuration (the gateway normalizes the origin at
+    send time; a stale configured URL here would pin it).
+
+    Named here, and not left inline in
+    `ConsoleSessionController._default_console_session_settings`, because
+    task-15860's launch wake builds a session with no screen in existence
+    and must start from the same defaults rather than a second spelling of
+    them.
+
+    Args:
+        app_config: The live app configuration snapshot.
+        provider: An explicit provider override (the Console control bar's
+            selection when there is a view), or ``None``.
+        model: An explicit model override, or ``None``.
+
+    Returns:
+        The default settings for a new session.
+    """
+    settings = build_default_console_session_settings(app_config, provider, model)
+    provider_key = provider_config_key(settings.provider)
+    return replace(
+        settings,
+        base_url=(
+            None
+            if provider_key in {"llama_cpp", "local_llamacpp"}
+            else settings.base_url
+        ),
+    )
+
+
+def resolve_effective_chat_configuration(
+    app_config: Mapping[str, object],
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> EffectiveChatConfiguration:
+    """Resolve canonical chat defaults without mutating loaded configuration."""
+    chat_defaults = _chat_defaults_with_streaming_compat(
+        _mapping_value(app_config, "chat_defaults")
+    )
+    provider_id = _canonical_chat_provider_id(
+        _string_value(provider) or _string_setting(chat_defaults, "provider")
+    )
+    provider_settings = _provider_settings(app_config, provider_id)
+    candidates = (
+        ("session", model),
+        ("chat_defaults", chat_defaults.get("model")),
+        ("provider_fallback", provider_settings.get("model")),
+        ("provider_fallback", provider_settings.get("api_model")),
+        ("provider_fallback", provider_settings.get("default_model")),
+    )
+    model_source = "none"
+    resolved_model = None
+    for candidate_source, candidate_model in candidates:
+        resolved_model = _string_value(candidate_model)
+        if resolved_model is not None:
+            model_source = candidate_source
+            break
+
+    return EffectiveChatConfiguration(
+        provider=provider_id,
+        model=resolved_model,
+        base_url=_default_base_url(provider_id, provider_settings),
+        model_source=model_source,
+    )
+
+
+def build_canonical_chat_defaults_mutation(
+    effective: EffectiveChatConfiguration,
+) -> dict[str, dict[str, str]]:
+    """Build the canonical provider/model fragment for an explicit save."""
+    chat_defaults: dict[str, str] = {}
+    provider_id = _canonical_chat_provider_id(effective.provider)
+    model = _string_value(effective.model)
+    if provider_id:
+        chat_defaults["provider"] = provider_id
+    if model:
+        chat_defaults["model"] = model
+    return {"chat_defaults": chat_defaults}
+
+
+def reasoning_effort_hint_for_model(model: str | None) -> frozenset[str] | None:
+    """Return the effort values this model family's template consumes.
+
+    Args:
+        model: Model identifier as selected in the Console (e.g.
+            ``"Qwen3.8-27B"``). Case-insensitive; ``None``/blank allowed.
+
+    Returns:
+        The set of ``reasoning_effort`` values the model family's chat
+        template consumes, or ``None`` when the family is unknown and no
+        hint should be shown.
+    """
+    lowered = str(model or "").strip().lower()
+    if not lowered:
+        return None
+    if re.search(r"qwen3\.\d", lowered):
+        return _QWEN_DOTTED_EFFORT_VALUES
+    for needle, values in _REASONING_EFFORT_MODEL_HINTS:
+        if needle in lowered:
+            return values
+    return None
+
+
+def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
+    """Return non-blocking warnings for the Console settings modal.
+
+    Warnings never block a save or send (ADR-066); blocking validation
+    lives in :func:`validate_console_session_settings`.
+
+    Args:
+        settings: The freshly parsed Console session settings.
+
+    Returns:
+        Zero or more user-facing warning strings: an effort value the
+        selected model family does not consume; for llama.cpp-family
+        providers with a thinking value set — the server requirements note
+        (``--jinja``; per-request budget needs llama.cpp b9982+); and for
+        thinking effort ``off`` on an always-on-thinking Anthropic model
+        (Fable 5 / Mythos 5) — that thinking cannot actually be turned off
+        there (TASK-18800: the API rejects the explicit disabled config, so
+        the request omits the parameter and adaptive thinking still runs).
+    """
+    warnings: list[str] = []
+    effort = str(settings.reasoning_effort or "").strip().lower()
+    has_thinking_value = bool(effort) or settings.thinking_budget_tokens is not None
+    if effort:
+        hint = reasoning_effort_hint_for_model(settings.model)
+        if hint is not None and effort not in hint:
+            warnings.append(
+                f"Reasoning effort '{effort}' is not consumed by this model "
+                f"family; expected one of: {', '.join(sorted(hint))}."
+            )
+    if has_thinking_value and settings.provider in _LLAMA_CPP_FAMILY_PROVIDERS:
+        warnings.append(_LLAMACPP_THINKING_REQUIREMENTS_NOTE)
+    thinking_effort = str(settings.thinking_effort or "").strip().lower()
+    if thinking_effort == "off" and anthropic_model_rejects_disabled_thinking(
+        settings.model
+    ):
+        warnings.append(
+            f"{settings.model} always thinks: the API rejects an explicit "
+            "thinking-off setting, so 'off' sends no thinking parameter and "
+            "adaptive thinking still runs (and is billed)."
+        )
+    return warnings
 
 
 def validate_console_session_settings(
@@ -473,7 +671,7 @@ def validate_console_session_settings(
     if not _is_blank_value(settings.max_tokens) and not _optional_int_at_least(
         settings.max_tokens, 1
     ):
-        errors.append("Max tokens must be 1 or greater.")
+        errors.append("Response max tokens must be 1 or greater.")
     if not _is_blank_value(settings.seed) and not _optional_int_at_least(
         settings.seed, 0
     ):
@@ -623,6 +821,24 @@ def build_console_settings_readiness(
     )
 
 
+def _default_supported_readiness_keys() -> frozenset[str]:
+    """Return the no-injection supported set, computed once.
+
+    TASK-18909: ``build_console_settings_readiness`` runs ~400 times during
+    one warm Console screen switch, and this set is a pure function of a
+    module constant -- recomputing it resolved provider identity for all
+    29 handler keys on every call (24k resolutions, the largest app-side
+    cost of the switch). Cached at first use; ``_supported_readiness_keys``
+    retains the test-injection seam uncached.
+    """
+    return supported_console_provider_readiness_keys(
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    )
+
+
+_default_supported_readiness_keys = functools.cache(_default_supported_readiness_keys)
+
+
 def _supported_readiness_keys(
     native_provider_keys: set[str] | None = None,
 ) -> frozenset[str]:
@@ -631,38 +847,36 @@ def _supported_readiness_keys(
     ``native_provider_keys`` is retained for older tests/callers that injected a
     support set before generic Console provider support existed.
     """
-    supported_keys = supported_console_provider_readiness_keys(
-        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    if native_provider_keys is None:
+        return _default_supported_readiness_keys()
+    supported_keys = _default_supported_readiness_keys()
+    injected_keys = frozenset(
+        resolve_console_provider_identity(
+            provider,
+            handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+        ).readiness_key
+        for provider in native_provider_keys
     )
-    if native_provider_keys is not None:
-        injected_keys = frozenset(
-            resolve_console_provider_identity(
-                provider,
-                handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-            ).readiness_key
-            for provider in native_provider_keys
-        )
-        return supported_keys | injected_keys
-    return supported_keys
+    return supported_keys | injected_keys
 
 
 def _send_capable_readiness_keys(
     native_provider_keys: set[str] | None = None,
 ) -> frozenset[str]:
     """Return readiness keys that currently have a wired Console send path."""
-    send_capable_keys = supported_console_provider_readiness_keys(
-        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    if native_provider_keys is None:
+        # Same constant inputs as the supported set (see
+        # `_default_supported_readiness_keys`); one shared cache serves both.
+        return _default_supported_readiness_keys()
+    send_capable_keys = _default_supported_readiness_keys()
+    injected_keys = frozenset(
+        resolve_console_provider_identity(
+            provider,
+            handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+        ).readiness_key
+        for provider in native_provider_keys
     )
-    if native_provider_keys is not None:
-        injected_keys = frozenset(
-            resolve_console_provider_identity(
-                provider,
-                handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-            ).readiness_key
-            for provider in native_provider_keys
-        )
-        return send_capable_keys | injected_keys
-    return send_capable_keys
+    return send_capable_keys | injected_keys
 
 
 def build_console_settings_summary_state(
@@ -703,8 +917,35 @@ def build_console_settings_summary_state(
         sampling_parts.append(f"reasoning {settings.reasoning_effort}")
     elif settings.thinking_effort:
         sampling_parts.append(f"thinking {settings.thinking_effort}")
+    if settings.thinking_budget_tokens is not None:
+        sampling_parts.append(f"think budget {settings.thinking_budget_tokens}")
+    if settings.reasoning_effort or settings.thinking_budget_tokens is not None:
+        identity = resolve_console_provider_identity(settings.provider)
+        wire_fields = build_local_thinking_payload_fields(
+            identity.execution_key,
+            settings.reasoning_effort,
+            settings.thinking_budget_tokens,
+        )
+        if wire_fields:
+            wire_parts = []
+            template_kwargs = wire_fields.get("chat_template_kwargs")
+            if template_kwargs:
+                rendered = ", ".join(
+                    f"{k}={v}" for k, v in sorted(template_kwargs.items())
+                )
+                wire_parts.append(f"chat_template_kwargs[{rendered}]")
+            if "reasoning_budget_tokens" in wire_fields:
+                wire_parts.append(
+                    f"reasoning_budget_tokens={wire_fields['reasoning_budget_tokens']}"
+                )
+            if "reasoning_effort" in wire_fields:
+                wire_parts.append(f"reasoning_effort={wire_fields['reasoning_effort']}")
+            sampling_parts.append("wire: " + "; ".join(wire_parts))
 
-    character_label = _string_value(settings.character_label)
+    character_label = sanitize_character_display_label(
+        settings.character_label,
+        max_characters=180,
+    )
     identity_row = (
         f"Character: {character_label}" if character_label else "Assistant: General"
     )
@@ -772,7 +1013,17 @@ def build_console_context_estimate(
         counter = token_counter or _estimate_tokens_locally
         limit_resolver = token_limit_resolver or _resolve_token_limit_locally
         used_tokens = counter(list(estimate_messages), model_name, provider_key)
-        token_limit = limit_resolver(model_name, provider_key)
+        if token_limit_resolver is None:
+            token_limit, token_limit_verified, token_limit_source = (
+                _resolve_token_limit_locally_with_provenance(
+                    model_name,
+                    provider_key,
+                )
+            )
+        else:
+            token_limit = limit_resolver(model_name, provider_key)
+            token_limit_verified = True
+            token_limit_source = "provided resolver"
     except Exception:
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
@@ -783,6 +1034,8 @@ def build_console_context_estimate(
         )
 
     label = f"{used_tokens:,} / {token_limit:,} tokens"
+    if not token_limit_verified:
+        label = f"{label} (estimated; model unverified)"
     if max_tokens_response is not None:
         label = f"{label}; {max_tokens_response:,} response tokens reserved"
     if staged_source_count:
@@ -795,6 +1048,8 @@ def build_console_context_estimate(
         label=label,
         staged_source_count=staged_source_count,
         staged_context_summary=staged_context_summary,
+        token_limit_verified=token_limit_verified,
+        token_limit_source=token_limit_source,
     )
 
 
@@ -819,16 +1074,23 @@ def _chat_defaults_with_streaming_compat(
     return compatible_defaults
 
 
+def _canonical_chat_provider_id(provider: str | None) -> str:
+    normalized = provider_config_key(provider)
+    normalized = _LEGACY_CHAT_PROVIDER_ALIASES.get(normalized, normalized)
+    return resolve_console_provider_identity(
+        normalized,
+        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    ).readiness_key
+
+
 def _provider_settings(
     app_config: Mapping[str, object], provider_key: str
 ) -> Mapping[str, object]:
     api_settings = _mapping_value(app_config, "api_settings")
-    value = {}
-    for configured_provider, configured_value in api_settings.items():
-        if provider_config_key(configured_provider) == provider_key:
-            value = configured_value
-            break
-    return value if isinstance(value, Mapping) else {}
+    try:
+        return provider_settings_for_key(api_settings, provider_key)
+    except ProviderSettingsError:
+        return {}
 
 
 def _model_default_profile(
@@ -897,6 +1159,122 @@ def _endpoint_differs_for_provider(
         )
         return selected != configured
     return generic_endpoint_differs(base_url, provider_settings)
+
+
+def _console_endpoint_restart_fallback(
+    provider_key: str,
+    provider_settings: Mapping[str, object],
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None,
+) -> str | None:
+    """Return the endpoint the next boot would derive for this provider.
+
+    Mirrors the selection fallback chain in
+    ``ChatScreen._build_console_provider_selection_uncached``: llama.cpp
+    resolves env override -> ``[console] llama_cpp_base_url_override`` -> the
+    provider's configured endpoint -> the built-in default; other URL-based
+    providers resolve only their configured endpoint.
+
+    Args:
+        provider_key: Normalized provider readiness key.
+        provider_settings: The provider's persisted ``api_settings`` section.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        The restart fallback endpoint, or ``None`` for URL-based providers
+        with nothing configured.
+    """
+    if provider_key in {"llama_cpp", "local_llamacpp"}:
+        env = environ if environ is not None else os.environ
+        console_config = _mapping_value(app_config, "console")
+        fallback = (
+            env.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
+            or _string_value(console_config.get("llama_cpp_base_url_override"))
+            or first_configured_endpoint(provider_settings)
+            or DEFAULT_LLAMACPP_BASE_URL
+        )
+        return normalize_llamacpp_base_url(fallback)
+    return first_configured_endpoint(provider_settings)
+
+
+def console_session_endpoint_survives_restart(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """Return whether the session endpoint is backed for the next boot.
+
+    ``True`` when the provider uses no endpoint, the session carries no
+    endpoint, or the session endpoint equals the restart fallback chain's
+    value (so re-deriving defaults next boot reproduces it). ``False`` means
+    the endpoint lives only in this session and is silently lost on restart
+    -- the task-16473 persistence trap.
+
+    Args:
+        settings: Console session settings carrying the endpoint to check.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        Whether re-deriving defaults on the next boot would reproduce the
+        session's endpoint.
+    """
+    provider_key = provider_config_key(settings.provider)
+    provider_settings = _provider_settings(app_config, provider_key)
+    base_url = _string_value(settings.base_url)
+    if not base_url or not _is_url_based_provider(provider_key, provider_settings):
+        return True
+    fallback = _console_endpoint_restart_fallback(
+        provider_key, provider_settings, app_config, environ
+    )
+    if provider_key in {"llama_cpp", "local_llamacpp"}:
+        selected = normalize_generic_endpoint_for_compare(
+            normalize_llamacpp_base_url(base_url)
+        )
+        resolved = normalize_generic_endpoint_for_compare(
+            normalize_llamacpp_base_url(fallback or DEFAULT_LLAMACPP_BASE_URL)
+        )
+        return selected == resolved
+    if not fallback:
+        return False
+    return normalize_generic_endpoint_for_compare(
+        base_url
+    ) == normalize_generic_endpoint_for_compare(fallback)
+
+
+def unsaved_console_endpoint_warning(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Build the session-only endpoint warning copy, or ``None`` when backed.
+
+    task-16473: llama.cpp readiness reports "Ready" for session-scoped
+    endpoints (the direct llama path skips the endpoint-saved check), so
+    nothing else tells the user their endpoint evaporates on restart. This is
+    the warning that apply surfaces.
+
+    Args:
+        settings: Console session settings carrying the endpoint to describe.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        User-facing warning copy, or ``None`` when the endpoint is backed for
+        the next boot.
+    """
+    if console_session_endpoint_survives_restart(
+        settings, app_config=app_config, environ=environ
+    ):
+        return None
+    display = safe_endpoint_display(settings.base_url) or "the current endpoint"
+    return (
+        f"Endpoint {display} is saved for this session only and will not "
+        "survive a restart. Use Save as default (or Settings) to keep it."
+    )
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
@@ -1121,8 +1499,21 @@ def _estimate_tokens_locally(
 
 
 def _resolve_token_limit_locally(model: str, provider: str) -> int:
+    """Resolve a local model-window estimate without exposing provenance."""
+    limit, _verified, _source = _resolve_token_limit_locally_with_provenance(
+        model,
+        provider,
+    )
+    return limit
+
+
+def _resolve_token_limit_locally_with_provenance(
+    model: str,
+    provider: str,
+) -> tuple[int, bool, str]:
+    """Resolve the model window and report whether it is model-specific."""
     if model in CONSOLE_MODEL_TOKEN_LIMITS:
-        return CONSOLE_MODEL_TOKEN_LIMITS[model]
+        return CONSOLE_MODEL_TOKEN_LIMITS[model], True, "model catalog"
 
     model_limits = (
         (prefix, limit)
@@ -1133,11 +1524,15 @@ def _resolve_token_limit_locally(model: str, provider: str) -> int:
         model_limits, key=lambda item: len(item[0]), reverse=True
     ):
         if model.startswith(model_prefix):
-            return limit
+            return limit, True, "model family"
 
-    return CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS.get(
-        provider, CONSOLE_MODEL_TOKEN_LIMITS["default"]
-    )
+    if provider in CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS:
+        return (
+            CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS[provider],
+            False,
+            "provider fallback",
+        )
+    return CONSOLE_MODEL_TOKEN_LIMITS["default"], False, "application fallback"
 
 
 def _bool_setting(

@@ -7,6 +7,10 @@ import pytest
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    resolve_console_message_presentation,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     ConsoleSpeechSnapshotRejectionCode,
@@ -139,6 +143,89 @@ def test_store_issues_and_validates_exact_scoped_character_snapshot():
     assert (
         store.validate_tts_message_speech_snapshot(snapshot)
         == "  Exact visible response.\n"
+    )
+
+
+def test_roleplay_greeting_speech_snapshot_uses_live_projection_and_rename_fence():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Hello User.",
+        metadata=MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{user}}.",
+        ),
+    )
+    session.user_display_name_override = "Captain Rowan"
+    context = store.presentation_context(session.id, "User")
+
+    snapshot = store.issue_tts_message_speech_snapshot(
+        greeting.id,
+        presentation_context=context,
+    )
+
+    assert snapshot.raw_content == "Hello Captain Rowan."
+    assert (
+        store.validate_tts_message_speech_snapshot(
+            snapshot,
+            presentation_context=context,
+        )
+        == "Hello Captain Rowan."
+    )
+    store.set_session_user_display_name_override(
+        session.id,
+        "First Mate",
+        global_default="User",
+    )
+    _assert_rejected(
+        store,
+        snapshot,
+        ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED,
+    )
+
+
+def test_malformed_character_name_is_display_only_for_store_greeting_and_tts_identity():
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    store = ConsoleChatStore()
+    session = store.create_session(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+        character_name=raw_name,
+    )
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="stored projection",
+        metadata=MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{character}}.",
+        ),
+    )
+    context = store.presentation_context(session.id, "User")
+
+    presentation = resolve_console_message_presentation(greeting, context)
+    snapshot = store.issue_tts_message_speech_snapshot(
+        greeting.id,
+        presentation_context=context,
+    )
+
+    assert context.character_name == raw_name
+    assert session.character_name == raw_name
+    assert presentation.speaker_label == "Nyx Admin?[/bold]"
+    assert presentation.content == f"Hello {raw_name}."
+    assert snapshot.raw_content == f"Hello {raw_name}."
+    assert snapshot.character_ref == CharacterRef(
+        source="local",
+        authority_id="local-authority",
+        character_id="7",
     )
 
 

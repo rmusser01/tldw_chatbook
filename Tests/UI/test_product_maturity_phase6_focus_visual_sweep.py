@@ -300,8 +300,17 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
                 ),
             )
 
-            if not isinstance(app.focused, Button):
+            for _ in range(24):
+                if isinstance(app.focused, Button) and app.focused.id == "nav-home":
+                    break
                 await pilot.press("tab")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    isinstance(app.focused, Button) and app.focused.id == "nav-home"
+                ),
+                context="focus:nav-home",
+            )
 
             expected_focus_ids = [
                 *(
@@ -310,19 +319,15 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
                 ),
             ]
             observed_focus_ids: list[str] = []
-            for expected_focus_id in expected_focus_ids:
-                await _wait_until(
-                    pilot,
-                    lambda: (
-                        isinstance(app.focused, Button)
-                        and app.focused.id == expected_focus_id
-                    ),
-                    context=f"focus:{expected_focus_id}",
-                )
+            for _ in range(24):
                 focused = app.focused
                 assert isinstance(focused, Button)
-                observed_focus_ids.append(focused.id or "")
-                assert str(focused.label).strip()
+                assert focused.id is not None
+                if focused.id == "home-primary-action":
+                    break
+                if focused.id.startswith("nav-") and focused.id != "nav-overflow-hint":
+                    assert not focused.has_class("nav-button-clip-ghost")
+                    observed_focus_ids.append(focused.id)
                 await pilot.press("tab")
 
             for _ in range(24):
@@ -342,8 +347,31 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
             )
             focused = app.focused
             assert isinstance(focused, Button)
-            observed_focus_ids.append(focused.id or "")
             assert str(focused.label).strip()
 
-            assert observed_focus_ids == [*expected_focus_ids, "home-primary-action"]
+            assert observed_focus_ids
+            assert observed_focus_ids[0] == "nav-home"
+            assert len(observed_focus_ids) == len(set(observed_focus_ids))
+            assert [
+                expected_focus_ids.index(focus_id) for focus_id in observed_focus_ids
+            ] == sorted(
+                expected_focus_ids.index(focus_id) for focus_id in observed_focus_ids
+            )
+
+            overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
+            overflow_hint.focus()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot,
+                lambda: app.screen.__class__.__name__ == "NavOverflowMenu",
+                context="navigation overflow menu",
+            )
+            assert [
+                button.id
+                for button in app.screen.query(".nav-overflow-destination")
+                if isinstance(button, Button)
+            ] == [
+                f"nav-overflow-{destination_id}"
+                for destination_id in TOP_LEVEL_DESTINATION_IDS
+            ]
             assert any(binding.key == "ctrl+p" for binding in TldwCli.BINDINGS)

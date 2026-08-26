@@ -14,11 +14,11 @@ from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
 
 # UX-053 -----------------------------------------------------------------
 def test_nav_labels_carry_the_ctrl_modifier() -> None:
-    assert nav_button_label(0, "Home") == "⌃1 Home"
-    assert nav_button_label(9, "ACP") == "⌃0 ACP"
+    assert nav_button_label("home", "Home") == "⌃1 Home"
+    assert nav_button_label("acp", "ACP") == "⌃0 ACP"
     # Unnumbered destinations carry their F-key route.
-    assert nav_button_label(10, "Lab") == "F7 Lab"
-    assert nav_button_label(12, "Settings") == "F9 Settings"
+    assert nav_button_label("lab", "Lab") == "F7 Lab"
+    assert nav_button_label("settings", "Settings") == "F9 Settings"
 
 
 # UX-056 -----------------------------------------------------------------

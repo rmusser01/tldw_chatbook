@@ -6,7 +6,10 @@ from tldw_chatbook.Chat.console_command_grammar import (
     ConsoleCommandRegistry,
     default_console_registry,
 )
-from tldw_chatbook.Chat.console_command_suggestions import suggestions_for_draft
+from tldw_chatbook.Chat.console_command_suggestions import (
+    COMMAND_DESCRIPTION_FALLBACK,
+    suggestions_for_draft,
+)
 from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
 
 SKILLS = (
@@ -19,7 +22,7 @@ def _labels(result):
     return [s.label for s in result]
 
 
-COMMANDS = ["/prompt", "/system", "/skills", "/prefill", "/generate-image", "/generate-video", "/stream-video", "/rewind"]
+COMMANDS = ["/prompt", "/system", "/skills", "/prefill", "/generate-image", "/generate-video", "/stream-video", "/rewind", "/research"]
 
 
 def test_bare_slash_lists_commands_then_skills():
@@ -98,6 +101,23 @@ def test_builtin_command_descriptions_are_plain_language():
         assert suggestion.description.strip(), suggestion.label
     assert "Arm" not in descriptions["/prefill"]
     assert "prefill" not in descriptions["/prefill"].lower()
+
+
+def test_no_builtin_command_falls_back_to_the_extension_description():
+    """`COMMAND_DESCRIPTION_FALLBACK` is for registrations we do not ship.
+
+    `console_command_suggestions` documents the fallback as reachable "only
+    [by] non-built-in registrations (extensions, test doubles): every
+    built-in has an entry above". Nothing pinned that, so `/generate-video`
+    (task-3401.5) and `/stream-video` (task-3401.11) shipped rendering
+    "Custom command" in the popup. Assert the invariant itself rather than a
+    list of names, so the next built-in cannot repeat it.
+    """
+    result = suggestions_for_draft("/", default_console_registry(), ())
+    undescribed = [
+        s.label for s in result if s.description == COMMAND_DESCRIPTION_FALLBACK
+    ]
+    assert undescribed == []
 
 
 def test_registered_command_without_dict_entry_gets_fallback_description():

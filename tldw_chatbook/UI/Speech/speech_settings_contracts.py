@@ -11,12 +11,12 @@ legacy values remain global until a real request-scoped contract exists.
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
-import unicodedata
 
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 from tldw_chatbook.UI.Speech.speech_settings_model import ALL_SETTINGS_CONTROLS
@@ -41,6 +41,166 @@ class SpeechTTSConfigurationState(StrEnum):
     UNSAVED = "Unsaved"
     INCOMPLETE = "Incomplete"
     INVALID = "Invalid"
+
+
+class SpeechTTSConnectionState(StrEnum):
+    """Bounded connection states for provider test evidence."""
+
+    REACHABLE = "reachable"
+    UNREACHABLE = "unreachable"
+    NOT_TESTED = "not_tested"
+    UNSUPPORTED = "unsupported"
+
+
+class SpeechTTSConfigurationValidity(StrEnum):
+    """Local validity kept independent from provider connectivity."""
+
+    VALID = "valid"
+    INCOMPLETE = "incomplete"
+    INVALID = "invalid"
+
+
+class SpeechTTSTestOperation(StrEnum):
+    """Provider operation that produced a connection observation."""
+
+    CATALOG = "catalog"
+    SAMPLE = "sample"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderTestFingerprint:
+    """Non-secret identity for one saved provider configuration."""
+
+    provider_id: str
+    normalized_fields: tuple[tuple[str, str], ...]
+    saved_revision: int
+
+    def __post_init__(self) -> None:
+        _validate_provider_id(self.provider_id)
+        _validate_revision(
+            self.saved_revision, "Saved Speech TTS configuration revision"
+        )
+        if type(self.normalized_fields) is not tuple:
+            raise TypeError("Provider test fields must be a tuple")
+        prior_key = ""
+        for field in self.normalized_fields:
+            if (
+                type(field) is not tuple
+                or len(field) != 2
+                or type(field[0]) is not str
+                or type(field[1]) is not str
+            ):
+                raise TypeError("Provider test fields must contain string pairs")
+            key, value = field
+            if (
+                not key
+                or key <= prior_key
+                or len(key) > 128
+                or len(value) > 4096
+                or any(
+                    unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+                    for character in key + value
+                )
+            ):
+                raise ValueError("Provider test fields are invalid")
+            prior_key = key
+
+    @property
+    def digest(self) -> str:
+        digest = hashlib.sha256()
+        for value in (
+            self.provider_id,
+            str(self.saved_revision),
+            *(part for field in self.normalized_fields for part in field),
+        ):
+            encoded = value.encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+        return digest.hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechTTSReadinessProjection:
+    """Independent local-configuration and provider-connection projection."""
+
+    configuration: SpeechTTSConfigurationValidity
+    connection: SpeechTTSConnectionState
+    catalog: SpeechTTSConnectionState
+    sample: SpeechTTSConnectionState
+
+
+def combine_tts_readiness(
+    configuration: object,
+    catalog: object,
+    sample: object,
+) -> SpeechTTSReadinessProjection:
+    """Combine bounded catalog and sample observations."""
+
+    def connection_state(
+        value: object, *, sample_value: bool = False
+    ) -> SpeechTTSConnectionState:
+        if type(value) is SpeechTTSConnectionState:
+            return value
+        aliases = {
+            "success": SpeechTTSConnectionState.REACHABLE,
+            "failure": SpeechTTSConnectionState.UNREACHABLE,
+            "not_run": SpeechTTSConnectionState.NOT_TESTED,
+            "not tested": SpeechTTSConnectionState.NOT_TESTED,
+            "model_listing_unavailable": SpeechTTSConnectionState.UNSUPPORTED,
+        }
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in aliases:
+                return aliases[normalized]
+            try:
+                return SpeechTTSConnectionState(normalized)
+            except ValueError:
+                pass
+        label = "sample" if sample_value else "catalog"
+        raise ValueError(f"Speech TTS {label} state is invalid")
+
+    if type(configuration) is SpeechTTSConfigurationValidity:
+        configuration_state = configuration
+    elif type(configuration) is SpeechTTSConfigurationState:
+        if configuration is SpeechTTSConfigurationState.INVALID:
+            configuration_state = SpeechTTSConfigurationValidity.INVALID
+        elif configuration is SpeechTTSConfigurationState.INCOMPLETE:
+            configuration_state = SpeechTTSConfigurationValidity.INCOMPLETE
+        else:
+            configuration_state = SpeechTTSConfigurationValidity.VALID
+    elif isinstance(configuration, str):
+        try:
+            configuration_state = SpeechTTSConfigurationValidity(
+                configuration.strip().lower()
+            )
+        except ValueError:
+            raise ValueError("Speech TTS configuration validity is invalid") from None
+    else:
+        raise TypeError("Speech TTS configuration validity is invalid")
+
+    catalog_state = connection_state(catalog)
+    sample_state = connection_state(sample, sample_value=True)
+    if sample_state is SpeechTTSConnectionState.REACHABLE:
+        combined = SpeechTTSConnectionState.REACHABLE
+    elif sample_state is SpeechTTSConnectionState.UNREACHABLE:
+        combined = SpeechTTSConnectionState.UNREACHABLE
+    elif sample_state is SpeechTTSConnectionState.UNSUPPORTED:
+        combined = SpeechTTSConnectionState.UNSUPPORTED
+    elif catalog_state is SpeechTTSConnectionState.REACHABLE:
+        combined = SpeechTTSConnectionState.REACHABLE
+    elif catalog_state is SpeechTTSConnectionState.UNREACHABLE:
+        combined = SpeechTTSConnectionState.UNREACHABLE
+    elif catalog_state is SpeechTTSConnectionState.UNSUPPORTED:
+        combined = SpeechTTSConnectionState.UNSUPPORTED
+    else:
+        combined = SpeechTTSConnectionState.NOT_TESTED
+
+    return SpeechTTSReadinessProjection(
+        configuration=configuration_state,
+        connection=combined,
+        catalog=catalog_state,
+        sample=sample_state,
+    )
 
 
 class SpeechTTSRuntimeState(StrEnum):

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Literal, Protocol, TypeAlias
+from typing import Literal, Protocol, TypeAlias, cast
 from uuid import UUID
 
 from loguru import logger
@@ -30,6 +30,7 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_service import LoadedCharacterTTSAssignment
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
 from tldw_chatbook.TTS.profile_types import PROFILE_PROVIDER_IDS, CharacterRef
 
 CharacterTTSResolutionSource: TypeAlias = Literal[
@@ -99,6 +100,14 @@ class _ProfileService(Protocol):
         character_ref: CharacterRef,
     ) -> LoadedCharacterTTSAssignment: ...
 
+    async def get_reference(
+        self,
+        profile_id: UUID,
+        *,
+        expected_revision: int,
+        expected_generation: int,
+    ) -> TTSCloneReference: ...
+
 
 class CharacterTTSResolutionError(RuntimeError):
     """One bounded assignment-resolution failure safe for direct UI copy."""
@@ -133,6 +142,7 @@ class CharacterTTSRequestResolution:
     repository_generation: int | None
     profile_id: UUID | None
     profile_revision: int | None
+    reference: TTSCloneReference | None = None
 
     def __post_init__(self) -> None:
         if self.source not in {
@@ -143,14 +153,20 @@ class CharacterTTSRequestResolution:
         }:
             raise ValueError("source")
         if self.source in {"assigned", "default_profile"}:
+            if type(self.request) is not TTSRequest:
+                raise ValueError(f"{self.source} resolution")
+            request = cast(TTSRequest, self.request)
             if (
-                type(self.request) is not TTSRequest
-                or self.request.provider_id not in PROFILE_PROVIDER_IDS
+                request.provider_id not in PROFILE_PROVIDER_IDS
                 or type(self.repository_generation) is not int
                 or self.repository_generation < 0
                 or type(self.profile_id) is not UUID
                 or type(self.profile_revision) is not int
                 or self.profile_revision < 1
+                or (
+                    self.reference is not None
+                    and type(self.reference) is not TTSCloneReference
+                )
             ):
                 raise ValueError(f"{self.source} resolution")
             return
@@ -161,6 +177,7 @@ class CharacterTTSRequestResolution:
                 self.repository_generation,
                 self.profile_id,
                 self.profile_revision,
+                self.reference,
             )
         ):
             raise ValueError("global resolution")
@@ -175,6 +192,7 @@ def _global_resolution(
         repository_generation=None,
         profile_id=None,
         profile_revision=None,
+        reference=None,
     )
 
 
@@ -252,6 +270,7 @@ class CharacterTTSRequestResolver:
         if service is None:
             raise CharacterTTSResolutionError("profile_store_unavailable")
 
+        load_failure: CharacterTTSResolutionCode | None = None
         try:
             loaded = await service.get_assigned_profile(character_ref)
         except asyncio.CancelledError:
@@ -262,10 +281,12 @@ class CharacterTTSRequestResolver:
             ProfileValidationError,
         ) as error:
             _log_resolution_failure("profile_store_unavailable", error)
-            raise CharacterTTSResolutionError("profile_store_unavailable") from None
+            load_failure = "profile_store_unavailable"
         except Exception as error:
             _log_resolution_failure("profile_store_unavailable", error)
-            raise CharacterTTSResolutionError("profile_store_unavailable") from None
+            load_failure = "profile_store_unavailable"
+        if load_failure is not None:
+            raise CharacterTTSResolutionError(load_failure) from None
 
         try:
             if type(loaded) is not LoadedCharacterTTSAssignment:
@@ -276,6 +297,34 @@ class CharacterTTSRequestResolver:
             if snapshot.assignment.character_ref != character_ref:
                 raise ValueError
             profile = snapshot.profile
+            reference: TTSCloneReference | None = None
+            if profile.reference is not None:
+                reference_failure: CharacterTTSResolutionCode | None = None
+                try:
+                    reference = await service.get_reference(
+                        profile.profile_id,
+                        expected_revision=profile.revision,
+                        expected_generation=loaded.repository_generation,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except (
+                    ProfileRepositoryError,
+                    ProfileServiceError,
+                    ProfileValidationError,
+                ) as error:
+                    _log_resolution_failure("assignment_invalid", error)
+                    reference_failure = "assignment_invalid"
+                except Exception as error:
+                    _log_resolution_failure("profile_store_unavailable", error)
+                    reference_failure = "profile_store_unavailable"
+                if reference_failure is not None:
+                    raise CharacterTTSResolutionError(reference_failure) from None
+                if type(reference) is not TTSCloneReference:
+                    raise ValueError
+                assert reference is not None
+                if reference.summary != profile.reference:
+                    raise ValueError
             request = TTSRequest(
                 provider_id=profile.provider_id,
                 model_id=profile.model_id,
@@ -291,6 +340,7 @@ class CharacterTTSRequestResolver:
                 repository_generation=loaded.repository_generation,
                 profile_id=profile.profile_id,
                 profile_revision=profile.revision,
+                reference=reference,
             )
         except CharacterTTSResolutionError:
             raise

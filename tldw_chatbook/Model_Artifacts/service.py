@@ -14,16 +14,17 @@ import stat
 import sys
 import tempfile
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TypeVar
+from typing import Generic, Literal, NoReturn, Self, TypeVar
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from . import leases as _leases
+from .gguf_admission import GGUFMetadata, inspect_gguf_structure, open_local_gguf
 from .leases import (
     ArtifactLeaseError,
     ArtifactLeaseKey,
@@ -120,6 +121,19 @@ _READINESS_SCHEMA_VERSION = 1
 _READINESS_KEYS = frozenset(
     {"schema_version", "root", "closure", "closure_fingerprint"}
 )
+_LOCAL_COPY_CHUNK_BYTES = 1024 * 1024
+_LOCAL_COPY_PROGRESS_BYTES = 64 * _LOCAL_COPY_CHUNK_BYTES
+
+
+def _never_cancelled() -> bool:
+    return False
+
+
+def _raise_if_install_cancelled(cancelled: Callable[[], bool]) -> None:
+    if cancelled():
+        raise ArtifactStateError("artifact installation cancelled")
+
+
 _ACTIVE_SCHEMA_VERSION = 1
 _ACTIVE_KEYS = frozenset({"schema_version", "root"})
 _LIFECYCLE_LEASE_KEY = ArtifactLeaseKey("!lifecycle", "1", "writer")
@@ -264,6 +278,158 @@ class ArtifactDependencyError(ArtifactStateError):
 
 class ArtifactNotReadyError(ArtifactStateError):
     """Raised when no valid readiness record exists for an artifact."""
+
+
+class ArtifactNotInstalledError(ArtifactStateError):
+    """Raised when an exact managed artifact root is not installed."""
+
+
+class ArtifactRemovalAvailability(str, Enum):
+    """Bounded advisory result for an exact artifact removal probe."""
+
+    AVAILABLE = "available"
+    BUSY = "busy"
+
+
+_REMOVAL_CLEANUP_OWNER_ATTRIBUTE = "_artifact_removal_cleanup_owner"
+
+
+def _is_removal_control(error: BaseException) -> bool:
+    return not isinstance(error, Exception)
+
+
+def _take_attached_removal_cleanup_owner(
+    error: BaseException,
+) -> ArtifactRemovalAuthority | None:
+    owner = getattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
+    if not isinstance(owner, ArtifactRemovalAuthority):
+        return None
+    setattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
+    return owner
+
+
+def _compose_removal_cleanup_owners(
+    owner: ArtifactRemovalAuthority | None,
+    additional: ArtifactRemovalAuthority | None,
+) -> ArtifactRemovalAuthority | None:
+    if additional is None:
+        return owner
+    if owner is None:
+        return additional
+    owner._absorb_cleanup_owner(additional)
+    return owner
+
+
+def _take_direct_removal_cleanup_owner(
+    error: BaseException,
+) -> ArtifactRemovalAuthority | None:
+    owner: ArtifactRemovalAuthority | None = None
+    if isinstance(error, ArtifactRemovalCleanupError):
+        owner = ArtifactRemovalCleanupError.take_cleanup_owner(error)
+    return _compose_removal_cleanup_owners(
+        owner,
+        _take_attached_removal_cleanup_owner(error),
+    )
+
+
+def _absorb_removal_cleanup_owner(
+    owner: ArtifactRemovalAuthority,
+    error: BaseException,
+) -> None:
+    attached = _take_direct_removal_cleanup_owner(error)
+    if attached is not None:
+        owner._absorb_cleanup_owner(attached)
+
+
+def _move_removal_cleanup_owner(
+    winner: BaseException,
+    loser: BaseException,
+) -> None:
+    losing_owner = _take_direct_removal_cleanup_owner(loser)
+    if losing_owner is None:
+        return
+    winning_owner = _take_attached_removal_cleanup_owner(winner)
+    if winning_owner is None:
+        winning_owner = losing_owner
+    else:
+        winning_owner._absorb_cleanup_owner(losing_owner)
+    setattr(winner, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, winning_owner)
+
+
+def _sanitize_removal_exception(error: BaseException) -> BaseException:
+    """Return a bounded exception.
+
+    Exception-group identity cannot survive because its message and children
+    are read-only; its control family and recursively sanitized children do.
+    """
+
+    if isinstance(error, BaseExceptionGroup):
+        cleanup_owner = _take_direct_removal_cleanup_owner(error)
+        children: list[BaseException] = []
+        for child in error.exceptions:
+            bounded_child = _sanitize_removal_exception(child)
+            cleanup_owner = _compose_removal_cleanup_owners(
+                cleanup_owner,
+                _take_direct_removal_cleanup_owner(bounded_child),
+            )
+            children.append(bounded_child)
+        bounded = BaseExceptionGroup("artifact removal control group", children)
+        if cleanup_owner is not None:
+            setattr(bounded, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, cleanup_owner)
+        error.__traceback__ = None
+        error.__context__ = None
+        error.__cause__ = None
+        if hasattr(error, "__notes__"):
+            error.__notes__ = []
+        return bounded
+
+    exit_code = error.code if isinstance(error, SystemExit) else None
+    error.args = ()
+    if isinstance(error, SystemExit):
+        error.code = exit_code if exit_code is None or type(exit_code) is int else 1
+    error.__traceback__ = None
+    error.__context__ = None
+    error.__cause__ = None
+    if hasattr(error, "__notes__"):
+        error.__notes__ = []
+    return error
+
+
+def _sanitize_and_absorb_removal_cleanup_owner(
+    owner: ArtifactRemovalAuthority,
+    error: BaseException,
+) -> BaseException:
+    """Bound one losing error and retain every cleanup authority it carries."""
+
+    bounded_error = _sanitize_removal_exception(error)
+    _absorb_removal_cleanup_owner(owner, bounded_error)
+    return bounded_error
+
+
+def _raise_removal_control(
+    control: BaseException,
+    *,
+    cleanup_owner: ArtifactRemovalAuthority | None = None,
+    ordinary_failure: bool = False,
+) -> None:
+    """Re-raise one exact sanitized control object with optional ownership."""
+
+    control = _sanitize_removal_exception(control)
+    if ordinary_failure:
+        control.add_note("artifact removal also encountered an ordinary failure")
+    if cleanup_owner is not None:
+        cleanup_owner._make_cleanup_only()
+        existing_owner = getattr(control, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
+        if isinstance(existing_owner, ArtifactRemovalAuthority):
+            existing_owner._absorb_cleanup_owner(cleanup_owner)
+            cleanup_owner = existing_owner
+        setattr(control, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, cleanup_owner)
+    try:
+        raise control from None
+    except BaseException as raised:
+        raised.__context__ = None
+        raised.__cause__ = None
+        raise
 
 
 class ArtifactRole(str, Enum):
@@ -545,8 +711,28 @@ class ArtifactDescriptor:
 
         for field_name in _DESCRIPTOR_STRING_FIELDS:
             _validate_nonempty_text(field_name, getattr(self, field_name))
-        _validate_url("source_url", self.source_url)
-        _validate_url("license_url", self.license_url)
+        local_only = self.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+        if type(self.source_url) is not str:
+            raise ArtifactDescriptorValidationError(
+                "source_url must be a non-empty canonical string"
+            )
+        if self.source_url:
+            _validate_url("source_url", self.source_url)
+        elif not local_only:
+            raise ArtifactDescriptorValidationError(
+                "source_url may be empty only for local integrity provenance"
+            )
+
+        if type(self.license_url) is not str:
+            raise ArtifactDescriptorValidationError(
+                "license_url must be a non-empty canonical string"
+            )
+        if self.license_url:
+            _validate_url("license_url", self.license_url)
+        elif not (local_only and self.license_id == "unknown"):
+            raise ArtifactDescriptorValidationError(
+                "license_url may be empty only for unknown local-import licensing"
+            )
 
         if self.precision != self.reference.variant:
             raise ArtifactDescriptorValidationError(
@@ -868,6 +1054,71 @@ class InstalledArtifact:
 
 
 @dataclass(frozen=True)
+class LocalGGUFImportProgress:
+    """Path-private progress emitted by one local GGUF import."""
+
+    phase: Literal["copy", "inspect", "verify", "finalize"]
+    file: str | None
+    bytes_done: int
+    bytes_total: int
+
+
+@dataclass(frozen=True)
+class LocalGGUFImportResult:
+    """Exact managed reference and convergence outcome for an import."""
+
+    reference: ArtifactRef
+    already_installed: bool
+
+
+def _ignore_local_import_progress(_progress: LocalGGUFImportProgress) -> None:
+    """Accept one import progress update without side effects."""
+
+
+def _local_gguf_descriptor(
+    metadata: GGUFMetadata,
+    *,
+    digest: str,
+    size_bytes: int,
+) -> ArtifactDescriptor:
+    """Build one path-private descriptor from staged GGUF facts."""
+
+    revision = f"sha256-{digest}"
+    variant = (
+        f"filetype-{metadata.file_type}"
+        if metadata.file_type is not None
+        else "imported"
+    )
+    label = (metadata.model_name or "").strip() or f"Imported GGUF {digest[:8]}"
+    reference = ArtifactRef(f"local-gguf-{digest[:16]}", revision, variant)
+    return ArtifactDescriptor(
+        reference=reference,
+        model_id=label,
+        role=ArtifactRole.ROOT,
+        format=ArtifactFormat.GGUF,
+        consumer="unassigned",
+        model_family=metadata.architecture,
+        upstream_repository="local-import",
+        upstream_revision=revision,
+        source_url="",
+        precision=variant,
+        expected_installed_bytes=size_bytes,
+        license_id="unknown",
+        license_url="",
+        usage_notice=(
+            "Imported from a user-selected local file; license and runtime "
+            "compatibility are not verified."
+        ),
+        runtime_name="unassigned",
+        runtime_version_constraint="none",
+        supported_os=("unassigned",),
+        supported_architectures=("unassigned",),
+        provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+        files=(ArtifactFile("model.gguf", size_bytes, digest),),
+    )
+
+
+@dataclass(frozen=True)
 class ArtifactDiskUsage:
     """Logical managed-store byte totals and current filesystem capacity."""
 
@@ -885,6 +1136,20 @@ class ReconcileReport:
     corrupt_artifacts: tuple[Path, ...]
     staging_entries: tuple[Path, ...]
     staging_removed: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ArtifactDependencyHandle:
+    """Verified exact managed dependencies and their payload paths."""
+
+    references: tuple[ArtifactRef, ...]
+    paths: tuple[tuple[ArtifactRef, Path], ...]
+
+    @property
+    def lease_keys(self) -> tuple[ArtifactLeaseKey, ...]:
+        """Return exact dependency lease keys in canonical order."""
+
+        return tuple(reference.lease_key() for reference in self.references)
 
 
 @dataclass(frozen=True)
@@ -948,26 +1213,29 @@ class _ReadinessRecord:
         }
 
 
-class LeasedArtifactHandle:
-    """Own shared operation leases for an already acquired artifact handle."""
+_HandleT = TypeVar("_HandleT", ArtifactHandle, ArtifactDependencyHandle)
+
+
+class _LeasedArtifactHandle(Generic[_HandleT]):
+    """Own shared operation leases for an already acquired handle."""
 
     def __init__(
         self,
-        handle: ArtifactHandle,
+        handle: _HandleT,
         lease_set: ArtifactOperationLeaseSet,
     ) -> None:
-        self.handle = handle
+        self.handle: _HandleT = handle
         self._lease_set: ArtifactOperationLeaseSet | None = lease_set
 
     def close(self) -> None:
-        """Release the exact shared closure lease set idempotently."""
+        """Release the owned shared lease set idempotently."""
 
         lease_set = self._lease_set
-        self._lease_set = None
         if lease_set is not None:
             lease_set.release()
+            self._lease_set = None
 
-    def __enter__(self) -> LeasedArtifactHandle:
+    def __enter__(self) -> Self:
         """Return this already acquired handle without reacquiring leases."""
 
         if self._lease_set is None:
@@ -990,6 +1258,231 @@ class LeasedArtifactHandle:
             exc.add_note(f"lease context cleanup failed: {cleanup_error!r}")
             for note in getattr(cleanup_error, "__notes__", ()):
                 exc.add_note(note)
+
+
+class LeasedArtifactHandle(_LeasedArtifactHandle[ArtifactHandle]):
+    """Own shared operation leases for an acquired artifact closure."""
+
+
+class LeasedArtifactDependencyHandle(_LeasedArtifactHandle[ArtifactDependencyHandle]):
+    """Own shared operation leases for verified exact dependencies."""
+
+
+class ArtifactRemovalAuthority:
+    """Own ordered exclusive leases for one exact installed artifact target."""
+
+    def __init__(
+        self,
+        service: ModelArtifactService,
+        reference: ArtifactRef,
+        lifecycle_lease: ArtifactOperationLease | None,
+        target_lease: ArtifactOperationLease | None,
+        target_identity: _NodeIdentity | None = None,
+    ) -> None:
+        self._service = service
+        self._reference = reference
+        self._target_identity = target_identity
+        self._lifecycle_lease: ArtifactOperationLease | None = lifecycle_lease
+        self._target_lease: ArtifactOperationLease | None = target_lease
+        self._committed = False
+        self._additional_cleanup_owners: list[ArtifactRemovalAuthority] = []
+
+    def commit(self) -> None:
+        """Remove the pinned target once without reacquiring either lease."""
+
+        if self._target_identity is None:
+            raise ArtifactStateError("removal authority is cleanup-only")
+        if self._target_lease is None or self._lifecycle_lease is None:
+            raise ArtifactStateError("removal authority is closed")
+        if self._committed:
+            raise ArtifactStateError("removal authority already committed")
+        self._service._revalidate_removal_target(
+            self._reference,
+            self._target_identity,
+        )
+        self._service._delete_under_leases(self._reference)
+        self._committed = True
+
+    def _admit_target(self, target_identity: _NodeIdentity) -> None:
+        """Make this close-only owner commit-capable after exact target pinning."""
+
+        if self._target_identity is not None:
+            raise ArtifactStateError("removal authority target is already pinned")
+        self._target_identity = target_identity
+
+    def _make_cleanup_only(self) -> None:
+        """Irrevocably revoke commit capability before cleanup can escape."""
+
+        self._target_identity = None
+
+    def _absorb_cleanup_owner(self, owner: ArtifactRemovalAuthority) -> None:
+        """Compose another exact cleanup-only authority into this owner."""
+
+        self._make_cleanup_only()
+        owner._make_cleanup_only()
+        if owner is self or any(
+            existing is owner for existing in self._additional_cleanup_owners
+        ):
+            return
+        self._additional_cleanup_owners.append(owner)
+
+    def _has_cleanup(self) -> bool:
+        return (
+            self._target_lease is not None
+            or self._lifecycle_lease is not None
+            or any(owner._has_cleanup() for owner in self._additional_cleanup_owners)
+        )
+
+    def close(self) -> None:
+        """Release target then lifecycle authority, retaining failures for retry."""
+
+        self._make_cleanup_only()
+        control: BaseException | None = None
+        ordinary_error: BaseException | None = None
+        for attribute in ("_target_lease", "_lifecycle_lease"):
+            lease = getattr(self, attribute)
+            if lease is None:
+                continue
+            try:
+                lease.release()
+            except BaseException as error:
+                if not _is_removal_control(error):
+                    if control is None:
+                        ordinary_error = error
+                        break
+                    if ordinary_error is None:
+                        ordinary_error = error
+                    else:
+                        _sanitize_and_absorb_removal_cleanup_owner(self, error)
+                    continue
+                if control is None:
+                    control = error
+                else:
+                    bounded_error = _sanitize_removal_exception(error)
+                    _move_removal_cleanup_owner(control, bounded_error)
+                continue
+            setattr(self, attribute, None)
+        retained_owners: list[ArtifactRemovalAuthority] = []
+        for owner in self._additional_cleanup_owners:
+            try:
+                owner.close()
+            except BaseException as error:
+                retained_owners.append(owner)
+                if _is_removal_control(error):
+                    if control is None:
+                        control = error
+                    else:
+                        bounded_error = _sanitize_removal_exception(error)
+                        _move_removal_cleanup_owner(control, bounded_error)
+                elif ordinary_error is None:
+                    ordinary_error = error
+                else:
+                    _sanitize_and_absorb_removal_cleanup_owner(self, error)
+            else:
+                if owner._has_cleanup():
+                    retained_owners.append(owner)
+        self._additional_cleanup_owners = retained_owners
+        if control is not None:
+            if ordinary_error is not None:
+                ordinary_error = _sanitize_removal_exception(ordinary_error)
+                _move_removal_cleanup_owner(control, ordinary_error)
+            _raise_removal_control(
+                control,
+                ordinary_failure=ordinary_error is not None,
+            )
+        if ordinary_error is not None:
+            raise ordinary_error
+
+    def __enter__(self) -> Self:
+        """Return this already acquired authority."""
+
+        if self._target_identity is None:
+            raise ArtifactStateError("removal authority is cleanup-only")
+        if self._target_lease is None or self._lifecycle_lease is None:
+            raise ArtifactStateError("removal authority is closed")
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        """Close while preserving body control flow over cleanup failure."""
+
+        cleanup_error: BaseException | None = None
+        try:
+            self.close()
+        except BaseException as error:
+            cleanup_error = error
+        if cleanup_error is None:
+            return
+        cleanup_error = _sanitize_and_absorb_removal_cleanup_owner(
+            self,
+            cleanup_error,
+        )
+        if exc is not None and _is_removal_control(exc):
+            _raise_removal_control(
+                exc,
+                cleanup_owner=self,
+                ordinary_failure=not _is_removal_control(cleanup_error),
+            )
+        if exc is not None:
+            _sanitize_and_absorb_removal_cleanup_owner(self, exc)
+        if _is_removal_control(cleanup_error):
+            _raise_removal_control(
+                cleanup_error,
+                cleanup_owner=self,
+                ordinary_failure=exc is not None,
+            )
+        _raise_removal_cleanup_failure(
+            self,
+            note="artifact removal commit also failed" if exc is not None else None,
+        )
+
+
+class ArtifactRemovalCleanupError(ArtifactStateError):
+    """Bounded failure carrying exact retryable removal cleanup ownership."""
+
+    __slots__ = ("_cleanup_owner",)
+
+    def __init__(self, cleanup_owner: ArtifactRemovalAuthority) -> None:
+        cleanup_owner._make_cleanup_only()
+        self._cleanup_owner: ArtifactRemovalAuthority | None = cleanup_owner
+        super().__init__("artifact removal cleanup is incomplete")
+
+    def take_cleanup_owner(self) -> ArtifactRemovalAuthority | None:
+        """Transfer retained cleanup ownership exactly once."""
+
+        owner = self._cleanup_owner
+        self._cleanup_owner = None
+        return owner
+
+
+def _raise_removal_cleanup_failure(
+    cleanup_owner: ArtifactRemovalAuthority,
+    *,
+    note: str | None = None,
+) -> NoReturn:
+    """Raise one bounded cleanup carrier without exposing superseded context."""
+
+    failure = ArtifactRemovalCleanupError(cleanup_owner)
+    if note is not None:
+        failure.add_note(note)
+    try:
+        raise failure from None
+    except ArtifactRemovalCleanupError as raised:
+        raised.__context__ = None
+        raised.__cause__ = None
+        raise
+
+
+def take_artifact_removal_cleanup_owner(
+    error: BaseException,
+) -> ArtifactRemovalAuthority | None:
+    """Take exact removal cleanup ownership from one bounded failure/control."""
+
+    return _take_direct_removal_cleanup_owner(error)
 
 
 class ModelArtifactService:
@@ -1116,46 +1609,9 @@ class ModelArtifactService:
     def delete(self, reference: ArtifactRef) -> None:
         """Delete one exact artifact after invalidating affected derived state."""
 
-        if type(reference) is not ArtifactRef:
-            raise TypeError("reference must be an ArtifactRef")
         try:
-            self._assert_managed_path(self._locks_path)
-            with ArtifactOperationLease(
-                self._locks_path,
-                _LIFECYCLE_LEASE_KEY,
-                LeaseMode.EXCLUSIVE,
-                timeout_seconds=self._lease_timeout_seconds,
-            ):
-                self._assert_managed_path(self._locks_path)
-                try:
-                    target_lease = ArtifactOperationLease(
-                        self._locks_path,
-                        reference.lease_key(),
-                        LeaseMode.EXCLUSIVE,
-                        timeout_seconds=self._lease_timeout_seconds,
-                    )
-                    target_lease.acquire()
-                except ArtifactLeaseTimeoutError as error:
-                    raise ArtifactInUseError(
-                        "artifact is in use and cannot be deleted"
-                    ) from error
-                primary_error: BaseException | None = None
-                try:
-                    self._delete_under_leases(reference)
-                except BaseException as error:
-                    primary_error = error
-                    raise
-                finally:
-                    try:
-                        target_lease.release()
-                    except BaseException as cleanup_error:
-                        if primary_error is None:
-                            raise
-                        primary_error.add_note(
-                            f"target lease cleanup failed: {cleanup_error!r}"
-                        )
-                        for note in getattr(cleanup_error, "__notes__", ()):
-                            primary_error.add_note(note)
+            with self.acquire_removal_authority(reference) as authority:
+                authority.commit()
         except ArtifactError:
             raise
         except ArtifactLeaseError as error:
@@ -1164,6 +1620,270 @@ class ModelArtifactService:
             ) from error
         except OSError as error:
             raise ArtifactStateError("artifact deletion I/O failed") from error
+
+    def probe_removal_availability(
+        self,
+        reference: ArtifactRef,
+    ) -> ArtifactRemovalAvailability:
+        """Return advisory available/busy truth without mutating store state."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        lifecycle_lease: ArtifactOperationLease | None = None
+        target_lease: ArtifactOperationLease | None = None
+        primary_error: BaseException | None = None
+        timed_out = False
+        try:
+            self._assert_managed_path(self._locks_path)
+            lifecycle_lease = ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=NONBLOCKING_LEASE_TIMEOUT_SECONDS,
+            )
+            lifecycle_lease.acquire()
+            self._assert_managed_path(self._locks_path)
+            target_lease = ArtifactOperationLease(
+                self._locks_path,
+                reference.lease_key(),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=NONBLOCKING_LEASE_TIMEOUT_SECONDS,
+            )
+            target_lease.acquire()
+        except ArtifactLeaseTimeoutError:
+            timed_out = True
+        except BaseException as error:
+            primary_error = error
+        cleanup_owner = ArtifactRemovalAuthority(
+            self,
+            reference,
+            lifecycle_lease,
+            target_lease,
+        )
+        cleanup_error: BaseException | None = None
+        try:
+            cleanup_owner.close()
+        except BaseException as error:
+            cleanup_error = error
+        if cleanup_error is not None:
+            cleanup_error = _sanitize_and_absorb_removal_cleanup_owner(
+                cleanup_owner,
+                cleanup_error,
+            )
+        if primary_error is not None and _is_removal_control(primary_error):
+            _raise_removal_control(
+                primary_error,
+                cleanup_owner=cleanup_owner if cleanup_owner._has_cleanup() else None,
+                ordinary_failure=(
+                    cleanup_error is not None and not _is_removal_control(cleanup_error)
+                ),
+            )
+        if cleanup_error is not None and _is_removal_control(cleanup_error):
+            if primary_error is not None:
+                _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    primary_error,
+                )
+            _raise_removal_control(
+                cleanup_error,
+                cleanup_owner=cleanup_owner if cleanup_owner._has_cleanup() else None,
+                ordinary_failure=primary_error is not None or timed_out,
+            )
+        if cleanup_error is not None:
+            if primary_error is not None:
+                _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    primary_error,
+                )
+            _raise_removal_cleanup_failure(
+                cleanup_owner,
+                note=(
+                    "artifact removal probe also failed"
+                    if primary_error is not None or timed_out
+                    else None
+                ),
+            )
+        if primary_error is not None:
+            _sanitize_and_absorb_removal_cleanup_owner(
+                cleanup_owner,
+                primary_error,
+            )
+            if cleanup_owner._has_cleanup():
+                _raise_removal_cleanup_failure(cleanup_owner)
+            raise ArtifactStateError("artifact removal probe failed") from None
+        return (
+            ArtifactRemovalAvailability.BUSY
+            if timed_out
+            else ArtifactRemovalAvailability.AVAILABLE
+        )
+
+    def acquire_removal_authority(
+        self,
+        reference: ArtifactRef,
+    ) -> ArtifactRemovalAuthority:
+        """Acquire ordered exclusive authority over one exact installed target."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        lifecycle_lease: ArtifactOperationLease | None = None
+        target_lease: ArtifactOperationLease | None = None
+        primary_error: BaseException | None = None
+        try:
+            self._assert_managed_path(self._locks_path)
+            lifecycle_lease = ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            )
+            lifecycle_lease.acquire()
+            self._assert_managed_path(self._locks_path)
+            target_lease = ArtifactOperationLease(
+                self._locks_path,
+                reference.lease_key(),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            )
+            target_lease.acquire()
+        except BaseException as error:
+            primary_error = error
+        if primary_error is not None:
+            cleanup_owner = ArtifactRemovalAuthority(
+                self,
+                reference,
+                lifecycle_lease,
+                target_lease,
+            )
+            cleanup_error: BaseException | None = None
+            try:
+                cleanup_owner.close()
+            except BaseException as error:
+                cleanup_error = error
+            if cleanup_error is not None:
+                cleanup_error = _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    cleanup_error,
+                )
+            if _is_removal_control(primary_error):
+                _raise_removal_control(
+                    primary_error,
+                    cleanup_owner=(
+                        cleanup_owner if cleanup_owner._has_cleanup() else None
+                    ),
+                    ordinary_failure=(
+                        cleanup_error is not None
+                        and not _is_removal_control(cleanup_error)
+                    ),
+                )
+            if cleanup_error is not None and _is_removal_control(cleanup_error):
+                _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    primary_error,
+                )
+                _raise_removal_control(
+                    cleanup_error,
+                    cleanup_owner=(
+                        cleanup_owner if cleanup_owner._has_cleanup() else None
+                    ),
+                    ordinary_failure=True,
+                )
+            if cleanup_error is not None:
+                _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    primary_error,
+                )
+                _raise_removal_cleanup_failure(
+                    cleanup_owner,
+                    note="artifact removal authority setup also failed",
+                )
+            _sanitize_and_absorb_removal_cleanup_owner(
+                cleanup_owner,
+                primary_error,
+            )
+            if cleanup_owner._has_cleanup():
+                _raise_removal_cleanup_failure(cleanup_owner)
+            if isinstance(primary_error, ArtifactLeaseTimeoutError):
+                raise ArtifactInUseError(
+                    "artifact is in use and cannot be deleted"
+                ) from None
+            if isinstance(primary_error, ArtifactLeaseError):
+                lease_failure = ArtifactStateError(
+                    "failed to acquire or release artifact deletion leases"
+                )
+                raise lease_failure from None
+            raise ArtifactStateError("artifact removal authority failed") from None
+
+        assert lifecycle_lease is not None
+        assert target_lease is not None
+        authority = ArtifactRemovalAuthority(
+            self,
+            reference,
+            lifecycle_lease,
+            target_lease,
+        )
+        target_error: BaseException | None = None
+        target_identity: _NodeIdentity | None = None
+        try:
+            target_identity = self._removal_target_identity(reference)
+        except BaseException as error:
+            target_error = error
+        if target_error is None:
+            assert target_identity is not None
+            authority._admit_target(target_identity)
+            return authority
+
+        target_cleanup_error: BaseException | None = None
+        try:
+            authority.close()
+        except BaseException as error:
+            target_cleanup_error = error
+        if target_cleanup_error is not None:
+            target_cleanup_error = _sanitize_and_absorb_removal_cleanup_owner(
+                authority,
+                target_cleanup_error,
+            )
+        if _is_removal_control(target_error):
+            _raise_removal_control(
+                target_error,
+                cleanup_owner=authority if authority._has_cleanup() else None,
+                ordinary_failure=(
+                    target_cleanup_error is not None
+                    and not _is_removal_control(target_cleanup_error)
+                ),
+            )
+        if target_cleanup_error is not None and _is_removal_control(
+            target_cleanup_error
+        ):
+            _sanitize_and_absorb_removal_cleanup_owner(
+                authority,
+                target_error,
+            )
+            _raise_removal_control(
+                target_cleanup_error,
+                cleanup_owner=authority,
+                ordinary_failure=True,
+            )
+        if target_cleanup_error is not None:
+            _sanitize_and_absorb_removal_cleanup_owner(
+                authority,
+                target_error,
+            )
+            _raise_removal_cleanup_failure(
+                authority,
+                note="artifact removal target setup also failed",
+            )
+        target_is_missing = type(target_error) is ArtifactStateError and (
+            target_error.args == ("installed artifact does not exist",)
+        )
+        _sanitize_and_absorb_removal_cleanup_owner(
+            authority,
+            target_error,
+        )
+        if authority._has_cleanup():
+            _raise_removal_cleanup_failure(authority)
+        if target_is_missing:
+            raise ArtifactStateError("installed artifact does not exist") from None
+        raise ArtifactStateError("artifact removal authority failed") from None
 
     def reconcile(self) -> ReconcileReport:
         """Verify installed roots and reconcile derived state explicitly."""
@@ -1416,6 +2136,32 @@ class ModelArtifactService:
             except OSError:
                 break
 
+    def _removal_target_identity(self, reference: ArtifactRef) -> _NodeIdentity:
+        target = self.artifact_path(reference)
+        if not self._managed_path_exists(target):
+            raise ArtifactStateError("installed artifact does not exist")
+        self._assert_managed_path(target)
+        try:
+            return _node_identity(target.stat(follow_symlinks=False))
+        except OSError as error:
+            raise ArtifactStateError("failed to pin artifact removal target") from error
+
+    def _revalidate_removal_target(
+        self,
+        reference: ArtifactRef,
+        expected_identity: _NodeIdentity,
+    ) -> None:
+        target = self.artifact_path(reference)
+        if not self._managed_path_exists(target):
+            raise ArtifactStateError("artifact removal target changed")
+        self._assert_managed_path(target)
+        try:
+            current_identity = _node_identity(target.stat(follow_symlinks=False))
+        except OSError as error:
+            raise ArtifactStateError("failed to revalidate removal target") from error
+        if current_identity != expected_identity:
+            raise ArtifactStateError("artifact removal target changed")
+
     def _state_files(self, root: Path, record_depth: int) -> tuple[Path, ...]:
         self._assert_managed_path(root)
         before = _path_snapshot(root.stat(follow_symlinks=False))
@@ -1637,9 +2383,7 @@ class ModelArtifactService:
             for candidate in self._state_files(managed_root, 3):
                 if self._is_valid_managed_staging_entry(managed_root, candidate):
                     continue
-                self._remove_state_path(
-                    candidate, "failed to remove staging orphan"
-                )
+                self._remove_state_path(candidate, "failed to remove staging orphan")
                 removed.append(candidate.relative_to(self._staging_path).as_posix())
             return tuple(removed)
         finally:
@@ -1899,7 +2643,9 @@ class ModelArtifactService:
         try:
             entries = tuple(os.scandir(directory))
         except OSError as error:
-            raise ArtifactPathError("failed to scan download staging payload") from error
+            raise ArtifactPathError(
+                "failed to scan download staging payload"
+            ) from error
         for entry in entries:
             path = Path(entry.path)
             try:
@@ -2052,6 +2798,8 @@ class ModelArtifactService:
         )
         try:
             lease_set.acquire()
+        except ArtifactLeaseTimeoutError:
+            raise
         except ArtifactLeaseError as error:
             raise ArtifactStateError(
                 "failed to acquire artifact closure leases"
@@ -2080,6 +2828,103 @@ class ModelArtifactService:
                 paths=paths,
             )
             return LeasedArtifactHandle(handle, lease_set)
+        except BaseException as error:
+            try:
+                lease_set.release()
+            except BaseException as cleanup_error:
+                error.add_note(f"lease rollback cleanup failed: {cleanup_error!r}")
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    error.add_note(note)
+            raise
+
+    def acquire_installed_root(
+        self,
+        reference: ArtifactRef,
+    ) -> LeasedArtifactHandle:
+        """Verify and lease one exact installed ROOT without derived state."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        self._assert_managed_path(self._locks_path)
+        lease_set = ArtifactOperationLeaseSet(
+            self._locks_path,
+            (reference.lease_key(),),
+            LeaseMode.SHARED,
+            timeout_seconds=self._lease_timeout_seconds,
+        )
+        try:
+            lease_set.acquire()
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire installed artifact root lease"
+            ) from error
+        try:
+            path = self.artifact_path(reference)
+            self._assert_managed_path(path, allow_missing=True)
+            try:
+                path.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                raise ArtifactNotInstalledError(
+                    "exact artifact root is not installed"
+                ) from None
+            except OSError as error:
+                raise ArtifactStateError(
+                    "failed to inspect exact installed artifact root"
+                ) from error
+            self._verify_installed(reference, ArtifactRole.ROOT)
+            canonical_root = path.resolve(strict=True)
+            self._assert_managed_path(canonical_root)
+            handle = ArtifactHandle(
+                root=reference,
+                closure=(reference,),
+                closure_fingerprint=closure_fingerprint(reference, ()),
+                paths=((reference, canonical_root),),
+            )
+            return LeasedArtifactHandle(handle, lease_set)
+        except BaseException as error:
+            try:
+                lease_set.release()
+            except BaseException as cleanup_error:
+                error.add_note(f"lease rollback cleanup failed: {cleanup_error!r}")
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    error.add_note(note)
+            raise
+
+    def acquire_dependencies(
+        self,
+        references: tuple[ArtifactRef, ...],
+    ) -> LeasedArtifactDependencyHandle:
+        """Verify and lease exact managed dependency artifacts."""
+
+        if type(references) is not tuple:
+            raise TypeError("references must be a tuple")
+        if any(type(reference) is not ArtifactRef for reference in references):
+            raise TypeError("references must contain only ArtifactRef values")
+        ordered = tuple(sorted(set(references)))
+        if not ordered:
+            raise ValueError("references must contain at least one ArtifactRef")
+
+        self._assert_managed_path(self._locks_path)
+        lease_set = ArtifactOperationLeaseSet(
+            self._locks_path,
+            tuple(reference.lease_key() for reference in ordered),
+            LeaseMode.SHARED,
+            timeout_seconds=self._lease_timeout_seconds,
+        )
+        try:
+            lease_set.acquire()
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact dependency leases"
+            ) from error
+        try:
+            for reference in ordered:
+                self._verify_installed(reference, ArtifactRole.DEPENDENCY)
+            paths = tuple(
+                (reference, self.artifact_path(reference)) for reference in ordered
+            )
+            handle = ArtifactDependencyHandle(references=ordered, paths=paths)
+            return LeasedArtifactDependencyHandle(handle, lease_set)
         except BaseException as error:
             try:
                 lease_set.release()
@@ -2301,7 +3146,9 @@ class ModelArtifactService:
                 directory=True,
             )
         except OSError as error:
-            raise ArtifactStateError("failed to create download staging operation") from error
+            raise ArtifactStateError(
+                "failed to create download staging operation"
+            ) from error
         try:
             temporary_marker = temporary / marker.name
             temporary_payload = temporary / payload.name
@@ -2371,7 +3218,9 @@ class ModelArtifactService:
                     temporary / payload.name,
                     temporary / state.name,
                 )
-            raise ArtifactStateError("failed to initialize download staging operation") from error
+            raise ArtifactStateError(
+                "failed to initialize download staging operation"
+            ) from error
 
     def _finalize_download_stage(
         self,
@@ -2466,9 +3315,13 @@ class ModelArtifactService:
         try:
             shutil.rmtree(self._retire_download_stage_operation(stage.operation))
         except FileNotFoundError:
-            raise ArtifactPathError("download staging operation disappeared during discard")
+            raise ArtifactPathError(
+                "download staging operation disappeared during discard"
+            )
         except OSError as error:
-            raise ArtifactStateError("failed to discard download staging operation") from error
+            raise ArtifactStateError(
+                "failed to discard download staging operation"
+            ) from error
 
     def _discard_temporary_download_stage(self, stage: _ManagedDownloadStage) -> None:
         """Remove one verified losing temporary publication candidate."""
@@ -2514,7 +3367,9 @@ class ModelArtifactService:
         try:
             shutil.rmtree(stage.operation)
         except OSError as error:
-            raise ArtifactStateError("failed to discard download staging temporary") from error
+            raise ArtifactStateError(
+                "failed to discard download staging temporary"
+            ) from error
 
     def _download_stage_paths(
         self,
@@ -2634,9 +3489,15 @@ class ModelArtifactService:
     ) -> None:
         self._validate_download_stage_handle_paths(stage)
         operation = stage.operation
-        operation_identity = self._download_stage_node_identity(operation, directory=True)
-        marker_identity = self._download_stage_node_identity(stage.marker, directory=False)
-        payload_identity = self._download_stage_node_identity(stage.payload, directory=True)
+        operation_identity = self._download_stage_node_identity(
+            operation, directory=True
+        )
+        marker_identity = self._download_stage_node_identity(
+            stage.marker, directory=False
+        )
+        payload_identity = self._download_stage_node_identity(
+            stage.payload, directory=True
+        )
         state_identity = self._download_stage_node_identity(stage.state, directory=True)
         if (
             operation_identity != stage.operation_identity
@@ -2670,7 +3531,9 @@ class ModelArtifactService:
         try:
             info = path.stat(follow_symlinks=False)
         except OSError as error:
-            raise ArtifactPathError("failed to inspect download staging path") from error
+            raise ArtifactPathError(
+                "failed to inspect download staging path"
+            ) from error
         if stat.S_ISLNK(info.st_mode) or (
             not stat.S_ISDIR(info.st_mode)
             if directory
@@ -2692,7 +3555,9 @@ class ModelArtifactService:
         try:
             entries = {entry.name: Path(entry.path) for entry in os.scandir(operation)}
         except OSError as error:
-            raise ArtifactPathError("failed to scan download staging operation") from error
+            raise ArtifactPathError(
+                "failed to scan download staging operation"
+            ) from error
         expected = {
             marker.name: marker,
         }
@@ -2766,10 +3631,13 @@ class ModelArtifactService:
         """
 
         try:
-            if self._download_stage_node_identity(
-                operation,
-                directory=True,
-            ) != operation_identity:
+            if (
+                self._download_stage_node_identity(
+                    operation,
+                    directory=True,
+                )
+                != operation_identity
+            ):
                 return
             entries = {entry.name: Path(entry.path) for entry in os.scandir(operation)}
             if set(entries) - {marker.name, payload.name, state.name}:
@@ -2813,7 +3681,9 @@ class ModelArtifactService:
                 or type(raw["descriptor_fingerprint"]) is not str
                 or raw["descriptor_fingerprint"] != fingerprint
             ):
-                raise ArtifactPathError("download stage marker does not match descriptor")
+                raise ArtifactPathError(
+                    "download stage marker does not match descriptor"
+                )
         except ArtifactPathError:
             raise
         except (
@@ -2831,7 +3701,9 @@ class ModelArtifactService:
             try:
                 entries = tuple(os.scandir(directory))
             except OSError as error:
-                raise ArtifactPathError("failed to scan download staging state") from error
+                raise ArtifactPathError(
+                    "failed to scan download staging state"
+                ) from error
             for entry in entries:
                 path = Path(entry.path)
                 try:
@@ -2847,7 +3719,9 @@ class ModelArtifactService:
                 elif stat.S_ISREG(info.st_mode) and path.suffix == ".json":
                     try:
                         with path.open("r", encoding="utf-8") as handle:
-                            json.load(handle, object_pairs_hook=_reject_duplicate_json_keys)
+                            json.load(
+                                handle, object_pairs_hook=_reject_duplicate_json_keys
+                            )
                     except (
                         OSError,
                         UnicodeError,
@@ -2867,7 +3741,9 @@ class ModelArtifactService:
         try:
             shutil.rmtree(self._retire_download_stage_operation(stage.operation))
         except OSError as error:
-            raise ArtifactStateError("failed to clean finalized download staging") from error
+            raise ArtifactStateError(
+                "failed to clean finalized download staging"
+            ) from error
 
     def _retire_download_stage_operation(self, operation: Path) -> Path:
         """Atomically move one validated canonical operation off its stable path."""
@@ -2915,7 +3791,9 @@ class ModelArtifactService:
         try:
             entries = {entry.name for entry in os.scandir(stage.operation)}
         except OSError as error:
-            raise ArtifactPathError("failed to scan finalized download staging") from error
+            raise ArtifactPathError(
+                "failed to scan finalized download staging"
+            ) from error
         expected_entries = {stage.marker.name}
         if state_identity is not None:
             expected_entries.add(stage.state.name)
@@ -2929,12 +3807,255 @@ class ModelArtifactService:
 
     # -- end TASK-1694 download-stage seam -----------------------------------
 
+    def _create_install_staging(self) -> tuple[Path, ArtifactOperationLease]:
+        """Create one leased operation-owned install staging directory."""
+
+        self._assert_managed_path(self._staging_path)
+        # Name before create so reconcile() cannot observe an unleased stage.
+        staging_name = f"{_INSTALL_STAGING_PREFIX}{uuid.uuid4().hex}"
+        staging = self._staging_path / staging_name
+        self._assert_managed_path(self._locks_path)
+        # Use the leases submodule so tests replacing the public writer-lease
+        # name do not intercept this orphan-detection lease.
+        staging_lease = _leases.ArtifactOperationLease(
+            self._locks_path,
+            _install_staging_lease_key(staging_name),
+            LeaseMode.EXCLUSIVE,
+            timeout_seconds=self._lease_timeout_seconds,
+        )
+        staging_lease.acquire()
+        try:
+            os.mkdir(staging, 0o700)
+        except OSError as error:
+            primary_error = ArtifactStateError(
+                "failed to create artifact install staging directory"
+            )
+            try:
+                try:
+                    shutil.rmtree(staging)
+                except FileNotFoundError:
+                    pass
+                except OSError as cleanup_error:
+                    primary_error.add_note(
+                        f"operation staging cleanup failed: {cleanup_error!r}"
+                    )
+            finally:
+                try:
+                    staging_lease.release()
+                except BaseException as release_error:
+                    primary_error.add_note(
+                        f"staging operation lease release failed: {release_error!r}"
+                    )
+            raise primary_error from error
+        return staging, staging_lease
+
+    def _commit_verified_staging(
+        self,
+        descriptor: ArtifactDescriptor,
+        staging: Path,
+        *,
+        cancelled: Callable[[], bool],
+        on_finalizing: Callable[[], None] | None = None,
+    ) -> bool:
+        """Verify and converge or promote one operation-owned staging tree."""
+
+        destination = self.artifact_path(descriptor.reference)
+        self._assert_managed_path(self._locks_path)
+
+        # ponytail: one lifecycle writer lock is enough until measured install
+        # throughput justifies per-artifact writer coordination.
+        with ArtifactOperationLease(
+            self._locks_path,
+            _LIFECYCLE_LEASE_KEY,
+            LeaseMode.EXCLUSIVE,
+            timeout_seconds=self._lease_timeout_seconds,
+        ):
+            with ArtifactOperationLease(
+                self._locks_path,
+                descriptor.reference.lease_key(),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                _raise_if_install_cancelled(cancelled)
+                if self._managed_path_exists(destination):
+                    self._verify_existing_destination(destination, descriptor)
+                    return True
+                self._verify_payload(
+                    staging,
+                    descriptor.files,
+                    cancelled=cancelled,
+                )
+                _raise_if_install_cancelled(cancelled)
+                atomic_write_json(
+                    staging / "manifest.json",
+                    {
+                        "schema_version": _MANIFEST_SCHEMA_VERSION,
+                        "descriptor": descriptor.to_dict(),
+                    },
+                )
+                self._ensure_final_parent(destination.parent)
+                if self._managed_path_exists(destination):
+                    raise ArtifactConflictError(
+                        "immutable artifact destination already exists"
+                    )
+                self._assert_managed_path(staging)
+                self._assert_managed_path(destination.parent)
+                _raise_if_install_cancelled(cancelled)
+                if on_finalizing is not None:
+                    on_finalizing()
+                self._promote(staging, destination)
+                self._assert_managed_path(destination)
+                return False
+
+    def import_local_gguf(
+        self,
+        source_file: Path,
+        *,
+        cancelled: Callable[[], bool] = _never_cancelled,
+        progress: Callable[
+            [LocalGGUFImportProgress], None
+        ] = _ignore_local_import_progress,
+    ) -> LocalGGUFImportResult:
+        """Copy one local GGUF into the immutable managed artifact store.
+
+        Args:
+            source_file: User-owned regular GGUF selected for import.
+            cancelled: Optional caller-thread-safe cancellation probe.
+            progress: Synchronous path-private progress callback. Exceptions raised
+                by the callback propagate to the caller.
+
+        Returns:
+            The exact managed reference and whether it already existed.
+
+        Raises:
+            TypeError: An argument has the wrong public API type.
+            ArtifactLeaseTimeoutError: A managed writer lease remains busy.
+            ArtifactError: Managed staging, verification, or promotion fails.
+            GGUFError: The source path or staged GGUF structure is invalid.
+        """
+
+        if not isinstance(source_file, Path):
+            raise TypeError("source_file must be a Path")
+        if not callable(cancelled):
+            raise TypeError("cancelled must be callable")
+        if not callable(progress):
+            raise TypeError("progress must be callable")
+        _raise_if_install_cancelled(cancelled)
+
+        staging: Path | None = None
+        staging_lease: ArtifactOperationLease | None = None
+        try:
+            staging, staging_lease = self._create_install_staging()
+            self._assert_managed_path(staging)
+            target = staging / "model.gguf"
+            with open_local_gguf(source_file) as opened, open(target, "xb") as output:
+                digest = hashlib.sha256()
+                copied = 0
+                last_progress = 0
+                progress(
+                    LocalGGUFImportProgress(
+                        "copy",
+                        "model.gguf",
+                        copied,
+                        opened.identity.size_bytes,
+                    )
+                )
+                while chunk := opened.handle.read(_LOCAL_COPY_CHUNK_BYTES):
+                    _raise_if_install_cancelled(cancelled)
+                    output.write(chunk)
+                    digest.update(chunk)
+                    copied += len(chunk)
+                    if copied - last_progress >= _LOCAL_COPY_PROGRESS_BYTES:
+                        progress(
+                            LocalGGUFImportProgress(
+                                "copy",
+                                "model.gguf",
+                                copied,
+                                opened.identity.size_bytes,
+                            )
+                        )
+                        last_progress = copied
+                if copied != last_progress:
+                    progress(
+                        LocalGGUFImportProgress(
+                            "copy",
+                            "model.gguf",
+                            copied,
+                            opened.identity.size_bytes,
+                        )
+                    )
+                output.flush()
+                os.fsync(output.fileno())
+                opened.recheck()
+
+            _raise_if_install_cancelled(cancelled)
+            progress(LocalGGUFImportProgress("inspect", None, 0, copied))
+            with target.open("rb", buffering=0) as staged:
+                metadata = inspect_gguf_structure(staged, file_size=copied)
+            descriptor = _local_gguf_descriptor(
+                metadata,
+                digest=digest.hexdigest(),
+                size_bytes=copied,
+            )
+            progress(LocalGGUFImportProgress("verify", "model.gguf", 0, copied))
+            already_installed = self._commit_verified_staging(
+                descriptor,
+                staging,
+                cancelled=cancelled,
+                on_finalizing=lambda: progress(
+                    LocalGGUFImportProgress("finalize", None, copied, copied)
+                ),
+            )
+            if not already_installed:
+                staging = None
+            return LocalGGUFImportResult(descriptor.reference, already_installed)
+        except ArtifactError:
+            raise
+        except ArtifactLeaseTimeoutError:
+            raise
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact writer leases"
+            ) from error
+        except OSError as error:
+            raise ArtifactStateError("artifact import I/O failed") from error
+        finally:
+            primary_error = sys.exception()
+            try:
+                if staging is not None:
+                    try:
+                        shutil.rmtree(staging)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as cleanup_error:
+                        if primary_error is None:
+                            raise ArtifactStateError(
+                                "failed to clean operation-owned artifact staging"
+                            ) from cleanup_error
+                        primary_error.add_note(
+                            f"operation staging cleanup failed: {cleanup_error!r}"
+                        )
+            finally:
+                if staging_lease is not None:
+                    try:
+                        staging_lease.release()
+                    except BaseException as release_error:
+                        if primary_error is None:
+                            raise ArtifactStateError(
+                                "failed to release staging operation lease"
+                            ) from release_error
+                        primary_error.add_note(
+                            f"staging operation lease release failed: {release_error!r}"
+                        )
+
     def install(
         self,
         descriptor: ArtifactDescriptor,
         source_directory: Path,
         *,
         consume_source: bool = False,
+        declared_files_only: bool = False,
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> ArtifactRef:
         """Verify and promote one local source directory immutably.
 
@@ -2945,6 +4066,10 @@ class ModelArtifactService:
                 the service root. Requires source inside the root; raises
                 ArtifactPathError otherwise. On EXDEV (cross-device link), falls
                 back to copy+delete. Defaults to False (today's copy semantics).
+            declared_files_only: Validate and snapshot only descriptor-declared
+                paths, allowing unrelated user-owned entries to remain ignored.
+            cancelled: Optional caller-thread-safe cancellation probe, polled
+                between fixed-size local-copy chunks and install phases.
 
         Returns:
             The installed artifact's immutable reference.
@@ -2962,6 +4087,11 @@ class ModelArtifactService:
             raise TypeError("descriptor must be an ArtifactDescriptor")
         if not isinstance(source_directory, Path):
             raise TypeError("source_directory must be a Path")
+        if type(declared_files_only) is not bool:
+            raise TypeError("declared_files_only must be a bool")
+        if not callable(cancelled):
+            raise TypeError("cancelled must be callable")
+        _raise_if_install_cancelled(cancelled)
         try:
             source_directory = validate_path_simple(
                 source_directory,
@@ -2973,62 +4103,23 @@ class ModelArtifactService:
         source_snapshot = self._validate_payload_tree(
             source_directory,
             descriptor.files,
+            declared_files_only=declared_files_only,
         )
+        _raise_if_install_cancelled(cancelled)
 
         staging: Path | None = None
         staging_lease: ArtifactOperationLease | None = None
         try:
-            self._assert_managed_path(self._staging_path)
-            # The staging directory's NAME is generated and its
-            # per-directory orphan-detection lease acquired BEFORE the
-            # directory itself is created on disk -- deliberately NOT a
-            # bare ``tempfile.mkdtemp``, whose combined name-and-create
-            # step makes the directory visible to a directory listing
-            # before anything protects it. reconcile()'s staging GC
-            # (``_gc_install_staging_orphan``) only ever considers names
-            # that already exist as real directories, and only treats one
-            # as abandoned -- safe to delete -- when its lease is free.
-            # Creating the directory first and leasing it second leaves a
-            # window where a concurrent reconcile() pass can observe the
-            # (leaseless) directory, acquire the lease itself, and delete
-            # a staging dir this call is about to copy files into. Naming
-            # then leasing then creating closes that window: nothing
-            # exists for reconcile() to find until the lease already
-            # belongs to this call.
-            staging_name = f"{_INSTALL_STAGING_PREFIX}{uuid.uuid4().hex}"
-            staging = self._staging_path / staging_name
-            self._assert_managed_path(self._locks_path)
-            # Held for this call's whole staging lifetime so reconcile()'s
-            # staging GC can tell this directory apart from one abandoned by
-            # a crashed install (see _install_staging_lease_key). Built via
-            # the leases submodule rather than the plain ArtifactOperationLease
-            # import: this is an orphan-detection lock, not one of the writer
-            # leases tests intentionally intercept via that name (see
-            # test_install_acquires_exact_writer_leases_in_fixed_order), and
-            # must keep working even when those tests replace that symbol.
-            staging_lease = _leases.ArtifactOperationLease(
-                self._locks_path,
-                _install_staging_lease_key(staging_name),
-                LeaseMode.EXCLUSIVE,
-                timeout_seconds=self._lease_timeout_seconds,
-            )
-            staging_lease.acquire()
-            try:
-                # Matches tempfile.mkdtemp's own directory permission bits
-                # (owner-only rwx) -- this is still a temporary, operation-
-                # owned staging directory, not a final managed-store path.
-                os.mkdir(staging, 0o700)
-            except OSError as error:
-                raise ArtifactStateError(
-                    "failed to create artifact install staging directory"
-                ) from error
+            staging, staging_lease = self._create_install_staging()
             self._assert_managed_path(staging)
-            # Only pass consume_source if True to maintain backward compatibility
-            # with tests that monkeypatch _copy_payload
-            if consume_source:
-                self._copy_payload(descriptor, source_directory, staging, consume_source=True)
-            else:
-                self._copy_payload(descriptor, source_directory, staging)
+            self._copy_payload(
+                descriptor,
+                source_directory,
+                staging,
+                consume_source=consume_source,
+                cancelled=cancelled,
+            )
+            _raise_if_install_cancelled(cancelled)
             # When consume_source=True, files are intentionally moved from source.
             # Skip the unchanged-tree check in that case; it's expected to change.
             if not consume_source:
@@ -3036,51 +4127,19 @@ class ModelArtifactService:
                     self._validate_payload_tree(
                         source_directory,
                         descriptor.files,
+                        declared_files_only=declared_files_only,
                     )
                     != source_snapshot
                 ):
                     raise ArtifactPathError("source tree changed during artifact copy")
-            destination = self.artifact_path(descriptor.reference)
-            self._assert_managed_path(self._locks_path)
-
-            # ponytail: one lifecycle writer lock is enough until measured install throughput
-            # justifies per-artifact writer coordination.
-            with ArtifactOperationLease(
-                self._locks_path,
-                _LIFECYCLE_LEASE_KEY,
-                LeaseMode.EXCLUSIVE,
-                timeout_seconds=self._lease_timeout_seconds,
-            ):
-                with ArtifactOperationLease(
-                    self._locks_path,
-                    descriptor.reference.lease_key(),
-                    LeaseMode.EXCLUSIVE,
-                    timeout_seconds=self._lease_timeout_seconds,
-                ):
-                    if self._managed_path_exists(destination):
-                        self._verify_existing_destination(
-                            destination,
-                            descriptor,
-                        )
-                        return descriptor.reference
-                    self._verify_payload(staging, descriptor.files)
-                    atomic_write_json(
-                        staging / "manifest.json",
-                        {
-                            "schema_version": _MANIFEST_SCHEMA_VERSION,
-                            "descriptor": descriptor.to_dict(),
-                        },
-                    )
-                    self._ensure_final_parent(destination.parent)
-                    if self._managed_path_exists(destination):
-                        raise ArtifactConflictError(
-                            "immutable artifact destination already exists"
-                        )
-                    self._assert_managed_path(staging)
-                    self._assert_managed_path(destination.parent)
-                    self._promote(staging, destination)
-                    self._assert_managed_path(destination)
-                    staging = None
+            _raise_if_install_cancelled(cancelled)
+            already_installed = self._commit_verified_staging(
+                descriptor,
+                staging,
+                cancelled=cancelled,
+            )
+            if not already_installed:
+                staging = None
             return descriptor.reference
         except ArtifactError:
             raise
@@ -3502,6 +4561,7 @@ class ModelArtifactService:
         files: tuple[ArtifactFile, ...],
         *,
         allowed_files: frozenset[str] = frozenset(),
+        declared_files_only: bool = False,
     ) -> tuple[tuple[str, _PathSnapshot], ...]:
         lexical_root = Path(os.path.abspath(root))
         try:
@@ -3520,6 +4580,41 @@ class ModelArtifactService:
         root_mode = root_info.st_mode
         if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
             raise ArtifactPathError("source_directory must be a non-symlink directory")
+        if declared_files_only:
+            snapshots = {"": _path_snapshot(root_info)}
+            for item in files:
+                current = lexical_root
+                parts = Path(item.path).parts
+                for index, component in enumerate(parts):
+                    current /= component
+                    relative = current.relative_to(lexical_root).as_posix()
+                    try:
+                        info = current.stat(follow_symlinks=False)
+                        resolved = current.resolve(strict=True)
+                        resolved.relative_to(resolved_root)
+                    except (FileNotFoundError, NotADirectoryError) as error:
+                        raise ArtifactPathError(
+                            f"source is missing declared path: {relative}"
+                        ) from error
+                    except (OSError, RuntimeError, ValueError) as error:
+                        raise ArtifactPathError(
+                            f"failed to inspect declared path: {relative}"
+                        ) from error
+                    is_file = index == len(parts) - 1
+                    if stat.S_ISLNK(info.st_mode) or resolved != current:
+                        raise ArtifactPathError(
+                            f"declared path is symlinked or redirected: {relative}"
+                        )
+                    if is_file and not stat.S_ISREG(info.st_mode):
+                        raise ArtifactPathError(
+                            f"declared path is not a regular file: {relative}"
+                        )
+                    if not is_file and not stat.S_ISDIR(info.st_mode):
+                        raise ArtifactPathError(
+                            f"declared path ancestor is not a directory: {relative}"
+                        )
+                    snapshots[relative] = _path_snapshot(info)
+            return tuple(sorted(snapshots.items()))
         expected_files = {item.path for item in files}
         permitted_files = expected_files | allowed_files
         expected_directories = {
@@ -3528,7 +4623,7 @@ class ModelArtifactService:
             for index in range(1, len(Path(path).parts))
         }
         actual_files: set[str] = set()
-        snapshots = [("", _path_snapshot(root_info))]
+        source_snapshots = [("", _path_snapshot(root_info))]
 
         def scan(directory: Path, prefix: str = "") -> None:
             try:
@@ -3562,15 +4657,15 @@ class ModelArtifactService:
                     raise ArtifactPathError(
                         f"source contains a special entry: {relative}"
                     )
-                snapshots.append((relative, _path_snapshot(entry_info)))
+                source_snapshots.append((relative, _path_snapshot(entry_info)))
 
         scan(lexical_root)
         missing = expected_files - actual_files
         if missing:
             raise ArtifactPathError(
                 f"source is missing declared files: {sorted(missing)}"
-            )
-        return tuple(snapshots)
+            ) from FileNotFoundError("declared payload file is missing")
+        return tuple(source_snapshots)
 
     def _copy_payload(
         self,
@@ -3579,6 +4674,7 @@ class ModelArtifactService:
         staging: Path,
         *,
         consume_source: bool = False,
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> None:
         """Copy or move declared payload into install staging.
 
@@ -3590,6 +4686,7 @@ class ModelArtifactService:
                 inside this service's root (both stagings share it). EXDEV
                 (bind-mount inside the root) degrades to copy+delete for that
                 file — correctness over the disk optimization.
+            cancelled: Cancellation probe polled at fixed copy chunks.
 
         Raises:
             ArtifactPathError: consume_source with a source outside the root,
@@ -3607,6 +4704,7 @@ class ModelArtifactService:
                 ) from error
 
         for item in descriptor.files:
+            _raise_if_install_cancelled(cancelled)
             src = source / item.path
             dst = staging / item.path
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -3617,7 +4715,10 @@ class ModelArtifactService:
                 except OSError as exc:
                     if exc.errno != errno.EXDEV:
                         raise
-            shutil.copyfile(src, dst, follow_symlinks=False)
+            with src.open("rb") as source_file, dst.open("xb") as destination_file:
+                while chunk := source_file.read(_LOCAL_COPY_CHUNK_BYTES):
+                    destination_file.write(chunk)
+                    _raise_if_install_cancelled(cancelled)
             if consume_source:
                 src.unlink()
 
@@ -3627,6 +4728,7 @@ class ModelArtifactService:
         files: tuple[ArtifactFile, ...],
         *,
         allowed_files: frozenset[str] = frozenset(),
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> None:
         self._validate_payload_tree(
             root,
@@ -3641,6 +4743,7 @@ class ModelArtifactService:
                 with path.open("rb") as handle:
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                         digest.update(chunk)
+                        _raise_if_install_cancelled(cancelled)
             except OSError as error:
                 raise ArtifactIntegrityError(
                     f"failed to verify payload file {item.path}"

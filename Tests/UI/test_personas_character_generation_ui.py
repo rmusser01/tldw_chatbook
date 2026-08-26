@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, TextArea
 
 from tldw_chatbook.Character_Chat.character_generation import GENERATABLE_FIELDS
@@ -20,7 +24,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 pytestmark = pytest.mark.asyncio
 
 
-class _EditorHost(App):
+class _EditorHost(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield PersonasCharacterEditorWidget()
 

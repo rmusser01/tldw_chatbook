@@ -39,10 +39,10 @@ automated test node still exists.
 | CFG-001 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_global_panel_states_scope_and_mounts_only_selected_provider` | Passing |
 | CFG-002 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_audio_cpp_cached_choices_are_revisioned_and_model_scoped` | Passing |
 | CFG-003 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_each_provider_form_mounts_its_complete_bounded_inventory` | Passing |
-| CFG-004 | Automated + UAT | `Tests/UI/test_settings_speech_tts_panel.py::test_panel_exposes_path_pickers_and_no_managed_audio_cpp_controls`; UAT-01 | Automated passing; live UAT passed |
+| CFG-004 | Automated + UAT | `Tests/UI/test_settings_speech_tts_panel.py::test_panel_exposes_mode_specific_managed_audio_cpp_setup_controls`; UAT-01 (original External scope) | Automated passing; live UAT passed for the original External scope; the later Managed amendment is tracked separately by TASK-3795 |
 | CFG-005 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_normal_panel_actions_do_not_contact_or_initialize_tts` | Passing |
 | CFG-006 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_normal_panel_actions_do_not_contact_or_initialize_tts` | Passing |
-| CFG-007 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready` | Passing |
+| CFG-007 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_saved_but_unavailable_and_transient_reconfiguration_are_not_ready` | Passing |
 | CFG-008 | Automated + UAT | `Tests/UI/test_settings_speech_tts_panel.py::test_credential_operations_are_separate_from_ordinary_save`; UAT-08 | Automated passing; live UAT passed after P1 fix |
 | CFG-009 | Automated | `Tests/TTS/test_stts_settings_reconfiguration.py::test_changed_audio_cpp_config_retires_only_audio_cpp` | Passing |
 | CFG-010 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_panel_tracks_dirty_state_and_revert_restores_the_saved_snapshot` | Passing |
@@ -83,7 +83,7 @@ automated test node still exists.
 | SEC-004 | Automated | `Tests/TTS/test_speech_tts_settings_ownership_hardening.py::test_privacy_sentinels_do_not_cross_owned_output_boundaries` | Passing |
 | SEC-005 | Manual UAT | UAT-01 | Passed with explicit human audible confirmation and privacy-reviewed synthetic evidence |
 | STATE-020 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_invalid_save_is_field_specific_and_posts_no_event` | Passing |
-| STATE-021 | Automated + UAT | `Tests/UI/test_settings_speech_tts_panel.py::test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready`; UAT-02 | Automated passing; live UAT passed after P1 fixes |
+| STATE-021 | Automated + UAT | `Tests/UI/test_settings_speech_tts_panel.py::test_saved_but_unavailable_and_transient_reconfiguration_are_not_ready`; UAT-02 | Automated passing; live UAT passed after P1 fixes |
 | STATE-022 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_cache_reload_failure_keeps_persistence_and_runtime_results_distinct` | Passing |
 | STATE-023 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_audio_cpp_authoritative_missing_model_stays_visible` | Passing |
 | STATE-024 | Automated | `Tests/UI/test_studio_tts_preferences.py::test_corrupt_record_offers_a_studio_only_reset` | Passing |

@@ -1,11 +1,18 @@
 """Handler for character-related operations in the Personas screen."""
 import asyncio
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from loguru import logger
-from textual.widgets import Select, Input, TextArea, Static
+from rich.text import Text
+from textual.widgets import Input, Select, Static, TextArea
 
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_prefix
+from ..character_display_text import (
+    sanitize_character_display_items,
+    sanitize_character_display_label,
+    sanitize_character_display_text,
+)
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 
 if TYPE_CHECKING:
@@ -13,6 +20,13 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="CCPCharacterHandler")
 CharacterId = Union[int, str]
+
+_OPTION_LABEL_MAX_CHARACTERS = 200
+_STATIC_FIELD_MAX_CHARACTERS = 1_000
+_READ_ONLY_TEXT_MAX_CHARACTERS = 20_000
+_COLLECTION_MAX_ITEMS = 50
+_COLLECTION_ITEM_MAX_CHARACTERS = 1_000
+_COLLECTION_TOTAL_MAX_CHARACTERS = 20_000
 
 
 def _coerce_local_character_id(character_id: CharacterId) -> CharacterId:
@@ -53,11 +67,16 @@ def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, A
     db = _default_character_db()
     if db is None:
         return []
-    escaped = term.replace('"', '""')
-    match_query = f'"{escaped}"*'
+    match_query = quote_fts5_prefix(term)
     return [
         _normalize_character_payload(row)
-        for row in db.search_character_cards(match_query, limit=limit)
+        # task-19558: this is a caller-BUILT prefix expression, so it goes
+        # through `fts_match_query`, not the plain-text parameter (which
+        # now quotes what it is given as a literal phrase and would have
+        # double-quoted this one into a no-match).
+        for row in db.search_character_cards(
+            term, limit=limit, fts_match_query=match_query
+        )
     ]
 
 
@@ -187,6 +206,8 @@ class CCPCharacterHandler:
         self.current_character_data: Dict[str, Any] = {}
         self.character_list: List[Dict[str, Any]] = []
         self.pending_image_data: Optional[str] = None
+        # TASK-19563: monotonic dispatch counter; see `_apply_loaded_character`.
+        self._character_load_generation: int = 0
 
         logger.debug("CCPCharacterHandler initialized")
 
@@ -384,7 +405,15 @@ class CCPCharacterHandler:
             # stalling the loop for the same read.
             self.character_list = await asyncio.to_thread(fetch_all_characters)
             options = [
-                (char.get("name", "Unnamed"), str(char.get("id")))
+                (
+                    Text(
+                        sanitize_character_display_label(
+                            char.get("name", "Unnamed"),
+                            max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                        )
+                    ),
+                    str(char.get("id")),
+                )
                 for char in self.character_list
             ]
 
@@ -433,19 +462,30 @@ class CCPCharacterHandler:
         """
         logger.info(f"Starting character load for {character_id}")
 
+        self._character_load_generation += 1
+
         # Run the sync database operation in a worker thread
         self.window.run_worker(
-            partial(self._load_character_sync, character_id),
+            partial(
+                self._load_character_sync,
+                character_id,
+                self._character_load_generation,
+            ),
             thread=True,
             exclusive=True,
+            group="ccp-load-character",
             name=f"load_character_{character_id}",
         )
 
-    def _load_character_sync(self, character_id: CharacterId) -> None:
+    def _load_character_sync(
+        self, character_id: CharacterId, generation: Optional[int] = None
+    ) -> None:
         """Sync method to load character data in a worker thread.
 
         Args:
             character_id: The ID of the character to load
+            generation: The dispatch generation this read belongs to; a
+                superseded generation is discarded when it arrives.
         """
         logger.info(f"Loading character {character_id}")
 
@@ -453,27 +493,11 @@ class CCPCharacterHandler:
             card_data = fetch_character_by_id(character_id)
 
             if card_data:
-                self.current_character_id = character_id
-                self.current_character_data = card_data
-
-                # Post messages from worker thread using call_from_thread
+                # Everything that mutates handler state or the UI happens on
+                # the event loop, behind the generation check.
                 self._call_from_thread(
-                    self.window.post_message,
-                    CharacterMessage.Loaded(character_id, card_data),
+                    self._apply_loaded_character, generation, character_id, card_data
                 )
-
-                # Switch view to show character card
-                self._call_from_thread(
-                    self.window.post_message,
-                    ViewChangeMessage.Requested(
-                        "character_card", {"character_id": character_id}
-                    ),
-                )
-
-                # Update UI on main thread
-                self._call_from_thread(self._display_character_card)
-
-                logger.info(f"Character {character_id} loaded successfully")
             else:
                 logger.error(f"Failed to load character {character_id}")
 
@@ -481,6 +505,45 @@ class CCPCharacterHandler:
             logger.opt(exception=True).error(
                 f"Error loading character {character_id}: {e}"
             )
+
+    def _apply_loaded_character(
+        self,
+        generation: Optional[int],
+        character_id: CharacterId,
+        card_data: Dict[str, Any],
+    ) -> None:
+        """Display a loaded character only while it is still the current one.
+
+        TASK-19563: selecting characters quickly dispatches one *thread* worker
+        per selection, and `Worker.cancel()` does not stop a thread worker --
+        its body finishes in the executor and its `call_from_thread` callbacks
+        still land. Without this arrival-time check the slower of two reads can
+        win and render a superseded character card. This is display corruption
+        only; the modern save path carries its own generation guard, so stored
+        data is not at risk.
+        """
+        if generation is not None and generation != self._character_load_generation:
+            logger.debug(
+                "Dropping superseded CCP character load "
+                f"(generation {generation} != {self._character_load_generation})"
+            )
+            return
+
+        self.current_character_id = character_id
+        self.current_character_data = card_data
+
+        self.window.post_message(CharacterMessage.Loaded(character_id, card_data))
+
+        # Switch view to show character card
+        self.window.post_message(
+            ViewChangeMessage.Requested(
+                "character_card", {"character_id": character_id}
+            )
+        )
+
+        self._display_character_card()
+
+        logger.info(f"Character {character_id} loaded successfully")
 
     def _display_character_card(self) -> None:
         """Display character card in the UI."""
@@ -494,9 +557,7 @@ class CCPCharacterHandler:
                 card_widget = self.window.query_one("#ccp-character-card-view")
                 if hasattr(card_widget, "load_character"):
                     card_widget.load_character(data)
-                    logger.debug(
-                        f"Displayed character card for {data.get('name', 'Unknown')}"
-                    )
+                    logger.debug("Displayed character card")
                     return
             except Exception as e:
                 logger.warning(f"Could not use character card widget loader: {e}")
@@ -529,15 +590,25 @@ class CCPCharacterHandler:
             )
 
             # Handle alternate greetings
-            alternate_greetings = data.get("alternate_greetings", [])
-            if alternate_greetings:
-                greetings_text = "\n".join(alternate_greetings)
-                self._update_textarea(
-                    "#ccp-card-alternate-greetings-display", greetings_text
-                )
+            alternate_greetings = sanitize_character_display_items(
+                data.get("alternate_greetings"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_COLLECTION_TOTAL_MAX_CHARACTERS,
+            )
+            self._update_textarea(
+                "#ccp-card-alternate-greetings-display",
+                "\n".join(alternate_greetings),
+            )
 
             # Handle tags
-            tags = data.get("tags", [])
+            tags = sanitize_character_display_items(
+                data.get("tags"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_STATIC_FIELD_MAX_CHARACTERS,
+                single_line=True,
+            )
             self._update_field(
                 "#ccp-card-tags-display", ", ".join(tags) if tags else "None"
             )
@@ -549,7 +620,13 @@ class CCPCharacterHandler:
             )
 
             # Keywords
-            keywords = data.get("keywords", [])
+            keywords = sanitize_character_display_items(
+                data.get("keywords"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_STATIC_FIELD_MAX_CHARACTERS,
+                single_line=True,
+            )
             self._update_field(
                 "#ccp-card-keywords-display",
                 ", ".join(keywords) if keywords else "None",
@@ -558,24 +635,31 @@ class CCPCharacterHandler:
             # Handle image display
             self._display_character_image(data)
 
-            logger.debug(f"Displayed character card for {data.get('name', 'Unknown')}")
+            logger.debug("Displayed character card")
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error displaying character card: {e}")
 
-    def _update_field(self, selector: str, value: str) -> None:
+    def _update_field(self, selector: str, value: object) -> None:
         """Update a Static field."""
         try:
             widget = self.window.query_one(selector, Static)
-            widget.update(value)
+            display_text = sanitize_character_display_text(
+                value,
+                max_characters=_STATIC_FIELD_MAX_CHARACTERS,
+            )
+            widget.update(Text(display_text))
         except Exception as e:
             logger.warning(f"Could not update field {selector}: {e}")
 
-    def _update_textarea(self, selector: str, value: str) -> None:
+    def _update_textarea(self, selector: str, value: object) -> None:
         """Update a TextArea field."""
         try:
             widget = self.window.query_one(selector, TextArea)
-            widget.text = value
+            widget.text = sanitize_character_display_text(
+                value,
+                max_characters=_READ_ONLY_TEXT_MAX_CHARACTERS,
+            )
         except Exception as e:
             logger.warning(f"Could not update textarea {selector}: {e}")
 
@@ -590,12 +674,15 @@ class CCPCharacterHandler:
             if data.get("image"):
                 # In a real implementation, we'd render the image
                 # For now, just indicate an image is present
-                image_placeholder.update("📷 Character Image")
+                image_placeholder.update(Text("📷 Character Image"))
             elif data.get("avatar"):
                 # URL to avatar
-                image_placeholder.update(f"🔗 Avatar: {data['avatar'][:50]}...")
+                avatar = sanitize_character_display_text(
+                    data["avatar"], max_characters=50
+                )
+                image_placeholder.update(Text(f"🔗 Avatar: {avatar}..."))
             else:
-                image_placeholder.update("No image")
+                image_placeholder.update(Text("No image"))
 
         except Exception as e:
             logger.warning(f"Could not display character image: {e}")
@@ -734,6 +821,7 @@ class CCPCharacterHandler:
                     ),
                     thread=True,
                     exclusive=True,
+                    group="ccp-update-character",
                     name=f"update_character_{self.current_character_id}",
                 )
             else:
@@ -742,6 +830,7 @@ class CCPCharacterHandler:
                     partial(self._create_character, character_data),
                     thread=True,
                     exclusive=True,
+                    group="ccp-create-character",
                     name="create_character",
                 )
 
@@ -965,6 +1054,7 @@ class CCPCharacterHandler:
                 title="Import Character Card",
                 filters=filters,
                 context="character_import",
+                select_button="Import",
             )
 
             # Push the file picker screen

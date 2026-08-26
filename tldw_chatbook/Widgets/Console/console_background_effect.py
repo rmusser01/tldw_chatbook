@@ -242,7 +242,7 @@ class ConsoleTranscriptSurface(Container):
     """Container for a background effect plus the native Console transcript."""
 
     can_focus = False
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleTranscriptSurface {
         layers: background content;
     }

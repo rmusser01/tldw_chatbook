@@ -1,4 +1,12 @@
-"""Pure display-state contracts for Library-native Search/RAG."""
+"""Pure display-state contracts for Library-native Search/RAG.
+
+One deliberate exception to "pure" (TASK-15020/B3): `library_rag_profile_
+top_k` reads the active RAG profile's result count, because the window's
+evidence depth is a user setting and a display state that cannot see it
+would have to keep hardcoding 5. The read is lazy, exception-safe, torch-
+free by construction (see that function), and everything downstream of it
+stays a pure function of the value it returns.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +16,19 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
+from loguru import logger
 from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Library.library_rag_answer_service import LibraryRagAnswer
+from tldw_chatbook.Library.library_rag_score_kinds import (
+    LIBRARY_RAG_SCORE_KIND_HYBRID_FUSION,
+    LIBRARY_RAG_SCORE_KIND_RERANKER,
+    LIBRARY_RAG_SCORE_KIND_VECTOR_SIMILARITY,
+    coerce_optional_float as _coerce_score,
+    library_rag_result_score_kind,
+    library_rag_similarity_input,
+    normalize_library_rag_score_kind as _normalize_score_kind,
+)
 from tldw_chatbook.Utils.input_validation import (
     sanitize_string,
     validate_number_range,
@@ -44,7 +62,15 @@ LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
     "conversations",
     "prompts",
 )
-LIBRARY_RAG_DEFAULT_TOP_K = 5
+#: The evidence depth used when the active RAG profile cannot be read at all
+#: (TASK-15020/B3). This used to be `LIBRARY_RAG_DEFAULT_TOP_K` -- the window's
+#: actual, unconfigurable default -- while the Console's Library RAG entry
+#: points already read the profile (TASK-406/TASK-3170). Renamed with the
+#: behavior: it is now only the degraded answer, reached when
+#: `library_rag_profile_top_k` cannot resolve a positive number. Kept equal to
+#: the Console seam's own fallback (`CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K`,
+#: pinned by the coupling test) so both surfaces degrade to the same depth.
+LIBRARY_RAG_FALLBACK_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
 LIBRARY_RAG_SERVICE_ERROR_SELECTOR = "library-rag-service-error"
 LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
@@ -104,6 +130,29 @@ LIBRARY_RAG_TOP_K_MAX = 50
 # below are the single seam a future refactor must touch to shift them.
 LIBRARY_RAG_MATCH_STRONG_THRESHOLD = 0.5
 LIBRARY_RAG_MATCH_MODERATE_THRESHOLD = 0.2
+# (RAG-port P0/Task 6) The band thresholds above are a claim about COSINE
+# SIMILARITY, and nothing else the retrieval stack produces lives on that
+# scale:
+#   * hybrid (RRF) fuses by RANK -- a fused score's theoretical maximum is
+#     `1/(rrf_k + 1)`, i.e. ~0.17 at the shipped `rrf_k = 5` (TASK-4110) and
+#     ~0.016 at the previous `rrf_k = 60`. Below the 0.2 weak boundary
+#     either way, but the kind -- not the magnitude -- is what disqualifies
+#     it: a rank blend is not a similarity at any k. Banding it on the
+#     thresholds above rendered a wall of "match: weak (0.02)" on every
+#     hybrid search, including perfect matches.
+#   * reranker scores are unbounded (cross-encoder logits, 0-10 LLM
+#     scales); a value that happens to land inside [0, 1] is not a
+#     similarity either.
+# So the band's INPUT is chosen by score kind (`library_rag_score_suffix`):
+# hybrid rows band on the vector leg Task 2 preserves in
+# `hybrid_fusion["vector_score"]`, and rows with no similarity at all
+# disclose their kind instead of inventing one. The kind vocabulary and its
+# resolution rule live in `library_rag_score_kinds` (imported above) so the
+# Console evidence-bundle builder can share them without closing an import
+# cycle; only the DISPLAY copy for the two no-similarity kinds is here.
+#: Title-line suffixes for the two kinds that carry no similarity to band.
+LIBRARY_RAG_KEYWORD_MATCH_SUFFIX = " | keyword match"
+LIBRARY_RAG_RERANKED_SUFFIX = " | reranked"
 LIBRARY_RAG_PROVENANCE_KEYS = frozenset(
     {
         "active_context_eligible",
@@ -172,10 +221,13 @@ _OPEN_SOURCE_TYPE_MAP = {
 # Prompts off would never hide a prompt row. Mirrors
 # `_SEMANTIC_SOURCE_TYPE_MAP` in `library_local_rag_search_service.py`
 # (the retrieval-time analogue of this same filter, applied to rag mode's
-# semantic leg before rows even land) -- extended with "prompt"/"prompts",
-# which that map deliberately omits (prompts have no semantic-index seam,
-# but DO have a keyword-mode retrieval leg that emits singular "prompt"
-# rows, see `_prompt_row`).
+# rows before they land). That map used to omit "prompt"/"prompts" because
+# nothing on the rag path could emit one; TASK-15020/B2's prompts keyword
+# sub-leg does, so the two maps now agree on prompts as well, and this one
+# keeps the extra "workspace"/"collection" entries no retrieval path emits.
+# Prompts still have no SEMANTIC seam -- that fact moved to
+# `_SEMANTICALLY_COVERABLE_SOURCE_TYPES`, which is about the vector index
+# rather than about canonicalization.
 _SCOPE_SOURCE_TYPE_MAP = {
     "note": "notes",
     "notes": "notes",
@@ -592,23 +644,82 @@ def _coerce_non_negative_int(value: Any) -> int:
         return 0
 
 
-def _coerce_positive_int(value: Any, fallback: int) -> int:
-    if not validate_number_range(value, min_val=1, max_val=LIBRARY_RAG_TOP_K_MAX):
-        return fallback
-    coerced = int(value)
-    return coerced if coerced > 0 else fallback
+def library_rag_profile_top_k() -> int:
+    """Return the ACTIVE RAG profile's result count (TASK-15020/B3).
 
+    The Search/RAG window's evidence depth used to be the literal 5 while the
+    Console's two Library RAG entry points already honored the profile
+    (TASK-406/TASK-3170) -- two surfaces over one retrieval stack disagreeing
+    about how deep a search goes, with only one of them configurable. This is
+    the ONE seam both now read: `chat_screen._console_library_rag_profile_
+    top_k` delegates here, and `Tests/Library/test_library_rag_state.py` pins
+    that they agree on both branches.
 
-def _coerce_score(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
+    Reads `resolve_active_rag_top_k` -- the depth-only resolution -- NOT
+    `resolve_active_rag_config()`: the full resolution's env layer probes the
+    embedding device and imports torch (~0.9s), and this is called from a
+    display-state builder that the Library screen rebuilds on every render
+    and documents as never importing an optional Search/RAG dependency. See
+    that function's docstring; the no-torch property is pinned in
+    `Tests/RAG/test_active_config_resolution.py`.
+
+    Imported lazily for the same reason the Console seam does: the profile
+    manager is not something this module has any other reason to load.
+
+    Returns:
+        The profile's `search.default_top_k` when it resolves to a positive
+        integer, else `LIBRARY_RAG_FALLBACK_TOP_K` -- a broken/absent profile
+        must degrade to a usable depth, never raise inside a render.
+    """
     try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+        from ..RAG_Search.simplified.active_config import resolve_active_rag_top_k
+
+        value = int(resolve_active_rag_top_k())
+    except Exception as exc:
+        logger.debug(
+            "Library Search/RAG could not read the active RAG profile's "
+            "top_k (exception_category={}); using the fallback.",
+            type(exc).__name__,
+        )
+        return LIBRARY_RAG_FALLBACK_TOP_K
+    return value if value > 0 else LIBRARY_RAG_FALLBACK_TOP_K
 
 
-def library_rag_score_suffix(score: float | None) -> str:
+def _resolve_window_top_k(value: Any) -> int:
+    """Resolve the window's evidence depth: explicit value, else the profile.
+
+    B3 changes the DEFAULT only. An in-range caller-supplied count wins
+    unchanged and the profile is never consulted for it; anything unset or
+    outside `1..LIBRARY_RAG_TOP_K_MAX` resolves to the active profile's depth,
+    clamped to that same bound.
+
+    The clamp is deliberate: Settings accepts a profile `default_top_k` up to
+    100 (`settings_library_rag_defaults.MAX_RAG_RESULT_COUNT`) while this
+    window's own bound is 50, and a 100-deep profile means "as deep as you
+    can" -- discarding it back to the fallback 5 (what the pre-B3 coercion did
+    with any out-of-range number) would invert the user's intent. The
+    Console seam has no such bound and stays uncapped; this is the one
+    deliberate difference between the two, and it only exists above 50.
+
+    Args:
+        value: The caller-supplied count, or `None`/invalid for "unset".
+
+    Returns:
+        A depth within `1..LIBRARY_RAG_TOP_K_MAX`.
+    """
+    if validate_number_range(value, min_val=1, max_val=LIBRARY_RAG_TOP_K_MAX):
+        coerced = int(value)
+        if coerced > 0:
+            return coerced
+    return min(library_rag_profile_top_k(), LIBRARY_RAG_TOP_K_MAX)
+
+
+def library_rag_score_suffix(
+    score: float | None,
+    *,
+    score_kind: str = LIBRARY_RAG_SCORE_KIND_VECTOR_SIMILARITY,
+    vector_score: float | None = None,
+) -> str:
     """Return an evidence row's title-line score suffix as an honest band.
 
     Raw three-decimal cosine scores (e.g. "| score 0.091") are meaningless
@@ -624,20 +735,53 @@ def library_rag_score_suffix(score: float | None) -> str:
     `LIBRARY_RAG_MATCH_STRONG_THRESHOLD` is "strong", and a score exactly at
     `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD` is "moderate".
 
+    The band is a claim about cosine similarity, so `score_kind` selects
+    what is banded (RAG-port P0/Task 6 -- see the thresholds' own comment
+    above):
+
+    * `vector_similarity` (the default, and every pre-existing call site):
+      band `score`, exactly as before.
+    * `hybrid_fusion` with a `vector_score`: band the VECTOR LEG. The fused
+      RRF number is a rank blend (maxing out at `1/(rrf_k + 1)`) and is
+      never banded, whatever k is configured.
+      The label is unchanged -- "match: strong" means the same thing it
+      always did, because it is computed from the same kind of number.
+    * `hybrid_fusion` with no `vector_score` (an FTS-leg-only row): no
+      similarity exists, so this discloses `" | keyword match"` -- never a
+      fabricated band, and never the fused 0.0x number.
+    * `reranker`: `" | reranked"`. Reranker outputs are unbounded (logits,
+      0-10 LLM scales); the kind is disclosed instead of banding them.
+
     Args:
         score: Retrieval score, or `None` for keyword-mode rows.
+        score_kind: The score's kind
+            (`library_rag_score_kinds.LIBRARY_RAG_SCORE_KINDS`).
+        vector_score: Preserved vector-leg similarity for hybrid rows.
 
     Returns:
-        `""` for `None`; otherwise `" | match: strong"`,
-        `" | match: moderate"`, or `" | match: weak (0.xx)"`.
+        `""` for an unscored similarity row;
+        `LIBRARY_RAG_RERANKED_SUFFIX` for reranked rows;
+        `LIBRARY_RAG_KEYWORD_MATCH_SUFFIX` for FTS-only hybrid rows;
+        otherwise `" | match: strong"`, `" | match: moderate"`, or
+        `" | match: weak (0.xx)"`.
     """
-    if score is None:
-        return ""
-    if score >= LIBRARY_RAG_MATCH_STRONG_THRESHOLD:
+    kind = _normalize_score_kind(score_kind)
+    if kind == LIBRARY_RAG_SCORE_KIND_RERANKER:
+        return LIBRARY_RAG_RERANKED_SUFFIX
+    similarity = library_rag_similarity_input(
+        score, score_kind=kind, vector_score=vector_score
+    )
+    if similarity is None:
+        return (
+            LIBRARY_RAG_KEYWORD_MATCH_SUFFIX
+            if kind == LIBRARY_RAG_SCORE_KIND_HYBRID_FUSION
+            else ""
+        )
+    if similarity >= LIBRARY_RAG_MATCH_STRONG_THRESHOLD:
         return " | match: strong"
-    if score >= LIBRARY_RAG_MATCH_MODERATE_THRESHOLD:
+    if similarity >= LIBRARY_RAG_MATCH_MODERATE_THRESHOLD:
         return " | match: moderate"
-    return f" | match: weak ({score:.2f})"
+    return f" | match: weak ({similarity:.2f})"
 
 
 def _normalize_mode(value: Any) -> str:
@@ -1041,7 +1185,7 @@ class LibraryRagQueryState:
         *,
         query: Any = "",
         mode: Any = "rag",
-        top_k: Any = LIBRARY_RAG_DEFAULT_TOP_K,
+        top_k: Any = None,
         include_citations: bool = True,
         has_source_scope: bool = True,
         dependencies_ready: bool = True,
@@ -1054,7 +1198,14 @@ class LibraryRagQueryState:
         Args:
             query: User query text.
             mode: Search mode, either `rag` or `search`; invalid values default to `rag`.
-            top_k: Requested result count. Values outside the allowed range use the default.
+            top_k: Requested result count. `None` (the Library screen's own
+                case -- the canvas carries no depth control) and any value
+                outside `1..LIBRARY_RAG_TOP_K_MAX` resolve to the ACTIVE RAG
+                PROFILE's `default_top_k` (TASK-15020/B3), clamped to that
+                bound, and to `LIBRARY_RAG_FALLBACK_TOP_K` only when the
+                profile itself is unresolvable. An in-range explicit value is
+                used unchanged and never consults the profile -- see
+                `_resolve_window_top_k`.
             include_citations: Whether citation metadata should be requested/displayed.
             has_source_scope: Whether at least one source is selected.
             dependencies_ready: Whether Search/RAG optional dependencies are available.
@@ -1110,7 +1261,7 @@ class LibraryRagQueryState:
         normalized_query, unsafe_query = _sanitize_query(query)
         normalized_mode = _normalize_mode(mode)
         mode_label = "Search" if normalized_mode == "search" else "RAG Answer"
-        normalized_top_k = _coerce_positive_int(top_k, LIBRARY_RAG_DEFAULT_TOP_K)
+        normalized_top_k = _resolve_window_top_k(top_k)
         disabled_reason = ""
         owner = ""
         next_action = ""
@@ -1223,6 +1374,19 @@ class LibraryRagResultRow:
     citations: tuple[LibraryRagCitation, ...]
     provenance: Mapping[str, Any]
     runtime_backend: str = ""
+    #: What scale `score` is on (RAG-port P0/Task 6). Defaults to
+    #: `vector_similarity` -- the only kind that existed before hybrid and
+    #: reranking became reachable -- so every pre-existing construction and
+    #: every `library_rag_score_suffix(row.score)` call site keeps its exact
+    #: prior behavior. Resolved once here, in `from_result`, rather than at
+    #: each display site, so the band, the all-weak coverage sentence and
+    #: the Console evidence bundle cannot disagree about one row.
+    score_kind: str = LIBRARY_RAG_SCORE_KIND_VECTOR_SIMILARITY
+    #: The vector leg's preserved cosine similarity for `hybrid_fusion`
+    #: rows (Task 2's `metadata["hybrid_fusion"]["vector_score"]`), or
+    #: `None` -- including for an FTS-leg-only hybrid row, which has no
+    #: similarity at all. Always `None` for the other kinds.
+    vector_score: float | None = None
     #: Sanitized/collapsed/HTML-entity-decoded snippet text, still UNESCAPED
     #: (RAG-30/31 C1 fix) -- `display_snippet` strips Markdown structure from
     #: this, never from `snippet` (which is already `escape_markup`-escaped
@@ -1281,11 +1445,23 @@ class LibraryRagResultRow:
             if key in values and key not in provenance:
                 provenance[key] = values[key]
         result_id = _result_id(source_id, chunk_id, title)
+        # Score-kind resolution reads the ORIGINAL `provenance_value` and
+        # engine `metadata` blocks, not the sanitized `provenance` copy
+        # above: `LIBRARY_RAG_PROVENANCE_KEYS` is a display allowlist, and
+        # the fusion/reranker channels are retrieval provenance, not
+        # display provenance.
+        score_kind, vector_score = library_rag_result_score_kind(
+            provenance_value,
+            values.get("metadata"),
+            values,
+        )
         return cls(
             result_id=result_id,
             title=title,
             snippet=snippet,
             score=_coerce_score(values.get("score")),
+            score_kind=score_kind,
+            vector_score=vector_score,
             source_id=source_id,
             chunk_id=chunk_id,
             citations=citations,
@@ -1514,23 +1690,53 @@ class LibraryRagResultRow:
 
 
 def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
-    """True when every scored row among `rows` bands weak (RAG-34/Task 8).
+    """True when every row carrying a similarity bands weak (RAG-34/Task 8).
 
-    Feeds Task 8's evidence-list coverage note. Unscored rows (keyword-mode,
-    `score is None`) are ignored entirely -- neither counted toward "all"
-    nor treated as weak. True only when there is at least one scored row and
-    all of them fall below `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD`; a result
-    set with no scored rows at all (e.g. pure keyword mode) returns `False`,
-    not `True` -- "everything is weak" is a claim about actual scores, not
-    about their absence.
+    Feeds Task 8's evidence-list coverage note, whose wording
+    (`LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX`: "No strong semantic
+    matches...") is a claim about SEMANTIC SIMILARITY. Only rows whose
+    effective banding input is a similarity therefore participate --
+    `library_rag_similarity_input`, the same seam
+    `library_rag_score_suffix` bands with:
+
+    * unscored rows (keyword-mode, `score is None`),
+    * FTS-leg-only hybrid rows (no vector leg), and
+    * reranked rows (unbounded scores)
+
+    are ignored entirely -- neither counted toward "all" nor treated as
+    weak. A hybrid row IS counted, on its preserved vector leg: the fused
+    RRF number (a rank blend maxing out at `1/(rrf_k + 1)`) would otherwise
+    make every hybrid result set read as uniformly weak (RAG-port P0/Task 6).
+
+    True only when there is at least one such row and all of them fall
+    below `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD`; a result set with no
+    similarity-bearing rows at all (e.g. pure keyword mode) returns
+    `False`, not `True` -- "everything is weak" is a claim about actual
+    scores, not about their absence.
 
     Args:
-        rows: Evidence rows to inspect.
+        rows: Evidence rows to inspect. Read by duck typing (`.score`, and
+            optionally `.score_kind`/`.vector_score`) rather than by type:
+            `mcp_inspector._ScoredRow` carries all three fields and feeds
+            this same canonical check.
 
     Returns:
-        Whether every scored row among `rows` bands weak.
+        Whether every similarity-bearing row among `rows` bands weak.
     """
-    scored = [row.score for row in rows if row.score is not None]
+    scored = [
+        similarity
+        for similarity in (
+            library_rag_similarity_input(
+                getattr(row, "score", None),
+                score_kind=getattr(
+                    row, "score_kind", LIBRARY_RAG_SCORE_KIND_VECTOR_SIMILARITY
+                ),
+                vector_score=getattr(row, "vector_score", None),
+            )
+            for row in rows
+        )
+        if similarity is not None
+    ]
     if not scored:
         return False
     return all(score < LIBRARY_RAG_MATCH_MODERATE_THRESHOLD for score in scored)
@@ -1543,6 +1749,127 @@ def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
 LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX = (
     "No strong semantic matches — results below are weak."
 )
+
+# (RAG-port P0, Workstream A) Diagnostics slot carrying retrieval-ROUTING
+# disclosures: one short phrase per way the retrieval that actually ran
+# differs from the active RAG profile's configured search mode -- e.g. a
+# hybrid profile forced onto the semantic path because no selected source
+# has a keyword leg, or a plain (BM25) profile routed to the Library's own
+# four-seam keyword path. (An active scope used to head that list; since
+# TASK-15020/B1 the allowlist reaches both engine legs, so a scoped hybrid
+# search runs hybrid and has nothing to disclose.)
+# Distinct in MEANING from `semantic_scope_coverage` (which reports which
+# requested source types a search that ran as configured actually touched),
+# but deliberately rendered into the SAME single quiet line under the
+# Evidence heading by `library_rag_coverage_note` -- one note channel on
+# screen, never two competing ones.
+LIBRARY_RAG_ROUTE_NOTES_KEY = "retrieval_route_notes"
+
+
+def _route_note_sentence(note: str) -> str:
+    """Render one service-supplied routing disclosure as a sentence.
+
+    The service states these as lowercase fragments ("media excluded —
+    semantic only") so they read correctly in logs and tests; here they
+    become sentences that can sit after the coverage/weak sentences on one
+    line. Escaped for the same reason the uncovered labels are (task-15
+    finding M8): the text is service-supplied and reaches a `Static`.
+    """
+    text = escape_markup(str(note).strip())
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]
+    return text if text[-1] in ".!?" else f"{text}."
+
+
+# (TASK-3502 note-(a)) The reranker's two disclosure tags, paired with the
+# word the note uses for each. `enhanced_rag_service_v2.search()` stamps
+# exactly one of them onto the FIRST result's metadata when a reranking
+# attempt did not do what enabling it implies: `reranking_skipped` when the
+# call raised at all (a dead credential, a provider outage), and
+# `reranking_degraded` when it returned normally having silently failed to
+# score some or all rows. Ordered: `skipped` is checked first so a row
+# somehow carrying both (the service's two sites are mutually exclusive
+# branches, but nothing here enforces that) produces ONE deterministic
+# sentence.
+LIBRARY_RAG_RERANKING_TAG_LABELS: tuple[tuple[str, str], ...] = (
+    ("reranking_skipped", "skipped"),
+    ("reranking_degraded", "degraded"),
+)
+#: What the failure actually means for what is on screen -- the reason this
+#: is worth a line at all. A silently unreranked result list is
+#: indistinguishable from a reranked one without it.
+LIBRARY_RAG_RERANKING_CONSEQUENCE = (
+    "these results are in their original retrieval order"
+)
+#: The tag detail is `str(exc)` off a provider call or a "N/M scorings
+#: failed" counter -- unbounded, service-supplied text sharing one line with
+#: the coverage/routing sentences.
+LIBRARY_RAG_RERANKING_DETAIL_MAX_CHARS = 120
+
+
+def library_rag_reranking_notice(rows: Sequence[LibraryRagResultRow]) -> str:
+    """Return the reranking-disclosure sentence for `rows`, or `""`.
+
+    TASK-3502 note-(a): the first UI consumer of the reranker's disclosure
+    tags. They reach here on a row's `provenance` -- the engine writes them
+    into the first `SearchResult`'s `metadata`
+    (`enhanced_rag_service_v2._tag_first_result`), the Library service
+    copies that metadata block into the row's provenance
+    (`library_local_rag_search_service._semantic_row`), and
+    `LibraryRagResultRow.from_result` copies the provenance mapping
+    wholesale.
+
+    Args:
+        rows: The panel's current, already-normalized evidence rows. EVERY
+            row is checked, not just the first: the engine tags position 0
+            of ITS list, but scope post-filtering and the panel's own
+            count-intersected filter both run afterwards, so the tagged row
+            can land anywhere (or be dropped, in which case there is
+            nothing to disclose and nothing claiming otherwise).
+
+    Returns:
+        One sentence naming which disclosure fired, its detail, and what
+        that means for the order on screen -- or `""` when no row carries
+        either tag (the overwhelmingly common case: reranking off, or on
+        and working). The detail is collapsed, clamped and
+        `escape_markup`-escaped, like every other service-supplied string
+        this module renders.
+    """
+    for key, label in LIBRARY_RAG_RERANKING_TAG_LABELS:
+        for row in rows:
+            provenance = row.provenance
+            if not isinstance(provenance, Mapping) or key not in provenance:
+                continue
+            detail = escape_markup(
+                _clamp_display_text(
+                    " ".join(str(provenance[key]).split()),
+                    LIBRARY_RAG_RERANKING_DETAIL_MAX_CHARS,
+                )
+            )
+            qualifier = f" ({detail})" if detail else ""
+            return (
+                f"Reranking was {label}{qualifier} — "
+                f"{LIBRARY_RAG_RERANKING_CONSEQUENCE}."
+            )
+    return ""
+
+
+def _coverage_labels(source_types: Sequence[str]) -> str:
+    """Render coverage source types as one display-vocabulary, escaped list.
+
+    `_source_type_display_label` falls back to the raw, unrecognized
+    `source_type` verbatim when it isn't one of `LIBRARY_RAG_SOURCE_TYPES`
+    -- and these come from the service's `semantic_scope_coverage`
+    diagnostics mapping, a swappable attribute this module does not control
+    the shape of. Every other user-visible string this module builds is
+    `escape_markup`-escaped before reaching a `Static`; these labels were
+    the one gap (task-15 finding M8).
+    """
+    return ", ".join(
+        escape_markup(_source_type_display_label(source_type))
+        for source_type in source_types
+    )
 
 
 def library_rag_coverage_note(
@@ -1571,9 +1898,13 @@ def library_rag_coverage_note(
             what is about to be shown).
 
     Returns:
-        `""` when `rows` is empty (edge case: zero results overall is the
-        no-match/empty state's territory, not a coverage note enumerating
-        every requested source as "uncovered"), when every requested source
+        `""` when `rows` is empty AND no routing disclosure is present
+        (edge case: zero results overall is the no-match/empty state's
+        territory, not a coverage note enumerating every requested source as
+        "uncovered" -- but a routing disclosure under
+        `LIBRARY_RAG_ROUTE_NOTES_KEY` is a statement about HOW the search
+        ran, still true and still needed at zero rows, so it renders alone
+        there), when every requested source
         type is covered and no row bands weak, or when `diagnostics` carries
         no `semantic_scope_coverage` entry at all (e.g. keyword mode).
         Otherwise `"Semantic search found nothing from: <types>."` (types
@@ -1586,9 +1917,43 @@ def library_rag_coverage_note(
         `LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX` prepended (space-joined) when
         `library_rag_all_matches_weak(rows)` is True -- or just the
         weak-prefix alone when nothing is uncovered.
+
+        A row carrying one of the reranker's disclosure tags appends
+        `library_rag_reranking_notice`'s sentence LAST (TASK-3502
+        note-(a)): those tags previously had no UI consumer at all, so a
+        reranking-enabled profile with a dead credential returned
+        normal-looking results in silently unreranked order. It joins this
+        one note channel rather than opening a second, competing one.
+
+        A hybrid profile can also report `"keyword_only"` types (TASK-14752):
+        sources whose rows on screen came entirely from the engine's FTS leg
+        with no semantic hit. Those get their own sentence, `"Keyword matches
+        only from: <types>."`, appended after the uncovered one -- because
+        the uncovered sentence said "found nothing" about a source the user
+        can see rows from, which reads as the opposite of the screen. The
+        key is absent for semantic and plain profiles, whose copy is
+        therefore unchanged.
     """
+    route_notes = (
+        tuple(
+            str(item)
+            for item in (diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ())
+        )
+        if isinstance(diagnostics, Mapping)
+        else ()
+    )
     if not rows:
-        return ""
+        # Coverage claims stay suppressed with no rows (see the Returns
+        # section) -- but a ROUTING disclosure is a different fact, and zero
+        # rows is exactly when it matters most: a plain-profile query that
+        # matched nothing must still say vectors were never consulted, or
+        # the quiet no-match line reads as a verdict on an index this search
+        # never touched (review finding I2).
+        return " ".join(
+            sentence
+            for sentence in (_route_note_sentence(note) for note in route_notes)
+            if sentence
+        )
     coverage = (
         diagnostics.get("semantic_scope_coverage")
         if isinstance(diagnostics, Mapping)
@@ -1599,29 +1964,77 @@ def library_rag_coverage_note(
         if isinstance(coverage, Mapping)
         else ()
     )
-    # `_source_type_display_label` falls back to the raw, unrecognized
-    # `source_type` verbatim when it isn't one of `LIBRARY_RAG_SOURCE_TYPES`
-    # -- and `uncovered` above is `str(item)` from the service's
-    # `semantic_scope_coverage` diagnostics mapping, a swappable attribute
-    # this module does not control the shape of. Every other user-visible
-    # string this module builds is `escape_markup`-escaped before reaching a
-    # `Static`; these labels were the one gap (task-15 finding M8).
-    uncovered_labels = tuple(
-        escape_markup(_source_type_display_label(source_type))
-        for source_type in uncovered
+    keyword_only = (
+        tuple(str(item) for item in coverage.get("keyword_only", ()) or ())
+        if isinstance(coverage, Mapping)
+        else ()
     )
     message = (
-        f"Semantic search found nothing from: {', '.join(uncovered_labels)}."
-        if uncovered_labels
+        f"Semantic search found nothing from: {_coverage_labels(uncovered)}."
+        if uncovered
         else ""
     )
-    if library_rag_all_matches_weak(rows):
-        return (
-            f"{LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX} {message}"
-            if message
-            else LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+    keyword_only_message = (
+        f"Keyword matches only from: {_coverage_labels(keyword_only)}."
+        if keyword_only
+        else ""
+    )
+    parts = [
+        part
+        for part in (
+            LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+            if library_rag_all_matches_weak(rows)
+            else "",
+            message,
+            keyword_only_message,
+            *(_route_note_sentence(note) for note in route_notes),
+            # Last: routing describes how retrieval RAN, this describes what
+            # a post-retrieval stage failed to do to the order below.
+            library_rag_reranking_notice(rows),
         )
-    return message
+        if part
+    ]
+    return " ".join(parts)
+
+
+def library_rag_results_count_line(
+    results: Sequence[LibraryRagResultRow], searched_query: str
+) -> str:
+    """Return the Evidence region's "N results for 'query'" headline.
+
+    task-2859 item 10: the Evidence region used to have no headline naming
+    how many results actually landed or what query produced them -- only
+    the mode/top-k-driven "Evidence · top 5" line (`results_heading_text`,
+    in `library_search_rag_panel.py`), which is deliberately STABLE across
+    a client-side scope toggle (Task 8: "the heading is mode/top_k-driven,
+    not row-count-driven"). This is a separate, additive line that DOES
+    track `results` -- it renders directly above the row cards it counts,
+    so it must agree with what the user can actually see below it,
+    including right after a scope toggle hides a row.
+
+    Args:
+        results: The panel's current, already-scope-filtered evidence rows
+            (`LibraryRagPanelState.results` -- what is actually rendered).
+        searched_query: The query that produced `results`
+            (`LibraryRagPanelState.searched_query`, NOT the live query box
+            text -- mirrors `library_rag_empty_state_quiet_copy`'s same
+            distinction, RAG-33/task-15 finding I3).
+
+    Returns:
+        `""` when `results` is empty (the empty/searching/recovery states
+        have their own copy -- this line is Evidence-row-count territory
+        only). Otherwise `"N result(s) for 'query'."`, escaped and clamped
+        the same way `library_rag_empty_state_quiet_copy` quotes a query.
+    """
+    if not results:
+        return ""
+    count = len(results)
+    noun = "result" if count == 1 else "results"
+    display_query = _clamp_display_text(
+        searched_query, LIBRARY_RAG_EMPTY_QUERY_QUOTE_MAX_CHARS
+    )
+    escaped_query = escape_markup(display_query)
+    return f"{count} {noun} for '{escaped_query}'."
 
 
 @dataclass(frozen=True)
@@ -1645,6 +2058,10 @@ class LibraryRagPanelState:
     #: `diagnostics["semantic_scope_coverage"]` and the panel's own
     #: `results`. Empty string when there is nothing to say.
     coverage_note: str = ""
+    #: Evidence region "N results for 'query'" headline (task-2859 item
+    #: 10), built by `library_rag_results_count_line` from `results` and
+    #: `searched_query`. Empty string whenever `results` is empty.
+    results_count_line: str = ""
     #: The query the CURRENT `retrieval_status`/`results` were actually
     #: retrieved for -- independent of `query_state.query`, which tracks
     #: live, not-yet-submitted input text (task-15 finding I3). The two
@@ -1853,6 +2270,9 @@ class LibraryRagPanelState:
             or row.scope_source_type in scope.selected_source_types
         )
         coverage_note = library_rag_coverage_note(diagnostics, result_rows)
+        results_count_line = library_rag_results_count_line(
+            result_rows, normalized_searched_query
+        )
         normalized_selected_result_id = _clean_text(selected_result_id)
         selected_result = next(
             (
@@ -1997,6 +2417,7 @@ class LibraryRagPanelState:
             history=tuple(str(h) for h in history),
             history_collapsed=bool(history_collapsed),
             coverage_note=coverage_note,
+            results_count_line=results_count_line,
             searched_query=normalized_searched_query,
             answer=answer,
             in_flight_answer_provider=str(in_flight_answer_provider or ""),

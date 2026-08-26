@@ -3,13 +3,43 @@
 from __future__ import annotations
 
 import json
+import os
+import hashlib
+import threading
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..Utils.path_validation import validate_path_simple
 from ..Chat.chat_conversation_service import ChatConversationService
+from ..Chat.assistant_generation_state import render_exported_assistant_content
 from .world_book_manager import WorldBookManager
+
+
+_PERSONA_STORE_KEYS = frozenset(
+    {
+        "profiles",
+        "exemplars",
+        "character_exemplars",
+        "chat_settings",
+        "chat_greeting_selections",
+        "chat_presets",
+        "character_memories",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ActorPackPersonaStorePlan:
+    persona_id: str
+    operation: str
+    old_profile_json: str | None = field(repr=False)
+    new_profile_json: str = field(repr=False)
+    old_store_sha256: str
+    new_store_sha256: str
+    new_store_bytes: bytes = field(repr=False)
 
 
 def _model_payload(value: Any, *, exclude_none: bool = True) -> dict[str, Any]:
@@ -32,11 +62,17 @@ class LocalCharacterPersonaService:
         self.db = db
         self.conversations = ChatConversationService(db)
         self.world_books = WorldBookManager(db) if db is not None else None
-        self.persona_store_path = (
-            Path(persona_store_path).expanduser()
-            if persona_store_path is not None
-            else None
-        )
+        if persona_store_path is None:
+            self.persona_store_path = None
+        else:
+            try:
+                self.persona_store_path = validate_path_simple(
+                    persona_store_path, probe_existing=False
+                )
+            except ValueError:
+                raise ValueError("local_persona_store_invalid") from None
+        self._persona_store_lock = threading.RLock()
+        self._persona_store_extras: dict[str, Any] = {}
         self._persona_profiles: list[dict[str, Any]] = []
         self._persona_exemplars: list[dict[str, Any]] = []
         self._character_exemplars: list[dict[str, Any]] = []
@@ -96,6 +132,14 @@ class LocalCharacterPersonaService:
         return datetime.now(timezone.utc).isoformat()
 
     def _load_personas(self) -> None:
+        self._persona_store_extras = {}
+        self._persona_profiles = []
+        self._persona_exemplars = []
+        self._character_exemplars = []
+        self._chat_settings = {}
+        self._chat_greeting_selections = {}
+        self._chat_presets = []
+        self._character_memories = []
         if self.persona_store_path is None or not self.persona_store_path.exists():
             return
         try:
@@ -104,6 +148,11 @@ class LocalCharacterPersonaService:
             self._persona_profiles = []
             return
         if isinstance(payload, dict):
+            self._persona_store_extras = {
+                str(key): value
+                for key, value in payload.items()
+                if key not in _PERSONA_STORE_KEYS
+            }
             profile_records = payload.get("profiles", payload.get("items", []))
             exemplar_records = payload.get("exemplars", [])
             character_exemplar_records = payload.get("character_exemplars", [])
@@ -168,30 +217,270 @@ class LocalCharacterPersonaService:
             else []
         )
 
+    def _persona_store_payload(self) -> dict[str, Any]:
+        return {
+            **self._persona_store_extras,
+            "profiles": self._persona_profiles,
+            "exemplars": self._persona_exemplars,
+            "character_exemplars": self._character_exemplars,
+            "chat_settings": self._chat_settings,
+            "chat_greeting_selections": self._chat_greeting_selections,
+            "chat_presets": self._chat_presets,
+            "character_memories": self._character_memories,
+        }
+
+    @staticmethod
+    def _persona_store_bytes(payload: Mapping[str, Any]) -> bytes:
+        return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+
+    def _write_persona_store_bytes(self, payload: bytes, *, token: str) -> None:
+        if self.persona_store_path is None:
+            raise ValueError("local_persona_store_unavailable")
+        if self.persona_store_path.is_symlink():
+            raise ValueError("local_persona_store_authority_changed")
+        temp_path = self.persona_store_path.with_name(
+            f".{self.persona_store_path.name}.{token}.tmp"
+        )
+        try:
+            self.persona_store_path.parent.mkdir(parents=True, exist_ok=True)
+            with temp_path.open("xb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temp_path.replace(self.persona_store_path)
+            try:
+                directory_fd = os.open(self.persona_store_path.parent, os.O_RDONLY)
+            except OSError:
+                directory_fd = None
+            if directory_fd is not None:
+                try:
+                    try:
+                        os.fsync(directory_fd)
+                    except OSError:
+                        pass
+                finally:
+                    os.close(directory_fd)
+        except OSError:
+            raise ValueError("local_persona_store_unavailable") from None
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _persist_personas(self) -> None:
         if self.persona_store_path is None:
             return
-        self.persona_store_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.persona_store_path.with_suffix(
-            self.persona_store_path.suffix + ".tmp"
+        self._write_persona_store_bytes(
+            self._persona_store_bytes(self._persona_store_payload()),
+            token=uuid.uuid4().hex,
         )
-        temp_path.write_text(
-            json.dumps(
-                {
-                    "profiles": self._persona_profiles,
-                    "exemplars": self._persona_exemplars,
-                    "character_exemplars": self._character_exemplars,
-                    "chat_settings": self._chat_settings,
-                    "chat_greeting_selections": self._chat_greeting_selections,
-                    "chat_presets": self._chat_presets,
-                    "character_memories": self._character_memories,
-                },
-                indent=2,
+
+    def _actor_pack_plan_persona_profile(
+        self,
+        profile: Mapping[str, Any],
+        *,
+        operation: str,
+    ) -> _ActorPackPersonaStorePlan:
+        """Build an immutable, bounded whole-store CAS plan."""
+
+        if self.persona_store_path is None or type(profile) is not dict:
+            raise ValueError("local_persona_store_invalid")
+        if operation not in {"create", "copy", "update"}:
+            raise ValueError("local_persona_store_invalid")
+        persona_id = profile.get("id")
+        if type(persona_id) is not str or not persona_id or len(persona_id) > 200:
+            raise ValueError("local_persona_store_invalid")
+        try:
+            new_profile_json = json.dumps(
+                profile,
+                ensure_ascii=False,
+                separators=(",", ":"),
                 sort_keys=True,
-            ),
-            encoding="utf-8",
-        )
-        temp_path.replace(self.persona_store_path)
+                allow_nan=False,
+            )
+        except (RecursionError, TypeError, UnicodeError, ValueError):
+            raise ValueError("local_persona_store_invalid") from None
+        encoded_profile = new_profile_json.encode("utf-8")
+        if len(encoded_profile) > 2 * 1024 * 1024:
+            raise ValueError("local_persona_store_invalid")
+        with self._persona_store_lock:
+            old_bytes, payload = self._actor_pack_read_canonical_store()
+            profiles = payload["profiles"]
+            matching = [
+                (index, item)
+                for index, item in enumerate(profiles)
+                if item.get("id") == persona_id
+            ]
+            if len(matching) > 1:
+                raise ValueError("local_persona_store_invalid")
+            if operation in {"create", "copy"} and matching:
+                raise ValueError("local_persona_profile_exists")
+            if operation == "update" and not matching:
+                raise ValueError("local_persona_profile_not_found")
+            old_profile_json = None
+            new_profiles = [dict(item) for item in profiles]
+            if matching:
+                index, old_profile = matching[0]
+                old_profile_json = json.dumps(
+                    old_profile,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+                new_profiles[index] = dict(profile)
+            else:
+                new_profiles.append(dict(profile))
+            new_payload = dict(payload)
+            new_payload["profiles"] = new_profiles
+            new_bytes = self._persona_store_bytes(new_payload)
+            return _ActorPackPersonaStorePlan(
+                persona_id=persona_id,
+                operation=operation,
+                old_profile_json=old_profile_json,
+                new_profile_json=new_profile_json,
+                old_store_sha256=hashlib.sha256(old_bytes).hexdigest(),
+                new_store_sha256=hashlib.sha256(new_bytes).hexdigest(),
+                new_store_bytes=new_bytes,
+            )
+
+    def _actor_pack_apply_persona_plan(self, plan: _ActorPackPersonaStorePlan) -> None:
+        """CAS-replace the store and refresh the incumbent in-memory cache."""
+
+        if type(plan) is not _ActorPackPersonaStorePlan:
+            raise ValueError("local_persona_store_invalid")
+        with self._persona_store_lock:
+            current_bytes, _ = self._actor_pack_read_canonical_store()
+            if hashlib.sha256(current_bytes).hexdigest() != plan.old_store_sha256:
+                raise ValueError("local_persona_store_authority_changed")
+            self._write_persona_store_bytes(
+                plan.new_store_bytes,
+                token=uuid.uuid4().hex,
+            )
+            self._load_personas()
+
+    def _actor_pack_store_state(
+        self, *, old_store_sha256: str, new_store_sha256: str
+    ) -> str:
+        """Classify current bytes as the exact old, new, or other authority."""
+
+        with self._persona_store_lock:
+            current_bytes = self._actor_pack_read_store_bytes()
+        current = hashlib.sha256(current_bytes).hexdigest()
+        if current == old_store_sha256:
+            return "old"
+        if current == new_store_sha256:
+            return "new"
+        return "other"
+
+    def _actor_pack_compensate_persona_profile(
+        self,
+        *,
+        persona_id: str,
+        old_profile_json: str | None,
+        new_profile_json: str,
+        old_store_sha256: str,
+        new_store_sha256: str,
+    ) -> None:
+        """Restore exactly one profile from the known new store authority."""
+
+        with self._persona_store_lock:
+            current_bytes, payload = self._actor_pack_read_canonical_store()
+            if hashlib.sha256(current_bytes).hexdigest() != new_store_sha256:
+                raise ValueError("local_persona_store_authority_changed")
+            profiles = [dict(item) for item in payload["profiles"]]
+            matches = [
+                index
+                for index, item in enumerate(profiles)
+                if item.get("id") == persona_id
+            ]
+            if len(matches) != 1:
+                raise ValueError("local_persona_store_authority_changed")
+            current_profile_json = json.dumps(
+                profiles[matches[0]],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+                allow_nan=False,
+            )
+            if current_profile_json != new_profile_json:
+                raise ValueError("local_persona_store_authority_changed")
+            if old_profile_json is None:
+                profiles.pop(matches[0])
+            else:
+                old_profile = json.loads(old_profile_json)
+                if type(old_profile) is not dict or old_profile.get("id") != persona_id:
+                    raise ValueError("local_persona_store_invalid")
+                profiles[matches[0]] = old_profile
+            restored_payload = dict(payload)
+            restored_payload["profiles"] = profiles
+            if old_store_sha256 == hashlib.sha256(b"").hexdigest():
+                if old_profile_json is not None or any(
+                    restored_payload[key]
+                    for key in _PERSONA_STORE_KEYS
+                    if key in restored_payload
+                ):
+                    raise ValueError("local_persona_store_authority_changed")
+                if self.persona_store_path is None:
+                    raise ValueError("local_persona_store_unavailable")
+                self.persona_store_path.unlink(missing_ok=True)
+            else:
+                restored_bytes = self._persona_store_bytes(restored_payload)
+                if hashlib.sha256(restored_bytes).hexdigest() != old_store_sha256:
+                    raise ValueError("local_persona_store_authority_changed")
+                self._write_persona_store_bytes(
+                    restored_bytes,
+                    token=uuid.uuid4().hex,
+                )
+            self._load_personas()
+
+    def _actor_pack_read_store_bytes(self) -> bytes:
+        if self.persona_store_path is None:
+            raise ValueError("local_persona_store_unavailable")
+        if self.persona_store_path.is_symlink():
+            raise ValueError("local_persona_store_authority_changed")
+        try:
+            return self.persona_store_path.read_bytes()
+        except FileNotFoundError:
+            return b""
+        except OSError:
+            raise ValueError("local_persona_store_unavailable") from None
+
+    def _actor_pack_read_canonical_store(self) -> tuple[bytes, dict[str, Any]]:
+        current_bytes = self._actor_pack_read_store_bytes()
+        if not current_bytes:
+            payload = {
+                "profiles": [],
+                "exemplars": [],
+                "character_exemplars": [],
+                "chat_settings": {},
+                "chat_greeting_selections": {},
+                "chat_presets": [],
+                "character_memories": [],
+            }
+            return current_bytes, payload
+        try:
+            payload = json.loads(current_bytes)
+        except (UnicodeError, json.JSONDecodeError):
+            raise ValueError("local_persona_store_invalid") from None
+        if type(payload) is not dict or type(payload.get("profiles")) is not list:
+            raise ValueError("local_persona_store_invalid")
+        if any(type(item) is not dict for item in payload["profiles"]):
+            raise ValueError("local_persona_store_invalid")
+        normalized = {
+            **payload,
+            "profiles": payload.get("profiles", []),
+            "exemplars": payload.get("exemplars", []),
+            "character_exemplars": payload.get("character_exemplars", []),
+            "chat_settings": payload.get("chat_settings", {}),
+            "chat_greeting_selections": payload.get("chat_greeting_selections", {}),
+            "chat_presets": payload.get("chat_presets", []),
+            "character_memories": payload.get("character_memories", []),
+        }
+        if self._persona_store_bytes(normalized) != current_bytes:
+            raise ValueError("local_persona_store_noncanonical")
+        return current_bytes, normalized
 
     @staticmethod
     def _persona_profile_view(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -1510,7 +1799,12 @@ class LocalCharacterPersonaService:
             lines = [f"# {session.get('title') or chat_id}", ""]
             for message in messages:
                 role = message.get("role") or message.get("sender") or "message"
-                lines.extend([f"## {role}", "", str(message.get("content") or ""), ""])
+                content = render_exported_assistant_content(
+                    role=role,
+                    content=message.get("content", ""),
+                    state=message.get("assistant_generation_state"),
+                )
+                lines.extend([f"## {role}", "", content, ""])
             return "\n".join(lines).rstrip() + "\n"
         if normalized_format != "json":
             raise ValueError(

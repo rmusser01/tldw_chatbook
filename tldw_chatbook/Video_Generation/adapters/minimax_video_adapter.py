@@ -56,6 +56,7 @@ from tldw_chatbook.Video_Generation.exceptions import (
     VideoBackendUnavailableError,
     VideoGenerationError,
 )
+from tldw_chatbook.Video_Generation.video_formats import normalize_video_mime
 
 # The submit response's task_id is interpolated into the poll/cancel URLs
 # -- charset-validated so a malformed/compromised task id can never reach
@@ -154,11 +155,20 @@ class MiniMaxVideoAdapter:
             )
         except ImageGenerationError as exc:
             raise VideoGenerationError(f"MiniMax video download failed: {exc}") from exc
-        if not (content_type or "").startswith("video/"):
-            content_type = "video/mp4"
+        try:
+            content_type = normalize_video_mime(content_type)
+        except ValueError as exc:
+            raise VideoGenerationError(
+                "MiniMax video download did not return video/mp4 MIME"
+            ) from exc
+        if content_type != "video/mp4":
+            raise VideoGenerationError(
+                "MiniMax video download did not return video/mp4 MIME"
+            )
         return VideoGenResult(
             content=content,
             content_type=content_type,
+            container="mp4",
             bytes_len=len(content),
             duration_seconds=self._duration(request),
             width=self._task_int(task, "video_width"),
@@ -352,7 +362,9 @@ class MiniMaxVideoAdapter:
             from loguru import logger
 
             logger.warning(
-                "MiniMax remote task cancel failed (local stop still honored): {}", exc
+                "MiniMax remote task cancel failed; local stop still honored "
+                "(error_type={})",
+                type(exc).__name__,
             )
 
     # -- response parsing ---------------------------------------------------

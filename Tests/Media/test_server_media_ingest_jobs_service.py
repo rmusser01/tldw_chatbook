@@ -86,7 +86,6 @@ async def test_server_media_service_routes_ingest_jobs_and_reprocess_operations(
                 "chunk_overlap": 200,
                 "perform_chunking": True,
                 "generate_embeddings": False,
-                "force_regenerate_embeddings": False,
             },
             None,
         ),

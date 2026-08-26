@@ -112,6 +112,8 @@ def _copy_composer_snapshot(snapshot: ComposerDraftSnapshot) -> ComposerDraftSna
                 origin=segment.origin,
                 collapse_state=segment.collapse_state,
                 label=segment.label,
+                generated_boundary=segment.generated_boundary,
+                paste_block=segment.paste_block,
             )
             for segment in snapshot.segments
         ),

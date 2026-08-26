@@ -3,10 +3,16 @@ Phase 2, the chat card) call run_generation() from a thread worker — never on 
 UI loop, because the adapters are synchronous and blocking.
 """
 from __future__ import annotations
+
+import threading
 from typing import Any
+
 from tldw_chatbook.Image_Generation.adapter_registry import get_registry
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest, ImageGenResult
-from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+from tldw_chatbook.Image_Generation.capabilities import (
+    ResolvedReferenceImage,
+    resolve_backend_reference_image_capability,
+)
 from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 from tldw_chatbook.Image_Generation.request_validation import validate_image_generation_request
 
@@ -26,6 +32,7 @@ def build_request(
     image_format: str = "png",
     extra_params: dict[str, Any] | None = None,
     reference_image: ResolvedReferenceImage | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> ImageGenRequest:
     """Build an :class:`ImageGenRequest` from caller/UI inputs.
 
@@ -45,6 +52,7 @@ def build_request(
         reference_image: Optional resolved reference image. Validated at the
             ``run_generation`` choke point (backend capability, mime, size,
             content) before any adapter sees it.
+        cancel_event: Optional caller-owned cancellation event, preserved by identity.
 
     Returns:
         A frozen :class:`ImageGenRequest`.
@@ -55,6 +63,7 @@ def build_request(
         sampler=sampler, model=model, format=image_format,
         extra_params=dict(extra_params or {}),
         reference_image=reference_image,
+        cancel_event=cancel_event,
     )
 
 
@@ -88,6 +97,14 @@ def run_generation(request: ImageGenRequest) -> ImageGenResult:
             f"Backend {request.backend!r} is not enabled/available. "
             f"Check [image_generation].enabled_backends."
         )
+    capability = resolve_backend_reference_image_capability(
+        resolved, config=registry.config
+    )
+    if capability.required and request.reference_image is None:
+        raise ImageGenerationError(
+            f"Invalid image generation request: reference_image: "
+            f"backend {resolved!r} requires a reference image"
+        )
     issues = validate_image_generation_request(
         {
             "backend": resolved,
@@ -98,7 +115,8 @@ def run_generation(request: ImageGenRequest) -> ImageGenResult:
             "cfg_scale": request.cfg_scale,
             "extra_params": request.extra_params,
             "reference_image": request.reference_image,
-        }
+        },
+        config=registry.config,
     )
     if issues:
         detail = "; ".join(f"{issue.path}: {issue.message}" for issue in issues)

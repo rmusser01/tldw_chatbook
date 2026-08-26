@@ -38,6 +38,8 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from Tests.Agents.test_agent_runtime import make_deps
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
 def _fence(name, args):
@@ -178,18 +180,27 @@ def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypat
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
-        _svc_fence(RUN_LOG_STATS_TOOL_NAME, {"group_by": "tool"}),  # child tries stats
-        _svc_fence(RUN_LOG_SLICE_TOOL_NAME, {"from_record": 1}),  # child tries slice
-        {"choices": [{"message": {"content": "child gave up"}}]},
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    calls = []
-
-    def chat(**kwargs):
-        calls.append(kwargs)
-        return script.pop(0)
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- one ordered queue is no longer deterministic. Addressed
+    # per agent instead; the replies themselves are unchanged.
+    chat = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {
+            "native task": [
+                _svc_fence(
+                    RUN_LOG_STATS_TOOL_NAME, {"group_by": "tool"}
+                ),  # child tries stats
+                _svc_fence(
+                    RUN_LOG_SLICE_TOOL_NAME, {"from_record": 1}
+                ),  # child tries slice
+                {"choices": [{"message": {"content": "child gave up"}}]},
+            ]
+        },
+        reply=verbatim,
+    )
 
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(
@@ -203,13 +214,16 @@ def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypat
         ),
         api_endpoint="llama_cpp",  # fence protocol: schemas render into the system prompt
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
-    # (a) schema gate: the child's own system prompt (calls[1] -- the
-    # parent's spawn dispatch runs the child's whole loop inline before
-    # dispatch returns, so this is the second chat_call invocation overall)
-    # must never mention either tool.
-    child_system_prompt = calls[1]["messages_payload"][0]["content"]
+    # (a) schema gate: the child's own system prompt must never mention
+    # either tool. Addressed by task text rather than by `calls[1]`: under
+    # the fleet the child's call is no longer guaranteed to be the second
+    # chat_call overall, but it is still THE call this assertion meant.
+    child_system_prompt = chat.child_calls["native task"][0]["messages_payload"][0][
+        "content"
+    ]
     assert RUN_LOG_STATS_TOOL_NAME not in child_system_prompt
     assert RUN_LOG_SLICE_TOOL_NAME not in child_system_prompt
 

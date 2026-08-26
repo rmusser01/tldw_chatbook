@@ -1,4 +1,8 @@
 import threading
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from types import SimpleNamespace
 
 import pytest
@@ -67,7 +71,7 @@ async def test_cancel_button_visible_only_while_running():
             status_line="Exporting…" if running else "",
         )
 
-    class Host(App):
+    class Host(ConsolidatedCSSApp):
         def compose(self):
             yield LibraryExportCanvas(_state(True), id="library-export-canvas")
 

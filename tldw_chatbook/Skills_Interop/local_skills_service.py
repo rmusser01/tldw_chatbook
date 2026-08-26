@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import io
 import json
 import re
 import shutil
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -20,6 +22,7 @@ from loguru import logger
 from ..runtime_policy.types import PolicyDeniedError
 from ..Utils.input_validation import sanitize_string, validate_text_input
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
+from .atomic_write import write_bytes_atomic, write_text_atomic
 from .skill_trust_models import SkillTrustBlockedError
 
 if TYPE_CHECKING:
@@ -234,17 +237,51 @@ class LocalSkillsService:
         store_dir: str | Path,
         policy_enforcer: Any | None = None,
         trust_service: Any | None = None,
+        trust_service_factory: Callable[[], Any] | None = None,
         allow_untrusted_without_trust_service: bool = False,
     ) -> None:
+        """Construct the local skill library service.
+
+        Args:
+            store_dir: Root of the local skill store.
+            policy_enforcer: Optional authorization policy enforcer.
+            trust_service: A ready trust service, or None for "no trust
+                service configured" (the escape-hatch shape tests use).
+            trust_service_factory: A zero-argument builder consulted the
+                first time ``trust_service`` is read, and memoized. The app
+                passes this because building the trust service performs OS
+                keyring backend discovery, and the Console's agent bridge
+                takes this service at screen mount while nothing has yet
+                asked a trust question (TASK-21111(b)).
+            allow_untrusted_without_trust_service: Escape hatch for a
+                deliberately trust-service-less service.
+        """
         self.store_dir = Path(store_dir)
         self.skills_dir = self.store_dir / _SKILLS_DIRNAME
         self.index_path = self.store_dir / _INDEX_FILENAME
         self.policy_enforcer = policy_enforcer
-        self.trust_service = trust_service
+        self._trust_service = trust_service
+        self._trust_service_factory = trust_service_factory
         self.allow_untrusted_without_trust_service = (
             allow_untrusted_without_trust_service
         )
         self._lock = asyncio.Lock()
+
+    @property
+    def trust_service(self) -> Any | None:
+        """The trust service, built on first read when deferred.
+
+        Stays ``None`` -- the documented "no trust service" state that every
+        call site guards on -- when neither a service nor a factory was
+        supplied.
+        """
+        if self._trust_service is None and self._trust_service_factory is not None:
+            self._trust_service = self._trust_service_factory()
+        return self._trust_service
+
+    @trust_service.setter
+    def trust_service(self, service: Any | None) -> None:
+        self._trust_service = service
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -298,11 +335,15 @@ class LocalSkillsService:
     def _save_index(self, records: dict[str, dict[str, Any]]) -> None:
         self.store_dir.mkdir(parents=True, exist_ok=True)
         payload = {"version": 1, "skills": records}
-        temp_path = self.index_path.with_suffix(".json.tmp")
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        temp_path.replace(self.index_path)
+        # Writer-unique temp file (pid + thread id, via the shared
+        # Skills_Interop.atomic_write helper) -- a fixed `<index>.json.tmp`
+        # let two concurrent writers (two app instances, or two callers in
+        # one) race on the same temp path, so one's `replace()` could
+        # consume the other's still-being-written temp file and raise
+        # FileNotFoundError (TASK-17963). A genuine write failure still
+        # raises here -- only that temp-name collision class is gone.
+        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        write_text_atomic(self.index_path, text)
 
     def _skill_dir(self, skill_name: str) -> Path:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
@@ -313,18 +354,16 @@ class LocalSkillsService:
     @staticmethod
     def _write_text_atomic(path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_name(f"{path.name}.tmp")
-        with temp_path.open("w", encoding="utf-8") as handle:
-            handle.write(content)
-        temp_path.replace(path)
+        # See _save_index above: writer-unique temp naming (TASK-17963) --
+        # a fixed `<name>.tmp` raced across concurrent writers to the same
+        # skill file. Write failures still propagate; only the collision
+        # is fixed.
+        write_text_atomic(path, content)
 
     @staticmethod
     def _write_bytes_atomic(path: Path, data: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_name(f"{path.name}.tmp")
-        with temp_path.open("wb") as handle:
-            handle.write(data)
-        temp_path.replace(path)
+        write_bytes_atomic(path, data)
 
     @staticmethod
     def _parse_front_matter(content: str) -> tuple[dict[str, Any], str]:
@@ -980,6 +1019,16 @@ class LocalSkillsService:
         payload["blocked_skills"] = blocked
         return payload
 
+    def get_library_user_content_evidence_context(self) -> dict[str, Any]:
+        """Return trusted records from the profile-owned managed Skills store."""
+        self._enforce("skills.context.list.local")
+        available = []
+        for _, record in sorted(self._load_index().items()):
+            summary = self._summary_for_record(record)
+            if not summary.get("trust_blocked"):
+                available.append(summary)
+        return {"available_skills": available}
+
     async def count_skills(self) -> int:
         """Return the total managed skills count, trusted plus needs-review.
 
@@ -1002,6 +1051,288 @@ class LocalSkillsService:
         self._enforce("skills.detail.local")
         records = self._load_index()
         return self._response_for_record(self._require_record(skill_name, records))
+
+    # --- Library read seams (task-1337) ---
+    #
+    # Bounded, trust-aware reads backing the local Library agent tools. They
+    # never touch the eager ``_read_supporting_files`` response builder:
+    # enumeration produces exact totals before slicing, blocked skills only
+    # ever surface safe name/description/trust fields, and file content is
+    # read one windowed file at a time behind opaque file tokens whose
+    # continuation revisions bind the selected file's SHA-256.
+
+    _LIBRARY_SKILL_PREVIEW_CHARS = 241
+    _LIBRARY_FILE_TOKEN_PREFIX = "file:"
+    _LIBRARY_FILE_TOKEN_MAX_ENCODED = 512
+
+    @staticmethod
+    def _make_library_file_token(relative_path: str) -> str:
+        """Encode a bundle-relative POSIX path as an opaque file token."""
+        encoded = base64.urlsafe_b64encode(relative_path.encode("utf-8")).decode(
+            "ascii"
+        )
+        return f"{LocalSkillsService._LIBRARY_FILE_TOKEN_PREFIX}{encoded.rstrip('=')}"
+
+    @staticmethod
+    def _parse_library_file_token(token: str) -> str:
+        """Decode an opaque file token back to a validated relative path.
+
+        Fail-closed: malformed base64, wrong prefix, absolute/path-like or
+        traversal payloads are all rejected before any filesystem use.
+
+        Args:
+            token: The opaque ``file:<base64url>`` token.
+
+        Returns:
+            The decoded POSIX relative path.
+
+        Raises:
+            ValueError: For any malformed, oversized, or unsafe token.
+        """
+        prefix = LocalSkillsService._LIBRARY_FILE_TOKEN_PREFIX
+        if not isinstance(token, str) or not token.startswith(prefix):
+            raise ValueError("local_skill_file_token_invalid")
+        encoded = token[len(prefix) :]
+        if (
+            not encoded
+            or len(encoded) > LocalSkillsService._LIBRARY_FILE_TOKEN_MAX_ENCODED
+            or re.fullmatch(r"[A-Za-z0-9_-]+", encoded) is None
+        ):
+            raise ValueError("local_skill_file_token_invalid")
+        try:
+            padded = encoded + "=" * (-len(encoded) % 4)
+            decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            raise ValueError("local_skill_file_token_invalid") from None
+        if (
+            not decoded
+            or decoded.startswith("/")
+            or "\x00" in decoded
+            or "\\" in decoded
+            or decoded == ".."
+            or decoded.startswith("../")
+            or "/../" in decoded
+        ):
+            raise ValueError("local_skill_file_token_invalid")
+        if decoded != _SKILL_FILENAME:
+            # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+            from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+            try:
+                validate_supporting_file_path(decoded)
+            except ValueError:
+                raise ValueError("local_skill_file_token_invalid") from None
+        return decoded
+
+    def _read_body_for_match(self, skill_name: str) -> str:
+        """Best-effort SKILL.md body read for search matching (never raises)."""
+        skill_dir = self._skill_dir(skill_name)
+        try:
+            return self._read_text_preserving_newlines(
+                skill_dir / _SKILL_FILENAME, base_dir=skill_dir
+            )
+        except (OSError, ValueError, UnicodeDecodeError):
+            return ""
+
+    async def list_library_skills(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Page managed skill summaries for agent-facing list tools.
+
+        One enumeration produces the exact total before slicing; summaries
+        carry safe fields and trust status only -- never body or files.
+
+        Args:
+            limit: Maximum number of skills to return.
+            offset: Number of skills to skip.
+
+        Returns:
+            A bounded page containing safe skill summaries and exact total.
+
+        Raises:
+            PolicyDeniedError: If local skill listing is denied by policy.
+        """
+        self._enforce("skills.list.local")
+        records = self._load_index()
+        items = [
+            self._summary_for_record(record) for _, record in sorted(records.items())
+        ]
+        return {
+            "items": items[offset : offset + limit],
+            "total": len(items),
+            "offset": offset,
+            "limit": limit,
+        }
+
+    async def search_library_skills(
+        self, *, query: str, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Casefold-match skills by name/description/metadata/body.
+
+        Blocked skills may match on safe fields (name, description, metadata)
+        and surface their trust status, but their bodies are never read, so a
+        query can never match blocked content. Exact-name hits rank first.
+
+        Args:
+            query: Raw user search text (literal, case-insensitive).
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
+
+        Returns:
+            Dict with ``items`` (safe summaries plus ``matched_fields``),
+            ``total``, ``offset``, and ``limit``.
+
+        Raises:
+            PolicyDeniedError: If local skill listing is denied by policy.
+        """
+        self._enforce("skills.list.local")
+        records = self._load_index()
+        query_cf = query.casefold()
+        matched: list[tuple[bool, str, dict[str, Any]]] = []
+        for _, record in sorted(records.items()):
+            summary = self._summary_for_record(record)
+            fields = set()
+            name = str(record.get("name", ""))
+            description = str(record.get("description") or "")
+            if query_cf in name.casefold():
+                fields.add("name")
+            if description and query_cf in description.casefold():
+                fields.add("description")
+            metadata = record.get("metadata")
+            if isinstance(metadata, dict) and any(
+                query_cf in str(value).casefold() for value in metadata.values()
+            ):
+                fields.add("metadata")
+            if not summary.get("trust_blocked"):
+                body = self._read_body_for_match(name)
+                if body and query_cf in body.casefold():
+                    fields.add("body")
+            if fields:
+                summary["matched_fields"] = sorted(fields)
+                matched.append((name.casefold() == query_cf, name.casefold(), summary))
+        matched.sort(key=lambda entry: (not entry[0], entry[1]))
+        items = [summary for _exact, _name, summary in matched]
+        return {
+            "items": items[offset : offset + limit],
+            "total": len(items),
+            "offset": offset,
+            "limit": limit,
+        }
+
+    async def get_library_skill(self, skill_name: str) -> dict[str, Any]:
+        """Return a bounded detail view of one managed skill.
+
+        Trusted skills get the exact body length, a bounded body preview,
+        and a supporting-file manifest with opaque file tokens (never file
+        content). Blocked skills return safe fields and trust status only.
+
+        Args:
+            skill_name: Canonical skill name.
+
+        Returns:
+            The summary payload, extended with ``body_total_chars``,
+            ``body_preview``, and ``files`` for trusted skills only.
+
+        Raises:
+            ValueError: If the skill is not in the managed index.
+        """
+        self._enforce("skills.detail.local")
+        records = self._load_index()
+        record = self._require_record(skill_name, records)
+        summary = self._summary_for_record(record)
+        if summary.get("trust_blocked"):
+            return summary
+        canonical_name = str(record["name"])
+        skill_dir = self._skill_dir(canonical_name)
+        body_path = skill_dir / _SKILL_FILENAME
+        body = self._read_text_preserving_newlines(body_path, base_dir=skill_dir)
+        files = [
+            {
+                "path": _SKILL_FILENAME,
+                "size": body_path.stat().st_size,
+                "executable": False,
+                "is_text": True,
+                "file_token": self._make_library_file_token(_SKILL_FILENAME),
+            }
+        ]
+        for entry in self._read_bundle_manifest(skill_dir) or []:
+            files.append(
+                {**entry, "file_token": self._make_library_file_token(entry["path"])}
+            )
+        summary.update(
+            {
+                "body_total_chars": len(body),
+                "body_preview": body[: self._LIBRARY_SKILL_PREVIEW_CHARS],
+                "files": files,
+            }
+        )
+        return summary
+
+    async def get_library_skill_file(
+        self, skill_name: str, file_token: str, *, start: int = 0, max_chars: int = 8000
+    ) -> dict[str, Any]:
+        """Read a windowed text segment of one skill file behind a token.
+
+        Mirrors ``read_skill_file``'s security order -- per-read trust
+        re-verification, token/path validation, containment, trusted-manifest
+        membership -- but returns a caller-bounded window with a content
+        revision (the selected file's SHA-256) for continuation checks. The
+        vendored-read exemption does not apply to Library reads: only
+        trust-reviewed files are served.
+
+        Args:
+            skill_name: Canonical skill name.
+            file_token: Opaque token from ``get_library_skill``'s manifest.
+            start: Zero-based character offset into the file.
+            max_chars: Maximum number of characters to return.
+
+        Returns:
+            Dict with ``path``, ``revision``, ``total_chars``, ``start``,
+            ``returned_chars``, ``has_more``, and the ``text`` segment.
+
+        Raises:
+            SkillTrustBlockedError: Skill not currently trusted.
+            ValueError: Bad token, unknown skill, missing/binary file, or a
+                file the trust manifest does not fingerprint.
+        """
+        self._enforce("skills.read_file.launch.local")
+        self._require_trusted_skill(skill_name)
+        relative_path = self._parse_library_file_token(file_token)
+        skill_dir = self._skill_dir(skill_name)
+        if not skill_dir.is_dir():
+            raise ValueError(f"local_skill_not_found:{skill_name}")
+        path = skill_dir / PurePosixPath(relative_path)
+        # Containment is checked BEFORE any stat/is_file on the candidate,
+        # mirroring read_skill_file, so escapes are indistinguishable from
+        # genuinely missing files.
+        contained = get_safe_relative_path(path, skill_dir)
+        if contained is None:
+            raise ValueError(f"local_skill_file_not_found:{relative_path}")
+        posix_relative = contained.as_posix()
+        if not self._path_is_trust_material(skill_name, posix_relative):
+            raise ValueError(f"local_skill_file_not_found:{relative_path}")
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"local_skill_file_not_found:{relative_path}")
+        raw = path.read_bytes()
+        if b"\x00" in raw:
+            raise ValueError(f"local_skill_file_binary:{relative_path}")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError(f"local_skill_file_binary:{relative_path}") from None
+        revision = hashlib.sha256(raw).hexdigest()[:16]
+        total_chars = len(text)
+        segment = text[start : start + max_chars]
+        return {
+            "name": skill_name,
+            "path": posix_relative,
+            "revision": revision,
+            "total_chars": total_chars,
+            "start": start,
+            "returned_chars": len(segment),
+            "has_more": start + len(segment) < total_chars,
+            "text": segment,
+        }
 
     async def create_skill(
         self,
@@ -2004,6 +2335,7 @@ class LocalSkillsService:
         args: Sequence[str],
         *,
         limits: ScriptRunLimits | None = None,
+        output_root: Path | None = None,
     ) -> ScriptRunResult:
         """Run a bundled script of a trusted skill under best-effort containment.
 
@@ -2025,6 +2357,9 @@ class LocalSkillsService:
                 caller's intended args would then display something
                 different from what actually runs).
             limits: Optional containment budget; defaults to ScriptRunLimits().
+            output_root: Optional explicit retained-output root supplied by a
+                run-scoped caller. When omitted, the configured legacy root is
+                resolved exactly as before.
 
         Returns:
             A ScriptRunResult; a non-zero exit or timeout is a normal result.
@@ -2061,6 +2396,11 @@ class LocalSkillsService:
             self._canonical_skill_name(skill_name), script_path, path
         )
         effective_limits = limits or resolve_script_run_limits()
+        explicit_output_root = (
+            Path(output_root).expanduser().resolve()
+            if output_root is not None
+            else None
+        )
         target_argv = (
             [str(path), *args]
             if plan.mechanism == "direct-exec"
@@ -2086,9 +2426,17 @@ class LocalSkillsService:
             # only place a script's artifacts can survive, and it stays owned by
             # this offloaded callable so a cancelled caller can never make
             # cleanup race a still-live child (see this function's docstring).
-            output_root = self._script_output_root()
+            retained_output_root = (
+                explicit_output_root
+                if explicit_output_root is not None
+                else self._script_output_root()
+            )
+            retained_output_root.mkdir(parents=True, exist_ok=True)
             run_dir = Path(
-                tempfile.mkdtemp(prefix="tldw-skill-script-", dir=output_root)
+                tempfile.mkdtemp(
+                    prefix="tldw-skill-script-",
+                    dir=retained_output_root,
+                )
             )
             result = run_script_subprocess(
                 target_argv, cwd=run_dir, limits=effective_limits
@@ -2100,7 +2448,9 @@ class LocalSkillsService:
                 _shutil.rmtree(run_dir, ignore_errors=True)
                 return replace(result, output_dir=None, output_files=())
             self._prune_output_runs(
-                output_root, SCRIPT_OUTPUT_KEEP_RUNS, protect=run_dir
+                retained_output_root,
+                SCRIPT_OUTPUT_KEEP_RUNS,
+                protect=run_dir,
             )
             return replace(
                 result, output_dir=str(run_dir), output_files=produced

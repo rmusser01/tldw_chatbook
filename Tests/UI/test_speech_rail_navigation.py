@@ -23,6 +23,7 @@ from textual.widgets import Button, Input, Select
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 
 SWITCHABLE = ("playground", "settings", "audiobook", "dictation")
@@ -161,6 +162,13 @@ async def test_rail_navigation_honors_cancel_then_discard_for_dirty_studio() -> 
         playground_row.press()
         for _ in range(40):
             if screen.stts_window.current_view == "playground":
-                break
+                playgrounds = list(screen.query(SpeechPlaygroundPane))
+                if playgrounds and list(
+                    playgrounds[0].query("#tts-provider-select SelectOverlay")
+                ):
+                    break
             await pilot.pause(0.02)
         assert screen.stts_window.current_view == "playground"
+        assert screen.query_one(SpeechPlaygroundPane).query_one(
+            "#tts-provider-select SelectOverlay"
+        )

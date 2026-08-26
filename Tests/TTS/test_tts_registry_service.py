@@ -39,6 +39,7 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_specs
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.studio_preferences import (
@@ -47,6 +48,7 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSPreferencesSnapshot,
 )
 from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppRuntimeObservation,
     TTSService,
     bind_tts_service,
     close_tts_resources,
@@ -332,6 +334,10 @@ async def test_admit_owns_revision_matched_lease_before_execution_and_response_c
         tts_request(),
         expected_configuration_revision=1,
     )
+
+    lease = operation._resources._lease
+    assert lease.configuration_revision == 1
+    assert lease.applied_generation == 0
 
     assert service._operation_limit._value == 0
     assert registry._total_leases() == 1
@@ -1754,6 +1760,87 @@ def test_default_bootstrap_prepends_audio_cpp_without_changing_legacy_specs(
     assert all(factory.calls == 0 for factory in factories.values())
 
 
+def test_default_service_constructs_one_supervisor_without_launch() -> None:
+    service = build_default_tts_service({})
+
+    supervisor = service._audio_cpp_supervisor
+    snapshot = supervisor.snapshot()
+
+    assert isinstance(supervisor, AudioCppSupervisor)
+    assert snapshot.state == "stopped"
+    assert snapshot.process_generation == 0
+    assert snapshot.endpoint is None
+    assert service.registry._slots["audio_cpp"].active is None
+
+
+@pytest.mark.asyncio
+async def test_default_service_runtime_observation_does_not_materialize_adapter() -> (
+    None
+):
+    service = build_default_tts_service({})
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert isinstance(observation, AudioCppRuntimeObservation)
+        assert observation.saved_mode == "external"
+        assert observation.applied_mode == "external"
+        assert observation.process.state == "stopped"
+        assert observation.catalog_fresh is False
+        assert service.registry._slots["audio_cpp"].active is None
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_reconfigured_audio_cpp_adapters_share_the_app_supervisor() -> None:
+    service = build_default_tts_service({})
+    first_lease = await service.registry.acquire("audio_cpp")
+    first_adapter = cast(AudioCppAdapter, first_lease.adapter)
+    await first_lease.release()
+    snapshot = await service.registry.provider_configuration_snapshot("audio_cpp")
+    replacement_config = {
+        **dict(snapshot.applied_config),
+        "base_url": "http://127.0.0.1:18081",
+    }
+
+    try:
+        assert (
+            await service.reconfigure_provider("audio_cpp", replacement_config)
+            is ReconfigureResult.CHANGED
+        )
+        second_lease = await service.registry.acquire("audio_cpp")
+        try:
+            second_adapter = cast(AudioCppAdapter, second_lease.adapter)
+            assert second_adapter is not first_adapter
+            assert first_adapter._supervisor is service._audio_cpp_supervisor
+            assert second_adapter._supervisor is service._audio_cpp_supervisor
+        finally:
+            await second_lease.release()
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_legacy_provider_materialization_never_touches_supervisor() -> None:
+    service = build_default_tts_service({})
+    supervisor = service._audio_cpp_supervisor
+    before = supervisor.snapshot()
+
+    try:
+        lease = await service.registry.acquire("openai")
+        await lease.release()
+        after = supervisor.snapshot()
+
+        assert after == before
+        assert service.registry._slots["audio_cpp"].active is None
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
 def test_default_bootstrap_parses_supplied_preferences_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1828,16 +1915,47 @@ def test_audio_cpp_provider_spec_owns_its_effective_configuration() -> None:
     from tldw_chatbook.TTS.adapter_bootstrap import audio_cpp_provider_spec
 
     raw_config = {
+        "mode": "managed",
         "base_url": "https://snapshot.example.test",
+        "managed_setup_source": "guided",
+        "guided_binary_path": "/opt/audio.cpp/audiocpp_server",
+        "guided_packages": [
+            {
+                "package_uuid": "d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",
+                "recipe_id": "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+                "recipe_revision": 1,
+                "package_variant": "supertonic_3_orig",
+                "public_model_id": "supertonic-3-orig",
+                "canonical_root": "/models/Supertonic-3-GGUF",
+                "canonical_root_identity": "1" * 64,
+                "configuration_identity": "2" * 64,
+                "weight_identity": "3" * 64,
+                "projection": {
+                    "family": "supertonic",
+                    "task": "tts",
+                    "mode": "offline",
+                    "model_relative_path": "supertonic-3-orig.gguf",
+                },
+            }
+        ],
+        "guided_default_model_id": "supertonic-3-orig",
         "max_input_characters": 123,
     }
     source = {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": raw_config}}}
 
     spec = audio_cpp_provider_spec(source)
     raw_config["base_url"] = "https://mutated.example.test"
+    raw_config["guided_packages"][0]["public_model_id"] = "mutated"
     raw_config["max_input_characters"] = 999
 
     assert spec.initial_config["base_url"] == "https://snapshot.example.test"
+    assert spec.initial_config["managed_setup_source"] == "guided"
+    assert spec.initial_config["guided_binary_path"] == (
+        "/opt/audio.cpp/audiocpp_server"
+    )
+    assert spec.initial_config["guided_packages"][0]["public_model_id"] == (
+        "supertonic-3-orig"
+    )
     assert spec.initial_config["max_input_characters"] == 123
 
 
@@ -1880,7 +1998,10 @@ def test_audio_cpp_factory_reconstructs_and_validates_immutable_config(
 
     assert isinstance(adapter, FakeAudioCppAdapter)
     assert len(captured) == 1
-    assert captured[0].to_mapping() == dict(spec.initial_config)
+    assert (
+        captured[0].to_mapping()
+        == AudioCppConfig.from_mapping(spec.initial_config).to_mapping()
+    )
 
 
 @pytest.mark.asyncio

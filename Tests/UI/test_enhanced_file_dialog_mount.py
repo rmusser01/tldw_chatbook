@@ -13,14 +13,21 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Optional
+from unittest.mock import patch
 
 import pytest
+import toml
 from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Static
 
+from tldw_chatbook.config import _get_effective_config_path
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import (
+    FileSystemPickerScreen,
+)
 from tldw_chatbook.Widgets.enhanced_file_picker import (
+    EnhancedFileDialog,
     EnhancedFileOpen,
     EnhancedFileSave,
     MultiSelectDirectoryEntry,
@@ -43,10 +50,12 @@ def _make_json_only_filter() -> Filters:
 class _DialogHost(App[None]):
     """Minimal host that immediately pushes the dialog under test."""
 
-    def __init__(self, dialog):
+    def __init__(self, dialog, *, exit_on_result: bool = True):
         super().__init__()
         self._dialog = dialog
+        self._exit_on_result = exit_on_result
         self._result: object = None
+        self._result_seen = False
 
     def compose(self) -> ComposeResult:
         yield from ()
@@ -54,7 +63,9 @@ class _DialogHost(App[None]):
     async def on_mount(self) -> None:
         def _capture(result):
             self._result = result
-            self.exit()
+            self._result_seen = True
+            if self._exit_on_result:
+                self.exit()
 
         await self.push_screen(self._dialog, callback=_capture)
 
@@ -154,6 +165,12 @@ async def test_filter_hidden_count(tmp_path):
     """
     for name in ("a.json", "b.json", "c.txt", "d.txt", "e.txt"):
         (tmp_path / name).write_text("x")
+    # task-15471 fix round: a dotfile that ALSO fails the filter. With
+    # show_hidden off it is dotfile-hidden, so the filter-hidden count must
+    # NOT include it -- this pins the merged pass's "not already
+    # dotfile-hidden" guard, which the all-visible fixture above never
+    # exercised (review minor 7).
+    (tmp_path / ".hidden.txt").write_text("x")
 
     dialog = EnhancedFileOpen(
         location=str(tmp_path),
@@ -315,6 +332,161 @@ async def test_open_dialog_confirms_selected_file(tmp_path):
         result.append(app._result)
 
     assert result[0] == test_file
+
+
+@pytest.mark.asyncio
+async def test_dismiss_does_not_write_config_synchronously(tmp_path):
+    """task-15470 review round: ``dismiss()`` must not run
+    ``recent_locations.add()``'s synchronous ``save_to_config()`` (nor the
+    last-directory write) on the event loop.
+
+    Calls ``dialog.dismiss(...)`` directly rather than driving it through a
+    ``Button.press()`` + ``pilot.pause()``: ``Button.press()`` only posts a
+    ``Button.Pressed`` message (confirmed by reading `_button.py`) -- the
+    handler that actually calls ``dismiss()`` does not run until a pause
+    lets the message queue process it, so asserting "no write yet"
+    immediately after ``press()`` alone is checking nothing (nothing has
+    run yet either way, bug or no bug). ``dismiss()`` is itself a plain
+    synchronous method; calling it directly and checking spy state in the
+    SAME synchronous call stack (no ``await`` at all) is deterministic --
+    Python cannot preempt into a worker thread until this code yields
+    control back to the event loop, so a still-empty spy here can only mean
+    the write was genuinely deferred, not a timing accident.
+
+    Spies on BOTH ``save_settings_to_cli_config`` (the batch API
+    `_persist_recent_and_last_directory` calls) AND ``save_setting_to_cli_
+    config`` (the singular API ``RecentLocations.save_to_config`` calls
+    internally -- a DIFFERENT function; a spy on only the batch API would
+    have stayed silent if ``dismiss()`` regressed to calling
+    ``recent_locations.add()`` with its default ``persist=True``, since
+    that path never touches the batch API at all).
+    """
+    test_file = tmp_path / "confirm_me_sync_check.txt"
+    test_file.write_text("hello")
+
+    batch_calls: list[dict] = []
+    singular_calls: list[tuple] = []
+    import tldw_chatbook.Widgets.enhanced_file_picker as efp_module
+
+    def batch_spy(section_values):
+        batch_calls.append(section_values)
+        return True
+
+    def singular_spy(section, key, value):
+        singular_calls.append((section, key, value))
+        return True
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Dismiss Sync Check",
+        context="test_dismiss_sync_check",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Mounting/populating the dialog (bookmarks defaults, recent-list
+        # load, etc.) can trigger its OWN unrelated singular-API writes;
+        # only calls made by the `dismiss()` call below are this test's
+        # actual subject.
+        with (
+            patch.object(efp_module, "save_settings_to_cli_config", batch_spy),
+            patch.object(efp_module, "save_setting_to_cli_config", singular_spy),
+        ):
+            dialog.dismiss(test_file)
+
+            # No `await` above this line: this assertion runs in the same
+            # synchronous call as `dismiss()` itself.
+            assert batch_calls == [] and singular_calls == [], (
+                "a config write fired synchronously from dismiss() instead "
+                f"of being deferred to a worker (batch={batch_calls!r}, "
+                f"singular={singular_calls!r})"
+            )
+
+
+@pytest.mark.asyncio
+async def test_confirm_coalesces_recent_and_last_dir_into_one_write(tmp_path):
+    """task-15470 review round: once persistence does run, it must be the
+    single coalesced ``save_settings_to_cli_config`` batch call carrying
+    both the ``recent_<context>`` and ``last_dir_<context>`` keys -- not
+    two separate writes -- and the on-disk state must end up correct.
+
+    Real end-to-end path: drives the dialog through an actual Select
+    button press, and the host app actually exits mid-test (`_DialogHost`
+    calls `self.exit()` from the dismiss callback), so this also proves
+    the deferred write is not simply discarded by app shutdown before the
+    worker thread gets a chance to run.
+    """
+    test_file = tmp_path / "confirm_me_coalesced.txt"
+    test_file.write_text("hello")
+
+    batch_calls: list[dict] = []
+    import tldw_chatbook.Widgets.enhanced_file_picker as efp_module
+
+    real_save_settings = efp_module.save_settings_to_cli_config
+
+    def batch_spy(section_values):
+        batch_calls.append(section_values)
+        return real_save_settings(section_values)
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Confirm Open Coalesced",
+        context="test_confirm_open_coalesced",
+    )
+    app = _DialogHost(dialog)
+
+    with (
+        patch.object(efp_module, "save_settings_to_cli_config", batch_spy),
+        patch.object(
+            dialog,
+            "run_worker",
+            side_effect=AssertionError("persistence must be app-owned"),
+        ),
+    ):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+            for _ in range(20):
+                if dir_nav.option_count > 0:
+                    break
+                await pilot.pause()
+
+            file_index = None
+            for index in range(dir_nav.option_count):
+                option = dir_nav.get_option_at_index(index)
+                if option.location == test_file:
+                    file_index = index
+                    break
+            assert file_index is not None
+
+            dir_nav.highlighted = file_index
+            dir_nav.action_select()
+            await pilot.pause()
+
+            dialog.query_one("#select").press()
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+    # Persistence is owned by the host app, not the dismissed dialog, and the
+    # coalesced write completed before host teardown.
+    assert len(batch_calls) == 1, (
+        f"expected exactly one coalesced write, got {len(batch_calls)}"
+    )
+    section = batch_calls[0]["filepicker"]
+    assert "recent_test_confirm_open_coalesced" in section
+    assert "last_dir_test_confirm_open_coalesced" in section
+    assert section["last_dir_test_confirm_open_coalesced"] == str(tmp_path)
+
+    on_disk = toml.load(_get_effective_config_path())
+    saved_recent = on_disk["filepicker"]["recent_test_confirm_open_coalesced"]
+    assert saved_recent, "recent-locations entry was not actually persisted"
+    assert saved_recent[0]["path"] == str(test_file)
+    assert (
+        on_disk["filepicker"]["last_dir_test_confirm_open_coalesced"]
+        == str(tmp_path)
+    )
 
 
 @pytest.mark.asyncio
@@ -1138,6 +1310,153 @@ async def test_escape_closes_recent_overlay_first(tmp_path):
     assert result[0] is None, "second Esc must dismiss the picker"
 
 
+class _TrackedSafeFileOpen(EnhancedFileOpen):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.safe_dismiss_results: list[object] = []
+        self.dismiss_results: list[object] = []
+        self.persisted_last_directories: list[Path | None] = []
+
+    def dismiss_safe_once(self, result: object) -> bool:
+        self.safe_dismiss_results.append(result)
+        return super().dismiss_safe_once(result)
+
+    def dismiss(self, result: object) -> None:
+        self.dismiss_results.append(result)
+        super().dismiss(result)
+
+    def _persist_recent_and_last_directory(
+        self, last_directory: Path | None
+    ) -> None:
+        self.persisted_last_directories.append(last_directory)
+
+
+class _TrackedSafeFileSave(EnhancedFileSave):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.safe_dismiss_results: list[object] = []
+        self.dismiss_results: list[object] = []
+        self.persisted_last_directories: list[Path | None] = []
+
+    def dismiss_safe_once(self, result: object) -> bool:
+        self.safe_dismiss_results.append(result)
+        return super().dismiss_safe_once(result)
+
+    def dismiss(self, result: object) -> None:
+        self.dismiss_results.append(result)
+        super().dismiss(result)
+
+    def _persist_recent_and_last_directory(
+        self, last_directory: Path | None
+    ) -> None:
+        self.persisted_last_directories.append(last_directory)
+
+
+def _safe_dialog(dialog_type, tmp_path, context: str):
+    kwargs = {
+        "location": str(tmp_path),
+        "context": context,
+    }
+    if issubclass(dialog_type, EnhancedFileSave):
+        kwargs["default_filename"] = "output.txt"
+    return dialog_type(**kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dialog_type", [_TrackedSafeFileOpen, _TrackedSafeFileSave])
+@pytest.mark.parametrize("source", ["terminal-escape", "backdrop", "visible"])
+async def test_file_dialog_terminal_cancel_sources_use_safe_dismiss_once(
+    tmp_path,
+    dialog_type,
+    source,
+):
+    dialog = _safe_dialog(
+        dialog_type, tmp_path, f"safe_{dialog_type.__name__}_{source}"
+    )
+    app = _DialogHost(dialog, exit_on_result=False)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert dialog.query_one("#enhanced-file-dialog")
+
+        if source == "terminal-escape":
+            await pilot.press("escape")
+        else:
+            await pilot.press("ctrl+l")
+            await pilot.press("ctrl+f")
+            await pilot.pause()
+            if source == "backdrop":
+                await pilot.click(offset=(0, 0))
+            else:
+                await pilot.click("#cancel")
+        await pilot.pause()
+
+    assert app._result_seen
+    assert app._result is None
+    assert dialog.safe_dismiss_results == [None]
+    assert dialog.dismiss_results == [None]
+    assert dialog.persisted_last_directories == [tmp_path]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dialog_type", [EnhancedFileOpen, EnhancedFileSave])
+@pytest.mark.parametrize(
+    ("open_surface", "surface_selector"),
+    [
+        ("path", "#path-input"),
+        ("search", "#search-input"),
+        ("recent", "#recent-locations"),
+        ("bookmarks", "#bookmarks-panel"),
+    ],
+)
+async def test_file_dialog_sub_surfaces_peel_on_escape_and_clicks_stay_inside(
+    tmp_path,
+    dialog_type,
+    open_surface,
+    surface_selector,
+):
+    dialog = _safe_dialog(
+        dialog_type,
+        tmp_path,
+        f"surface_{dialog_type.__name__}_{open_surface}",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        key = {
+            "path": "ctrl+l",
+            "search": "ctrl+f",
+            "recent": "ctrl+r",
+            "bookmarks": "ctrl+b",
+        }[open_surface]
+        await pilot.press(key)
+        await pilot.pause()
+
+        await pilot.click(surface_selector)
+        await pilot.pause()
+        assert app.screen is dialog
+        assert not app._result_seen
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is dialog
+        assert not app._result_seen
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert app._result_seen
+    assert app._result is None
+
+
+def test_application_import_keeps_enhanced_file_dialog_mro_consistent() -> None:
+    """The application and public enhanced base import without an MRO conflict."""
+    import tldw_chatbook.app  # noqa: F401
+
+    assert issubclass(EnhancedFileDialog, FileSystemPickerScreen)
+
+
 def test_file_list_highlight_is_visible():
     """The file list's selected-row highlight must not blend into $surface.
 
@@ -1186,3 +1505,78 @@ def test_file_list_highlight_is_visible():
     assert "$surface" not in block, (
         "Highlighted row must not fall back to the near-invisible $surface color"
     )
+
+
+@pytest.mark.asyncio
+async def test_search_keystrokes_debounce_into_one_filtered_repopulation(tmp_path):
+    """A search-keystroke burst coalesces into ONE repopulation (task-15471).
+
+    Before task-15471 every ``search_filter`` assignment (one per
+    Input.Changed keystroke) rebuilt the whole option list synchronously on
+    the event loop -- measured at ~120 ms per keystroke on a 1000-file
+    directory. Now a burst only (re)arms the debounce timer; the single
+    deferred rebuild applies the final query, so the visible set is
+    unchanged from the pre-debounce behavior.
+    """
+    for name in ("alpha.txt", "beta.txt", "gamma.txt"):
+        (tmp_path / name).write_text("x")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Debounced Search",
+        context="test_debounced_search",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        repopulates = {"count": 0}
+        real_repopulate = dir_nav._repopulate_display
+
+        def counting_repopulate() -> None:
+            repopulates["count"] += 1
+            real_repopulate()
+
+        dir_nav._repopulate_display = counting_repopulate
+
+        # Three "keystrokes" -- exactly what the dialog's _on_search_changed
+        # does per Input.Changed. Watchers run synchronously on assignment,
+        # so a per-keystroke rebuild would already have counted here.
+        for fragment in ("b", "be", "bet"):
+            dir_nav.search_filter = fragment
+        assert repopulates["count"] == 0, (
+            "a keystroke must only arm the debounce timer, not rebuild inline"
+        )
+
+        # After the debounce interval: exactly one rebuild, final query applied.
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if repopulates["count"]:
+                break
+        assert repopulates["count"] == 1
+
+        visible = {
+            dir_nav.get_option_at_index(index).location.name
+            for index in range(dir_nav.option_count)
+        }
+        assert "beta.txt" in visible
+        assert "alpha.txt" not in visible
+        assert "gamma.txt" not in visible
+
+        # Clearing is a RESTORE, not a keystroke (task-15471 fix round,
+        # review minor 4): Esc / the Clear button empty the filter and the
+        # unfiltered list must be back IMMEDIATELY -- the watcher runs
+        # synchronously on assignment, so the rebuild has already happened
+        # by the next line, with no debounce interval in between.
+        dir_nav.search_filter = ""
+        assert repopulates["count"] == 2
+        dir_nav._repopulate_display = real_repopulate
+        restored = {
+            dir_nav.get_option_at_index(index).location.name
+            for index in range(dir_nav.option_count)
+        }
+        assert {"alpha.txt", "beta.txt", "gamma.txt"} <= restored

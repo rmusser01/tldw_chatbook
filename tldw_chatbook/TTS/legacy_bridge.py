@@ -26,6 +26,11 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     ELEVENLABS_MODELS,
     legacy_catalog,
 )
+from tldw_chatbook.TTS.openai_compatible_config import (
+    OpenAIAuthenticationMode,
+    normalize_openai_authentication_mode,
+    normalize_openai_compatible_endpoint,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
@@ -34,16 +39,33 @@ logger = logging.getLogger(__name__)
 _DELEGATED_CLEANUP_FAILURE_NOTE = (
     "Legacy TTS cleanup also failed during caller cancellation"
 )
+_ALLTALK_DEFAULT_ENDPOINT = "http://127.0.0.1:7851"
 
 
 class UnknownLegacyModelError(LookupError):
-    """Raised when a compatibility internal model ID is not enumerated."""
+    """Raised when a compatibility internal model ID cannot be routed.
+
+    Enumerated ids route through ``LEGACY_ROUTES``; OpenAI ids also route
+    by their ``OPENAI_INTERNAL_ID_PREFIX`` alone, since custom
+    OpenAI-compatible endpoints define their own model names (TASK-15420).
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class LegacyRoute:
     provider_id: str
     internal_model_id: str
+
+
+#: The one place the OpenAI internal-id shape is defined; every builder of
+#: these ids must use :func:`openai_internal_model_id` so the resolver's
+#: prefix routing and the builders cannot drift apart.
+OPENAI_INTERNAL_ID_PREFIX = "openai_official_"
+
+
+def openai_internal_model_id(model_id: str) -> str:
+    """Compose the internal compatibility id for an OpenAI model."""
+    return f"{OPENAI_INTERNAL_ID_PREFIX}{model_id}"
 
 
 OPENAI_INTERNAL_IDS = (
@@ -190,22 +212,61 @@ def legacy_provider_config(
         }
     )
 
+    if provider_id == "alltalk":
+        # ``app_tts`` is the canonical AllTalk network authority. The legacy
+        # manager applies global and model sections at different precedence;
+        # allowing either to replace the URL would make admission authorize a
+        # different origin from the backend's eventual request.
+        for section_name, section in projected.items():
+            if section_name == "app_tts" or not isinstance(section, dict):
+                continue
+            section.pop("ALLTALK_TTS_URL", None)
+            section.pop("ALLTALK_TTS_URL_DEFAULT", None)
+
     if provider_id == "openai":
+        # Admission resolves the canonical endpoint from ``app_tts``. Remove
+        # model-level endpoint overrides before the production manager applies
+        # its highest-precedence section so synthesis uses that same authority.
+        for section_name, section in projected.items():
+            if (
+                section_name == "app_tts"
+                or not section_name.startswith("openai_official")
+                or not isinstance(section, dict)
+            ):
+                continue
+            section.pop("OPENAI_BASE_URL", None)
+        endpoint = normalize_openai_compatible_endpoint(
+            effective_tts.get(
+                "OPENAI_BASE_URL",
+                "https://api.openai.com/v1/audio/speech",
+            )
+        )
+        authentication_mode = normalize_openai_authentication_mode(
+            effective_tts.get("OPENAI_AUTH_MODE"),
+            endpoint=endpoint,
+        )
+        projected["app_tts"]["OPENAI_BASE_URL"] = endpoint.speech_url
+        projected["app_tts"]["OPENAI_AUTH_MODE"] = authentication_mode.value
         openai_key_locations = (
             ("api_settings.openai", "api_key"),
             ("openai_api", "api_key"),
             ("API", "openai_api_key"),
         )
-        api_key = os.getenv("OPENAI_API_KEY") or _first_mapping_value(
-            raw,
-            openai_key_locations,
-        )
-        api_key = api_key or _first_mapping_value(
-            app_config,
-            openai_key_locations,
-        )
-        if api_key:
-            projected["openai_api"] = {"api_key": api_key}
+        if authentication_mode is OpenAIAuthenticationMode.API_KEY:
+            api_key = os.getenv("OPENAI_API_KEY") or _first_mapping_value(
+                raw,
+                openai_key_locations,
+            )
+            api_key = api_key or _first_mapping_value(
+                app_config,
+                openai_key_locations,
+            )
+            if api_key:
+                projected["openai_api"] = {"api_key": api_key}
+        else:
+            for key in tuple(projected["app_tts"]):
+                if str(key).upper().startswith("OPENAI_API_KEY"):
+                    projected["app_tts"].pop(key, None)
     elif provider_id == "elevenlabs":
         elevenlabs_key_locations = (
             ("api_settings.elevenlabs", "api_key"),
@@ -251,8 +312,40 @@ def legacy_provider_config(
     return {"app_config": projected}
 
 
+def legacy_provider_outbound_endpoint(
+    provider_id: str,
+    app_config: Mapping[str, Any],
+) -> str:
+    """Resolve one legacy adapter's endpoint from its immutable config."""
+    if provider_id == "elevenlabs":
+        return "https://api.elevenlabs.io"
+    if provider_id not in {"openai", "alltalk"}:
+        return "http://localhost"
+    app_tts = app_config.get("app_tts")
+    settings = app_tts if isinstance(app_tts, Mapping) else {}
+    if provider_id == "openai":
+        endpoint = settings.get("OPENAI_BASE_URL")
+        return (
+            endpoint
+            if isinstance(endpoint, str) and endpoint
+            else "https://api.openai.com/v1/audio/speech"
+        )
+    for key in ("ALLTALK_TTS_URL", "ALLTALK_TTS_URL_DEFAULT"):
+        endpoint = settings.get(key)
+        if isinstance(endpoint, str) and endpoint:
+            return endpoint
+    return _ALLTALK_DEFAULT_ENDPOINT
+
+
 def resolve_legacy_route(internal_model_id: str) -> LegacyRoute:
     provider_id = LEGACY_ROUTES.get(internal_model_id)
+    if provider_id is None and internal_model_id.removeprefix(
+        OPENAI_INTERNAL_ID_PREFIX
+    ) not in ("", internal_model_id):
+        # Custom OpenAI-compatible endpoints (TASK-2260) define their own
+        # model names; the provider is already known from the prefix, so an
+        # exact-catalog check here would wrongly reject them (TASK-15420).
+        provider_id = "openai"
     if provider_id is None:
         raise UnknownLegacyModelError("The selected TTS model is not available")
     return LegacyRoute(provider_id, internal_model_id)
@@ -311,7 +404,7 @@ async def _close_delegated_stream(
     cancellation: asyncio.CancelledError | None = None
     while not close_task.done():
         try:
-            await asyncio.shield(close_task)
+            await asyncio.wait((close_task,))
         except asyncio.CancelledError as error:
             cancellation = cancellation or error
         except BaseException:
@@ -445,6 +538,12 @@ class LegacyBackendHost:
         self._manager_detached = False
         self._close_task: asyncio.Task[None] | None = None
         self._manager_close_task: asyncio.Task[None] | None = None
+
+    def admitted_outbound_endpoint(self) -> str:
+        return legacy_provider_outbound_endpoint(
+            self.provider_id,
+            self._app_config,
+        )
 
     async def _get_manager(self) -> TTSBackendManager:
         async with self._manager_lock:
@@ -658,6 +757,9 @@ class LegacyTTSAdapter:
     async def ensure_ready(self) -> None:
         return
 
+    def admitted_outbound_endpoint(self) -> str:
+        return self.host.admitted_outbound_endpoint()
+
     async def get_catalog(
         self,
         refresh: bool = False,
@@ -733,6 +835,29 @@ def legacy_provider_specs(
     ) -> TTSBackendManager:
         from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
 
+        app_tts = config.get("app_tts")
+        if (
+            _provider_id == "openai"
+            and isinstance(app_tts, Mapping)
+            and app_tts.get("OPENAI_AUTH_MODE") == OpenAIAuthenticationMode.NONE
+        ):
+
+            class ExplicitOpenAIAuthManager(TTSBackendManager):
+                def _prepare_backend_config(self, backend_id: str) -> dict[str, Any]:
+                    if not backend_id.startswith("openai_official"):
+                        return super()._prepare_backend_config(backend_id)
+                    prepared: dict[str, Any] = {}
+                    global_settings = self.app_config.get("global_tts_settings")
+                    if isinstance(global_settings, Mapping):
+                        prepared.update(deepcopy(dict(global_settings)))
+                    current_app_tts = self.app_config.get("app_tts")
+                    if isinstance(current_app_tts, Mapping):
+                        prepared.update(deepcopy(dict(current_app_tts)))
+                    prepared.pop("OPENAI_API_KEY", None)
+                    prepared.pop("OPENAI_API_KEY_fallback", None)
+                    return prepared
+
+            return ExplicitOpenAIAuthManager(app_config=config)
         return TTSBackendManager(app_config=config)
 
     create_manager = manager_factory or default_manager_factory

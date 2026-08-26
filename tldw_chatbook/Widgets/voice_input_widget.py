@@ -273,7 +273,7 @@ class VoiceInputWidget(Widget):
                 self.dictation_service.set_audio_device(event.value)
                 logger.info(f"Changed audio device to: {event.value}")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="voice-input-start-recording", thread=True)
     def start_recording(self):
         """Start voice recording and dictation."""
         try:
@@ -322,7 +322,7 @@ class VoiceInputWidget(Widget):
             logger.error(f"Failed to start recording: {e}")
             self._call_from_worker_or_now(self._set_error, f"Recording error: {str(e)}")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="voice-input-stop-recording", thread=True)
     def stop_recording(self):
         """Stop voice recording and get final transcript."""
         if not self.dictation_service:
@@ -445,11 +445,14 @@ class VoiceInputWidget(Widget):
             return "Processing..."
         return ""
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="voice-input-start-level-monitoring", thread=True)
     def _start_level_monitoring(self):
         """Start monitoring audio levels."""
         self.level_monitor_worker = self.run_worker(
-            self._monitor_audio_levels, exclusive=True, thread=True
+            self._monitor_audio_levels,
+            exclusive=True,
+            group="voice-input-monitor-levels",
+            thread=True,
         )
 
     def _stop_level_monitoring(self):
@@ -557,7 +560,9 @@ class VoiceInputWidget(Widget):
         """Start audio level monitoring."""
         if not hasattr(self, "level_monitor_worker") or not self.level_monitor_worker:
             self.level_monitor_worker = self.run_worker(
-                self._monitor_audio_levels, exclusive=True
+                self._monitor_audio_levels,
+                exclusive=True,
+                group="voice-input-monitor-levels",
             )
 
     def _set_audio_level(self, level: float):

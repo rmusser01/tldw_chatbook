@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
+import pytest
+
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import ModelDiscoveryCache
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
@@ -83,6 +88,146 @@ def test_cache_list_returns_immutable_snapshot():
     assert [m.model_id for m in listed] == ["gpt-4.1"]
 
 
+def test_cache_lru_touch_keeps_old_entry_over_newer_untouched_entry():
+    cache = ModelDiscoveryCache(max_snapshots=3, max_models=3)
+    for endpoint in ("old", "middle", "newer"):
+        cache.replace(
+            "Custom",
+            endpoint,
+            (model(endpoint, endpoint_fingerprint=endpoint),),
+        )
+
+    assert [item.model_id for item in cache.list("Custom", "old")] == ["old"]
+    cache.replace(
+        "Custom",
+        "newest",
+        (model("newest", endpoint_fingerprint="newest"),),
+    )
+
+    assert cache.has_snapshot("Custom", "old")
+    assert not cache.has_snapshot("Custom", "middle")
+    assert [item.model_id for item in cache.list("Custom")] == [
+        "newer",
+        "newest",
+        "old",
+    ]
+
+
+def test_cache_model_budget_evicts_whole_snapshots_without_partial_values():
+    cache = ModelDiscoveryCache(max_snapshots=10, max_models=3)
+    cache.replace("Custom", "one", tuple(model(f"one-{i}") for i in range(2)))
+    cache.replace("Custom", "two", tuple(model(f"two-{i}") for i in range(2)))
+
+    assert cache.list("Custom", "one") == ()
+    assert [item.model_id for item in cache.list("Custom", "two")] == [
+        "two-0",
+        "two-1",
+    ]
+    assert cache.model_count == 2
+
+
+def test_cache_concurrent_replace_list_and_clear_remain_bounded():
+    cache = ModelDiscoveryCache(max_snapshots=20, max_models=40)
+    for index in range(4):
+        cache.replace(
+            "Evict",
+            f"populated-{index}",
+            (model(f"evict-{index}", provider_list_key="Evict"),),
+        )
+    barrier = Barrier(9)
+
+    def mutate(worker: int) -> None:
+        barrier.wait()
+        for index in range(100):
+            endpoint = f"endpoint-{worker}-{index}"
+            cache.replace(
+                "Custom",
+                endpoint,
+                (model(f"model-{worker}-{index}", endpoint_fingerprint=endpoint),),
+            )
+            cache.list("Custom", endpoint)
+
+    def invalidate() -> None:
+        barrier.wait()
+        cache.clear("Evict")
+
+    with ThreadPoolExecutor(max_workers=9) as executor:
+        futures = [executor.submit(mutate, worker) for worker in range(8)]
+        futures.append(executor.submit(invalidate))
+        for future in futures:
+            future.result()
+
+    assert cache.list("Evict") == ()
+    assert cache.snapshot_count <= 20
+    assert cache.model_count <= 40
+    assert len(cache.list("Custom")) == cache.model_count
+
+
+@pytest.mark.parametrize(
+    ("provider", "endpoint"),
+    (("x" * 129, "endpoint"), ("Custom", "x" * 513), (object(), "endpoint")),
+)
+def test_cache_rejects_unbounded_or_non_string_snapshot_identity(provider, endpoint):
+    cache = ModelDiscoveryCache()
+
+    with pytest.raises((TypeError, ValueError), match="identity"):
+        cache.replace(provider, endpoint, ())
+
+    assert cache.snapshot_count == 0
+
+
+def test_cache_rejects_non_model_values_without_partial_snapshot():
+    cache = ModelDiscoveryCache()
+
+    with pytest.raises(TypeError, match="model snapshot"):
+        cache.replace("Custom", "endpoint", (model("valid"), object()))
+
+    assert not cache.has_snapshot("Custom", "endpoint")
+
+
+def test_cache_rejects_snapshot_over_model_budget_without_replacing_current():
+    cache = ModelDiscoveryCache(max_models=2)
+    cache.replace("Custom", "endpoint", (model("current"),))
+
+    with pytest.raises(ValueError, match="bounds"):
+        cache.replace(
+            "Custom",
+            "endpoint",
+            tuple(model(f"too-many-{index}") for index in range(3)),
+        )
+
+    assert [item.model_id for item in cache.list("Custom", "endpoint")] == ["current"]
+
+
+def test_cache_stops_oversized_generator_at_max_plus_one_and_preserves_snapshot():
+    cache = ModelDiscoveryCache(max_models=2)
+    cache.replace("Custom", "endpoint", (model("current"),))
+    consumed = 0
+
+    def infinite_models():
+        nonlocal consumed
+        while True:
+            consumed += 1
+            yield model(f"generated-{consumed}")
+
+    with pytest.raises(ValueError, match="bounds"):
+        cache.replace("Custom", "endpoint", infinite_models())
+
+    assert consumed == 3
+    assert [item.model_id for item in cache.list("Custom", "endpoint")] == ["current"]
+
+
+@pytest.mark.parametrize("model_id", ("", "x" * 121, "unsafe\nmodel"))
+def test_cache_rejects_invalid_model_id_without_replacing_current(model_id):
+    cache = ModelDiscoveryCache()
+    cache.replace("Custom", "endpoint", (model("current"),))
+
+    with pytest.raises(ValueError, match="model snapshot"):
+        cache.replace("Custom", "endpoint", (model(model_id),))
+
+    assert [item.model_id for item in cache.list("Custom", "endpoint")] == ["current"]
+
+
 def test_merge_preserves_saved_order_then_adds_discovered_models():
     merged = merge_saved_and_discovered_models(
         saved_model_ids=["gpt-4.1", "gpt-4.1-mini"],
@@ -102,7 +247,7 @@ def test_merge_preserves_saved_order_then_adds_discovered_models():
     assert merged[-1].persisted is False
 
 
-def test_merge_discovered_duplicate_of_saved_is_saved_and_persisted():
+def test_merge_discovered_duplicate_of_saved_preserves_endpoint_provenance():
     merged = merge_saved_and_discovered_models(
         saved_model_ids=["gpt-4.1-mini"],
         discovered_models=(model("gpt-4.1-mini"),),
@@ -111,8 +256,22 @@ def test_merge_discovered_duplicate_of_saved_is_saved_and_persisted():
     )
 
     assert len(merged) == 1
-    assert merged[0].source == "saved"
+    assert merged[0].source == "persisted_discovered"
     assert merged[0].persisted is True
+
+
+def test_merge_saved_model_absent_from_endpoint_remains_saved_only():
+    merged = merge_saved_and_discovered_models(
+        saved_model_ids=["retired-model", "current-model"],
+        discovered_models=(model("current-model"),),
+        provider="OpenAI",
+        provider_list_key="OpenAI",
+    )
+
+    assert [(entry.model_id, entry.source) for entry in merged] == [
+        ("retired-model", "saved"),
+        ("current-model", "persisted_discovered"),
+    ]
 
 
 def test_vision_false_does_not_make_capabilities_known():

@@ -18,7 +18,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
 from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
@@ -78,7 +78,7 @@ _ECHO_CONSUMED = object()
 class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPToolsMode {
         width: 1fr;
         height: 100%;
@@ -87,6 +87,45 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     #mcp-tools-filter-bar {
         height: auto;
         min-height: 0;
+    }
+    #mcp-tools-local-config {
+        height: auto;
+        min-height: 0;
+        padding: 0 1 1 1;
+        background: $surface;
+    }
+    #mcp-tools-local-config-title-row,
+    #mcp-tools-workspace-row {
+        height: auto;
+        min-height: 0;
+    }
+    #mcp-tools-local-config-title {
+        width: 1fr;
+        text-style: bold;
+        content-align: left middle;
+    }
+    #mcp-tools-local-enabled {
+        width: 8;
+    }
+    #mcp-tools-local-enabled-state {
+        width: 10;
+        content-align: right middle;
+        text-style: bold;
+    }
+    #mcp-tools-local-config-help,
+    #mcp-tools-local-config-status {
+        height: auto;
+        color: $text-muted;
+    }
+    #mcp-tools-local-config-status.is-error {
+        color: $error;
+        text-style: bold;
+    }
+    #mcp-tools-workspace-root {
+        width: 1fr;
+    }
+    #mcp-tools-workspace-save {
+        width: 14;
     }
     #mcp-tools-filter-text {
         width: 1fr;
@@ -98,7 +137,7 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     #mcp-tools-filter-server-slot Select {
         width: 28;
     }
-    /* T7 (P3 UX batch): same fix as MCPServersMode.DEFAULT_CSS's
+    /* T7 (P3 UX batch): same fix as MCPServersMode.BUNDLED_CSS's
     #mcp-servers-table -- height: auto + max-height: 70% instead of height:
     1fr, so the table hugs its own row count instead of ballooning to fill
     the canvas. */
@@ -131,6 +170,20 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             super().__init__()
             self.action_key = action_key
 
+    class LocalToolsEnabledChanged(Message, namespace="mcp_tools_mode"):
+        """Persist the workspace, web, and Watchlists provider master switch."""
+
+        def __init__(self, enabled: bool) -> None:
+            super().__init__()
+            self.enabled = enabled
+
+    class WorkspaceRootSaveRequested(Message, namespace="mcp_tools_mode"):
+        """Request validation and persistence of the workspace root."""
+
+        def __init__(self, workspace_root: str) -> None:
+            super().__init__()
+            self.workspace_root = workspace_root
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._tools: list[HubTool] = []
@@ -154,6 +207,43 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         self._displayed_server_value: Any = Select.NULL
 
     def compose(self) -> ComposeResult:
+        with Vertical(id="mcp-tools-local-config"):
+            with Horizontal(id="mcp-tools-local-config-title-row"):
+                yield Static(
+                    "Local workspace, web, and Watchlists tools",
+                    id="mcp-tools-local-config-title",
+                )
+                yield Checkbox(
+                    "On",
+                    value=False,
+                    id="mcp-tools-local-enabled",
+                )
+                yield Static("Disabled", id="mcp-tools-local-enabled-state")
+            yield Static(
+                "Available by default. Calls still follow Ask, Allow, or Off permissions.",
+                id="mcp-tools-local-config-help",
+                markup=False,
+            )
+            with Horizontal(id="mcp-tools-workspace-row"):
+                yield Input(
+                    placeholder="Workspace root (blank uses the app folder)",
+                    id="mcp-tools-workspace-root",
+                )
+                yield Button(
+                    "Save root",
+                    id="mcp-tools-workspace-save",
+                    classes="console-action-primary",
+                    compact=True,
+                    tooltip=(
+                        "Save this workspace root for the next Console agent run; "
+                        "blank uses the app folder."
+                    ),
+                )
+            yield Static(
+                "Changes apply to the next Console agent run.",
+                id="mcp-tools-local-config-status",
+                markup=False,
+            )
         with Horizontal(id="mcp-tools-filter-bar", classes="ds-toolbar"):
             yield Input(placeholder="Filter tools…", id="mcp-tools-filter-text")
             # The filter Select is mounted dynamically (see
@@ -215,6 +305,54 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         self._has_tags = any(tool.tags for tool in self._tools)
         await self._rebuild_server_select()
         self._apply_filter()
+
+    def update_local_config(
+        self,
+        *,
+        enabled: bool,
+        workspace_root: str,
+        visible: bool,
+    ) -> None:
+        """Refresh local-tool controls from persisted configuration truth.
+
+        Args:
+            enabled: State of the workspace, web, and Watchlists master switch.
+            workspace_root: Persisted workspace confinement root, or an empty
+                string when the app launch directory is the root.
+            visible: Whether the local-source configuration panel is visible.
+        """
+        panel = self.query_one("#mcp-tools-local-config", Vertical)
+        panel.display = visible
+        checkbox = self.query_one("#mcp-tools-local-enabled", Checkbox)
+        root_input = self.query_one("#mcp-tools-workspace-root", Input)
+        with checkbox.prevent(Checkbox.Changed):
+            checkbox.value = bool(enabled)
+        with root_input.prevent(Input.Changed):
+            root_input.value = workspace_root
+        self._render_local_enabled_state(bool(enabled))
+        self.set_local_config_status(
+            "Changes apply to the next Console agent run.", error=False
+        )
+
+    def set_local_config_status(self, message: str, *, error: bool) -> None:
+        """Render persistence or validation feedback beside the controls.
+
+        Args:
+            message: User-facing status text.
+            error: Whether to apply the error-state presentation.
+        """
+        status = self.query_one("#mcp-tools-local-config-status", Static)
+        status.update(message)
+        status.set_class(error, "is-error")
+
+    def _render_local_enabled_state(self, enabled: bool) -> None:
+        self.query_one("#mcp-tools-local-enabled-state", Static).update(
+            "Enabled" if enabled else "Disabled"
+        )
+
+    def _request_workspace_root_save(self) -> None:
+        value = self.query_one("#mcp-tools-workspace-root", Input).value
+        self.post_message(self.WorkspaceRootSaveRequested(value))
 
     def update_states(self, states: dict[tuple[str, str], EffectiveToolState]) -> None:
         """Refresh the cached State-column data in place and re-render rows,
@@ -309,7 +447,9 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             # InvalidSelectValueError when the Select is constructed below.
             self._filter_server_key = None
         value: Any = (
-            self._filter_server_key if self._filter_server_key is not None else Select.NULL
+            self._filter_server_key
+            if self._filter_server_key is not None
+            else Select.NULL
         )
         # Select's `value` is a `var` with `init=False` -- mounting it only
         # actually FIRES a `Changed` echo when the constructor value differs
@@ -321,11 +461,15 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         # servers" (there is no second, later mount to re-arm it) -- so only
         # arm the guard when an echo is actually coming; otherwise mark it
         # pre-consumed.
-        self._displayed_server_value = value if value is not Select.NULL else _ECHO_CONSUMED
+        self._displayed_server_value = (
+            value if value is not Select.NULL else _ECHO_CONSUMED
+        )
         slot = self.query_one("#mcp-tools-filter-server-slot", Vertical)
         await slot.remove_children()
         await slot.mount(
-            Select(options, id="mcp-tools-filter-server", prompt="All servers", value=value)
+            Select(
+                options, id="mcp-tools-filter-server", prompt="All servers", value=value
+            )
         )
 
     def _apply_filter(self) -> None:
@@ -355,7 +499,9 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         # being read as a selection -- see DataTableClickSelectMixin.
         self.repopulating_table()
         table.clear(columns=True)
-        table.add_columns(*(_TABLE_COLUMNS if self._has_tags else _TABLE_COLUMNS_NO_TAGS))
+        table.add_columns(
+            *(_TABLE_COLUMNS if self._has_tags else _TABLE_COLUMNS_NO_TAGS)
+        )
         seen_keys: set[str] = set()
         for tool in ordered:
             if tool.tool_id in seen_keys:
@@ -379,8 +525,12 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
                 )
             else:
                 state_cell = state_text("—", "muted")
-            server_cell = f"{tool.server_label} (stale)" if tool.stale else tool.server_label
-            schema_cell = "form" if parse_schema(tool.input_schema) is not None else "raw"
+            server_cell = (
+                f"{tool.server_label} (stale)" if tool.stale else tool.server_label
+            )
+            schema_cell = (
+                "form" if parse_schema(tool.input_schema) is not None else "raw"
+            )
             row_cells: list[Any] = [Text(tool.name), state_cell, Text(server_cell)]
             if self._has_tags:
                 tags_cell = ", ".join(tool.tags) if tool.tags else "—"
@@ -438,8 +588,23 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         ):
             self._displayed_server_value = _ECHO_CONSUMED
             return
-        self._filter_server_key = None if event.value is Select.NULL else str(event.value)
+        self._filter_server_key = (
+            None if event.value is Select.NULL else str(event.value)
+        )
         self._apply_filter()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id != "mcp-tools-local-enabled":
+            return
+        event.stop()
+        self._render_local_enabled_state(event.value)
+        self.post_message(self.LocalToolsEnabledChanged(event.value))
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "mcp-tools-workspace-root":
+            return
+        event.stop()
+        self._request_workspace_root_save()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
@@ -447,6 +612,10 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             self.post_message(self.ToolSelected(str(event.row_key.value)))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "mcp-tools-workspace-save":
+            event.stop()
+            self._request_workspace_root_save()
+            return
         if event.button.id != "mcp-tools-empty-action":
             return
         event.stop()

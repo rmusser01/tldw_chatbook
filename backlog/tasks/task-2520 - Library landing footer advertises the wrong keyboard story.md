@@ -1,5 +1,5 @@
 ---
-id: task-2520
+id: TASK-2520
 title: Library landing footer advertises the wrong keyboard story
 status: To Do
 assignee: []

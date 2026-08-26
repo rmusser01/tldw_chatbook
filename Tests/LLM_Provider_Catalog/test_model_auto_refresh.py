@@ -333,22 +333,66 @@ async def test_zero_stale_after_hours_refetches_fresh_entry(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_disk_save_failure_still_returns_report(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "failure",
+    (OSError("disk full"), ValueError("https://user:secret@example.test/v1")),
+)
+async def test_disk_save_failure_still_returns_truthful_report(
+    tmp_path, monkeypatch, failure
+):
     saved_calls = []
     service = _service({"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls)
     store = ModelCatalogDiskStore(tmp_path / "cache.json")
 
     def failing_save():
-        raise OSError("disk full")
+        raise failure
 
     monkeypatch.setattr(store, "save", failing_save)
-    report = await service.refresh_stale_configured_providers(
-        catalog_settings=ModelCatalogSettings(),
-        disk_store=store,
-        provider_list_keys=("OpenAI",),
-    )
+    logged: list[str] = []
+    sink = logger.add(lambda message: logged.append(str(message)), level="WARNING")
+    try:
+        report = await service.refresh_stale_configured_providers(
+            catalog_settings=ModelCatalogSettings(),
+            disk_store=store,
+            provider_list_keys=("OpenAI",),
+        )
+    finally:
+        logger.remove(sink)
     assert report.outcomes[0].status == "refreshed"
     assert report.outcomes[0].new_model_ids == ("new-1",)
+    assert report.disk_write_failed is True
+    assert "available this session" in format_refresh_notification(report)
+    assert "secret" not in "".join(logged)
+
+
+@pytest.mark.asyncio
+async def test_disk_record_validation_failure_keeps_successful_refresh_truthful(
+    tmp_path, monkeypatch
+):
+    saved_calls = []
+    service = _service({"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls)
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+
+    def failing_record(*_args, **_kwargs):
+        raise ValueError("https://user:secret@example.test/v1")
+
+    monkeypatch.setattr(store, "record", failing_record)
+    logged: list[str] = []
+    sink = logger.add(lambda message: logged.append(str(message)), level="WARNING")
+    try:
+        report = await service.refresh_stale_configured_providers(
+            catalog_settings=ModelCatalogSettings(),
+            disk_store=store,
+            provider_list_keys=("OpenAI",),
+        )
+    finally:
+        logger.remove(sink)
+
+    assert report.outcomes[0].status == "refreshed"
+    assert report.outcomes[0].new_model_ids == ("new-1",)
+    assert report.disk_write_failed is True
+    assert "available this session" in format_refresh_notification(report)
+    assert "secret" not in "".join(logged)
 
 
 @pytest.mark.asyncio

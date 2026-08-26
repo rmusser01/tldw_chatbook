@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -73,7 +74,7 @@ async def _wait_for_library_conversation_selection(
         ) == conversation_id and expected_title in _visible_text(screen):
             await pilot.pause()
             return
-        await pilot.pause(0.05)
+        await asyncio.sleep(0.05)
     raise AssertionError(
         f"Conversation {conversation_id!r} was not selected. "
         f"selected={getattr(screen, '_selected_conversation_id', None)!r}; "
@@ -162,6 +163,16 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
 
         visible = _visible_text(screen)
 
+        # task-2859 item 7: the canvas title drops the "Library " prefix
+        # and matches the rail row's own "Search / RAG" spacing (it used
+        # to read "Library Search/RAG", disagreeing with the rail on both
+        # counts).
+        assert (
+            str(screen.query_one("#library-rag-panel-title", Static).renderable)
+            == "Search / RAG"
+        )
+        assert "Library Search/RAG" not in visible
+
         # A1: exactly one quiet line for the empty-query gate; no callout,
         # no summary Static, no "Run disabled:" reason, no recovery dump.
         assert screen.query_one("#library-rag-query-input")
@@ -206,7 +217,11 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
 
         # A3: top-k surfaces on the Evidence heading, the single mode
         # surface is the toggle button, not a separate status line.
-        assert "Evidence · top 5 per source" in visible
+        # TASK-15020/B3: that depth is the ACTIVE RAG PROFILE's
+        # `search.default_top_k` -- 15 on the shipped default profile
+        # (`hybrid_basic`), which is what an isolated test profile resolves
+        # to -- not the old hardcoded 5.
+        assert "Evidence · top 15 per source" in visible
         assert not screen.query("#library-rag-query-status")
         assert "No evidence yet. Run Search/RAG to populate results." in visible
         assert screen.query_one("#library-rag-evidence-empty-guidance", Static)
@@ -275,6 +290,17 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
             str(screen.query_one("#library-rag-select-result-0", Button).label)
             == "Selected evidence"
         )
+        # task-2859 item 10: "N results for 'query'" headline above the
+        # evidence cards -- there used to be no line naming the result
+        # count or the query that produced it.
+        assert (
+            str(
+                screen.query_one(
+                    "#library-rag-results-count-line", Static
+                ).renderable
+            )
+            == "1 result for 'What does the research note say?'."
+        )
         # B3: the carry-through jargon line is retired outright -- selecting
         # evidence needs no permanent caption.
         assert not screen.query("#library-rag-attribution-placeholder")
@@ -285,6 +311,15 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
             screen.query_one("#library-rag-use-selected-in-console", Button).disabled
             is False
         )
+        # Note on the snippet-padding half of task-2859 item 10: this
+        # harness (`DestinationHarness`) hosts the screen under a bare
+        # `App` with no `CSS_PATH` of its own -- only widget-level
+        # `DEFAULT_CSS` Python blocks are loaded, never the app bundle
+        # (`css/tldw_cli_modular.tcss`), so `.library-rag-result-snippet`'s
+        # new padding rule (bundle-only CSS) cannot be observed via
+        # rendered geometry here. That check lives in
+        # `Tests/UI/test_library_shell.py`, whose `LibraryHarness` sets
+        # `CSS_PATH` to the real bundle for exactly this reason.
 
 
 @pytest.mark.asyncio
@@ -545,26 +580,21 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
 
         visible = _visible_text(screen)
 
+        # task-4023 AC#7: the empty state is TWO lines now -- the fact and
+        # one purpose+next-action sentence. The old stacked sentences
+        # (separate next-action line, purpose dump, and a meaningless
+        # "No Collection selected." with zero collections) must not return.
         assert "No Collections yet." in visible
         assert (
-            "Create a local Collection record to start reviewing saved content."
-            in visible
+            "Collections gather saved content for reading and review — "
+            "create one below to start." in visible
         )
-        assert "No stored collection items are available locally yet." in visible
-        assert (
-            "Collections are for reading, reviewing, and reusing saved content."
-            in visible
-        )
-        assert "No Collection selected." in visible
+        assert "No stored collection items are available locally yet." not in visible
+        assert "No Collection selected." not in visible
         assert not screen.query("#library-collection-empty-reader")
         assert not screen.query("#library-collection-empty-reader-title")
         assert not screen.query("#library-collection-form-action-state")
         assert not screen.query("#library-collection-form-action-boundary")
-
-        occurrences = visible.count(
-            "No stored collection items are available locally yet."
-        )
-        assert occurrences == 1
 
         form_guidance = screen.query_one(
             "#library-collection-form-guidance", Static

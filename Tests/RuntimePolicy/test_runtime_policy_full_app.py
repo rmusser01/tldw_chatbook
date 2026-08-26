@@ -17,8 +17,7 @@ from tldw_chatbook.runtime_policy.bootstrap import (
     set_authoritative_runtime_source,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
-from tldw_chatbook.UI.Screens.media_screen import MediaScreen
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 
 class ControllableRuntimeStore:
@@ -69,12 +68,12 @@ async def full_app_with_controllable_runtime_store(
         pass
 
 
-def _configure_full_app_media_startup(
+def _configure_full_app_library_startup(
     app: TldwCli,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
-    app._initial_tab_value = "media"
+    app._initial_tab_value = "library"
     real_get_cli_setting = app_module.get_cli_setting
 
     def get_cli_setting_without_splash(section, key=None, default=None):
@@ -94,16 +93,16 @@ def _configure_full_app_media_startup(
     monkeypatch.setattr(app, "_refresh_model_catalogs", skip_model_catalog_refresh)
 
 
-async def _wait_for_mounted_media_screen(app: TldwCli, pilot) -> MediaScreen:
+async def _wait_for_mounted_library_screen(app: TldwCli, pilot) -> LibraryScreen:
     deadline = asyncio.get_running_loop().time() + 5.0
     while asyncio.get_running_loop().time() < deadline:
         if getattr(app, "_initial_screen_pushed", False) and isinstance(
             app.screen,
-            MediaScreen,
+            LibraryScreen,
         ):
             return app.screen
         await pilot.pause(0.01)
-    raise AssertionError("full app did not mount its configured MediaScreen")
+    raise AssertionError("full app did not mount its configured LibraryScreen")
 
 
 @pytest.mark.asyncio
@@ -382,15 +381,16 @@ async def test_full_app_coordinator_store_failure_retains_every_precommit_surfac
     screen_calls: list[str] = []
 
     async def record_screen_callback(
-        _screen: MediaScreen,
+        _screen: LibraryScreen,
         runtime_backend: str,
     ) -> None:
         screen_calls.append(runtime_backend)
 
     monkeypatch.setattr(
-        MediaScreen,
+        LibraryScreen,
         "handle_runtime_backend_changed",
         record_screen_callback,
+        raising=False,
     )
     notifications: list[tuple[str, str | None]] = []
     monkeypatch.setattr(
@@ -400,10 +400,10 @@ async def test_full_app_coordinator_store_failure_retains_every_precommit_surfac
             (message, severity)
         ),
     )
-    _configure_full_app_media_startup(app, monkeypatch)
+    _configure_full_app_library_startup(app, monkeypatch)
 
     async with app.run_test() as pilot:
-        mounted_screen = await _wait_for_mounted_media_screen(app, pilot)
+        mounted_screen = await _wait_for_mounted_library_screen(app, pilot)
         assert app.screen is mounted_screen
         notifications.clear()
         warnings: list[str] = []
@@ -595,24 +595,24 @@ async def test_full_app_coordinator_success_orders_commit_rebind_and_actual_scre
     monkeypatch.setattr(provider, "rebind_app_config", record_rebind)
 
     async def record_screen_callback(
-        screen: MediaScreen,
+        screen: LibraryScreen,
         runtime_backend: str,
     ) -> None:
         assert app.screen is screen
         assert app.app_config is candidate_config
         assert provider.app_config is candidate_config
         events.append("screen_callback")
-        screen.media_window.runtime_state.reset_for_backend(runtime_backend)
 
     monkeypatch.setattr(
-        MediaScreen,
+        LibraryScreen,
         "handle_runtime_backend_changed",
         record_screen_callback,
+        raising=False,
     )
-    _configure_full_app_media_startup(app, monkeypatch)
+    _configure_full_app_library_startup(app, monkeypatch)
 
     async with app.run_test() as pilot:
-        await _wait_for_mounted_media_screen(app, pilot)
+        await _wait_for_mounted_library_screen(app, pilot)
 
         result = await app.handle_runtime_backend_changed(
             "server",
@@ -652,20 +652,21 @@ async def test_full_app_coordinator_contains_actual_screen_callback_failure_afte
     callback_sentinel = "SCREEN-CALLBACK-PRIVATE-SENTINEL"
 
     async def raise_from_screen(
-        _screen: MediaScreen,
+        _screen: LibraryScreen,
         _runtime_backend: str,
     ) -> None:
         raise RuntimeError(callback_sentinel)
 
     monkeypatch.setattr(
-        MediaScreen,
+        LibraryScreen,
         "handle_runtime_backend_changed",
         raise_from_screen,
+        raising=False,
     )
-    _configure_full_app_media_startup(app, monkeypatch)
+    _configure_full_app_library_startup(app, monkeypatch)
 
     async with app.run_test() as pilot:
-        await _wait_for_mounted_media_screen(app, pilot)
+        await _wait_for_mounted_library_screen(app, pilot)
         warnings: list[str] = []
         sink = app_module.logger.add(
             warnings.append,
@@ -697,7 +698,7 @@ async def test_full_app_coordinator_contains_actual_screen_callback_failure_afte
 
 
 @pytest.mark.asyncio
-async def test_full_app_coordinator_without_candidate_updates_mounted_media_screen(
+async def test_full_app_coordinator_without_candidate_updates_mounted_library_screen(
     full_app_with_controllable_runtime_store,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -720,19 +721,23 @@ async def test_full_app_coordinator_without_candidate_updates_mounted_media_scre
     )
     refreshes: list[str] = []
 
-    async def record_refresh(window: MediaWindow, runtime_backend: str) -> None:
-        window.runtime_state.reset_for_backend(runtime_backend)
-        refreshes.append(window.runtime_state.runtime_backend)
+    async def record_refresh(
+        screen: LibraryScreen,
+        runtime_backend: str,
+    ) -> None:
+        assert screen is app.screen
+        refreshes.append(runtime_backend)
 
     monkeypatch.setattr(
-        MediaWindow,
+        LibraryScreen,
         "handle_runtime_backend_changed",
         record_refresh,
+        raising=False,
     )
-    _configure_full_app_media_startup(app, monkeypatch)
+    _configure_full_app_library_startup(app, monkeypatch)
 
     async with app.run_test() as pilot:
-        mounted_screen = await _wait_for_mounted_media_screen(app, pilot)
+        mounted_screen = await _wait_for_mounted_library_screen(app, pilot)
         refreshes.clear()
 
         result = await app.handle_runtime_backend_changed("local")
@@ -740,7 +745,6 @@ async def test_full_app_coordinator_without_candidate_updates_mounted_media_scre
         assert app.screen is mounted_screen
         assert not hasattr(app, "media_runtime_state")
         assert not hasattr(mounted_screen, "media_runtime_state")
-        assert mounted_screen.media_window.runtime_state.runtime_backend == "local"
 
     assert result is True
     assert app.current_runtime_backend == "local"

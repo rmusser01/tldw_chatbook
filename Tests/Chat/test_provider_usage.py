@@ -271,3 +271,29 @@ def test_an_infinite_token_count_degrades_instead_of_raising():
 
     assert restored is not None
     assert restored.output == 0
+
+
+def test_openai_chat_payload_reads_cache_creation_tokens_as_write():
+    """The chat-completions branch splits our cache-write extension key.
+
+    TASK-18607: the Console gateway's normalization preserves Anthropic's
+    write bucket as ``prompt_tokens_details.cache_creation_tokens``;
+    ``prompt_tokens`` still INCLUDES it (readers of the flat sum are
+    unchanged), so it must be subtracted like the read bucket.
+    """
+    payload = {
+        "prompt_tokens": 2000,
+        "completion_tokens": 150,
+        "total_tokens": 2150,
+        "prompt_tokens_details": {
+            "cached_tokens": 1536,
+            "cache_creation_tokens": 111,
+        },
+    }
+    usage = ProviderUsage.from_provider_payload(
+        payload, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    assert usage.uncached_input == 353
+    assert usage.cache_read == 1536
+    assert usage.cache_write == 111
+    assert usage.output == 150

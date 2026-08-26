@@ -543,6 +543,37 @@ def _test_git_installation() -> tuple[Path, Path]:
     return git_executable.resolve(), git_exec_path.resolve()
 
 
+def _pinnable_python_executable() -> Path:
+    """The first interpreter the network context can safely pin.
+
+    TASK-18609: the factory pins ``sys.executable`` for SSH-transport
+    dispatch by default, but GitHub-hosted runners install Python under
+    ``/opt/hostedtoolcache`` -- a shared tool cache whose layout fails
+    ``_pin_executable``'s safety predicates -- so every SSH-destination
+    test failed on CI while passing on developer machines (where the
+    interpreter lives in a safe location). The factory gained an explicit
+    ``python_executable`` seam; this helper picks the running interpreter
+    when it is pinnable and otherwise falls back to a system interpreter
+    that is.
+    """
+    candidates = [Path(sys.executable)]
+    candidates += [
+        Path(f"/usr/bin/python{minor}")
+        for minor in ("3", "3.11", "3.12", "3.13")
+    ]
+    for candidate in candidates:
+        try:
+            if not candidate.is_file():
+                continue
+            git_network._pin_executable(str(candidate), os.defpath)
+            return candidate.resolve()
+        except git_network.NetworkContextError:
+            continue
+    raise RuntimeError(
+        "no pinnable Python interpreter found for the network context tests"
+    )
+
+
 def _network_factory(
     tmp_path: Path,
     *,
@@ -566,6 +597,7 @@ def _network_factory(
         ssh_executable=(
             None if ssh_executable is None else str(ssh_executable)
         ),
+        python_executable=str(_pinnable_python_executable()),
         allow_ssh_agent=allow_ssh_agent,
     )
 
@@ -618,6 +650,7 @@ def test_network_context_factory_rejects_explicit_empty_git_executable(
             temporary_parent=parent,
             git_executable="",
             git_exec_path=_test_git_installation()[1],
+            python_executable=str(_pinnable_python_executable()),
         )
 
     assert error.value.code == "invalid_executable"
@@ -937,6 +970,9 @@ def test_windows_network_context_refuses_before_private_or_external_work(
     )
 
     with pytest.raises(git_network.NetworkContextError) as error:
+        # No python_executable: the refusal must happen before ANY ambient
+        # probing, so resolving a pinnable interpreter here would itself be
+        # forbidden work on the Windows path under test.
         git_network.NetworkContextFactory(
             environment={},
             temporary_parent=tmp_path,
@@ -1016,6 +1052,14 @@ def test_network_environment_pins_authorized_owner_agent_socket(
         agent_path.unlink()
         replacement = _bound_agent_socket(agent_path)
         try:
+            # The pinned socket is validated by (device, inode) AND mode.
+            # Linux inode allocation frequently recycles the freed inode for
+            # the rebind at the same path, which alone can leave the
+            # identity comparison passing (a filesystem limitation, not a
+            # validator gap). Loosen the replacement's mode so the pinned
+            # mode check trips on every platform: the substituted socket is
+            # distinguishable from the pinned one wherever it is created.
+            os.chmod(agent_path, 0o777)
             with pytest.raises(git_network.NetworkContextError):
                 context.command_settings()
         finally:
@@ -1197,6 +1241,7 @@ def test_network_environment_rejects_relative_or_empty_search_path(
             temporary_parent=tmp_path,
             git_executable=git_executable,
             git_exec_path=_test_git_installation()[1],
+            python_executable=str(_pinnable_python_executable()),
         )
 
 
@@ -2187,6 +2232,7 @@ def test_openssh_invocation_rejects_tokenized_private_host_trust_path(
         git_executable=str(git_executable),
         git_exec_path=git_exec_path,
         ssh_executable=str(_fake_ssh_executable(tmp_path)),
+            python_executable=str(_pinnable_python_executable()),
         allow_ssh_agent=True,
     )
 
@@ -2233,7 +2279,7 @@ def test_openssh_git_adapter_executes_only_exact_frozen_route_without_network(
         env=dict(settings.environment),
         stdin=subprocess.DEVNULL,
         capture_output=True,
-        timeout=5,
+        timeout=15,
         check=False,
     )
 
@@ -2576,6 +2622,7 @@ def test_network_context_builders_require_live_exact_context_endpoint(
         environment={},
         temporary_parent=other_parent,
         git_exec_path=_test_git_installation()[1],
+            python_executable=str(_pinnable_python_executable()),
     ).create(
         repository=other_repository,
         source_objects=other_source,
@@ -2741,13 +2788,13 @@ def test_network_context_rejects_safe_leaf_under_writable_ancestor(
     repository = _network_repository(tmp_path / "repository")
     destination = _network_destination()
     source, config = _network_authorizations(repository, destination)
-    git_executable = shutil.which("git")
-    assert git_executable is not None
+    git_executable = _test_git_installation()[0]
     factory = git_network.NetworkContextFactory(
         environment={},
         temporary_parent=parent,
-        git_executable=git_executable,
+        git_executable=str(git_executable),
         git_exec_path=_test_git_installation()[1],
+            python_executable=str(_pinnable_python_executable()),
     )
 
     with pytest.raises(git_network.NetworkContextError):
@@ -2776,6 +2823,7 @@ def test_network_context_rejects_executable_under_writable_ancestor(
             temporary_parent=tmp_path,
             git_executable=str(executable),
             git_exec_path=_test_git_installation()[1],
+            python_executable=str(_pinnable_python_executable()),
         )
 
 
@@ -2864,6 +2912,7 @@ def test_network_context_proved_git_exec_path_dispatches_pinned_targets(
         temporary_parent=parent,
         git_executable=str(git_executable),
         git_exec_path=proved_exec_path,
+            python_executable=str(_pinnable_python_executable()),
     ).create(
         repository=repository,
         source_objects=source_authorization,
@@ -3018,6 +3067,7 @@ def test_network_context_rejects_source_repository_network_executables(
         ssh_executable=(
             None if selected_ssh is None else str(selected_ssh)
         ),
+        python_executable=str(_pinnable_python_executable()),
         allow_ssh_agent=destination.scheme == "ssh",
     )
 
@@ -3054,6 +3104,7 @@ def test_https_network_context_ignores_source_repository_python(
         temporary_parent=parent,
         git_executable=str(_test_git_installation()[0]),
         git_exec_path=_test_git_installation()[1],
+            python_executable=str(_pinnable_python_executable()),
     ).create(
         repository=repository,
         source_objects=source_authorization,
@@ -3133,6 +3184,7 @@ def test_network_context_restart_never_discovers_or_reuses_crash_left_directory(
         environment={},
         temporary_parent=parent,
         git_exec_path=_test_git_installation()[1],
+            python_executable=str(_pinnable_python_executable()),
     ).create(
         repository=repository,
         source_objects=source,

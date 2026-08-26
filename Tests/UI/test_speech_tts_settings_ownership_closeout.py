@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 import io
 import tomllib
 import wave
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +15,7 @@ from textual import on
 from textual.app import App
 from textual.containers import VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 from Tests.TTS.test_console_speak_autoplay import _FakeApp
 from Tests.TTS.test_stts_audio_cpp_generation import (
@@ -23,25 +23,26 @@ from Tests.TTS.test_stts_audio_cpp_generation import (
     _NativeService,
     _Response,
 )
+from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
 from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _build_test_app,
     _wait_for_selector,
 )
 from Tests.UI.test_settings_speech_tts_panel import (
+    _audio_cpp_state,
     _StyledDestinationHarness,
     _StyledPanelHarness,
-    _audio_cpp_state,
 )
 from Tests.UI.test_speech_profile_navigation import (
-    _SpeechHost,
     _playground_ready,
+    _SpeechHost,
     _wait_until,
 )
-from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
+from Tests.UI.test_speech_playground_pane_lifecycle import _runtime_observation
 from Tests.UI.test_studio_tts_preferences import _Host, _Store
-from tldw_chatbook.app import TldwCli
 from tldw_chatbook import config as config_module
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
@@ -64,7 +65,6 @@ from tldw_chatbook.TTS.TTS_Generation import (
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -241,7 +241,13 @@ class _StudioNativeService(_NativeService):
             provider_id="audio_cpp",
             model_id="second-model",
             voice_id="second-voice",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
             revisions=SimpleNamespace(provider_configuration=3),
+            sources={},
+            provider_option_sources={},
+            studio_preview=False,
         )
 
 
@@ -415,6 +421,41 @@ async def test_global_and_studio_controls_have_programmatic_labels_and_text_stat
         assert "only the Speech Studio" in _rendered_text(
             studio.query_one("#studio-tts-scope", Static)
         )
+
+
+async def test_global_details_disclosures_are_accessible_and_unframed() -> None:
+    app = _AccessiblePanelHarness(
+        state=_audio_cpp_state(saved_provider=True),
+        observation=None,
+        current_configuration_revision=41,
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        panel = app.query_one("#panel")
+        focus_chain = tuple(app.screen.focus_chain)
+
+        for selector in (
+            "#settings-speech-details",
+            "#settings-speech-scope-inspector",
+        ):
+            disclosure = panel.query_one(selector, Collapsible)
+            title = disclosure.query_one("CollapsibleTitle")
+            assert disclosure.collapsed is True
+            assert title.can_focus
+            assert title in focus_chain
+            assert not any(
+                ancestor.has_class("settings-focus-card")
+                for ancestor in disclosure.ancestors
+            )
+
+        primary = " ".join(
+            _rendered_text(widget)
+            for widget in panel.query(Static)
+            if widget.display and widget.is_on_screen
+        ).casefold()
+        assert "current status" in primary
+        assert "revision" not in primary
+        assert "provider_configuration" not in primary
 
 
 async def test_keyboard_order_reaches_primary_actions_and_status_does_not_steal_focus() -> (
@@ -826,6 +867,29 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
         assert settings_service.provider_operations == []
 
     catalog_service = FakeTTSService()
+    runtime_observation = _runtime_observation(
+        saved_mode="external",
+        applied_mode="external",
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint=fake_url,
+        active_endpoint=fake_url,
+        catalog_revision=11,
+        catalog_fresh=True,
+    )
+
+    async def start_and_test_audio_cpp() -> object:
+        return await catalog_service.get_catalog("audio_cpp", refresh=True)
+
+    async def audio_cpp_runtime_observation(
+        *, selected_model_id: str | None = None
+    ) -> object:
+        del selected_model_id
+        return runtime_observation
+
+    catalog_service.start_and_test_audio_cpp = start_and_test_audio_cpp  # type: ignore[attr-defined]
+    catalog_service.audio_cpp_runtime_observation = audio_cpp_runtime_observation  # type: ignore[attr-defined]
     native_service = _StudioNativeService(
         _Response(
             _CountingStream((_complete_wav(),)),
@@ -876,7 +940,7 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
                 refresh for _provider, refresh in catalog_service.catalog_calls
             )
 
-            playground.query_one("#tts-test-connection-btn", Button).press()
+            playground.query_one("#tts-refresh-catalog-btn", Button).press()
             await _wait_until(
                 pilot,
                 lambda: (
@@ -884,7 +948,15 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
                     == initial_refreshes + 1
                 ),
             )
-            await speech_host.workers.wait_for_complete()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    playground._audio_cpp_lifecycle_busy is None
+                    and not playground.query_one(
+                        "#tts-refresh-catalog-btn", Button
+                    ).disabled
+                ),
+            )
 
             playground.query_one("#tts-model-select", Select).value = "second-model"
             await _wait_until(
@@ -894,7 +966,6 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
                     for provider, model, _refresh in catalog_service.voice_calls
                 ),
             )
-            await speech_host.workers.wait_for_complete()
             playground.query_one("#tts-voice-select", Select).value = "second-voice"
             await pilot.pause()
             playground.query_one("#tts-refresh-catalog-btn", Button).press()
@@ -905,7 +976,7 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
                     == initial_refreshes + 2
                 ),
             )
-            await speech_host.workers.wait_for_complete()
+            await pilot.pause()
             assert playground.query_one("#tts-model-select", Select).value == (
                 "second-model"
             )
@@ -929,7 +1000,8 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
             )
             artifact = speech_host._stts_handler.playground_state().artifact
             assert artifact is not None
-            assert playground.current_audio_artifact is artifact
+            assert playground.current_audio_artifact == artifact
+            assert playground.current_audio_artifact is not artifact
             assert not playground.query_one("#audio-play-btn", Button).disabled
             with wave.open(str(artifact.path), "rb") as wav_file:
                 assert wav_file.getnchannels() == 1

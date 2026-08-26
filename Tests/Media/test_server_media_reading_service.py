@@ -2610,7 +2610,6 @@ async def test_server_service_routes_media_ingest_job_calls_and_payloads():
                 "chunk_overlap": 200,
                 "perform_chunking": True,
                 "generate_embeddings": False,
-                "force_regenerate_embeddings": False,
             },
             ["/tmp/document.html"],
         ),

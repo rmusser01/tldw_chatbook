@@ -9,7 +9,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input, Static
 
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import _conflict_type_label
@@ -77,7 +81,7 @@ def test_conflict_type_labels_are_plain_language() -> None:
     )
 
 
-class _SyncBarHarness(App[None]):
+class _SyncBarHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield SyncStatusWidget(
             current_owner="local",
@@ -93,13 +97,13 @@ async def test_sync_bar_labels_and_tooltips() -> None:
         await pilot.pause()
         server = app.query_one("#scheduling-owner-server")
         clear = app.query_one("#scheduling-clear-error")
-        assert server.label == "Server"
-        assert "http://127.0.0.1:8000" in (server.tooltip or "")
-        assert clear.label == "Clear errors"
-        assert clear.tooltip
+        assert str(server.label) == "Server (http://127.0.0.1:8000)"
+        assert server.tooltip == "Use the connected server as the Schedules owner."
+        assert str(clear.label) == "Clear"
+        assert clear.tooltip == "Clear the latest scheduling sync error."
 
 
-class _FormHarness(App[None]):
+class _FormHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield Static("harness")
 

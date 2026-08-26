@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, fields
+from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from uuid import UUID
 
 import pytest
 
+import tldw_chatbook.TTS.playground_types as playground_types
 from tldw_chatbook.TTS import (
     STTSGeneratedAudio,
+    STTSPlaygroundResultProjection,
     STTSPlaygroundRequest,
     TTSRequestedSelectionSnapshot,
 )
@@ -17,6 +21,174 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSStudioDraftSelection,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_types import CanonicalTTSCloneReference
+
+
+def _canonical_reference() -> CanonicalTTSCloneReference:
+    wav = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"PRIVATE_REFERENCE_WAV"
+    return CanonicalTTSCloneReference(
+        wav_bytes=wav,
+        reference_text="PRIVATE REFERENCE TRANSCRIPT",
+        sha256=sha256(wav).hexdigest(),
+        byte_length=len(wav),
+        duration_ms=750,
+        sample_rate_hz=24_000,
+        channels=1,
+        sample_encoding="pcm_s16le",
+    )
+
+
+def _studio_clone_request(
+    clone_audition: object,
+    *,
+    provider_id: str = "audio_cpp",
+) -> STTSPlaygroundRequest:
+    preferences = StudioTTSPreferencesSnapshot(revision=4)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id=provider_id,
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=4,
+    )
+    return STTSPlaygroundRequest(
+        operation_id="clone-op",
+        provider_id=provider_id,
+        model_id="clone-model",
+        text="hello",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=draft,
+        studio_preferences=preferences,
+        clone_audition=clone_audition,
+    )
+
+
+def test_playground_clone_snapshot_is_path_free_immutable_and_redacted() -> None:
+    snapshot_type = getattr(playground_types, "STTSPlaygroundCloneSnapshot", None)
+    assert snapshot_type is not None
+    canonical = _canonical_reference()
+    snapshot = snapshot_type(
+        draft_revision=3,
+        canonical_reference=canonical,
+    )
+
+    assert snapshot.canonical_reference is canonical
+    assert {field.name for field in fields(snapshot)} == {
+        "draft_revision",
+        "canonical_reference",
+    }
+    assert not hasattr(snapshot, "source_path")
+    rendered = repr(snapshot)
+    assert "PRIVATE_REFERENCE_WAV" not in rendered
+    assert "PRIVATE REFERENCE TRANSCRIPT" not in rendered
+    assert canonical.sha256 not in rendered
+    with pytest.raises(FrozenInstanceError):
+        snapshot.draft_revision = 4  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("draft_revision", (True, -1))
+def test_playground_clone_snapshot_requires_exact_nonnegative_revision(
+    draft_revision: object,
+) -> None:
+    snapshot_type = getattr(playground_types, "STTSPlaygroundCloneSnapshot", None)
+    assert snapshot_type is not None
+    with pytest.raises((TypeError, ValueError)):
+        snapshot_type(
+            draft_revision=draft_revision,  # type: ignore[arg-type]
+            canonical_reference=_canonical_reference(),
+        )
+
+
+def test_playground_request_accepts_clone_only_for_complete_audio_cpp_studio() -> None:
+    snapshot_type = getattr(playground_types, "STTSPlaygroundCloneSnapshot", None)
+    assert snapshot_type is not None
+    snapshot = snapshot_type(
+        draft_revision=3,
+        canonical_reference=_canonical_reference(),
+    )
+
+    request = _studio_clone_request(snapshot)
+
+    assert request.clone_audition is snapshot
+    with pytest.raises(ValueError, match="audio.cpp Studio"):
+        _studio_clone_request(snapshot, provider_id="openai")
+    with pytest.raises(ValueError, match="audio.cpp Studio"):
+        STTSPlaygroundRequest(
+            operation_id="clone-op",
+            provider_id="audio_cpp",
+            model_id="clone-model",
+            text="hello",
+            voice_id=None,
+            response_format="wav",
+            clone_audition=snapshot,
+        )
+
+
+def test_profile_preview_snapshot_is_path_free_and_request_exclusive() -> None:
+    preview_type = getattr(playground_types, "STTSPlaygroundProfilePreview", None)
+    assert preview_type is not None
+    preview = preview_type(
+        profile_id=UUID("11111111-1111-4111-8111-111111111111"),
+        repository_generation=7,
+        profile_revision=4,
+    )
+    preferences = StudioTTSPreferencesSnapshot(revision=4)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=4,
+        preview=True,
+    )
+
+    request = STTSPlaygroundRequest(
+        operation_id="preview-op",
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        text="hello",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=draft,
+        studio_preferences=preferences,
+        profile_preview=preview,
+    )
+
+    assert request.profile_preview is preview
+    assert {field.name for field in fields(preview)} == {
+        "profile_id",
+        "repository_generation",
+        "profile_revision",
+    }
+    assert not hasattr(preview, "reference")
+    assert not hasattr(preview, "wav_bytes")
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        STTSPlaygroundRequest(
+            operation_id="preview-op",
+            provider_id="audio_cpp",
+            model_id="clone-model",
+            text="hello",
+            voice_id=None,
+            response_format="wav",
+            studio_draft=draft,
+            studio_preferences=preferences,
+            profile_preview=preview,
+            clone_audition=playground_types.STTSPlaygroundCloneSnapshot(
+                draft_revision=3,
+                canonical_reference=_canonical_reference(),
+            ),
+        )
 
 
 def test_playground_request_is_an_immutable_defensive_snapshot() -> None:
@@ -275,6 +447,24 @@ def test_only_native_artifact_provenance_is_profile_save_eligible(
 
     assert getattr(native, "profile_save_eligible", False) is True
     assert getattr(legacy, "profile_save_eligible", False) is False
+
+
+def test_clone_projection_is_save_eligible_from_handler_evidence_flag(
+    tmp_path: Path,
+) -> None:
+    """The UI may offer Save while the handler retains private clone proof."""
+
+    projection = STTSPlaygroundResultProjection(
+        path=tmp_path / "clone.wav",
+        provider_id="audio_cpp",
+        model_id="clone/model",
+        voice_id=None,
+        operation_id="clone-operation",
+        audio_format="wav",
+        clone_profile_save_eligible=True,
+    )
+
+    assert projection.profile_save_eligible is True
 
 
 class _PrivateOption:

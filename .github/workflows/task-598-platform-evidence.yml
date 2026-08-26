@@ -1,0 +1,74 @@
+name: TASK-598 native Parakeet evidence
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform-evidence:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'task-598-platform-evidence'
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - evidence_name: linux-x86_64
+            os: ubuntu-24.04
+          - evidence_name: linux-aarch64
+            os: ubuntu-24.04-arm
+          - evidence_name: windows-x86_64
+            os: windows-2022
+          - evidence_name: macos-x86_64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Initialize failure evidence
+        shell: bash
+        run: python .github/scripts/task598_external_parakeet_evidence.py --initialize --output "$RUNNER_TEMP/task-598-platform-evidence.json"
+
+      - name: Install the declared native transcription extra
+        id: dependencies
+        continue-on-error: true
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[transcription_parakeet_onnx]"
+
+      - name: Record dependency installation failure
+        shell: bash
+        run: python .github/scripts/task598_external_parakeet_evidence.py --record-failure dependency_install --output "$RUNNER_TEMP/task-598-platform-evidence.json"
+        if: steps.dependencies.outcome != 'success'
+
+      - name: Run bounded native evidence
+        shell: bash
+        run: python .github/scripts/task598_external_parakeet_evidence.py --output "$RUNNER_TEMP/task-598-platform-evidence.json" --timeout-seconds 4800
+        if: steps.dependencies.outcome == 'success'
+
+      - name: Validate evidence
+        if: always()
+        shell: bash
+        run: python .github/scripts/task598_external_parakeet_evidence.py --validate "$RUNNER_TEMP/task-598-platform-evidence.json"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-598-platform-${{ matrix.evidence_name }}
+          path: ${{ runner.temp }}/task-598-platform-evidence.json
+          if-no-files-found: error

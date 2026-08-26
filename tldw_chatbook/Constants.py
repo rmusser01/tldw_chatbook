@@ -27,6 +27,7 @@ TAB_STTS = "stts"
 TAB_STUDY = "study"
 TAB_WRITING = "writing"
 TAB_RESEARCH = "research"
+TAB_RESEARCH_WORKSPACE = "research_workspace"
 TAB_SUBSCRIPTIONS = "subscriptions"
 TAB_CHATBOOKS = "chatbooks"
 TAB_HOME = "home"
@@ -96,6 +97,7 @@ TAB_DISPLAY_LABELS = {
     TAB_STUDY: "Study",
     TAB_WRITING: "Writing",
     TAB_RESEARCH: "Research",
+    TAB_RESEARCH_WORKSPACE: "Research Workspace",
     TAB_CHATBOOKS: "Chatbooks",
     TAB_HOME: "Home",
     TAB_LIBRARY: "Library",
@@ -1387,7 +1389,7 @@ MetricsScreen Label.-info-message {
 /* NOTE: this css_content copy is DEAD -- production loads
    css/tldw_cli_modular.tcss, built from css/components/_widgets.tcss,
    which is the live source for these AppFooterStatus rules and carries
-   the KEEP-IN-SYNC contract with AppFooterStatus.DEFAULT_CSS (task-264). */
+   the KEEP-IN-SYNC contract with AppFooterStatus.BUNDLED_CSS (task-264). */
 AppFooterStatus {
     dock: bottom;
     height: 1;

@@ -17,7 +17,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -38,7 +42,11 @@ def _test_cli_setting(section: str, key: str, default=None):
 
 async def _wait_for_screen(app, pilot, screen_type, tab: str):
     for _ in range(300):
-        if app.current_tab == tab and isinstance(app.screen, screen_type):
+        if (
+            app.current_tab == tab
+            and isinstance(app.screen, screen_type)
+            and app.screen.query(AppFooterStatus)
+        ):
             return app.screen
         await pilot.pause(0.01)
     raise AssertionError(
@@ -98,14 +106,18 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # task-2237 (R2): the landing footer advertises the full
                 # keyboard story that works there (F-012 started with just
                 # `/` focus search).
-                # Merged footer (AppFooterStatus): the "F6 next pane" entry is
-                # filtered as a reserved global key (the global hints already
-                # advertise F6), and the protected global hints follow the
-                # screen's own hints.
+                # Merged footer (AppFooterStatus): task-2860 -- the screen's
+                # own "F6 next pane" entry now renders verbatim (it used to
+                # be silently dropped as a "reserved global key", leaving
+                # only the global cluster's generic copy, then spelled
+                # "F6 panes"); the global cluster in turn excludes its own
+                # F6 entry ("F6 next pane" since task-4023 AC#5) because the
+                # screen already covers that key, so F1/Ctrl+P/Ctrl+Q are
+                # the only globals left.
                 assert (
                     screen.query_one(AppFooterStatus).shortcut_text
                     == "/ focus search | i import content | n new note | "
-                    f"{AppFooterStatus.GLOBAL_HINTS}"
+                    "F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
                 for _ in range(300):
                     rows = list(screen.query("#library-row-browse-search"))
@@ -116,8 +128,13 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 else:
                     raise AssertionError("Library Search/RAG row did not mount.")
                 for _ in range(300):
-                    screen_footer = screen.query_one(AppFooterStatus)
-                    if "use Library context in Console" in screen_footer.shortcut_text:
+                    footers = list(screen.query(AppFooterStatus))
+                    if (
+                        footers
+                        and "use Library context in Console"
+                        in footers[0].shortcut_text
+                    ):
+                        screen_footer = footers[0]
                         break
                     await pilot.pause(0.01)
                 else:
@@ -129,23 +146,29 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # string so a future edit can't silently drop a key.
                 # F-012: `/ focus search` closes the set -- it works on every
                 # canvas, including this one.
+                # task-4023 AC#4 (RC-10): the set now covers F6 itself, so
+                # the screen entry renders "F6 next pane" verbatim and the
+                # global cluster drops its own F6 entry (the task-2860
+                # merge rule, same as the landing assertion above).
                 assert screen_footer.shortcut_text == (
                     "u use Library context in Console | "
                     "enter select evidence | o open evidence | "
-                    "/ focus search | "
-                    f"{AppFooterStatus.GLOBAL_HINTS}"
+                    "/ focus search | F6 next pane | "
+                    "F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
 
                 footer_before = screen_footer
                 screen.refresh(recompose=True)
                 for _ in range(300):
-                    footer_after = screen.query_one(AppFooterStatus)
-                    if (
-                        footer_after is not footer_before
-                        and "use Library context in Console"
-                        in footer_after.shortcut_text
-                    ):
-                        break
+                    footers = list(screen.query(AppFooterStatus))
+                    if footers:
+                        footer_after = footers[0]
+                        if (
+                            footer_after is not footer_before
+                            and "use Library context in Console"
+                            in footer_after.shortcut_text
+                        ):
+                            break
                     await pilot.pause(0.01)
                 else:
                     raise AssertionError(
@@ -154,8 +177,8 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 assert footer_after.shortcut_text == (
                     "u use Library context in Console | "
                     "enter select evidence | o open evidence | "
-                    "/ focus search | "
-                    f"{AppFooterStatus.GLOBAL_HINTS}"
+                    "/ focus search | F6 next pane | "
+                    "F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
 
                 await app.handle_screen_navigation(NavigateToScreen("settings"))
@@ -183,11 +206,16 @@ def test_library_shortcuts_advertise_the_evidence_card_keys():
 
     F-012: `/ focus search` closes the set (it works on every canvas), and
     the landing/other-canvas set is pinned alongside it."""
+    # task-4023 AC#4 (RC-10): F6 closes the set -- Search/RAG was the ONLY
+    # per-mode Library set without it, so F1 (fed by this same tuple, the
+    # task-2858 single-source rule) never listed the key even though the
+    # footer's global hint cluster advertised "F6 panes" on that surface.
     assert LibraryScreen.LIBRARY_SHORTCUTS == (
         ("u", "use Library context in Console"),
         ("enter", "select evidence"),
         ("o", "open evidence"),
         ("/", "focus search"),
+        ("F6", "next pane"),
     )
     # task-2237 (R2): the landing set advertises the full keyboard story --
     # the hub next-action accelerators and the pane-cycle key, not just `/`.
@@ -207,7 +235,7 @@ class _MinimalScreen(BaseAppScreen):
         yield Static("minimal screen content")
 
 
-class _MinimalScreenHost(App):
+class _MinimalScreenHost(ConsolidatedCSSApp):
     """Hosts a bare BaseAppScreen subclass with no App-level footer of its
     own, so the only AppFooterStatus in the tree is the one the screen
     itself composes."""
@@ -231,7 +259,7 @@ async def test_base_app_screen_composes_footer_status():
         assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
 
-class _DefaultScreenFooterHost(App):
+class _DefaultScreenFooterHost(ConsolidatedCSSApp):
     """Mirrors app.py's real shape: an `AppFooterStatus` composed directly
     on the App's own DEFAULT screen (id="app-footer-status", exactly like
     `TldwCli._create_main_ui_widgets`), with a real destination screen
@@ -366,13 +394,54 @@ async def test_library_registration_updates_the_screens_own_footer():
         else:
             raise AssertionError("Library Search/RAG row did not mount.")
         for _ in range(300):
-            screen_footer = screen.query_one(AppFooterStatus)
-            if "use Library context in Console" in screen_footer.shortcut_text:
+            footers = list(screen.query(AppFooterStatus))
+            if footers and "use Library context in Console" in footers[0].shortcut_text:
+                screen_footer = footers[0]
                 break
             await pilot.pause(0.01)
         else:
             raise AssertionError("Library contextual footer did not update.")
         assert "u" in screen_footer.shortcut_text
+
+
+def test_library_note_footer_shortcut_contract_is_exact():
+    """Keep screen-owned Notes copy stable without cross-test private imports."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    # task-4023 AC#5: the Notes workflow joins the shared footer grammar --
+    # per-key (key, label) pairs, lowercase keys, the same action
+    # vocabulary as the sibling canvases -- with a _COMPACT tier that only
+    # compresses labels (same keys/destinations) for the ≤100-col
+    # single-stage footer.
+    assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS == (
+        ("ctrl+n", "new note"),
+        ("/", "find note"),
+        ("esc", "focus rail"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS_COMPACT == (
+        ("ctrl+n", "new"),
+        ("/", "find"),
+        ("esc", "rail"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS == (
+        ("ctrl+s", "save note"),
+        ("esc", "back to notes"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT == (
+        ("ctrl+s", "save"),
+        ("esc", "notes"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_PREVIEW_SHORTCUTS == (
+        ("pgup/pgdn", "scroll"),
+        ("esc", "back to notes"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_CONTEXT_SHORTCUTS == (
+        ("enter", "run action"),
+        ("esc", "back to note"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_CONFLICT_SHORTCUTS == (
+        ("enter", "choose version"),
+    )
 
 
 @pytest.mark.asyncio
@@ -448,24 +517,24 @@ def _footer_section_blocks(css_path: Path) -> dict[str, dict[str, str]]:
     text = css_path.read_text(encoding="utf-8")
     assert _FOOTER_SECTION_START in text and _FOOTER_SECTION_END in text, (
         f"{css_path.name} lost its '{_FOOTER_SECTION_START}' section markers -- "
-        "the DEFAULT_CSS drift guard needs them to find the footer block."
+        "the BUNDLED_CSS drift guard needs them to find the footer block."
     )
     section = text.split(_FOOTER_SECTION_START, 1)[1].split(_FOOTER_SECTION_END, 1)[0]
     return _parse_css_blocks(section)
 
 
 def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[str]:
-    """Every DEFAULT_CSS declaration missing/different in the bundle blocks.
+    """Every BUNDLED_CSS declaration missing/different in the bundle blocks.
 
-    DEFAULT_CSS scopes child selectors as ``AppFooterStatus #id``; the bundle
+    BUNDLED_CSS scopes child selectors as ``AppFooterStatus #id``; the bundle
     declares the same ids unscoped, so the scope prefix is stripped before
-    matching. DEFAULT_CSS is allowed to be a SUBSET (the bundle carries
-    extras); a declaration present in DEFAULT_CSS but absent or different in
+    matching. BUNDLED_CSS is allowed to be a SUBSET (the bundle carries
+    extras); a declaration present in BUNDLED_CSS but absent or different in
     the bundle is drift.
     """
     divergences = []
     for selector, declarations in _parse_css_blocks(
-        AppFooterStatus.DEFAULT_CSS
+        AppFooterStatus.BUNDLED_CSS
     ).items():
         bundle_selector = selector.replace("AppFooterStatus #", "#")
         bundle_declarations = bundle_blocks.get(bundle_selector)
@@ -485,7 +554,7 @@ def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[s
 
 
 def test_default_css_matches_the_live_bundle_source():
-    """AppFooterStatus.DEFAULT_CSS must stay a faithful subset of the live
+    """AppFooterStatus.BUNDLED_CSS must stay a faithful subset of the live
     bundle source (css/components/_widgets.tcss footer block) -- otherwise
     stylesheet-less harnesses silently diverge from production geometry
     (task-264's KEEP-IN-SYNC contract, previously comment-only)."""
@@ -493,7 +562,7 @@ def test_default_css_matches_the_live_bundle_source():
         _footer_section_blocks(_CSS_ROOT / "components" / "_widgets.tcss")
     )
     assert divergences == [], (
-        "AppFooterStatus.DEFAULT_CSS diverged from _widgets.tcss's footer "
+        "AppFooterStatus.BUNDLED_CSS diverged from _widgets.tcss's footer "
         f"block: {divergences}. Update BOTH sides (they are KEEP-IN-SYNC) "
         "and rebuild the bundle (python3 tldw_chatbook/css/build_css.py)."
     )
@@ -508,7 +577,7 @@ def test_built_bundle_carries_the_footer_rules():
     )
     assert divergences == [], (
         "The built bundle's footer block diverged from AppFooterStatus."
-        f"DEFAULT_CSS: {divergences}. If _widgets.tcss is already correct, "
+        f"BUNDLED_CSS: {divergences}. If _widgets.tcss is already correct, "
         "the bundle is stale -- rerun python3 tldw_chatbook/css/build_css.py."
     )
 

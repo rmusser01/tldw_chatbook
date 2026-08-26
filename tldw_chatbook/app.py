@@ -48,6 +48,7 @@ if __name__ == "__mp_main__" or _early_multiprocessing.parent_process() is not N
         pass
 
 # Imports
+import argparse
 import concurrent.futures
 import contextlib
 import functools
@@ -57,7 +58,10 @@ import logging
 import logging.handlers
 import multiprocessing
 import multiprocessing.connection
+import queue
 import random
+import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -65,7 +69,8 @@ import time
 import uuid
 import traceback
 from copy import deepcopy
-from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Iterable, Mapping
 from textual.widget import Widget
 
 #
@@ -80,13 +85,14 @@ from textual.containers import Container
 from textual.reactive import reactive
 from textual.worker import Worker, WorkerCancelled, WorkerState
 from textual.binding import Binding
-from textual.message import Message
 from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
 from textual.command import Hit, Hits, Provider
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PurePath
 
+from tldw_chatbook.css import build_css, widget_css
+from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
@@ -102,11 +108,15 @@ from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 # --- Local API library Imports ---
 from .config import (
     get_cli_setting,
+    first_profile_created_this_session,
     get_library_collections_db_path,
     get_library_ingest_jobs_db_path,
     get_media_db_path,
     get_prompts_db_path,
     get_notifications_db_path,
+    get_notes_sync_state_db_path,
+    get_notes_sync_recovery_capacity_bytes,
+    get_notes_sync_watcher_intervals,
     get_research_db_path,
     get_scheduled_tasks_db_path,
     get_subscriptions_db_path,
@@ -147,6 +157,7 @@ from tldw_chatbook.Constants import (
     TAB_STUDY,
     TAB_WRITING,
     TAB_RESEARCH,
+    TAB_RESEARCH_WORKSPACE,
     TAB_CHATBOOKS,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
@@ -174,6 +185,10 @@ from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     resolve_console_live_work_primary_action,
 )
+from tldw_chatbook.Chat.console_image_edit_operations import (
+    ImageEditOperationRegistry,
+)
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
@@ -188,7 +203,12 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
-from tldw_chatbook.Library.ingest_capabilities import get_type_group
+from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
+from tldw_chatbook.Library.ingest_capabilities import (
+    field_gate_open,
+    generic_option_default,
+    get_type_group,
+)
 from tldw_chatbook.Library.ingest_preflight import collect_directory_files
 from tldw_chatbook.Library.server_ingest_reconcile import (
     pending_remote_batches,
@@ -205,11 +225,16 @@ from tldw_chatbook.Library.web_clip_request import (
     is_web_clip_source,
 )
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ActiveIngestConsentScope,
+    ActiveIngestJobRef,
+    ActiveIngestSubmissionRefused,
     DEFAULT_CHUNK_SIZE,
     INGEST_DUPLICATE_PROGRESS_PREFIX,
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
+    normalize_active_ingest_source,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
@@ -217,8 +242,15 @@ from tldw_chatbook.Library.library_local_rag_search_service import (
 from tldw_chatbook.Local_Ingestion import FileIngestionError
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     classify_parse_failure,
+    initialize_ingest_parse_worker,
     run_parse_job,
-    silence_ingest_worker_import_noise,
+)
+from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
+    INGEST_PARSE_PROGRESS_FLUSH_SECONDS,
+    INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE,
+    ParseProgressCoalescer,
+    ParseProgressEvent,
+    make_parse_progress_event,
 )
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     classify_ingest_source,
@@ -226,8 +258,27 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 )
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     BatchSTTRoutingError,
+    PARAKEET_V2_MODEL,
     resolve_batch_stt_route,
 )
+from tldw_chatbook.STT.contracts import (
+    TRANSCRIPTION_FAILURE_CONTRACT,
+    ExecutionDevice,
+    FileAudioSource,
+    TranscriptionFailureCode,
+)
+from tldw_chatbook.STT.executor import (
+    ExecutorBusyError,
+    ExecutorEvent,
+    ExecutorFailure,
+    ExecutorResult,
+    ExecutorUnavailableError,
+    LocalSTTExecutor,
+    ModelIdentity,
+    WorkerPhase,
+    snapshot_local_source,
+)
+from tldw_chatbook.STT.dispatch_coordinator import LocalSTTDispatchCoordinator
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -248,15 +299,53 @@ from tldw_chatbook.Utils.Emoji_Handling import (
     FALLBACK_TITLE_BRAIN,
     supports_emoji,
 )
+from tldw_chatbook.Utils.app_shutdown import (
+    arm_exit_watchdog,
+    install_termination_handlers,
+    register_running_app,
+    unregister_running_app,
+)
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.Utils.text_selection_crash_guard import TextSelectionCrashGuard
 from tldw_chatbook.TTS import TTSProfileService
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactLeaseCoordinator,
+    AudioCppArtifactRemovalEvidence,
+    AudioCppModelLibraryObservationSnapshot,
+    AudioCppManagedConsumerIdentity,
+    project_audio_cpp_artifact_removal_evidence,
+)
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppSettingsConfig,
+    project_audio_cpp_settings_config,
+)
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+# TASK-21108: `TTS/voice_bundle_service` (1,857 lines) is imported
+# function-locally in `_ensure_tts_voice_bundle_service` -- the only place
+# that constructs it, on first use, long after first paint. The name below is
+# TYPE_CHECKING-only, so every annotation that mentions it must stay a string
+# (app.py has no `from __future__ import annotations`, and PEP 526
+# annotations on attribute targets ARE evaluated at runtime).
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.TTS.voice_bundle_service import (
+        TTSVoiceBundlePortabilityService,
+    )
+# TASK-21108: the payload class only -- importing it from
+# `speech_tts_settings_panel` put that 5,600-line Textual widget module (and
+# its fspicker/lab-status/voice-input subtrees) on the app import path for a
+# frozen dataclass. `speech_tts_panel_types` re-exports into the panel, so
+# this is the same class object the panel and its tests use.
+from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
+    SpeechTTSPanelDraftSnapshot,
+)
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.TTS.TTS_Generation import (
     bind_tts_service,
     close_tts_resources,
@@ -274,6 +363,7 @@ from .config import (
     load_cli_config_and_ensure_existence,
     persist_cli_config_for_shutdown,
     set_encryption_password,
+    get_config_load_failure,
 )
 from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
@@ -294,7 +384,15 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
-from .Notes.notes_scope_service import NotesScopeService
+from .Notes.note_folder_repository import LocalNoteFolderRepository
+from .Notes.notes_scope_service import NotesScopeService, ScopeType
+# TASK-21108: `notes_sync_runtime` (and `notes_sync_legacy`, which the
+# TASK-21112 start gate reads) are imported inside
+# `_construct_notes_sync_runtime_owner`, the single place that needs them, so the
+# lasting-sync chain leaves the app import closure. The name below is
+# TYPE_CHECKING-only: annotations mentioning it must stay strings.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .Notes.notes_sync_runtime import NotesSyncRuntimeOwner
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from .Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
@@ -304,6 +402,17 @@ from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryS
 from .Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
+from .Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
+from .Actor_Packs.creation import ActorPackCreationService
+from .Actor_Packs.activation import ActorPackActivationService
+from .Actor_Packs.controller import ActorPackExportController
+from .Actor_Packs.export import ActorPackExportService
+from .Actor_Packs.import_controller import ActorPackImportController
+from .Actor_Packs.importer import ActorPackImportError, ActorPackImportService
+from .Actor_Packs.repository import ActorPackRepository
+# Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
+# its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
+# path. See the lazy persona_buddy_controller property.
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from .RAG_Admin.server_rag_admin_service import ServerRAGAdminService
@@ -325,7 +434,26 @@ from .Research_Interop import (
     ResearchScopeService,
     ServerResearchService,
 )
+from .Research_Workspace.source_association import (
+    ResearchSourceAssociationCoordinator,
+    ResearchSourceAssociationScheduler,
+)
+from .Research_Workspace.source_operation_store import (
+    ResearchSourceOperationStore,
+    SourceOperationConflictError,
+)
+from .Research_Workspace.paste_staging import ResearchPasteStagingStore
+from .Research_Workspace.source_operations import (
+    SourceOperationStage,
+    SourceOperationStatus,
+)
+from .Research_Workspace.source_readiness import ResearchSourceReadinessCoordinator
 from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from .Scheduling.constants import (
+    HANDLER_TIMEOUT_SECONDS,
+    MISSED_FIRE_GRACE_SECONDS,
+    SCHEDULER_POLL_INTERVAL_SECONDS,
+)
 from .Scheduling.services.scheduling_service import SchedulingService
 from .Scheduling.services.server_client import SchedulingServerClient
 from .Scheduling.scheduler.loop import SchedulerLoop, Handler
@@ -337,7 +465,10 @@ from .Scheduling.services.briefing_projection import BriefingProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+
+# chat_message_enhanced is deliberately NOT imported at module scope
+# (TASK-21103): it pulls PIL and the textual_image package at import time.
+# The two TTS event handlers that query it import it function-locally.
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 from .Widgets.AppFooterStatus import AppFooterStatus
@@ -369,19 +500,38 @@ from tldw_chatbook.config import (
     get_chachanotes_db_path,
     settings,
     get_chachanotes_db_lazy,
+    seed_builtin_content,
 )
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
+from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
 from .UI.Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
     HandoffValueError,
     PendingHandoffStore,
 )
-from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
-from .UI.Navigation.screen_registry import resolve_screen_target, screen_load_error
-from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+from .UI.Navigation.screen_state_store import (
+    ConsolePromptTargetProjection,
+    RuntimeIdentity,
+    ScreenStateStore,
+)
+from .UI.Navigation.screen_registry import (
+    ScreenRoute,
+    registered_screen_aliases,
+    registered_screen_routes,
+    resolve_screen_route,
+    resolve_screen_target,
+    screen_load_error,
+)
+from .UI.Navigation.shell_destinations import (
+    SHELL_DESTINATION_ORDER,
+    SHELL_DESTINATION_SHORTCUTS,
+    get_shell_destination,
+)
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .UI.stable_command_palette import StableCommandPalette
+from .Prompt_Management.prompt_variables import PromptVariableApplication
 
 from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
@@ -567,6 +717,7 @@ from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
 from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
         ModelCatalogDiskStore,
     )
@@ -577,6 +728,133 @@ API_IMPORTS_SUCCESSFUL = True
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
+
+# task-19561: how long a cancelled worker gets to settle before shutdown
+# stops waiting on it and says so. Replaces a flat `asyncio.sleep(0.1)` that
+# waited on nothing in particular. Sized to be invisible on a quiet exit
+# (the wait ends the moment the last worker finishes) while still bounding a
+# thread worker that will not notice cancellation at all.
+WORKER_CANCELLATION_GRACE_SECONDS = 3.0
+
+# task-15472: after first paint, warm the lazy screen-module import cache from
+# a background thread so the FIRST click to each tab doesn't pay for a
+# synchronous, UI-thread `import_module` inside the FIFO-locked navigation
+# worker (`UI/Navigation/screen_registry.py`'s `load_screen_class`) --
+# chat_screen.py is ~20k lines, library_screen.py ~26k, settings_screen.py
+# ~19k (Docs/Design/2026-08-11-input-latency-audit.md). Scheduled slightly
+# after the other 0.1s deferred-startup timers (footer status, audio
+# services) so it is strictly the lowest-priority background task: nothing
+# depends on it finishing, it only warms a cache.
+DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS = 0.2
+
+# task-21110: the timer above cannot help the FIRST screen. With the splash
+# enabled (the default) boot is strictly serial -- the splash owns the loop for
+# its full duration, THEN the initial screen's module is imported
+# synchronously on that same loop, and only after the screen is up does
+# `_post_mount_setup` arm the deferred pre-importer above. So the initial
+# route's module gets its own, much earlier kick: scheduled from `on_mount`
+# while the splash is still on screen, onto the same daemon-thread mechanism.
+#
+# Why 0.2 and not 0. The splash animation ticks on the event loop at 20 Hz
+# (`Widgets/splash_screen.py`, `animation_speed` default 0.05s) and the import
+# thread holds the GIL, so this trades a little splash smoothness for a lot of
+# boot time. Measured, interleaved arms x10 boots, isolated profile, M-series
+# (frames = animation frames rendered during a 1.5s splash, ideal 30):
+#
+#   arm      frames  worst gap  p95 gap  gaps>100ms/10 boots  close->usable
+#   no warm    30      51.0ms    50.9ms          0               1.410s
+#   0.0s       28     111.5ms    69.8ms          6               1.106s
+#   0.2s       30      86.8ms    52.9ms          2               1.083s
+#   0.5s       30      83.6ms    51.8ms          2               1.087s
+#
+# 0.2s recovers the dropped frames and nearly all of the p95 that a 0s start
+# costs, for no measurable boot-time difference. 0.5s is no better and eats
+# overlap headroom that the case with the most to gain cannot spare: on a
+# first boot after an upgrade the import is bytecode-compiling and takes
+# ~0.98s, which fits inside the splash from 0.2s but not from 0.5s.
+SPLASH_INITIAL_SCREEN_PREIMPORT_DELAY_SECONDS = 0.2
+
+# Chat/Library/Settings are the three screens the audit measured as
+# multi-thousand-line modules -- import them first so a thread that gets cut
+# short (app quit shortly after startup) still banked the highest-value work
+# before spending time on the rest of the registry.
+#
+# TASK-21113 considered reordering this to start with the CONFIGURED DEFAULT
+# TAB and measured the idea dead: the whole-registry pass is armed by
+# `_schedule_deferred_startup_work()`, the last statement of
+# `_post_mount_setup()`, and BOTH boot paths run `_push_initial_screen()` to
+# completion first (`_run_no_splash_post_mount_setup` awaits them in order;
+# the splash path pushes, then `call_after_refresh(self._post_mount_setup)`).
+# So the configured default tab's module is always already in `sys.modules`
+# before this list is consulted -- and if the initial push raised, this pass
+# never runs at all. Reordering would have moved a `sys.modules` dict hit.
+SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS: tuple[str, ...] = ("chat", "library", "settings")
+
+# TASK-21113 pacing for the whole-registry pre-importer. The pass is a
+# GIL-holding CPU burst on a daemon thread; on a 1-2 core machine the event
+# loop is sharing a core with it for the whole post-boot window. Measured on
+# a fast M-series with the initial screen already warm (the real boot
+# condition, see above): 21 routes, **361 ms** total, of which library
+# 110.6 ms + settings 95.9 ms + personas 82.3 ms are **80%** -- the other 18
+# routes cost 72.8 ms between them.
+#
+# That skew is what these constants answer. A flat inter-route sleep would
+# treat a 0.5 ms module exactly like a 110 ms one, so the gap is instead
+# proportional to the time the previous import just took: hand the event loop
+# back (ratio x) what was just taken from it, capped. On the numbers above
+# that inserts ~0.35 s of quiet across the pass, i.e. it stops being a
+# continuous competitor and becomes a ~50%-duty-cycle one, at zero cost to
+# anything that waits on it (nothing does).
+#
+# What a gap CANNOT do is subdivide a single `import_module`: those three
+# 80-110 ms bursts are indivisible, and on constrained hardware they are the
+# multi-hundred-millisecond stretches that actually hurt. That is what the
+# low-core tier is for -- same mechanism, 3x the yield and a much higher cap,
+# so a 400 ms import on a slow box is followed by ~1.2 s of quiet.
+SCREEN_PREIMPORT_YIELD_RATIO = 1.0
+SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS = 0.10
+SCREEN_PREIMPORT_LOW_CORE_YIELD_RATIO = 3.0
+SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS = 1.5
+# Below this many usable CPUs the pass is throttled rather than switched off:
+# disabling it would push each screen's import back onto the event loop at
+# first navigation, which is work the user has actually asked for, on the
+# machines least able to absorb it. Throttling keeps the win and drops the
+# pressure.
+SCREEN_PREIMPORT_LOW_CORE_THRESHOLD = 4
+# While a screen navigation holds `_screen_navigation_lock`, the event loop is
+# doing its own import + compose + mount; the speculative pass steps aside
+# until it finishes. Bounded, so a lock that is never released (a navigation
+# blocked on a confirm dialog the user leaves open) throttles the pass instead
+# of stranding it.
+SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS = 0.05
+SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS = 5.0
+SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS = max(
+    1,
+    round(
+        SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS
+        / SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS
+    ),
+)
+
+
+def _usable_cpu_count() -> int:
+    """How many CPUs this process may actually run on.
+
+    Prefers the scheduler affinity mask where the platform has one (a
+    container pinned to one core reports the host's core count from
+    ``os.cpu_count()``), and falls back to ``os.cpu_count()``. Returns 1 when
+    neither will answer -- the conservative direction here, since the only
+    consequence of guessing low is that a background pass nothing waits on
+    paces itself more politely.
+    """
+    affinity = getattr(os, "sched_getaffinity", None)
+    if affinity is not None:
+        try:
+            return max(1, len(affinity(0)))
+        except OSError:
+            pass
+    return max(1, os.cpu_count() or 1)
+
 
 # TASK-1240. The `component` this module passes to `persist_event`. It is a
 # bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
@@ -794,6 +1072,7 @@ class TabNavigationProvider(Provider):
         TAB_STUDY: "Switch to flashcards and quizzes",
         TAB_WRITING: "Switch to writing tools",
         TAB_RESEARCH: "Switch to research workflows",
+        TAB_RESEARCH_WORKSPACE: "Open Research Workspace for grounded research",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
@@ -876,6 +1155,10 @@ class TabNavigationProvider(Provider):
         }
         if destination.full_label:
             terms.add(destination.full_label)
+        for related_route in destination.related_routes:
+            terms.add(related_route)
+            terms.add(get_tab_display_label(related_route))
+        terms.update(destination.palette_aliases)
         for legacy_route in destination.legacy_routes:
             terms.add(legacy_route)
             terms.add(get_tab_display_label(legacy_route))
@@ -1079,6 +1362,16 @@ class LLMProviderProvider(Provider):
         return "Unknown"
 
 
+#: task-18812 / ADR-071: the command-palette entry for the Console focus
+#: toggle -- one tuple reused by both QuickActionsProvider lists so the
+#: command text, action id, and help string cannot drift apart.
+FOCUS_TOGGLE_PALETTE_ENTRY = (
+    "Quick Actions: Toggle Focus Mode",
+    "toggle_focus_mode",
+    "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
+)
+
+
 class QuickActionsProvider(Provider):
     """Provider for quick action commands."""
 
@@ -1111,6 +1404,7 @@ class QuickActionsProvider(Provider):
                 "search_all",
                 "Search across all content",
             ),
+            FOCUS_TOGGLE_PALETTE_ENTRY,
         ]
 
         for command_text, action_id, help_text in quick_actions:
@@ -1141,6 +1435,7 @@ class QuickActionsProvider(Provider):
                 "import_media",
                 "Import a new media file for processing",
             ),
+            FOCUS_TOGGLE_PALETTE_ENTRY,
         ]
 
         for command_text, action_id, help_text in popular_actions:
@@ -1177,6 +1472,8 @@ class QuickActionsProvider(Provider):
                 _navigate_via_screen(
                     self.app, TAB_INGEST, "Opened Import/Export for media import"
                 )
+            elif action_id == FOCUS_TOGGLE_PALETTE_ENTRY[1]:
+                self.app.action_toggle_focus_mode()
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
 
@@ -1682,6 +1979,139 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
     return sanitized if sanitized else exc.__class__.__name__[:200]
 
 
+def _library_ingest_write_failure_category(exc: BaseException) -> str:
+    """Classify an exception escaping the ingest WRITE stage.
+
+    (task-14821) The stage covers two different things: refusing an empty
+    extraction, which happens BEFORE any write, and a genuine database
+    write failure. Exceptions that know which they are declare it on
+    ``ingest_error_category``.
+
+    (xhigh review round) Everything else used to default to
+    ``"write_error"`` -- the ONE category ``ingest_retry_advice`` still
+    answers with "a retry can succeed if the write failure was temporary
+    — the file itself parsed fine". So the optimistic branch task-14821
+    was filed to remove stayed reachable for every unclassified cause,
+    through the default. Only a failure of the database write itself
+    earns that name now; an unknown cause is unnamed, and an unnamed
+    category is silent (task-14821 AC#2) rather than encouraging.
+
+    Args:
+        exc: The exception raised while persisting a parsed payload.
+
+    Returns:
+        The ``error_detail`` category token, or ``""`` when the cause is
+        not known to be a write failure.
+    """
+    declared = str(getattr(exc, "ingest_error_category", "") or "").strip()
+    if declared:
+        return declared
+    if isinstance(exc, (MediaDatabaseError, MediaInputError, sqlite3.Error)):
+        return "write_error"
+    return ""
+
+
+def _resolve_ingest_cookies_file(raw: str) -> tuple[Optional[str], Optional[str]]:
+    """Validate the audio/video panel's ``Cookies file for gated URLs`` value.
+
+    (task-3306 xhigh review round) The value used to be forwarded verbatim
+    as ``options["cookies"]``. ``download_video`` treats a string that is
+    not an existing file as cookie JSON, so a typo'd or moved path became a
+    ``json.JSONDecodeError`` caught into a single "Invalid cookie format"
+    warning -- the download then ran un-authenticated and failed later for
+    a reason that named neither cookies nor the path. Validating here, at
+    the option boundary, is the earliest point this module owns.
+
+    NOTE: the canonical home for per-field validation is the shared
+    ``validate_ingest_option_value`` seam in ``library_ingest_state``, which
+    is where the sibling text fields (``start_time``/``end_time``) are
+    format-gated. This check lives here instead because existence is not a
+    format question -- a path can be well-formed at typing time and gone by
+    the time the job is claimed, which is exactly when this runs.
+
+    Args:
+        raw: The stripped field value; ``""`` means the option is unset.
+
+    Returns:
+        ``(cookies_path, problem)``. Exactly one is non-``None`` for a
+        non-empty input; both are ``None`` when no cookies were requested.
+    """
+    if not raw:
+        return None, None
+
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    try:
+        # Repo security rule: user-supplied file paths go through
+        # path_validation before they become a subprocess/library argument.
+        validate_path_simple(os.path.expanduser(raw))
+    except ValueError as exc:
+        return None, f"Unsafe cookies file path: {_sanitize_library_ingest_error(exc)}"
+
+    candidate = Path(os.path.expanduser(raw))
+    if not candidate.is_file():
+        return None, f"Cookies file not found: {raw}"
+    return str(candidate), None
+
+
+def _library_ingest_done_progress(
+    source_path: str, *, was_duplicate: bool, payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Build a done job's ``progress`` dict from its persisted payload.
+
+    (task-3301) Pure and module-level so the analysis-skipped annotation is
+    unit-testable without a writer thread. When the parse payload carries
+    ``analysis_skipped_reason`` (analysis was requested but no callable
+    provider was configured at dispatch time), the done row says so --
+    "analysis skipped: ..." on the row's progress sub-line -- instead of
+    the analysis being silently absent. Duplicate-match outcomes keep their
+    exact ``INGEST_DUPLICATE_PROGRESS_PREFIX`` message untouched: nothing
+    new was imported, so there was nothing to analyze.
+
+    Args:
+        source_path: The job's source path (basename feeds the message).
+        was_duplicate: Whether the write resolved to an existing item.
+        payload: The parse payload that was just persisted.
+
+    Returns:
+        The ``progress`` dict for ``LibraryIngestJobRegistry.mark_done``.
+    """
+    if was_duplicate:
+        return {
+            "message": (
+                f"{INGEST_DUPLICATE_PROGRESS_PREFIX} — "
+                "matched an existing item; nothing new was "
+                "imported."
+            )
+        }
+    # (task-2016) The basename, not the absolute path: the row line already
+    # identifies the file and the details surface carries the full path.
+    source_name = Path(source_path).name or source_path
+    progress: Dict[str, Any] = {"message": f"Imported {source_name}"}
+    skip_reason = str(payload.get("analysis_skipped_reason") or "").strip()
+    if skip_reason:
+        progress["message"] += f" — analysis skipped: {skip_reason}"
+        progress["analysis_skipped"] = skip_reason
+    # (task-3301 xhigh review round, F4) An analysis that RAN and failed
+    # (provider exception or an in-band "Error: ..." result) annotates the
+    # done row the same way a skipped one does -- the import succeeded,
+    # the analysis did not, and the user must be able to see which.
+    failed_reason = str(payload.get("analysis_failed_reason") or "").strip()
+    if failed_reason:
+        progress["message"] += f" — analysis failed: {failed_reason}"
+        progress["analysis_failed"] = failed_reason
+    # (task-3306 xhigh review round) A cookies path the option boundary
+    # refused to forward. The import itself is fine -- a public URL never
+    # needed cookies -- so this is an annotation, not a failure; without it
+    # a gated import that silently ran un-authenticated looks identical to
+    # one that worked.
+    cookies_problem = str(payload.get("cookies_problem") or "").strip()
+    if cookies_problem:
+        progress["message"] += f" — cookies ignored: {cookies_problem}"
+        progress["cookies_problem"] = cookies_problem
+    return progress
+
+
 def _stream_fileno(stream: Any) -> int:
     """Best-effort file descriptor for a possibly-fake stream object.
 
@@ -1708,6 +2138,62 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+
+# (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
+# dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
+# stored-invalid body refused by the validator.
+#
+# (task-21102) Resolved at except-time by the sole consumer (the ingest job
+# dispatch loop) rather than imported at module scope: these two imports were
+# one of the six entry points that executed the full Chunking package
+# (~15k LOC shim + vendored engine) during ``import tldw_chatbook.app``.
+# The lazily imported classes are the SAME objects the raising code
+# (``_ingest_job_options`` -> ``Chunking.template_runtime`` /
+# ``chunking_interop_library``) raises, so the except clause catches exactly
+# what it always caught.
+#
+# (task-21102 review round) Because ``except _template_resolution_errors()``
+# evaluates this for EVERY exception reaching that clause -- not only
+# template errors -- the matcher must be inert for unrelated errors:
+# * If ``tldw_chatbook.Chunking`` is not resident, no template error can be
+#   in flight (an instance of its exception classes cannot exist without the
+#   defining modules having been imported), so return ``()`` -- which
+#   matches nothing -- WITHOUT importing ~39 Chunking modules as a side
+#   effect of handling an unrelated exception.
+# * If the imports themselves fail (broken install), also return ``()`` so
+#   the ORIGINAL in-flight exception propagates with its own class instead
+#   of being replaced by a ModuleNotFoundError raised from the except
+#   clause.
+# Guarded by ``Tests/App/test_template_error_lazy_matching.py``.
+def _template_resolution_errors() -> tuple[type[Exception], ...]:
+    """Return the named template-resolution error types, imported lazily.
+
+    Returns:
+        ``(TemplateResolutionError, InvalidTemplateError)`` when the
+        Chunking package is resident and importable; ``()`` otherwise, so
+        that using this as an ``except`` matcher never masks an unrelated
+        in-flight exception and never imports Chunking as a side effect.
+    """
+    if "tldw_chatbook.Chunking" not in sys.modules:
+        return ()
+    try:
+        from tldw_chatbook.Chunking.chunking_interop_library import (
+            InvalidTemplateError,
+        )
+        from tldw_chatbook.Chunking.template_runtime import TemplateResolutionError
+    except Exception:
+        return ()
+
+    return (TemplateResolutionError, InvalidTemplateError)
+
+
+_INGEST_LOCAL_STT_PHASE_MESSAGES: dict[WorkerPhase, str] = {
+    WorkerPhase.PREPARING: "Preparing import",
+    WorkerPhase.LOADING: "Loading source",
+    WorkerPhase.TRANSCRIBING: "Transcribing audio",
+    WorkerPhase.POST_PROCESSING: "Post-processing audio",
+}
+
 # Cap on how many persisted ingest jobs `_restore_ingest_jobs` carries
 # forward on restart (see `Library.library_ingest_jobs.plan_restore`) --
 # keeps startup and the in-memory registry bounded for a long-lived store.
@@ -1721,6 +2207,14 @@ _MAX_PERSISTED_INGEST_JOBS = 500
 # got garbage-collected, the OS could reuse the fd number and the tracker's
 # error output would silently corrupt an unrelated file.
 _INGEST_POOL_STDERR_FALLBACK = None
+
+
+@dataclass(frozen=True)
+class _IngestParsePoolResources:
+    """Process-pool resources owned by one ingest parse generation."""
+
+    pool: Any
+    progress_queue: Any | None
 
 
 def _ingest_pool_real_stderr():
@@ -1842,27 +2336,371 @@ class LibraryIngestQueueMixin:
     job or blocks the writer.
 
     Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
-    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + pool
-    reference detached, synchronously -- pool callbacks short-circuit on
-    the result-handler thread before ever marshaling; (2)
-    ``pool.terminate()`` + ``pool.join()`` on a detached daemon thread,
+    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + executor
+    and pool references detached, synchronously -- callbacks short-circuit
+    before ever marshaling; (2) executor close followed by
+    ``pool.terminate()`` + ``pool.join()`` on one detached daemon thread,
     never the event-loop thread (deadlock rationale in that method's
     docstring); (3) the writer thread is swept afterward by ``on_unmount``'s
     generic worker cancellation, its in-flight DB write completing as
-    before. Steps 2 and 3 run concurrently -- safe because the two stages
-    share no resources (parse workers never touch ``media_db``; the writer
-    never touches the pool).
+    before. Steps 2 and 3 run concurrently -- safe because the stages share
+    no resources (parse workers never touch ``media_db``; the writer never
+    touches either heavy worker).
     """
 
+    _RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY = (
+        "Research source retry is unavailable. Open Research Workspace "
+        "and retry from its receipt."
+    )
+
+    def _init_library_ingest_runtime_state(self) -> None:
+        """Initialize every host attribute the ingest job loop reads.
+
+        The single source of truth for this mixin's host-state contract:
+        ``TldwCli``'s wiring calls this, and the headless test harnesses
+        (``Tests/UI/test_library_shell.py``'s ``_LibraryIngestCanvasHarness``,
+        ``Tests/Library/test_library_ingest_runner.py``'s
+        ``_IngestRunnerHarness``) call the same method, so a new
+        ``self._ingest_*`` read added to the coordinator/writer is mirrored
+        into the fakes automatically instead of hand-listed (task-3315 --
+        the hand-listed harness missed ``_ingest_local_stt_jobs`` when the
+        local-STT lane landed and ~20 pilots died with AttributeError).
+        ``self.media_db`` is deliberately NOT set here: it is a per-host
+        input (see the class docstring), not coordinator state.
+
+        F3 parallel-parse coordinator state: the lazily-created parse-pool
+        handle, the parse->write handoff (job_id -> parsed payload dict,
+        populated by a pool completion and drained by the writer's claim),
+        and the shutdown flag pool callbacks check before touching a
+        closing app.
+        """
+        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        self._research_source_terminal_jobs_scheduled: set[str] = set()
+        self._research_source_parse_dispatch_pending: set[str] = set()
+        self._research_source_restore_in_progress = False
+        self.library_ingest_jobs.add_listener(
+            self._schedule_settled_research_source_operations
+        )
+        self._ingest_parse_pool = None
+        self._ingest_parse_pool_generation: int = 0
+        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
+        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
+        self._ingest_parse_progress_queue: Any | None = None
+        self._ingest_parse_progress_thread: threading.Thread | None = None
+        self._ingest_parsed_payloads: dict[str, dict] = {}
+        # RLock, not Lock: dev's STT dispatch work re-enters this guard.
+        self._local_stt_executor_lock = threading.RLock()
+        self._local_stt_executor: Optional[LocalSTTExecutor] = None
+        self._local_stt_dispatch_coordinator: Optional[LocalSTTDispatchCoordinator] = (
+            None
+        )
+        self._parakeet_source_service: Any | None = None
+        self._parakeet_source_registry_listener: Callable[[], None] | None = None
+        self._parakeet_submitting_scope_ids: set[str] = set()
+        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
+        self._ingest_shutdown: bool = False
+
+    def _schedule_settled_research_source_operations(self) -> None:
+        """Schedule durable association work after a linked job has settled.
+
+        Registry listeners run after the in-memory transition has completed.
+        This listener only queues an async worker; it never calls the
+        coordinator (and therefore never touches SQLite) synchronously inside
+        the registry mutation.
+        """
+        jobs = self.library_ingest_jobs.jobs()
+        self._research_source_terminal_jobs_scheduled.intersection_update(
+            job.job_id for job in jobs
+        )
+        if self._research_source_restore_in_progress:
+            return
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if scheduler is None:
+            return
+        terminal_states = {
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.CANCELLED,
+            IngestJobState.SKIPPED,
+        }
+        for job in jobs:
+            operation_id = str(job.research_source_operation_id or "").strip()
+            if (
+                not operation_id
+                or job.state not in terminal_states
+                or job.job_id in self._research_source_terminal_jobs_scheduled
+            ):
+                continue
+            self._research_source_terminal_jobs_scheduled.add(job.job_id)
+            self.run_worker(
+                self._resume_settled_research_source_operation(
+                    job.job_id,
+                    operation_id,
+                ),
+                group="research_source_association",
+            )
+
+    async def _resume_settled_research_source_operation(
+        self, job_id: str, operation_id: str
+    ) -> None:
+        """Run one scheduled resume and release suppression after exceptions."""
+
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if scheduler is None:
+            self._research_source_terminal_jobs_scheduled.discard(job_id)
+            return
+        try:
+            operation = await scheduler.resume(operation_id)
+            staging_store = getattr(self, "research_paste_staging_store", None)
+            job = self.library_ingest_jobs.get_job(job_id)
+            state = str(getattr(getattr(job, "state", None), "value", ""))
+            if staging_store is not None and (
+                state in {"cancelled", "skipped"}
+                or (
+                    operation is not None
+                    and operation.catalog_status is SourceOperationStatus.SUCCEEDED
+                )
+            ):
+                await asyncio.to_thread(staging_store.delete, operation_id)
+        except Exception:
+            self._research_source_terminal_jobs_scheduled.discard(job_id)
+            logger.opt(exception=True).warning(
+                "Research source association worker failed; operation remains resumable"
+            )
+
+    def _restore_ingest_jobs_and_schedule_research_sources(self) -> None:
+        """Restore ingest history before queuing bounded source-operation work."""
+
+        restore_was_in_progress = self._research_source_restore_in_progress
+        self._research_source_restore_in_progress = True
+        try:
+            self._restore_ingest_jobs()
+        finally:
+            self._research_source_restore_in_progress = restore_was_in_progress
+        ingest_store = getattr(self, "_library_ingest_jobs_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if ingest_store is not None and operation_store is not None:
+            self.run_worker(
+                self._reconcile_research_source_held_jobs(),
+                group="research_source_held_startup",
+            )
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if scheduler is not None:
+            self.run_worker(
+                scheduler.resume_startup(),
+                group="research_source_association_startup",
+            )
+        staging_store = getattr(self, "research_paste_staging_store", None)
+        if staging_store is not None and operation_store is not None:
+            self.run_worker(
+                self._sweep_research_paste_staging(),
+                group="research_paste_staging_startup",
+            )
+
+    async def _sweep_research_paste_staging(self) -> None:
+        """Run one bounded fail-safe startup sweep away from the UI loop."""
+
+        staging_store = getattr(self, "research_paste_staging_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if staging_store is None or operation_store is None:
+            return
+        try:
+            await asyncio.to_thread(
+                staging_store.sweep,
+                operation_store,
+                job_registry=self.library_ingest_jobs,
+                limit=100,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Research paste staging sweep failed; artifacts were retained"
+            )
+
+    async def _reconcile_research_source_held_jobs(self, *, limit: int = 50) -> None:
+        """Boundedly link or cancel durable Research jobs left held at restart."""
+
+        ingest_store = getattr(self, "_library_ingest_jobs_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if ingest_store is None or operation_store is None:
+            return
+        try:
+            rows = await asyncio.to_thread(ingest_store.list_dispatch_held, limit=limit)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Research source held-job startup scan failed; jobs remain held"
+            )
+            return
+        for row in rows:
+            job_id = str(row.get("job_id") or "")
+            operation_id = str(row.get("research_source_operation_id") or "")
+            job = self.library_ingest_jobs.get_job(job_id)
+            if (
+                job is None
+                or job.state is not IngestJobState.QUEUED
+                or not job.dispatch_held
+                or job.research_source_operation_id != operation_id
+            ):
+                continue
+            try:
+                operation = await asyncio.to_thread(operation_store.get, operation_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Research source held-job receipt read failed "
+                    "(job_id={}, operation_id={}); retained for recovery",
+                    job_id,
+                    operation_id,
+                )
+                continue
+
+            expected_origin = str(
+                getattr(getattr(operation, "data_source", None), "value", "")
+            )
+            compatible = operation is not None and expected_origin == job.origin
+            if (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.PENDING
+                and not operation.ingest_job_id
+            ):
+                try:
+                    operation = await asyncio.to_thread(
+                        operation_store.advance_stage,
+                        operation_id,
+                        stage=SourceOperationStage.CATALOG,
+                        status=SourceOperationStatus.IN_PROGRESS,
+                        expected_revision=operation.revision,
+                        ingest_job_id=job_id,
+                    )
+                except Exception:
+                    try:
+                        operation = await asyncio.to_thread(
+                            operation_store.get, operation_id
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            "Research source held-job link remains pending "
+                            "(job_id={}, operation_id={})",
+                            job_id,
+                            operation_id,
+                        )
+                        continue
+                    expected_origin = str(
+                        getattr(getattr(operation, "data_source", None), "value", "")
+                    )
+                    compatible = operation is not None and expected_origin == job.origin
+
+            linked = (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.IN_PROGRESS
+                and operation.ingest_job_id == job_id
+            )
+            if linked:
+                try:
+                    released = self.library_ingest_jobs.release_dispatch_hold(
+                        job_id, require_persisted=True
+                    )
+                    if released is None:
+                        continue
+                    self._dispatch_research_source_catalog_job(job_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Research source held-job dispatch could not start "
+                        "(job_id={}, operation_id={})",
+                        job_id,
+                        operation_id,
+                    )
+                    try:
+                        self._fail_research_source_prepared_job(job_id)
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            "Research source held-job dispatch failure could not be persisted "
+                            "(job_id={}, operation_id={})",
+                            job_id,
+                            operation_id,
+                        )
+                continue
+
+            still_pending = (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.PENDING
+                and not operation.ingest_job_id
+            )
+            if still_pending:
+                continue
+            try:
+                cancelled = self._cancel_research_source_prepared_job(job_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Research source incompatible held-job cancellation failed "
+                    "(job_id={}, operation_id={}); staging retained",
+                    job_id,
+                    operation_id,
+                )
+                continue
+            if cancelled.state not in {
+                IngestJobState.CANCELLED,
+                IngestJobState.FAILED,
+                IngestJobState.DONE,
+                IngestJobState.SKIPPED,
+            }:
+                continue
+            staging_store = getattr(self, "research_paste_staging_store", None)
+            if staging_store is not None:
+                try:
+                    await asyncio.to_thread(staging_store.delete, operation_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Research source terminal held-job staging cleanup failed "
+                        "(job_id={}, operation_id={})",
+                        job_id,
+                        operation_id,
+                    )
+
     def _restore_ingest_jobs(self) -> None:
-        """One-time on_mount restore of persisted ingest job history."""
+        """Start the one-time restore of persisted ingest job history.
+
+        Returns immediately: the store open (schema create/migrate on first
+        run), the read, the plan and the reconcile writes all run on a worker
+        thread, and only the in-memory registry seeding comes back to the UI
+        thread (TASK-21111(c) -- measured 1.7-11.6 ms of synchronous
+        ``on_mount`` work depending on history size, x3-5 on constrained
+        hardware).
+
+        Never raises, on either thread: a corrupt or unreadable store leaves
+        the registry empty and store-less, exactly as before.
+        """
+        if getattr(self, "_ingest_shutdown", False):
+            return
+        self.run_worker(
+            self._restore_ingest_jobs_off_thread,
+            name="restore_ingest_jobs",
+            group="ingest_restore",
+            thread=True,
+            exclusive=True,
+            # The body already catches and logs everything; `exit_on_error`
+            # is off so no future edit to it can turn a history-restore
+            # failure into an app exit. Restoring history must never be able
+            # to prevent boot -- that was true of the synchronous version and
+            # stays true here.
+            exit_on_error=False,
+        )
+
+    def _restore_ingest_jobs_off_thread(self) -> None:
+        """Worker body for :meth:`_restore_ingest_jobs`. Runs on a thread.
+
+        Catches everything. A worker that raised would surface as an uncaught
+        ``WorkerFailed`` and take the app down -- the failure mode this
+        function's synchronous predecessor could not have.
+        """
         from datetime import datetime, timezone
         from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
         from tldw_chatbook.Library.library_ingest_jobs import plan_restore
 
         try:
+            # `LibraryIngestJobsDB` opens with `check_same_thread=False`, so
+            # the connection this thread creates stays usable from the UI
+            # thread once the store is attached. Nothing else touches the
+            # store until then.
             store = LibraryIngestJobsDB(get_library_ingest_jobs_db_path())
-            self._library_ingest_jobs_store = store
             # Do ALL fallible work -- corrupt read, plan, and the store
             # reconcile writes -- BEFORE touching the in-memory registry, so any
             # failure leaves the registry empty + store unattached: a clean
@@ -1877,12 +2715,47 @@ class LibraryIngestQueueMixin:
                 store.upsert_job(job)
             for job_id in plan.delete_ids:
                 store.delete_job(job_id)
-            self.library_ingest_jobs.restore(plan.jobs, plan.next_id)
-            self.library_ingest_jobs.attach_store(store)
         except Exception:
             logger.opt(exception=True).warning(
                 "Failed to restore persisted ingest job history; starting empty."
             )
+            return
+
+        try:
+            self.call_from_thread(self._apply_ingest_job_restore, store, plan)
+        except Exception:
+            # The app stopped (quit during startup) or the callback itself
+            # failed. Either way the registry stays store-less; close the
+            # connection this thread opened rather than leaking it.
+            logger.opt(exception=True).debug(
+                "Ingest job history restore could not be applied; discarding."
+            )
+            try:
+                store.close()
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Ingest job store close after failed restore failed."
+                )
+
+    def _apply_ingest_job_restore(self, store: Any, plan: Any) -> None:
+        """Seed the registry from a completed restore plan. UI thread only.
+
+        Args:
+            store: The opened ``LibraryIngestJobsDB`` to attach as the
+                registry's write-through sink.
+            plan: The ``RestorePlan`` produced off-thread.
+
+        The registry is documented UI-thread-only, so the seeding and the
+        store attach stay here even though the I/O moved. Uses
+        ``merge_restored`` rather than ``restore`` so a job submitted in the
+        few milliseconds between ``on_mount`` and this callback survives.
+        """
+        if getattr(self, "_ingest_shutdown", False):
+            store.close()
+            return
+        self._library_ingest_jobs_store = store
+        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
+        self.library_ingest_jobs.attach_store(store)
 
     def _expand_library_ingest_source(self, source_path: str) -> list[str] | None:
         """Expand a directory source into the files it contains.
@@ -1933,6 +2806,10 @@ class LibraryIngestQueueMixin:
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         batch_id: str | None = None,
+        active_duplicate_consent: ActiveIngestConsentScope | None = None,
+        research_source_operation_id: str | None = None,
+        required_origin: str | None = None,
+        _prepare_only: bool = False,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
@@ -1956,6 +2833,10 @@ class LibraryIngestQueueMixin:
             perform_analysis: Whether to run post-ingest analysis.
             chunk_enabled: Whether to chunk the ingested content.
             chunk_size: Requested chunk size when ``chunk_enabled``.
+            active_duplicate_consent: Exact candidate and active-membership scope
+                captured by an explicitly confirmed submission.
+            required_origin: Optional fail-closed owner precondition for a captured
+                Research workspace authority. General Library submissions omit it.
 
         Returns:
             The newly created job: ``QUEUED`` normally, or immediately
@@ -1964,7 +2845,74 @@ class LibraryIngestQueueMixin:
             so each file gets its own queue row, its own outcome and its own
             retry -- one unsupported file no longer fails its siblings.
         """
+        normalized_required_origin = (
+            str(required_origin).strip().lower()
+            if required_origin is not None
+            else None
+        )
+        if normalized_required_origin not in {None, "local", "server"}:
+            raise ValueError("required_origin must be local or server")
+        backend = self._resolve_ingest_backend()
+        if (
+            normalized_required_origin is not None
+            and backend != normalized_required_origin
+        ):
+            selected = normalized_required_origin.title()
+            raise ValueError(
+                f"Ingestion is unavailable for the selected {selected} authority. "
+                f"The active Library ingest owner is {backend.title()}."
+            )
+        if research_source_operation_id and normalized_required_origin is not None:
+            self._validate_research_source_operation_authority(
+                research_source_operation_id,
+                expected_origin=normalized_required_origin,
+            )
         expanded = self._expand_library_ingest_source(source_path)
+        if _prepare_only and expanded is not None:
+            raise ValueError(
+                "Research source preparation accepts one file or URL, not a folder."
+            )
+        if research_source_operation_id and expanded is not None and len(expanded) > 1:
+            raise ValueError(
+                "Folder imports require one Research source operation per catalog item."
+            )
+        sources = tuple(expanded) if expanded is not None else (source_path,)
+        matches = self.library_ingest_jobs.find_active_source_matches(
+            sources, origin=backend
+        )
+        matched_source_keys = set()
+        for job in matches:
+            try:
+                matched_source_keys.add(
+                    normalize_active_ingest_source(job.source_path, origin=backend)
+                )
+            except (TypeError, ValueError, OSError):
+                continue
+        current_consent = build_active_ingest_consent_scope(
+            sources,
+            origin=backend,
+            active_job_ids=(job.job_id for job in matches),
+            active_source_count=len(matched_source_keys),
+        )
+        candidates_changed = active_duplicate_consent is not None and (
+            active_duplicate_consent.origin != current_consent.origin
+            or active_duplicate_consent.candidate_digest
+            != current_consent.candidate_digest
+            or active_duplicate_consent.candidate_count
+            != current_consent.candidate_count
+        )
+        matches_covered = (
+            active_duplicate_consent is not None
+            and active_duplicate_consent.covers(current_consent)
+        )
+        if candidates_changed or (matches and not matches_covered):
+            raise ActiveIngestSubmissionRefused(
+                (ActiveIngestJobRef(job.job_id, job.state) for job in matches),
+                consent_scope=current_consent,
+                candidate_changed=candidates_changed,
+            )
+
+        normalized_options = ingest_options or {}
         if expanded is not None:
             if not expanded:
                 empty_job = self.library_ingest_jobs.submit(
@@ -1976,7 +2924,8 @@ class LibraryIngestQueueMixin:
                     chunk_enabled=chunk_enabled,
                     chunk_size=chunk_size,
                     detected_type="",
-                    ingest_options=ingest_options or {},
+                    ingest_options=normalized_options,
+                    research_source_operation_id=research_source_operation_id,
                 )
                 failed = self.library_ingest_jobs.mark_failed(
                     empty_job.job_id,
@@ -1988,30 +2937,185 @@ class LibraryIngestQueueMixin:
             # so the queue can group this run's rows under one header and
             # the tally can answer "what did THIS run just do".
             folder_batch_id = f"local-{uuid.uuid4().hex[:12]}"
-            for expanded_path in expanded:
-                job = self.submit_library_ingest_job(
-                    source_path=expanded_path,
-                    ingest_options=ingest_options,
-                    batch_id=folder_batch_id,
-                    # Title is per-file (the ingest form clears it on submit
-                    # for exactly this reason), so a folder's files each take
-                    # their own filename-derived title rather than all
-                    # sharing one. Author and keywords are batch metadata and
-                    # do carry across.
-                    title="",
-                    author=author,
-                    keywords=keywords,
-                    perform_analysis=perform_analysis,
-                    chunk_enabled=chunk_enabled,
-                    chunk_size=chunk_size,
-                )
-                if first_job is None:
-                    first_job = job
+            audio_options = normalized_options.get("audio_video", {})
+            scope_id = (
+                str(audio_options.get("transcription_external_scope_id") or "").strip()
+                if isinstance(audio_options, dict)
+                else ""
+            )
+            submitting_scopes = getattr(self, "_parakeet_submitting_scope_ids", None)
+            if submitting_scopes is None:
+                submitting_scopes = self._parakeet_submitting_scope_ids = set()
+            if scope_id:
+                submitting_scopes.add(scope_id)
+            try:
+                for expanded_path in expanded:
+                    job = self._submit_library_ingest_job_admitted(
+                        source_path=expanded_path,
+                        ingest_options=normalized_options,
+                        batch_id=folder_batch_id,
+                        # Title is per-file (the ingest form clears it on submit
+                        # for exactly this reason), so a folder's files each take
+                        # their own filename-derived title rather than all
+                        # sharing one. Author and keywords are batch metadata and
+                        # do carry across.
+                        title="",
+                        author=author,
+                        keywords=keywords,
+                        perform_analysis=perform_analysis,
+                        chunk_enabled=chunk_enabled,
+                        chunk_size=chunk_size,
+                        backend=backend,
+                        research_source_operation_id=research_source_operation_id,
+                    )
+                    if first_job is None:
+                        first_job = job
+            finally:
+                if scope_id:
+                    submitting_scopes.discard(scope_id)
+                    self._sync_parakeet_source_scopes()
             # ``expanded`` is non-empty here, so the loop always assigns.
             assert first_job is not None
             return first_job
 
-        if self._resolve_ingest_backend() == "server":
+        admitted_kwargs = dict(
+            source_path=source_path,
+            ingest_options=normalized_options,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            batch_id=batch_id,
+            backend=backend,
+            research_source_operation_id=research_source_operation_id,
+        )
+        if _prepare_only:
+            return self._prepare_library_ingest_job_admitted(
+                **admitted_kwargs,
+                dispatch_held=True,
+                require_persisted=True,
+            )
+        return self._submit_library_ingest_job_admitted(**admitted_kwargs)
+
+    def prepare_research_source_ingest_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any] | None = None,
+        title: str = "",
+        author: str = "",
+        keywords: tuple[str, ...] = (),
+        perform_analysis: bool = False,
+        chunk_enabled: bool = False,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        research_source_operation_id: str,
+        required_origin: str,
+    ) -> LibraryIngestJob:
+        """Durably queue one qualified Research source without dispatching it."""
+
+        return self.submit_library_ingest_job(
+            source_path=source_path,
+            ingest_options=ingest_options,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            research_source_operation_id=research_source_operation_id,
+            required_origin=required_origin,
+            _prepare_only=True,
+        )
+
+    def _prepare_library_ingest_job_admitted(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+        chunk_enabled: bool,
+        chunk_size: int,
+        batch_id: str | None,
+        backend: str,
+        research_source_operation_id: str | None,
+        require_persisted: bool,
+        dispatch_held: bool = False,
+    ) -> LibraryIngestJob:
+        """Create one queued row without starting its Local or Server owner."""
+
+        detected_type = ""
+        if backend == "server":
+            if is_web_clip_source(source_path):
+                build_web_clip_kwargs(
+                    source_path,
+                    options=ingest_options,
+                    title=title,
+                    author=author,
+                    keywords=keywords,
+                )
+                detected_type = "web"
+            else:
+                kwargs = build_server_ingest_kwargs(
+                    source_path,
+                    options=ingest_options,
+                    title=title,
+                    author=author,
+                    keywords=keywords,
+                    perform_analysis=perform_analysis,
+                )
+                detected_type = str(kwargs.get("media_type") or "")
+        else:
+            try:
+                detected_type = classify_ingest_source(source_path) or ""
+            except FileIngestionError:
+                detected_type = ""
+            except Exception:
+                logger.warning(
+                    "classify_ingest_source failed unexpectedly "
+                    "(operation_id={}, origin={}); treating as light work "
+                    "(heavy-lane cap may not apply).",
+                    research_source_operation_id or "none",
+                    backend,
+                )
+        return self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            detected_type=detected_type,
+            ingest_options=ingest_options,
+            origin=backend,
+            batch_id=batch_id,
+            research_source_operation_id=research_source_operation_id,
+            dispatch_held=dispatch_held,
+            require_persisted=require_persisted,
+        )
+
+    def _submit_library_ingest_job_admitted(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+        chunk_enabled: bool,
+        chunk_size: int,
+        batch_id: str | None,
+        backend: str,
+        research_source_operation_id: str | None,
+    ) -> LibraryIngestJob:
+        """Route a source already admitted by ``submit_library_ingest_job``."""
+        if backend == "server":
             # A web page goes to the clipper, not the ingest-jobs API: that API
             # has no media type for one. A local ingest needs no such branch --
             # classify_ingest_source already routes an article through the
@@ -2023,46 +3127,59 @@ class LibraryIngestQueueMixin:
             )
             return submit_remote(
                 source_path=source_path,
-                ingest_options=ingest_options or {},
+                ingest_options=ingest_options,
                 title=title,
                 author=author,
                 keywords=keywords,
                 perform_analysis=perform_analysis,
+                research_source_operation_id=research_source_operation_id,
             )
 
-        try:
-            detected_type = classify_ingest_source(source_path) or ""
-        except FileIngestionError:
-            # Expected for an unsupported extension -- treat as light work.
-            detected_type = ""
-        except Exception:
-            # An UNEXPECTED classification failure must not silently disable the
-            # heavy-lane cap (an empty type is treated as light work, so a
-            # misclassified audio/video job would bypass the transcription cap).
-            # Log it so a regression is observable, then fall back to light.
-            logger.opt(exception=True).warning(
-                f"classify_ingest_source failed unexpectedly for {source_path!r}; "
-                "treating as light work (heavy-lane cap may not apply)."
-            )
-            detected_type = ""
-        job = self.library_ingest_jobs.submit(
+        return self._submit_local_library_ingest_job(
             source_path=source_path,
+            ingest_options=ingest_options,
             title=title,
             author=author,
             keywords=keywords,
             perform_analysis=perform_analysis,
             chunk_enabled=chunk_enabled,
             chunk_size=chunk_size,
-            detected_type=detected_type,
-            ingest_options=ingest_options or {},
             batch_id=batch_id,
+            research_source_operation_id=research_source_operation_id,
         )
+
+    def _submit_local_library_ingest_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+        chunk_enabled: bool,
+        chunk_size: int,
+        batch_id: str | None,
+        research_source_operation_id: str | None,
+    ) -> LibraryIngestJob:
+        """Append one admitted local source and top up the parse pool."""
+        job = self._prepare_library_ingest_job_admitted(
+            source_path=source_path,
+            ingest_options=ingest_options,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            batch_id=batch_id,
+            backend="local",
+            research_source_operation_id=research_source_operation_id,
+            require_persisted=False,
+        )
+        self._dispatch_research_source_catalog_job(job.job_id)
         if self.media_db is None:
-            failed = self.library_ingest_jobs.mark_failed(
-                job.job_id, error="Media database is unavailable."
-            )
-            return failed if failed is not None else job
-        self._top_up_ingest_parse_pool()
+            return self.library_ingest_jobs.get_job(job.job_id) or job
         return job
 
     def retry_library_ingest_job(
@@ -2071,11 +3188,11 @@ class LibraryIngestQueueMixin:
         *,
         transcription_provider: str | None = None,
     ) -> Optional[LibraryIngestJob]:
-        """Requeue a previously failed job and top up the parse pool.
+        """Retry a previously failed Library or Research-owned ingest job.
 
-        UI-thread only. A thin wrapper over
-        ``LibraryIngestJobRegistry.requeue`` -- a no-op (returns ``None``)
-        when ``job_id`` is unknown or the job is not currently ``FAILED``.
+        UI-thread only. Ordinary Library jobs use the legacy synchronous
+        ``LibraryIngestJobRegistry.requeue`` path. Research-owned jobs hand
+        catalog retry ownership to their durable source-operation scheduler.
 
         Args:
             job_id: The failed job to requeue.
@@ -2083,15 +3200,24 @@ class LibraryIngestQueueMixin:
         Returns:
             The newly appended ``QUEUED`` job (or immediately ``FAILED``
             when ``media_db`` is unavailable), or ``None`` when nothing was
-            requeued.
+            requeued. Research-owned jobs schedule their durable catalog-stage
+            retry and return ``None``; the async owner returns the exact
+            replacement only after its operation lineage is reconciled.
         """
         replacement_options = None
         if transcription_provider not in {None, "faster-whisper"}:
             return None
+        source = self.library_ingest_jobs.get_job(job_id)
+        if source is None:
+            return None
+        operation_id = str(source.research_source_operation_id or "").strip()
+        if operation_id:
+            self._schedule_research_source_catalog_retry(
+                source,
+                operation_id=operation_id,
+            )
+            return None
         if transcription_provider is not None:
-            source = self.library_ingest_jobs.get_job(job_id)
-            if source is None:
-                return None
             replacement_options = deepcopy(source.ingest_options)
             replacement_options.setdefault("audio_video", {})[
                 "transcription_provider"
@@ -2110,12 +3236,282 @@ class LibraryIngestQueueMixin:
         self._top_up_ingest_parse_pool()
         return requeued
 
+    def _schedule_research_source_catalog_retry(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+        notify_unavailable: bool = True,
+    ) -> bool:
+        """Queue the durable Research retry owner without generic requeueing."""
+
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        run_worker = getattr(self, "run_worker", None)
+        if (
+            source.state is not IngestJobState.FAILED
+            or source.superseded
+            or source.dismissed
+            or source.permanent
+            or scheduler is None
+            or operation_store is None
+            or not callable(run_worker)
+        ):
+            if notify_unavailable:
+                self._notify_research_source_retry_unavailable()
+            return False
+        awaitable = self._retry_research_source_catalog_job(
+            source,
+            operation_id=operation_id,
+        )
+        try:
+            run_worker(awaitable, group="research_source_catalog_retry")
+        except Exception:
+            awaitable.close()
+            if notify_unavailable:
+                self._notify_research_source_retry_unavailable()
+            return False
+        return True
+
+    async def _retry_research_source_catalog_job(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+    ) -> LibraryIngestJob | None:
+        """Retry one exact Research catalog receipt and reload its replacement."""
+
+        operation_store = getattr(self, "research_source_operation_store", None)
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if operation_store is None or scheduler is None:
+            self._notify_research_source_retry_unavailable()
+            return None
+        try:
+            # Keep this indexed preflight on the event-loop turn so concurrent
+            # clicks reach the scheduler fence in order instead of racing the
+            # same SQLite connection from two executor threads.
+            operation = operation_store.get(operation_id)
+        except Exception:
+            operation = None
+        operation_source = getattr(
+            getattr(operation, "data_source", None), "value", ""
+        )
+        expected_origin = (
+            operation_source if operation_source in {"local", "server"} else ""
+        )
+        if (
+            operation is None
+            or operation.operation_id != operation_id
+            or operation.ingest_job_id != source.job_id
+            or source.research_source_operation_id != operation_id
+            or source.origin != expected_origin
+        ):
+            self._notify_research_source_retry_unavailable()
+            return None
+        try:
+            receipt = await scheduler.retry(
+                operation_id,
+                stage=SourceOperationStage.CATALOG,
+            )
+        except SourceOperationConflictError:
+            receipt = None
+        except Exception:
+            self._notify_research_source_retry_unavailable()
+            return None
+        replacement = self._research_source_retry_replacement(
+            source,
+            operation_id=operation_id,
+            receipt=receipt,
+        )
+        if replacement is None:
+            # A second click may have waited behind the scheduler fence. Re-read
+            # the durable winner so every caller converges on the same job.
+            try:
+                receipt = await asyncio.to_thread(operation_store.get, operation_id)
+            except Exception:
+                receipt = None
+            replacement = self._research_source_retry_replacement(
+                source,
+                operation_id=operation_id,
+                receipt=receipt,
+            )
+        if replacement is None:
+            self._notify_research_source_retry_unavailable()
+        return replacement
+
+    def _research_source_retry_replacement(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+        receipt: Any,
+    ) -> LibraryIngestJob | None:
+        """Return only the released replacement named by the exact receipt."""
+
+        if (
+            receipt is None
+            or getattr(receipt, "operation_id", "") != operation_id
+            or getattr(receipt, "catalog_status", None)
+            not in {
+                SourceOperationStatus.IN_PROGRESS,
+                SourceOperationStatus.SUCCEEDED,
+            }
+        ):
+            return None
+        replacement_id = str(getattr(receipt, "ingest_job_id", "") or "")
+        if not replacement_id or replacement_id == source.job_id:
+            return None
+        replacement = self.library_ingest_jobs.get_job(replacement_id)
+        if (
+            replacement is None
+            or replacement.retry_of_job_id != source.job_id
+            or replacement.research_source_operation_id != operation_id
+            or replacement.origin != source.origin
+            or replacement.dispatch_held
+        ):
+            return None
+        return replacement
+
+    def _notify_research_source_retry_unavailable(self) -> None:
+        """Report a fixed path-free recovery without exposing owner failures."""
+
+        notify = getattr(self, "notify", None)
+        if callable(notify):
+            notify(
+                self._RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY,
+                severity="warning",
+            )
+
+    def _requeue_research_source_catalog_job(
+        self, job_id: str
+    ) -> Optional[LibraryIngestJob]:
+        """Persist a replacement Research ingest without dispatching it."""
+
+        source = self.library_ingest_jobs.get_job(job_id)
+        if source is None or source.origin not in {"local", "server"}:
+            return None
+        return self.library_ingest_jobs.requeue(job_id, dispatch_held=True)
+
+    def _cancel_research_source_prepared_job(self, job_id: str) -> LibraryIngestJob:
+        """Durably cancel an undispatched row whose operation link failed."""
+
+        current = self.library_ingest_jobs.get_job(job_id)
+        if current is None:
+            raise ValueError("Prepared Research ingest job does not exist.")
+        if current.state in {
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.CANCELLED,
+            IngestJobState.SKIPPED,
+        }:
+            return current
+        cancelled = self.library_ingest_jobs.mark_cancelled(
+            job_id,
+            reason="Research source operation could not be linked.",
+            require_persisted=True,
+        )
+        if cancelled is None:
+            raise ValueError("Prepared Research ingest job cannot be cancelled.")
+        return cancelled
+
+    def _fail_research_source_prepared_job(self, job_id: str) -> LibraryIngestJob:
+        """Durably fail a linked row whose owner dispatch did not start."""
+
+        current = self.library_ingest_jobs.get_job(job_id)
+        if current is None:
+            raise ValueError("Prepared Research ingest job does not exist.")
+        if current.state in {
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.CANCELLED,
+            IngestJobState.SKIPPED,
+        }:
+            return current
+        failed = self.library_ingest_jobs.mark_failed(
+            job_id,
+            error="Research catalog dispatch could not be started.",
+            require_persisted=True,
+        )
+        if failed is None:
+            raise ValueError("Prepared Research ingest job cannot be failed.")
+        return failed
+
+    def _dispatch_research_source_catalog_job(self, job_id: str) -> None:
+        """Dispatch an already-persisted ingest through its bound adapter."""
+
+        requeued = self.library_ingest_jobs.get_job(job_id)
+        if requeued is None:
+            raise ValueError("Replacement ingest job does not exist.")
+        if requeued.dispatch_held:
+            requeued = self.library_ingest_jobs.release_dispatch_hold(
+                job_id, require_persisted=True
+            )
+            if requeued is None:
+                raise ValueError("Prepared Research ingest job cannot be released.")
+        if requeued.origin == "local":
+            if self.media_db is None:
+                self.library_ingest_jobs.mark_failed(
+                    requeued.job_id,
+                    error="Media database is unavailable.",
+                )
+                return
+            if (
+                requeued.state is IngestJobState.PARSING
+                and requeued.retry_of_job_id
+                and requeued.research_source_operation_id
+            ):
+                pending = getattr(
+                    self,
+                    "_research_source_parse_dispatch_pending",
+                    None,
+                )
+                if pending is None:
+                    pending = set()
+                    self._research_source_parse_dispatch_pending = pending
+                pending.add(requeued.job_id)
+            self._top_up_ingest_parse_pool()
+            return
+        if requeued.origin != "server":
+            raise ValueError("Replacement ingest authority is unsupported.")
+
+        try:
+            if is_web_clip_source(requeued.source_path):
+                kwargs = build_web_clip_kwargs(
+                    requeued.source_path,
+                    options=requeued.ingest_options,
+                    title=requeued.title,
+                    author=requeued.author,
+                    keywords=requeued.keywords,
+                )
+                self._send_web_clip_job(requeued.job_id, kwargs)
+            else:
+                kwargs = build_server_ingest_kwargs(
+                    requeued.source_path,
+                    options=requeued.ingest_options,
+                    title=requeued.title,
+                    author=requeued.author,
+                    keywords=requeued.keywords,
+                    perform_analysis=requeued.perform_analysis,
+                )
+                self._send_server_ingest_job(requeued.job_id, kwargs)
+        except (NotAWebClipSource, ServerIngestUnsupported) as exc:
+            self.library_ingest_jobs.mark_failed(
+                requeued.job_id,
+                error=str(exc),
+                permanent=True,
+            )
+            return None
+
     def retry_library_ingest_job_with_provider(
         self,
         job_id: str,
         provider: str,
     ) -> Optional[LibraryIngestJob]:
-        """Run the one supported explicit cross-provider recovery action."""
+        """Run the supported provider recovery for ordinary Library jobs.
+
+        Research-owned jobs preserve the operation's captured options and
+        route through the durable catalog retry owner instead.
+        """
 
         if provider != "faster-whisper":
             return None
@@ -2169,10 +3565,10 @@ class LibraryIngestQueueMixin:
         """Create the Library ingest parse pool.
 
         UI-thread only. Test seam: monkeypatched to an inline-synchronous
-        fake pool (see ``Tests/Library/test_library_ingest_runner.py``) so
-        pilots stay deterministic without spawning real OS processes. Real
-        callers get a spawn-context ``multiprocessing.Pool`` sized by
-        ``_ingest_parse_worker_count``.
+        fake resource bundle (see
+        ``Tests/Library/test_library_ingest_runner.py``) so pilots stay
+        deterministic without spawning real OS processes. Real callers get a
+        spawn-context ``multiprocessing.Pool`` and bounded progress queue.
 
         Not a ``concurrent.futures.ProcessPoolExecutor`` -- see the F3
         design spec's Architecture section: the executor's ``atexit`` hook
@@ -2191,28 +3587,52 @@ class LibraryIngestQueueMixin:
         value(s) in fds_to_keep`` -- so the very first Pool construction
         (which ensure-runs the process-global resource tracker) crashed
         the app on its first ingest submission. When ``sys.stderr`` has no
-        usable fd, the Pool is constructed under
+        usable fd, both the queue and Pool are constructed under
         ``contextlib.redirect_stderr`` pointing at a genuinely fd-backed
         stream (``_ingest_pool_real_stderr``: ``sys.__stderr__``, else a
         kept-alive devnull handle). The tracker launches at most once per
         process, so covering construction is sufficient -- and applying
-        the redirect on every (re)construction is harmless.
+        the redirect on every (re)construction is harmless. Queue and Pool
+        creation are one atomic owner operation: if Pool creation fails, the
+        already-created queue is closed before the exception escapes.
         """
         ctx = multiprocessing.get_context("spawn")
         processes = self._ingest_parse_worker_count()
-        # (task-2016) The initializer silences worker-side import noise
-        # (loguru default sink, dependency warnings) that would otherwise
-        # write straight over the TUI via the inherited real-TTY stderr.
+
+        def _construct_resources() -> _IngestParsePoolResources:
+            progress_queue = None
+            try:
+                progress_queue = ctx.Queue(maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE)
+                pool = ctx.Pool(
+                    processes=processes,
+                    initializer=initialize_ingest_parse_worker,
+                    initargs=(progress_queue,),
+                )
+            except Exception:
+                if progress_queue is not None:
+                    for method_name in ("close", "cancel_join_thread"):
+                        method = getattr(progress_queue, method_name, None)
+                        if method is None:
+                            continue
+                        try:
+                            method()
+                        except Exception:
+                            logger.error(
+                                "Error cleaning up a partially constructed "
+                                "Library ingest progress queue "
+                                "(operation={}, queue_type={}).",
+                                method_name,
+                                type(progress_queue).__name__,
+                            )
+                raise
+            return _IngestParsePoolResources(pool, progress_queue)
+
+        # The combined initializer keeps worker import noise off the TUI and
+        # installs this generation's progress sink.
         if _stream_fileno(sys.stderr) >= 0:
-            return ctx.Pool(
-                processes=processes,
-                initializer=silence_ingest_worker_import_noise,
-            )
+            return _construct_resources()
         with contextlib.redirect_stderr(_ingest_pool_real_stderr()):
-            return ctx.Pool(
-                processes=processes,
-                initializer=silence_ingest_worker_import_noise,
-            )
+            return _construct_resources()
 
     def _ensure_ingest_parse_pool(self):
         """Return the current parse pool, lazily creating one if needed.
@@ -2220,11 +3640,17 @@ class LibraryIngestQueueMixin:
         UI-thread only.
         """
         if self._ingest_parse_pool is None:
-            pool = self._create_ingest_parse_pool()
+            resources = self._create_ingest_parse_pool()
+            pool = resources.pool
+            progress_queue = resources.progress_queue
             try:
                 sentinels = self._ingest_parse_pool_worker_sentinels(pool)
             except Exception:
-                self._terminate_ingest_parse_pool_off_thread(pool)
+                self._terminate_ingest_parse_pool_off_thread(
+                    pool,
+                    progress_queue,
+                    None,
+                )
                 raise
 
             generation = getattr(self, "_ingest_parse_pool_generation", 0) + 1
@@ -2236,9 +3662,74 @@ class LibraryIngestQueueMixin:
             self._ingest_parse_jobs_by_generation[generation] = set()
             self._ingest_parse_pool_stop_event = stop_event
             self._ingest_parse_pool = pool
+            self._ingest_parse_progress_queue = progress_queue
+            self._ingest_parse_progress_thread = None
+            if progress_queue is not None:
+                self._ingest_parse_progress_thread = (
+                    self._start_ingest_parse_progress_drain(
+                        generation,
+                        progress_queue,
+                        stop_event,
+                    )
+                )
             if sentinels:
                 self._start_ingest_parse_pool_monitor(generation, sentinels, stop_event)
         return self._ingest_parse_pool
+
+    def _start_ingest_parse_progress_drain(
+        self,
+        generation: int,
+        progress_queue: Any,
+        stop_event: threading.Event,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> threading.Thread:
+        """Start the bounded, latest-per-job drain for one pool generation."""
+
+        def _drain() -> None:
+            coalescer = ParseProgressCoalescer(
+                interval=INGEST_PARSE_PROGRESS_FLUSH_SECONDS,
+                started_at=clock(),
+            )
+            while not stop_event.is_set() and not self._ingest_shutdown:
+                try:
+                    raw_event = progress_queue.get(timeout=0.05)
+                except queue.Empty:
+                    raw_event = None
+                except (EOFError, OSError, ValueError):
+                    return
+                if stop_event.is_set() or self._ingest_shutdown:
+                    return
+                if raw_event is not None:
+                    try:
+                        event = make_parse_progress_event(
+                            raw_event.generation,
+                            raw_event.job_id,
+                            raw_event.phase,
+                            raw_event.message,
+                            raw_event.percent,
+                        )
+                    except Exception:
+                        event = None
+                    if event is not None:
+                        coalescer.accept(event)
+                batch = coalescer.take_due(clock())
+                if batch:
+                    if stop_event.is_set() or self._ingest_shutdown:
+                        return
+                    self._marshal_ingest_pool_call(
+                        self._on_ingest_parse_progress_batch,
+                        generation,
+                        batch,
+                    )
+
+        thread = threading.Thread(
+            target=_drain,
+            name=f"library-ingest-progress-drain-{generation}",
+            daemon=True,
+        )
+        thread.start()
+        return thread
 
     @staticmethod
     def _ingest_parse_pool_worker_sentinels(pool: Any) -> Optional[tuple[Any, ...]]:
@@ -2306,52 +3797,335 @@ class LibraryIngestQueueMixin:
         as deprecated fallbacks when ``ingest_options`` is empty or does not
         contain a value.
 
-        The Library queue never sets ``custom_prompt``/``system_prompt``/
-        ``api_name``/``api_key``/``metadata``, so they're simply absent (``None``
-        inside the worker's ``options.get(...)`` reads).
+        (task-3301) The three previously dead controls resolve here:
+
+        * ``encoding`` (generic group) travels to the plaintext/html readers.
+        * ``chunk_options`` carries the form's size/overlap as ints (the
+          snapshot boundary coerces, but restored/persisted jobs may still
+          hold display strings), in both the ``size`` spelling (audio/video
+          option maps) and the ``max_size`` spelling
+          (``improved_chunking_process``); the overlap fallback is the
+          generic schema default -- the value the UI displays -- not a
+          hardcoded constant. (task-3301/3303 xhigh review round 2,
+          F11+F12) An explicit ``method`` ALWAYS travels: pdf and
+          audio/video get ``words`` so the generic size/overlap hint
+          ("words · 100-5000") is true everywhere the processors would
+          otherwise setdefault sentences (a ~10-30x unit lie); the ebook
+          group maps its panel choice ("chapters" -> the chunker's
+          ``ebook_chapters``, other names verbatim) and falls back to the
+          pre-branch ``sentences`` when the snapshot predates the field
+          (fresh snapshots always carry the schema default -- absence IS
+          the legacy marker, so a requeued old job keeps its original
+          scheme). The text tail's own default is already words.
+        * When analysis is requested, the configured analysis provider
+          (``[analysis_defaults] provider``) is resolved through the shared
+          readiness seam, then constrained to a chat-dispatchable name
+          (task-3301 xhigh review round): ready adds ``api_name`` (the
+          normalized ``API_CALL_HANDLERS`` key), ``api_key`` (``None`` for
+          keyless local providers, paired with the explicit
+          ``analysis_keyless_ok`` opt-in the processors' credential gates
+          require), and ``analysis_call`` (model/temperature/top_p/min_p/
+          max_tokens from ``[analysis_defaults]``, viewer-parity defaults)
+          plus ``system_prompt`` when the section configures one; not ready
+          (including readiness-ready providers with no chat handler) adds
+          ``analysis_skipped_reason`` so the job records WHY analysis is
+          absent instead of silently dropping it.
+
+        ``custom_prompt`` and ``system_prompt`` are copied from the generic
+        snapshot only when analysis is requested. They remain in the job
+        snapshot while analysis is off, but parser options omit them so stale
+        instructions cannot reach a backend that will not execute analysis.
+        ``metadata`` remains absent (``None`` inside the worker's
+        ``options.get(...)`` reads).
         """
         opts = job.ingest_options or {}
         group = get_type_group(job.source_path)
 
         # Resolve a flat option map from the generic group and the detected
         # type-specific group, with type-specific values taking precedence.
-        flat_opts: dict[str, Any] = dict(opts.get("generic", {}))
+        generic_opts: dict[str, Any] = dict(opts.get("generic", {}))
+        flat_opts: dict[str, Any] = dict(generic_opts)
         flat_opts.update(opts.get(group, {}) or {})
+
+        def _as_int(value: Any, fallback: int) -> int:
+            """Coerce a possibly-display-string number, falling back."""
+            try:
+                return int(str(value).strip())
+            except (TypeError, ValueError):
+                return fallback
+
+        perform_analysis = bool(flat_opts.get("analyze", job.perform_analysis))
+        overlap_default = _as_int(generic_option_default("chunk_overlap", 100), 100)
+        chunk_size = _as_int(
+            flat_opts.get("chunk_size", job.chunk_size), job.chunk_size
+        )
+        chunk_enabled = bool(flat_opts.get("chunk", job.chunk_enabled))
+
+        # (task 10, spec §9.1 AC 34) Template resolution -- ingest order:
+        # picker/batch choice -> config [chunking] default_template -> plain
+        # options. Resolution happens HERE (the app process owns the media
+        # DB) and the resolved DICT travels inside chunk_options: the parse
+        # worker must stay DB-free. An unresolvable or stored-invalid choice
+        # raises a NAMED error (TemplateResolutionError /
+        # InvalidTemplateError, AC 37 / AC-24b) -- the ingest dispatch
+        # catches both and fails THIS item; there is never a silent
+        # fallback to plain chunking.
+        # (task 4, auto-selection spec §4.3) A picker choice of the Auto
+        # sentinel ("auto") resolves to an AutoDecision instead: the job's
+        # ALREADY-KNOWN metadata (detected type / title / filename / URL)
+        # feeds resolve_auto -- nothing re-reads file contents at selection
+        # time. A template-tier win is consumed exactly like a manual pick;
+        # a plan-tier win materializes the planner's options as this
+        # parse's defaults; a plain-tier win changes nothing below.
+        ingest_template: dict[str, Any] | None = None
+        auto_decision: Any = None
+        plan_options: dict[str, Any] | None = None
+        if chunk_enabled:
+            from .Chunking.template_runtime import resolve_ingest_template
+
+            source_is_url = (
+                str(job.source_path or "").lower().startswith(("http://", "https://"))
+            )
+            resolved = resolve_ingest_template(
+                getattr(self, "media_db", None),
+                str(flat_opts.get("chunk_template") or "").strip() or None,
+                media_type=str(job.detected_type or "").strip() or None,
+                title=str(job.title or "").strip() or None,
+                filename=(None if source_is_url else PurePath(job.source_path).name),
+                url=str(job.source_path) if source_is_url else None,
+            )
+            from .Chunking.auto_selection import AutoDecision
+
+            if isinstance(resolved, AutoDecision):
+                auto_decision = resolved
+                if resolved.tier == "template" and isinstance(resolved.template, dict):
+                    ingest_template = resolved.template
+                elif resolved.tier == "plan" and isinstance(
+                    resolved.chunk_options, dict
+                ):
+                    plan_options = dict(resolved.chunk_options)
+                # plain tier: fall through to today's default options
+            else:
+                ingest_template = resolved
+
+        if ingest_template is not None or plan_options is not None:
+            # (task 10, spec §9.1 AC 35 -- the precedence ruling) A resolved
+            # template's chunk-stage options beat the ingest builder's
+            # DEFAULTS; only a value the user explicitly CHANGED in the
+            # ingest form beats the template. Left as-is, the builder's
+            # always-on size/overlap (+ per-group method injection) would
+            # arrive at the Chunker as explicit options that override the
+            # template on every path -- the picker would be inert.
+            # (task 4, auto-selection §4.3) The plan tier rides the SAME
+            # ruling: the planner's options are the defaults, a
+            # user-changed form value still wins.
+            #
+            # Mechanism: the form snapshot ALWAYS carries explicit values
+            # (``_build_ingest_options_snapshot`` seeds every schema
+            # default), so "differs from the schema default" is the only
+            # user-changed signal available at this seam. Values equal to
+            # the schema default are dropped here and re-derived from the
+            # template by the parse seam's materialization
+            # (``materialize_template_chunk_options``); values that differ
+            # ride along and win at the Chunker's explicit-beats-template
+            # merge. A snapshot WITHOUT the key (pre-field legacy jobs) has
+            # no user signal at all and defaults to the template winning.
+            size_schema_default = _as_int(
+                generic_option_default("chunk_size", DEFAULT_CHUNK_SIZE),
+                DEFAULT_CHUNK_SIZE,
+            )
+            overlap_schema_default = overlap_default
+            if ingest_template is not None:
+                chunk_options: dict[str, Any] = {"template": ingest_template}
+            else:
+                # Plan tier: the planner's options travel as this parse's
+                # chunk-stage defaults; ``size`` mirrors ``max_size`` for
+                # the audio/video key-by-key re-projection (the same alias
+                # ``materialize_template_chunk_options`` fills).
+                chunk_options = dict(plan_options)
+                if "max_size" in chunk_options:
+                    chunk_options.setdefault("size", chunk_options["max_size"])
+            if "chunk_size" in flat_opts and chunk_size != size_schema_default:
+                chunk_options["size"] = chunk_size
+                chunk_options["max_size"] = chunk_size
+            if (
+                "chunk_overlap" in flat_opts
+                and _as_int(flat_opts.get("chunk_overlap"), overlap_default)
+                != overlap_schema_default
+            ):
+                chunk_options["overlap"] = _as_int(
+                    flat_opts.get("chunk_overlap"), overlap_default
+                )
+        else:
+            chunk_options = (
+                {
+                    "size": chunk_size,
+                    "max_size": chunk_size,
+                    "overlap": _as_int(
+                        flat_opts.get("chunk_overlap", overlap_default),
+                        overlap_default,
+                    ),
+                }
+                if chunk_enabled
+                else None
+            )
+        if auto_decision is not None and chunk_options is not None:
+            # (task 4, auto-selection spec §4.4) The decision's travel
+            # ticket to the persist seam (mode/auto_tier/auto_rationale).
+            # The parse seam POPS this key before any branch dispatch, so
+            # no processor or the Chunker ever sees it.
+            chunk_options["auto"] = {
+                "tier": str(auto_decision.tier),
+                "rationale": [str(line) for line in (auto_decision.rationale or [])],
+            }
 
         options: dict[str, Any] = {
             "title": job.title or None,
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
-            "perform_analysis": flat_opts.get("analyze", job.perform_analysis),
-            "chunk_options": (
-                {
-                    "method": "sentences",
-                    "size": flat_opts.get("chunk_size", job.chunk_size),
-                    "overlap": flat_opts.get("chunk_overlap", 50),
-                }
-                if flat_opts.get("chunk", job.chunk_enabled)
-                else None
+            "perform_analysis": perform_analysis,
+            # These generic fields intentionally travel independently of the
+            # detected type-group branch. The downstream local overwrite/RAG
+            # behavior is owned by later work; this seam only makes the form
+            # snapshot honest for consumers that already read these options.
+            "overwrite_existing": bool(
+                generic_opts.get(
+                    "overwrite_existing",
+                    generic_option_default("overwrite_existing", False),
+                )
             ),
+            "generate_embeddings": bool(
+                generic_opts.get(
+                    "generate_embeddings",
+                    generic_option_default("generate_embeddings", True),
+                )
+            ),
+            "encoding": flat_opts.get("encoding"),
+            "chunk_options": chunk_options,
         }
+        # ``template_active`` gates the per-group METHOD injection below:
+        # the pdf/audio-video/image "words" and the ebook group mapping are
+        # builder DEFAULTS (the user cannot type a method in those panels),
+        # so under a resolved template they must not be injected -- the
+        # template's method wins via materialization. A user-changed ebook
+        # chunk_method (differs from the select's schema default) still
+        # travels. (task 4, auto-selection §4.3) An auto PLAN-tier win
+        # governs identically: its method is a derived default, not a user
+        # choice, so the injection is skipped for it too; the auto PLAIN
+        # tier keeps today's injections (it changes nothing).
+        template_active = ingest_template is not None or plan_options is not None
+
+        if perform_analysis:
+            # Prompts remain in the persisted generic snapshot while analysis
+            # is off, but parser options must not carry instructions no
+            # backend will execute.
+            options["custom_prompt"] = generic_opts.get(
+                "custom_prompt", generic_option_default("custom_prompt", "")
+            )
+            options["system_prompt"] = generic_opts.get(
+                "system_prompt", generic_option_default("system_prompt", "")
+            )
+            resolution = resolve_ingest_analysis_provider(
+                getattr(self, "app_config", None)
+            )
+            if resolution.ready:
+                # (task-3301 xhigh review round) The NORMALIZED dispatch
+                # name (an `API_CALL_HANDLERS` key) travels, not the
+                # display spelling -- it is what `chat_api_call` and the
+                # summarizer's alias map accept (F5).
+                options["api_name"] = resolution.dispatch_name
+                options["api_key"] = resolution.api_key
+                if resolution.keyless:
+                    # (F8) Explicit keyless opt-in: the processors' analysis
+                    # gates only dispatch without a credential when the
+                    # readiness seam vouched for keyless operation.
+                    options["analysis_keyless_ok"] = True
+                # (F10) The full [analysis_defaults] call shape, so an
+                # ingest analysis runs with the same model/sampling the
+                # Media viewer's analysis panel would use.
+                options["analysis_call"] = {
+                    "model": resolution.model,
+                    "temperature": resolution.temperature,
+                    "top_p": resolution.top_p,
+                    "min_p": resolution.min_p,
+                    "max_tokens": resolution.max_tokens,
+                }
+                if resolution.system_prompt and not options.get("system_prompt"):
+                    options["system_prompt"] = resolution.system_prompt
+            else:
+                options["analysis_skipped_reason"] = resolution.short_reason
 
         if group == "pdf":
+            if options["chunk_options"] is not None and not template_active:
+                # (F12) ``process_pdf`` setdefaults method='sentences',
+                # under which the form's "words · 100-5000" size hint is a
+                # ~10-30x unit lie (500 SENTENCES ~= one chunk per
+                # document). Words is what the hint promises. (task 10)
+                # Under a resolved template this injection is a builder
+                # DEFAULT and is skipped -- the template's method wins.
+                options["chunk_options"]["method"] = "words"
             options["pdf_engine"] = flat_opts.get("engine") or flat_opts.get(
                 "pdf_engine"
             )
             options["page_range"] = flat_opts.get("pages")
             options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", False))
             options["extract_images"] = flat_opts.get("extract_images", False)
+            # (task-3303) OCR detail: language + backend, with the
+            # processor's own defaults as the fallbacks. The panel gates
+            # the OCR toggle to the docling/docext engines, so a silent
+            # OCR-under-pymupdf no-op can no longer be *asked for*; the
+            # values themselves always travel (process_pdf ignores them
+            # when the parser cannot OCR).
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
+            options["ocr_backend"] = flat_opts.get("ocr_backend") or "auto"
+        elif group == "document":
+            # (task-3303) The document group layers ON TOP of generic:
+            # ``flat_opts`` already merged generic (analyze/chunk/encoding)
+            # under these, so document files keep task-3301's chunking and
+            # analysis while gaining ``process_document``'s own knobs.
+            options["processing_method"] = flat_opts.get("processing_method") or "auto"
+            options["enable_ocr"] = flat_opts.get(
+                "ocr", flat_opts.get("enable_ocr", False)
+            )
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
         elif group == "audio_video":
+            if options["chunk_options"] is not None and not template_active:
+                # (F12) The audio/video branch defaults chunk_method to
+                # sentences too -- same unit-lie fix as the pdf branch.
+                # (task 10) Skipped under a resolved template (a builder
+                # default, not a user choice).
+                options["chunk_options"]["method"] = "words"
             provider = flat_opts.get("transcription_provider")
             if provider is None:
                 provider = "default"
             target_language = flat_opts.get("translation_target_language")
             if target_language is None:
                 target_language = flat_opts.get("target_language")
+            if (
+                target_language is None
+                and flat_opts.get("translate_to_english")
+                # (task-3303 xhigh review round 2, F9) Honor the checkbox's
+                # own schema gate: its value survives in the snapshot after
+                # the provider select moves to one that rejects translation
+                # (transcribe-cpp/parakeet raise BatchSTTRoutingError, which
+                # failed the WHOLE batch at dispatch). The normalized
+                # provider is passed so the gate sees the same value the
+                # route resolution below will use.
+                and field_gate_open(
+                    "audio_video",
+                    "translate_to_english",
+                    {**flat_opts, "transcription_provider": provider},
+                )
+            ):
+                # (task-3303) The panel's translate toggle. An explicit
+                # target (retry overrides, older snapshots) stays
+                # authoritative; the checkbox only fills the gap.
+                target_language = "en"
             route = resolve_batch_stt_route(
                 provider=provider,
                 language=flat_opts.get("language"),
                 target_language=target_language,
+                precision=flat_opts.get("transcription_precision"),
             )
             options["transcription_provider"] = route.provider
             selected_model_dir = (
@@ -2378,26 +4152,80 @@ class LibraryIngestQueueMixin:
             options["transcription_batch_route_resolved"] = True
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
+            # (task-3303) VAD filter -- travels as its own option; the
+            # parse worker hands it to the processors' ``vad_use``.
+            options["vad_filter"] = bool(flat_opts.get("vad_filter", False))
+            # (task-3306) Time-range trim: format-gated at the option layer
+            # (HH:MM:SS or seconds); blank means unbounded on that side.
+            start_trim = str(flat_opts.get("start_time") or "").strip()
+            end_trim = str(flat_opts.get("end_time") or "").strip()
+            options["start_time"] = start_trim or None
+            options["end_time"] = end_trim or None
+            # (task-3306) Gated URL downloads: a cookies FILE PATH only
+            # (yt-dlp cookiefile) -- raw cookie text is a credential, and
+            # this options dict persists with the job and echoes into
+            # config.toml. Its presence IS the use_cookies flag, so there
+            # is no separate toggle to go stale. Only the video (yt-dlp)
+            # branch of ``parse_local_file_for_ingest`` consumes it; the
+            # audio downloader's cookies parameter has JSON-dict semantics
+            # a path would crash.
+            # (xhigh review round) Validated here, not forwarded verbatim:
+            # an unusable path used to degrade into a silent "Invalid
+            # cookie format" debug line inside the downloader.
+            cookies_file = str(flat_opts.get("cookies_file") or "").strip()
+            cookies_path, cookies_problem = _resolve_ingest_cookies_file(cookies_file)
+            options["use_cookies"] = bool(cookies_path)
+            options["cookies"] = cookies_path
+            if cookies_problem:
+                options["cookies_problem"] = cookies_problem
+            # (task-3306) Recursive map-reduce summary; the processors'
+            # analysis tail consumes it only when analysis actually runs,
+            # so an idle True is inert rather than a stale hazard.
+            options["summarize_recursively"] = bool(
+                flat_opts.get("summarize_recursively", False)
+            )
             failed_attempt = job.retry_source_failure_provenance
+            options["transcription_context"] = {
+                "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
+                "batch_id": job.batch_id,
+                "job_id": job.job_id,
+                "retry_of_attempt_id": failed_attempt.get("attempt_id")
+                if failed_attempt
+                else None,
+                "retry_of_job_id": job.retry_of_job_id,
+                "retry_source_failure_provenance": failed_attempt,
+            }
+            external_scope_id = str(
+                flat_opts.get("transcription_external_scope_id") or ""
+            ).strip()
+            if external_scope_id:
+                options["transcription_context"]["external_scope_id"] = (
+                    external_scope_id
+                )
             if route.provider == "transcribe-cpp":
                 configured_path = get_cli_setting(
                     "transcription.transcribe_cpp.model_path"
                 )
-                options["transcription_context"] = {
-                    "model_path": configured_path
+                options["transcription_context"]["model_path"] = (
+                    configured_path
                     if isinstance(configured_path, str) and configured_path
-                    else None,
-                    "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
-                    "batch_id": failed_attempt.get("batch_id")
-                    if failed_attempt
-                    else None,
-                    "job_id": job.job_id,
-                    "retry_of_attempt_id": failed_attempt.get("attempt_id")
-                    if failed_attempt
-                    else None,
-                    "retry_of_job_id": job.retry_of_job_id,
-                    "retry_source_failure_provenance": failed_attempt,
-                }
+                    else None
+                )
+        elif group == "image":
+            # (task-3307) The image panel's OCR knobs travel under the
+            # names the parse branch reads; fallbacks mirror
+            # ``process_image``'s own declared defaults. OCR defaults ON:
+            # the extracted text IS the imported content, and a no-text
+            # parse fails honestly at the persist seam.
+            if options["chunk_options"] is not None and not template_active:
+                # (F12 parity) ``process_image`` chunks the OCR text via
+                # ``improved_chunking_process``; an explicit words method
+                # keeps the generic "words · 100-5000" size hint true here
+                # too. (task 10) Skipped under a resolved template.
+                options["chunk_options"]["method"] = "words"
+            options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", True))
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
+            options["ocr_backend"] = flat_opts.get("ocr_backend") or "auto"
         elif group == "ebook":
             options["extraction_method"] = (
                 flat_opts.get("extraction_method")
@@ -2408,8 +4236,645 @@ class LibraryIngestQueueMixin:
             options["include_toc"] = flat_opts.get(
                 "include_toc", flat_opts.get("extract_toc", True)
             )
+            # (task-3303) The panel's chunk-method choice: the human
+            # "chapters" maps to the chunker's real ``ebook_chapters``
+            # method; the other names travel verbatim. Only meaningful when
+            # chunking is on.
+            ebook_chunk_method = str(flat_opts.get("chunk_method") or "").strip()
+            if options["chunk_options"] is not None:
+                if template_active and ebook_chunk_method in (
+                    "",
+                    "chapters",  # the ebook select's schema default
+                ):
+                    # (task 10, AC 35) The select's schema default
+                    # ("chapters") is a builder default: under a resolved
+                    # template the template's method wins and nothing is
+                    # injected. An ABSENT value under a template also lets
+                    # the template win (the template IS the scheme the
+                    # user picked; there is no legacy scheme to preserve).
+                    pass
+                elif ebook_chunk_method:
+                    options["chunk_options"]["method"] = (
+                        "ebook_chapters"
+                        if ebook_chunk_method == "chapters"
+                        else ebook_chunk_method
+                    )
+                else:
+                    # (task-3303 xhigh review round 2, F11) No chunk_method
+                    # in the snapshot means the job PREDATES the field --
+                    # fresh submissions always seed the schema default (see
+                    # ``_build_ingest_options_snapshot``). The old builder
+                    # forced sentences for every group, so a requeued
+                    # legacy job must keep that scheme rather than silently
+                    # switching to the processor's chapters default.
+                    options["chunk_options"]["method"] = "sentences"
 
         return options
+
+    def _create_local_stt_executor(self) -> LocalSTTExecutor:
+        """Construct the one app-owned heavy STT executor lazily."""
+
+        return LocalSTTExecutor()
+
+    def _ensure_local_stt_executor(self) -> LocalSTTExecutor:
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                raise ExecutorUnavailableError("Library ingest is shutting down")
+            executor = getattr(self, "_local_stt_executor", None)
+            if executor is None:
+                executor = self._create_local_stt_executor()
+                self._local_stt_executor = executor
+            return executor
+
+    def _recycle_idle_local_stt_reference(self, reference: "ArtifactRef") -> bool:
+        """Recycle an existing idle STT resident that leases ``reference``."""
+
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                return False
+            executor = getattr(self, "_local_stt_executor", None)
+        if executor is None:
+            return False
+        return executor.recycle_idle_managed_reference(
+            (reference.artifact_id, reference.revision, reference.variant)
+        )
+
+    def _create_parakeet_source_service(self) -> Any:
+        """Construct the shared download-free Parakeet source service lazily."""
+
+        from tldw_chatbook.STT.parakeet_sources import ParakeetSourceService
+
+        return ParakeetSourceService()
+
+    def _ensure_parakeet_source_service(self) -> Any:
+        """Return the one app-owned Parakeet source service."""
+
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                raise ExecutorUnavailableError("Local STT is shutting down")
+            service = getattr(self, "_parakeet_source_service", None)
+            if service is None:
+                service = self._create_parakeet_source_service()
+                listener = self._sync_parakeet_source_scopes
+                self._parakeet_source_service = service
+                self._parakeet_source_registry_listener = listener
+                self.library_ingest_jobs.add_listener(listener)
+                listener()
+            return service
+
+    @staticmethod
+    def _parakeet_scope_id_for_job(job: LibraryIngestJob) -> str:
+        """Return the path-free verifier owner captured for one Library job."""
+
+        audio_options = (job.ingest_options or {}).get("audio_video", {})
+        if isinstance(audio_options, dict):
+            scope_id = audio_options.get("transcription_external_scope_id")
+            if isinstance(scope_id, str) and scope_id.strip():
+                return scope_id.strip()
+        return job.batch_id or job.job_id
+
+    def _sync_parakeet_source_scopes(self) -> None:
+        """Release only source scopes the registry observed and then settled."""
+
+        service = getattr(self, "_parakeet_source_service", None)
+        if service is None:
+            return
+        active_states = {
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        }
+        active = {
+            self._parakeet_scope_id_for_job(job)
+            for job in self.library_ingest_jobs.jobs()
+            if job.state in active_states
+        }
+        active.update(getattr(self, "_parakeet_submitting_scope_ids", ()))
+        service.release_scopes_except(active)
+
+    def _ensure_local_stt_dispatch_coordinator(
+        self,
+    ) -> LocalSTTDispatchCoordinator:
+        """Return the one app-owned admission coordinator lazily."""
+
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                raise ExecutorUnavailableError("Local STT is shutting down")
+            executor = self._ensure_local_stt_executor()
+            coordinator = getattr(self, "_local_stt_dispatch_coordinator", None)
+            if coordinator is None:
+                coordinator = LocalSTTDispatchCoordinator(
+                    executor,
+                    on_dictation_idle=lambda: self._marshal_local_stt_call(
+                        self._top_up_ingest_parse_pool
+                    ),
+                )
+                self._local_stt_dispatch_coordinator = coordinator
+            return coordinator
+
+    def _create_console_dictation_service(self, **kwargs: Any) -> Any:
+        """Build Console dictation without importing its native stack eagerly."""
+
+        from tldw_chatbook.Audio.dictation_service_lazy import (
+            LazyLiveDictationService,
+        )
+        from tldw_chatbook.Local_Ingestion.transcription_service import (
+            TranscriptionService,
+        )
+
+        app_loop_running = getattr(self, "_loop", None) is not None
+        on_app_thread = threading.get_ident() == getattr(self, "_thread_id", None)
+        if app_loop_running and not on_app_thread:
+            source_service = self.call_from_thread(self._ensure_parakeet_source_service)
+        else:
+            source_service = self._ensure_parakeet_source_service()
+        return LazyLiveDictationService(
+            **kwargs,
+            transcription_service_factory=lambda: TranscriptionService(
+                local_stt_dispatcher=self._ensure_local_stt_dispatch_coordinator(),
+                parakeet_source_service=source_service,
+            ),
+        )
+
+    def _build_local_stt_dispatch(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve the exact private model identity for one eligible job."""
+
+        provider = options["transcription_provider"]
+        attempt_id = f"{job.job_id}-attempt-{job.retry_count + 1}"
+        local_source = None
+        managed_store_root = None
+        managed_artifact_ref = None
+        managed_dependency_refs: tuple[tuple[str, str, str], ...] = ()
+        root_revision = None
+        closure_fingerprint = None
+        device = ExecutionDevice.CPU
+
+        if provider == "transcribe-cpp":
+            from tldw_chatbook.Model_Artifacts.gguf_admission import (
+                validate_local_gguf,
+            )
+
+            context = options.get("transcription_context") or {}
+            configured_path = (
+                context.get("model_path") if isinstance(context, dict) else None
+            )
+            model_id = "local-gguf:unavailable"
+            if isinstance(configured_path, str) and configured_path:
+                admission = validate_local_gguf(Path(configured_path))
+                local_source = snapshot_local_source((admission.path,))
+                model_id = f"local-gguf:{admission.metadata.architecture}"
+            device = ExecutionDevice.AUTO
+        else:
+            model_id = options.get("transcription_model") or PARAKEET_V2_MODEL
+            precision = options.get("transcription_precision") or "int8"
+            selected_dir = options.get("transcription_model_dir")
+            from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+            resolved = self._ensure_parakeet_source_service().resolve(
+                ParakeetSourceKey.from_values(model_id, precision),
+                override=selected_dir,
+                scope_id=self._parakeet_scope_id_for_job(job),
+            )
+            options.update(resolved.option_updates)
+            return {
+                "attempt_id": attempt_id,
+                "identity": resolved.identity,
+                "local_source": resolved.local_source,
+                "managed_store_root": resolved.managed_store_root,
+                "managed_artifact_ref": resolved.managed_artifact_ref,
+                "managed_dependency_refs": resolved.managed_dependency_refs,
+            }
+
+        identity = ModelIdentity(
+            provider_id=provider,
+            model_id=model_id,
+            root_revision=root_revision,
+            closure_fingerprint=closure_fingerprint,
+            precision=options.get("transcription_precision") or "int8",
+            device=device,
+            local_snapshot_token=(
+                local_source.token if local_source is not None else None
+            ),
+        )
+        return {
+            "attempt_id": attempt_id,
+            "identity": identity,
+            "local_source": local_source,
+            "managed_store_root": managed_store_root,
+            "managed_artifact_ref": managed_artifact_ref,
+            "managed_dependency_refs": managed_dependency_refs,
+        }
+
+    def _submit_local_stt_job(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+    ) -> None:
+        if options.get("transcription_provider") == "parakeet-onnx":
+            self._ensure_parakeet_source_service()
+        attempt_id = f"{job.job_id}-attempt-{job.retry_count + 1}"
+        self._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
+        thread = threading.Thread(
+            target=self._dispatch_local_stt_job,
+            args=(job, options, attempt_id),
+            name=f"library-local-stt-dispatch-{job.job_id}",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except Exception:
+            self._ingest_local_stt_jobs.pop(job.job_id, None)
+            raise
+
+    def _dispatch_local_stt_job(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+        attempt_id: str,
+    ) -> None:
+        """Build identity and perform the bounded spawn handshake off-loop."""
+
+        try:
+            dispatch = self._build_local_stt_dispatch(job, options)
+            if dispatch["attempt_id"] != attempt_id:
+                raise RuntimeError("Local STT attempt identity changed")
+            coordinator = self._ensure_local_stt_dispatch_coordinator()
+            generation = coordinator.submit_library(
+                attempt_id=attempt_id,
+                job_id=job.job_id,
+                source=FileAudioSource(Path(job.source_path)),
+                identity=dispatch["identity"],
+                options=options,
+                local_source=dispatch["local_source"],
+                managed_store_root=dispatch["managed_store_root"],
+                managed_artifact_ref=dispatch["managed_artifact_ref"],
+                managed_dependency_refs=dispatch["managed_dependency_refs"],
+                on_event=functools.partial(self._ingest_local_stt_event, job.job_id),
+                on_result=functools.partial(self._ingest_local_stt_result, job.job_id),
+                on_failure=functools.partial(
+                    self._ingest_local_stt_failure, job.job_id
+                ),
+                explicit_retry=job.retry_count > 0,
+            )
+        except ExecutorBusyError:
+            self._marshal_local_stt_call(
+                self._on_ingest_local_stt_deferred,
+                job.job_id,
+                attempt_id,
+            )
+            return
+        except Exception as exc:
+            provider = str(options.get("transcription_provider") or "")
+            code, actions = self._classify_local_stt_dispatch_error(provider, exc)
+            self._marshal_local_stt_call(
+                self._on_ingest_local_stt_dispatch_failure,
+                job.job_id,
+                attempt_id,
+                code,
+                actions,
+                type(exc).__name__,
+            )
+            return
+        self._marshal_local_stt_call(
+            self._on_ingest_local_stt_submitted,
+            job.job_id,
+            generation,
+            attempt_id,
+        )
+
+    @staticmethod
+    def _classify_local_stt_dispatch_error(
+        provider: str,
+        error: BaseException,
+    ) -> tuple[TranscriptionFailureCode, tuple[str, ...]]:
+        from tldw_chatbook.STT.parakeet_sources import (
+            ParakeetSourceError,
+            ParakeetSourceErrorCode,
+        )
+
+        missing_model = isinstance(error, ParakeetSourceError) and error.code in {
+            ParakeetSourceErrorCode.VAD_UNAVAILABLE,
+            ParakeetSourceErrorCode.MANAGED_UNAVAILABLE,
+        }
+        unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
+        if missing_model:
+            code = TranscriptionFailureCode.MODEL_NOT_INSTALLED
+        elif unavailable:
+            code = TranscriptionFailureCode.PROVIDER_UNAVAILABLE
+        else:
+            code = TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+        actions = ["retry_faster_whisper"]
+        if provider == "transcribe-cpp":
+            actions.insert(0, "choose_another_gguf")
+        return code, tuple(actions)
+
+    def _marshal_local_stt_call(
+        self,
+        callback: Callable[..., Any],
+        *args: Any,
+    ) -> None:
+        if self._ingest_shutdown:
+            return
+        try:
+            self.call_from_thread(callback, *args)
+        except RuntimeError:
+            if not self._ingest_shutdown:
+                callback_name = getattr(
+                    callback,
+                    "__name__",
+                    type(callback).__name__,
+                )
+                logger.error(
+                    "Library local STT callback could not be marshaled (callback={}).",
+                    callback_name,
+                )
+
+    def _on_ingest_local_stt_submitted(
+        self,
+        job_id: str,
+        generation: int,
+        attempt_id: str,
+    ) -> None:
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        if (
+            self._ingest_shutdown
+            or binding is None
+            or binding[1] != attempt_id
+            or generation <= binding[0]
+        ):
+            return
+        if self._claim_ingest_local_stt_job(job_id) is None:
+            self._ingest_local_stt_jobs.pop(job_id, None)
+            return
+        self._ingest_local_stt_jobs[job_id] = (generation, attempt_id)
+
+    def cancel_local_ingest_job(self, job_id: str) -> bool:
+        """Request cooperative cancellation for one bound local STT attempt."""
+
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        executor = getattr(self, "_local_stt_executor", None)
+        job = self.library_ingest_jobs.get_job(job_id)
+        if (
+            binding is None
+            or binding[0] <= 0
+            or executor is None
+            or job is None
+            or job.state is not IngestJobState.PARSING
+        ):
+            return False
+        if not executor.cancel(binding[1]):
+            return False
+        progress = dict(job.progress or {})
+        progress["cancel_requested"] = True
+        self.library_ingest_jobs.update_progress(job_id, progress=progress)
+        return True
+
+    def force_stop_local_ingest_job(self, job_id: str) -> bool:
+        """Force-stop one cancel-requested local STT attempt off the UI thread."""
+
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        executor = getattr(self, "_local_stt_executor", None)
+        job = self.library_ingest_jobs.get_job(job_id)
+        if (
+            binding is None
+            or binding[0] <= 0
+            or executor is None
+            or job is None
+            or job.state is not IngestJobState.PARSING
+            or not bool((job.progress or {}).get("cancel_requested"))
+        ):
+            return False
+        thread = threading.Thread(
+            target=self._force_stop_local_stt_attempt,
+            args=(executor, binding[1]),
+            name=f"library-local-stt-force-stop-{job_id}",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            return False
+        return True
+
+    def _force_stop_local_stt_attempt(
+        self,
+        executor: LocalSTTExecutor,
+        attempt_id: str,
+    ) -> None:
+        if not executor.force_stop(attempt_id):
+            return
+        if executor.wait_for_retirement(10.0):
+            self._marshal_local_stt_call(self._top_up_ingest_parse_pool)
+
+    def _on_ingest_local_stt_deferred(
+        self,
+        job_id: str,
+        attempt_id: str,
+    ) -> None:
+        """Release a provisional Library claim blocked by dictation admission."""
+
+        if self._ingest_shutdown or self._ingest_local_stt_jobs.get(job_id) != (
+            0,
+            attempt_id,
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        self._top_up_ingest_parse_pool()
+
+    def _claim_ingest_local_stt_job(
+        self,
+        job_id: str,
+    ) -> LibraryIngestJob | None:
+        """Publish a provisionally dispatched local-STT job as parsing."""
+
+        current = self.library_ingest_jobs.get_job(job_id)
+        if current is None:
+            return None
+        if current.state is IngestJobState.PARSING:
+            return current
+        if current.state is not IngestJobState.QUEUED:
+            return None
+        return self.library_ingest_jobs.mark_parsing(
+            job_id,
+            detected_type=current.detected_type,
+        )
+
+    def _on_ingest_local_stt_dispatch_failure(
+        self,
+        job_id: str,
+        attempt_id: str,
+        code: TranscriptionFailureCode,
+        actions: tuple[str, ...],
+        error_type: str,
+    ) -> None:
+        if self._ingest_shutdown or self._ingest_local_stt_jobs.get(job_id) != (
+            0,
+            attempt_id,
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        message = TRANSCRIPTION_FAILURE_CONTRACT[code][0]
+        logger.error(
+            "Library local STT dispatch failed "
+            f"(job_id={job_id}, error_type={error_type})."
+        )
+        self.library_ingest_jobs.mark_failed(
+            job_id,
+            error=message,
+            permanent=False,
+            error_detail={
+                "category": "stt_failure",
+                "code": code.value,
+                "message": message,
+                "actions": list(actions),
+            },
+        )
+        self._top_up_ingest_parse_pool()
+
+    def _marshal_local_stt_callback(
+        self,
+        callback: Callable[..., Any],
+        job_id: str,
+        envelope: ExecutorEvent | ExecutorResult | ExecutorFailure,
+    ) -> None:
+        self._marshal_local_stt_call(callback, job_id, envelope)
+
+    def _ingest_local_stt_event(self, job_id: str, event: ExecutorEvent) -> None:
+        self._marshal_local_stt_callback(self._on_ingest_local_stt_event, job_id, event)
+
+    def _ingest_local_stt_result(self, job_id: str, result: ExecutorResult) -> None:
+        self._marshal_local_stt_callback(
+            self._on_ingest_local_stt_result, job_id, result
+        )
+
+    def _ingest_local_stt_failure(
+        self,
+        job_id: str,
+        failure: ExecutorFailure,
+    ) -> None:
+        self._marshal_local_stt_callback(
+            self._on_ingest_local_stt_failure, job_id, failure
+        )
+
+    def _local_stt_callback_matches(
+        self,
+        job_id: str,
+        envelope: ExecutorEvent | ExecutorResult | ExecutorFailure,
+    ) -> bool:
+        return self._ingest_local_stt_jobs.get(job_id) == (
+            envelope.generation,
+            envelope.attempt_id,
+        )
+
+    def _local_stt_terminal_matches(
+        self,
+        job_id: str,
+        envelope: ExecutorResult | ExecutorFailure,
+    ) -> bool:
+        """Adopt the first controller-fenced generation before submit returns."""
+
+        if self._local_stt_callback_matches(job_id, envelope):
+            return True
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        if binding == (0, envelope.attempt_id) and envelope.generation > 0:
+            self._ingest_local_stt_jobs[job_id] = (
+                envelope.generation,
+                envelope.attempt_id,
+            )
+            return True
+        return False
+
+    def _on_ingest_local_stt_event(
+        self,
+        job_id: str,
+        event: ExecutorEvent,
+    ) -> None:
+        if self._ingest_shutdown:
+            return
+        if not self._local_stt_callback_matches(job_id, event):
+            binding = self._ingest_local_stt_jobs.get(job_id)
+            if (
+                binding is None
+                or binding[1] != event.attempt_id
+                or event.generation <= binding[0]
+                or event.phase is not WorkerPhase.PREPARING
+            ):
+                return
+            self._ingest_local_stt_jobs[job_id] = (
+                event.generation,
+                event.attempt_id,
+            )
+        if self._claim_ingest_local_stt_job(job_id) is None:
+            return
+        existing = self.library_ingest_jobs.get_job(job_id)
+        progress: dict[str, Any] = {
+            "phase": event.phase.value,
+            "message": _INGEST_LOCAL_STT_PHASE_MESSAGES[event.phase],
+        }
+        if (
+            existing is not None
+            and (existing.progress or {}).get("cancel_requested") is True
+        ):
+            progress["cancel_requested"] = True
+        self.library_ingest_jobs.update_progress(
+            job_id,
+            progress=progress,
+            persist=False,
+        )
+
+    def _on_ingest_local_stt_result(
+        self,
+        job_id: str,
+        result: ExecutorResult,
+    ) -> None:
+        if self._ingest_shutdown or not self._local_stt_terminal_matches(
+            job_id, result
+        ):
+            return
+        if self._claim_ingest_local_stt_job(job_id) is None:
+            self._ingest_local_stt_jobs.pop(job_id, None)
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        self._ingest_parsed_payloads[job_id] = result.payload
+        self._start_library_ingest_queue_if_idle()
+        self._top_up_ingest_parse_pool()
+
+    def _on_ingest_local_stt_failure(
+        self,
+        job_id: str,
+        failure: ExecutorFailure,
+    ) -> None:
+        if self._ingest_shutdown or not self._local_stt_terminal_matches(
+            job_id, failure
+        ):
+            return
+        if self._claim_ingest_local_stt_job(job_id) is None:
+            self._ingest_local_stt_jobs.pop(job_id, None)
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        message = TRANSCRIPTION_FAILURE_CONTRACT[failure.code][0]
+        if failure.code is TranscriptionFailureCode.CANCELLED:
+            self.library_ingest_jobs.mark_cancelled(job_id, reason=message)
+        else:
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=message,
+                permanent=False,
+                error_detail={
+                    "category": "stt_failure",
+                    "code": failure.code.value,
+                    "message": message,
+                    "actions": list(failure.recovery_actions),
+                },
+                stt_failure_provenance=failure.failed_attempt,
+            )
+        executor = getattr(self, "_local_stt_executor", None)
+        if executor is None or not executor.retiring:
+            self._top_up_ingest_parse_pool()
 
     def _top_up_ingest_parse_pool(self) -> None:
         """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.
@@ -2448,76 +4913,183 @@ class LibraryIngestQueueMixin:
             return
         worker_count = self._ingest_parse_worker_count()
         heavy_cap = self._ingest_heavy_lane_max_workers()
-        # Read the total + heavy in-flight counts ONCE, then track them locally
-        # as we dispatch. This whole method is UI-thread-only and synchronous,
-        # so nothing but our own mark_parsing() calls can change these counts
-        # mid-loop -- re-scanning the registry (O(N)) every iteration would make
-        # the loop O(worker_count * N) on the UI thread for no benefit.
-        parsing_count = self.library_ingest_jobs.counts().get("parsing", 0)
-        heavy_parsing_count = self.library_ingest_jobs.parsing_count_for_types(
-            _INGEST_HEAVY_TYPES
+        pending_research = getattr(
+            self,
+            "_research_source_parse_dispatch_pending",
+            set(),
+        )
+        pending_research_jobs: dict[str, LibraryIngestJob] = {}
+        for pending_job_id in tuple(pending_research):
+            pending_job = self.library_ingest_jobs.get_job(pending_job_id)
+            if (
+                pending_job is None
+                or pending_job.state is not IngestJobState.PARSING
+                or pending_job.origin != "local"
+            ):
+                pending_research.discard(pending_job_id)
+                continue
+            pending_research_jobs[pending_job_id] = pending_job
+        # Read the total + heavy in-flight counts ONCE, then include local-STT
+        # jobs provisionally owned by an off-loop dispatch thread. Those rows
+        # remain QUEUED until coordinator admission succeeds, but still consume
+        # capacity; otherwise a later top-up could overfill the pool with light
+        # work while identity resolution is in flight.
+        parsing_count = max(
+            0,
+            self.library_ingest_jobs.counts().get("parsing", 0)
+            - len(pending_research_jobs),
+        )
+        heavy_parsing_count = max(
+            0,
+            self.library_ingest_jobs.parsing_count_for_types(_INGEST_HEAVY_TYPES)
+            - sum(
+                job.detected_type in _INGEST_HEAVY_TYPES
+                for job in pending_research_jobs.values()
+            ),
+        )
+        provisional_local_jobs = []
+        for provisional_job_id in self._ingest_local_stt_jobs:
+            provisional = self.library_ingest_jobs.get_job(provisional_job_id)
+            if provisional is not None and provisional.state is IngestJobState.QUEUED:
+                provisional_local_jobs.append(provisional)
+        parsing_count += len(provisional_local_jobs)
+        heavy_parsing_count += sum(
+            job.detected_type in _INGEST_HEAVY_TYPES for job in provisional_local_jobs
         )
         while parsing_count < worker_count:
-            heavy_full = heavy_parsing_count >= heavy_cap
-            job = self.library_ingest_jobs.next_queued(
-                skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+            # LocalSTTExecutor intentionally accepts one request at a time.
+            # A legacy heavy-lane override above one must not turn the next
+            # queued audio/video job into a spurious ExecutorBusyError.
+            local_stt_busy = bool(self._ingest_local_stt_jobs)
+            coordinator = getattr(self, "_local_stt_dispatch_coordinator", None)
+            dictation_reserved = bool(
+                coordinator is not None and coordinator.dictation_reserved
             )
+            heavy_full = (
+                heavy_parsing_count >= heavy_cap or local_stt_busy or dictation_reserved
+            )
+            preclaimed = False
+            eligible_pending = (
+                job
+                for job in pending_research_jobs.values()
+                if not (heavy_full and job.detected_type in _INGEST_HEAVY_TYPES)
+            )
+            job = min(
+                eligible_pending,
+                key=lambda item: item.submitted_at,
+                default=None,
+            )
+            if job is not None:
+                preclaimed = True
+                pending_research_jobs.pop(job.job_id, None)
+            else:
+                job = self.library_ingest_jobs.next_queued(
+                    skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+                )
             if job is None:
                 return
-            claimed = self.library_ingest_jobs.mark_parsing(
-                job.job_id, detected_type=job.detected_type
+            try:
+                options = self._ingest_job_options(job)
+            except BatchSTTRoutingError as exc:
+                error_text = _sanitize_library_ingest_error_text(str(exc))
+                failure_text = error_text or "Batch transcription routing failed."
+                logger.warning(
+                    "Library ingest batch STT routing failed "
+                    f"(job_id={job.job_id}, "
+                    f"detected_type={job.detected_type}, "
+                    f"error={failure_text})."
+                )
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id,
+                    error=failure_text,
+                    permanent=False,
+                )
+                if preclaimed:
+                    pending_research.discard(job.job_id)
+                continue
+            except _template_resolution_errors() as exc:
+                # (task 10, AC 37/AC-24b) A template choice that no longer
+                # resolves (or a stored-invalid body) FAILS THIS ITEM with
+                # the named error -- never a silent fallback to plain
+                # chunking, which is how a library gets chunked two ways
+                # without the user knowing. Not permanent: re-creating or
+                # re-naming the template makes a retry succeed.
+                failure_text = _sanitize_library_ingest_error_text(str(exc)) or (
+                    "Chunking template resolution failed."
+                )
+                logger.warning(
+                    "Library ingest template resolution failed "
+                    f"(job_id={job.job_id}, "
+                    f"detected_type={job.detected_type}, "
+                    f"error={failure_text})."
+                )
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id,
+                    error=failure_text,
+                    permanent=False,
+                )
+                continue
+            job_id = job.job_id
+            source_path = job.source_path
+            if options.get("transcription_provider") in {
+                "parakeet-onnx",
+                "transcribe-cpp",
+            }:
+                try:
+                    self._submit_local_stt_job(job, options)
+                except Exception as exc:
+                    if preclaimed:
+                        pending_research.discard(job_id)
+                    code, recovery_actions = self._classify_local_stt_dispatch_error(
+                        str(options.get("transcription_provider") or ""), exc
+                    )
+                    message = TRANSCRIPTION_FAILURE_CONTRACT[code][0]
+                    logger.error(
+                        "Library local STT dispatch failed "
+                        f"(job_id={job_id}, provider="
+                        f"{options.get('transcription_provider')}, "
+                        f"error_type={type(exc).__name__})."
+                    )
+                    self.library_ingest_jobs.mark_failed(
+                        job_id,
+                        error=message,
+                        permanent=False,
+                        error_detail={
+                            "category": "stt_failure",
+                            "code": code.value,
+                            "message": message,
+                            "actions": list(recovery_actions),
+                        },
+                    )
+                    continue
+                if preclaimed:
+                    pending_research.discard(job_id)
+                parsing_count += 1
+                if job.detected_type in _INGEST_HEAVY_TYPES:
+                    heavy_parsing_count += 1
+                continue
+            claimed = (
+                job
+                if preclaimed
+                else self.library_ingest_jobs.mark_parsing(
+                    job.job_id, detected_type=job.detected_type
+                )
             )
             if claimed is None:
-                # Invariant violation (Task-3 reviewer's guard note): the
-                # job we just pulled off `next_queued()` was no longer
-                # QUEUED by the time we tried to claim it -- should be
-                # impossible on the UI thread (this whole method is
-                # UI-thread-only, so nothing else can race the queue
-                # between the two calls), but a coordinator bug here must
-                # never crash the submission path. `break`, not `continue`
-                # (whole-branch review, Minor 2): `next_queued()` always
-                # returns the OLDEST queued job, so a `continue` would get
-                # the exact same unclaimable job handed straight back --
-                # an infinite loop on the UI thread. Breaking abandons
-                # only this top-up pass (logged); the next submission/
-                # retry/parse-completion re-attempts from scratch.
                 logger.error(
                     f"Library ingest coordinator: mark_parsing rejected "
                     f"job {job.job_id} (expected QUEUED) -- abandoning "
                     f"this top-up pass."
                 )
                 break
-            # Track the just-claimed job locally (mirrors what a fresh
-            # counts()/parsing_count_for_types() scan would report next
-            # iteration) so the loop stays O(N), not O(worker_count * N).
             parsing_count += 1
             if job.detected_type in _INGEST_HEAVY_TYPES:
                 heavy_parsing_count += 1
             try:
-                options = self._ingest_job_options(claimed)
-            except BatchSTTRoutingError as exc:
-                error_text = _sanitize_library_ingest_error_text(str(exc))
-                failure_text = error_text or "Batch transcription routing failed."
-                logger.warning(
-                    "Library ingest batch STT routing failed "
-                    f"(job_id={claimed.job_id}, "
-                    f"detected_type={claimed.detected_type}, "
-                    f"error={failure_text})."
-                )
-                self.library_ingest_jobs.mark_failed(
-                    claimed.job_id,
-                    error=failure_text,
-                    permanent=False,
-                )
-                parsing_count -= 1
-                if claimed.detected_type in _INGEST_HEAVY_TYPES:
-                    heavy_parsing_count -= 1
-                continue
-            job_id = claimed.job_id
-            source_path = claimed.source_path
-            try:
                 pool = self._ensure_ingest_parse_pool()
             except Exception as exc:
+                if preclaimed:
+                    pending_research.discard(job_id)
                 # CONTAINMENT (live-QA crash fix): pool CREATION itself
                 # failed -- e.g. the spawn machinery raising at
                 # construction time (the fileno-less-stderr resource-
@@ -2552,7 +5124,7 @@ class LibraryIngestQueueMixin:
             try:
                 pool.apply_async(
                     run_parse_job,
-                    (source_path, options),
+                    (source_path, options, (generation, job_id)),
                     callback=functools.partial(
                         self._ingest_pool_callback, generation, job_id
                     ),
@@ -2560,13 +5132,32 @@ class LibraryIngestQueueMixin:
                         self._ingest_pool_error_callback, generation, job_id
                     ),
                 )
+                if preclaimed:
+                    pending_research.discard(job_id)
             except Exception as exc:
+                if preclaimed:
+                    pending_research.discard(job_id)
                 # The pool itself rejected the submission synchronously
                 # (e.g. it was already terminated/closed) -- every job
                 # currently PARSING was submitted to this same broken pool
                 # and can't be trusted to ever complete either.
                 self._handle_broken_ingest_parse_pool(generation, job_id, exc)
                 return
+
+    def _marshal_ingest_pool_call(
+        self,
+        callback: Callable[..., Any],
+        *args: Any,
+    ) -> None:
+        """Marshal a pool callback, tolerating only shutdown cancellation."""
+
+        if self._ingest_shutdown:
+            return
+        try:
+            self.call_from_thread(callback, *args)
+        except concurrent.futures.CancelledError:
+            if not self._ingest_shutdown:
+                raise
 
     def _ingest_pool_callback(
         self, generation: int, job_id: str, result: Dict[str, Any]
@@ -2596,9 +5187,7 @@ class LibraryIngestQueueMixin:
                 ``_top_up_ingest_parse_pool``.
             result: ``run_parse_job``'s structured return value.
         """
-        if self._ingest_shutdown:
-            return
-        self.call_from_thread(
+        self._marshal_ingest_pool_call(
             self._on_ingest_parse_complete, generation, job_id, result
         )
 
@@ -2607,11 +5196,61 @@ class LibraryIngestQueueMixin:
     ) -> None:
         """``apply_async`` ``error_callback``: same thread + shutdown
         contract as ``_ingest_pool_callback`` (see its docstring)."""
-        if self._ingest_shutdown:
-            return
-        self.call_from_thread(
+        self._marshal_ingest_pool_call(
             self._handle_broken_ingest_parse_pool, generation, job_id, exc
         )
+
+    def _on_ingest_parse_progress_batch(
+        self,
+        generation: int,
+        events: tuple[ParseProgressEvent, ...],
+    ) -> None:
+        """Apply one validated progress batch for the current parse generation.
+
+        Progress and terminal results travel on separate channels, so this
+        UI-thread boundary rechecks every piece of coordinator authority after
+        IPC. Unknown or malformed queue data is ignored; local live telemetry
+        is projected in memory only.
+        """
+        if self._ingest_shutdown or generation != self._ingest_parse_pool_generation:
+            return
+        generation_jobs = self._ingest_parse_jobs_by_generation.get(generation)
+        if generation_jobs is None:
+            return
+
+        for raw_event in events:
+            try:
+                event = make_parse_progress_event(
+                    raw_event.generation,
+                    raw_event.job_id,
+                    raw_event.phase,
+                    raw_event.message,
+                    raw_event.percent,
+                )
+            except Exception:
+                continue
+            if event is None:
+                continue
+            job = self.library_ingest_jobs.get_job(event.job_id)
+            if (
+                event.generation != generation
+                or event.job_id not in generation_jobs
+                or event.job_id in self._ingest_parsed_payloads
+                or job is None
+                or job.state is not IngestJobState.PARSING
+            ):
+                continue
+            progress: dict[str, Any] = {
+                "phase": event.phase,
+                "message": event.message,
+            }
+            if event.percent is not None:
+                progress["percent"] = event.percent
+            self.library_ingest_jobs.update_progress(
+                event.job_id,
+                progress=progress,
+                persist=False,
+            )
 
     def _on_ingest_parse_complete(
         self, generation: int, job_id: str, result: Dict[str, Any]
@@ -2719,12 +5358,22 @@ class LibraryIngestQueueMixin:
         self._ingest_parse_jobs_by_generation.pop(generation, None)
         pool = self._ingest_parse_pool
         stop_event = self._ingest_parse_pool_stop_event
+        progress_queue = self._ingest_parse_progress_queue
+        progress_thread = self._ingest_parse_progress_thread
         if stop_event is not None:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
-        if pool is not None:
-            self._terminate_ingest_parse_pool_off_thread(pool)
+        self._ingest_parse_progress_queue = None
+        self._ingest_parse_progress_thread = None
+        if any(
+            resource is not None for resource in (pool, progress_queue, progress_thread)
+        ):
+            self._terminate_ingest_parse_pool_off_thread(
+                pool,
+                progress_queue,
+                progress_thread,
+            )
 
         logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
         for job in self.library_ingest_jobs.jobs():
@@ -2743,25 +5392,20 @@ class LibraryIngestQueueMixin:
             self._start_library_ingest_queue_if_idle()
 
     @staticmethod
-    def _terminate_ingest_parse_pool_off_thread(pool: Any) -> threading.Thread:
-        """Terminate and join one detached Pool without blocking the UI thread."""
-
-        def _terminate_pool() -> None:
-            try:
-                pool.terminate()
-                pool.join()
-            except Exception:
-                logger.opt(exception=True).error(
-                    "Error terminating the Library ingest parse pool."
-                )
-
-        thread = threading.Thread(
-            target=_terminate_pool,
-            name="library-ingest-pool-terminate",
-            daemon=True,
+    def _terminate_ingest_parse_pool_off_thread(
+        pool: Any | None,
+        progress_queue: Any | None = None,
+        progress_thread: threading.Thread | None = None,
+    ) -> threading.Thread:
+        """Clean up one detached parse generation away from the UI thread."""
+        return LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+            None,
+            None,
+            None,
+            pool,
+            progress_queue,
+            progress_thread,
         )
-        thread.start()
-        return thread
 
     def _shutdown_ingest_parse_pool(self) -> Optional[threading.Thread]:
         """Quit-path teardown: flag up, pool detached, terminate off-loop.
@@ -2771,35 +5415,155 @@ class LibraryIngestQueueMixin:
         pool callbacks -- ``_ingest_pool_callback``/
         ``_ingest_pool_error_callback``, running on the pool's
         result-handler thread -- short-circuit before marshaling from this
-        point on) and drops the ``_ingest_parse_pool`` reference (nothing
-        can submit to it anymore). The actual ``pool.terminate()`` +
-        ``pool.join()`` then run on a detached daemon thread, NEVER on the
-        caller's (loop) thread: CPython's ``Pool._terminate_pool`` does an
-        unbounded ``result_handler.join()``, and if that result-handler
-        thread is at that moment parked inside a ``call_from_thread`` it
-        entered just before the flag went up, joining it from the loop
-        thread would deadlock (the loop can't drain the marshaled call it
-        is itself waiting behind). Off-loop, the loop stays free: the
-        in-flight marshaled call runs, no-ops via the flag, the
-        result-handler thread unblocks, and the join completes. The daemon
-        thread is deliberately not joined by the caller -- worst case it
-        outlives the app briefly and dies with the process.
+        point on) and drops every worker reference (nothing can submit to
+        them anymore). Source/coordinator/executor close, parse-pool
+        terminate/join, queue cleanup, and bounded drain-thread join then run
+        sequentially on one detached daemon thread,
+        NEVER on the caller's (loop) thread: verifier close may wait and
+        CPython's ``Pool._terminate_pool`` does an unbounded
+        ``result_handler.join()``, and if that result-handler thread is at
+        that moment parked inside a ``call_from_thread`` it entered just
+        before the flag went up, joining it from the loop thread would
+        deadlock (the loop can't drain the marshaled call it is itself waiting
+        behind). Off-loop, the loop stays free: the in-flight marshaled call
+        runs, no-ops via the flag, the result-handler thread unblocks, and the
+        join completes. The daemon thread is deliberately not joined by the
+        caller -- worst case it outlives the app briefly and dies with the
+        process.
 
         Returns:
-            The teardown thread (so tests can bound-join it and assert
-            thread identity), or ``None`` when no pool was ever created --
-            the shutdown flag is still set in that case.
+            The one teardown thread that owns every detached ingest resource,
+            or ``None`` when no ingest resource was ever created. The
+            shutdown flag is still set in that case.
         """
         self._ingest_shutdown = True
+        with self._local_stt_executor_lock:
+            source_service = getattr(self, "_parakeet_source_service", None)
+            source_listener = getattr(self, "_parakeet_source_registry_listener", None)
+            coordinator = getattr(self, "_local_stt_dispatch_coordinator", None)
+            executor = getattr(self, "_local_stt_executor", None)
+            self._parakeet_source_service = None
+            self._parakeet_source_registry_listener = None
+            self._local_stt_dispatch_coordinator = None
+            self._local_stt_executor = None
+            if source_listener is not None:
+                self.library_ingest_jobs.remove_listener(source_listener)
+        local_jobs = getattr(self, "_ingest_local_stt_jobs", None)
+        if local_jobs is None:
+            self._ingest_local_stt_jobs = {}
+        else:
+            local_jobs.clear()
         pool = getattr(self, "_ingest_parse_pool", None)
         stop_event = getattr(self, "_ingest_parse_pool_stop_event", None)
+        progress_queue = getattr(self, "_ingest_parse_progress_queue", None)
+        progress_thread = getattr(self, "_ingest_parse_progress_thread", None)
         if stop_event is not None:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
-        if pool is None:
+        self._ingest_parse_progress_queue = None
+        self._ingest_parse_progress_thread = None
+        if all(
+            resource is None
+            for resource in (
+                source_service,
+                coordinator,
+                executor,
+                pool,
+                progress_queue,
+                progress_thread,
+            )
+        ):
             return None
-        return self._terminate_ingest_parse_pool_off_thread(pool)
+        return self._shutdown_ingest_workers_off_thread(
+            source_service,
+            coordinator,
+            executor,
+            pool,
+            progress_queue,
+            progress_thread,
+        )
+
+    @staticmethod
+    def _shutdown_ingest_workers_off_thread(
+        source_service: Any | None,
+        coordinator: Any | None,
+        executor: Any | None,
+        pool: Any | None,
+        progress_queue: Any | None,
+        progress_thread: threading.Thread | None,
+    ) -> threading.Thread:
+        """Close detached ingest workers without blocking the UI thread.
+
+        Executor shutdown remains ahead of parse-pool teardown. The parse pool
+        is terminated and joined before its queue is closed/cancelled, then the
+        already-stopped daemon drain receives only a bounded join.
+        """
+
+        def _shutdown_workers() -> None:
+            if source_service is not None:
+                try:
+                    source_service.close()
+                except Exception:
+                    logger.error("Error closing the Parakeet source service.")
+            if coordinator is not None:
+                try:
+                    coordinator.close()
+                except Exception:
+                    logger.error("Error closing the local STT dispatch coordinator.")
+            if executor is not None:
+                try:
+                    executor.close()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error closing the Library local STT executor."
+                    )
+            if pool is not None:
+                try:
+                    pool.terminate()
+                    pool.join()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error terminating the Library ingest parse pool."
+                    )
+            if progress_queue is not None:
+                close = getattr(progress_queue, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception:
+                        logger.error(
+                            "Error cleaning up the Library ingest progress queue "
+                            "(operation={}, queue_type={}).",
+                            "close",
+                            type(progress_queue).__name__,
+                        )
+                cancel_join = getattr(progress_queue, "cancel_join_thread", None)
+                if cancel_join is not None:
+                    try:
+                        cancel_join()
+                    except Exception:
+                        logger.error(
+                            "Error cleaning up the Library ingest progress queue "
+                            "(operation={}, queue_type={}).",
+                            "cancel_join_thread",
+                            type(progress_queue).__name__,
+                        )
+            if progress_thread is not None:
+                try:
+                    progress_thread.join(timeout=1.0)
+                except Exception:
+                    logger.error(
+                        "Error joining the Library ingest progress drain thread."
+                    )
+
+        thread = threading.Thread(
+            target=_shutdown_workers,
+            name="library-ingest-workers-shutdown",
+            daemon=True,
+        )
+        thread.start()
+        return thread
 
     # -- Remote poller (server-origin jobs) --------------------------------
 
@@ -2847,6 +5611,58 @@ class LibraryIngestQueueMixin:
         )
         return "server" if active_source == "server" else "local"
 
+    def _validate_research_source_operation_authority(
+        self,
+        operation_id: str,
+        *,
+        expected_origin: str,
+    ) -> Any:
+        """Recover and validate the durable qualified intake authority.
+
+        This is called before queue admission and again by delayed Server
+        dispatch workers.  The visible Research screen and the current Library
+        origin are never accepted as substitutes for the persisted operation.
+        """
+
+        store = getattr(self, "research_source_operation_store", None)
+        get_operation = getattr(store, "get", None)
+        if not callable(get_operation):
+            raise ValueError(
+                "Durable Research source authority is unavailable; reopen Add Sources."
+            )
+        operation = get_operation(operation_id)
+        operation_origin = str(
+            getattr(getattr(operation, "data_source", None), "value", "") or ""
+        )
+        if operation is None or operation_origin != expected_origin:
+            raise ValueError(
+                "The intake no longer matches its captured Research workspace authority."
+            )
+        if expected_origin != "server":
+            return operation
+
+        context_provider = getattr(self, "server_context_provider", None)
+        get_context = getattr(context_provider, "get_active_context", None)
+        if not callable(get_context):
+            raise ValueError(
+                "The captured Server workspace authority is unavailable; restore it and retry."
+            )
+        from tldw_chatbook.runtime_policy.server_event_scope import (
+            event_principal_id_from_active_context,
+        )
+
+        context = get_context()
+        profile_id = str(getattr(context, "active_server_id", "") or "").strip()
+        principal_id = event_principal_id_from_active_context(context) or ""
+        if (
+            profile_id != getattr(operation, "server_profile_id", "")
+            or principal_id != getattr(operation, "principal_id", "")
+        ):
+            raise ValueError(
+                "The captured Server workspace authority changed; restore it and retry."
+            )
+        return operation
+
     def _submit_server_ingest_job(
         self,
         *,
@@ -2856,6 +5672,7 @@ class LibraryIngestQueueMixin:
         author: str,
         keywords: tuple[str, ...],
         perform_analysis: bool,
+        research_source_operation_id: str | None = None,
     ) -> LibraryIngestJob:
         """Queue a ``server``-origin job and send it to the server.
 
@@ -2870,13 +5687,19 @@ class LibraryIngestQueueMixin:
             be sent at all.
         """
         try:
-            kwargs = build_server_ingest_kwargs(
-                source_path,
-                options=ingest_options,
+            job = self._prepare_library_ingest_job_admitted(
+                source_path=source_path,
+                ingest_options=ingest_options,
                 title=title,
                 author=author,
                 keywords=keywords,
                 perform_analysis=perform_analysis,
+                chunk_enabled=False,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                batch_id=None,
+                backend="server",
+                research_source_operation_id=research_source_operation_id,
+                require_persisted=False,
             )
         except ServerIngestUnsupported as exc:
             job = self.library_ingest_jobs.submit(
@@ -2887,23 +5710,12 @@ class LibraryIngestQueueMixin:
                 perform_analysis=perform_analysis,
                 origin="server",
                 ingest_options=ingest_options,
+                research_source_operation_id=research_source_operation_id,
             )
-            failed = self.library_ingest_jobs.mark_failed(
+            return self.library_ingest_jobs.mark_failed(
                 job.job_id, error=str(exc), permanent=True
-            )
-            return failed if failed is not None else job
-
-        job = self.library_ingest_jobs.submit(
-            source_path=source_path,
-            title=title,
-            author=author,
-            keywords=keywords,
-            perform_analysis=perform_analysis,
-            detected_type=str(kwargs.get("media_type") or ""),
-            origin="server",
-            ingest_options=ingest_options,
-        )
-        self._send_server_ingest_job(job.job_id, kwargs)
+            ) or job
+        self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
     def _submit_web_clip_job(
@@ -2915,6 +5727,7 @@ class LibraryIngestQueueMixin:
         author: str,
         keywords: tuple[str, ...],
         perform_analysis: bool,
+        research_source_operation_id: str | None = None,
     ) -> LibraryIngestJob:
         """Queue a ``server``-origin job that clips a web page.
 
@@ -2929,12 +5742,19 @@ class LibraryIngestQueueMixin:
             be clipped at all.
         """
         try:
-            kwargs = build_web_clip_kwargs(
-                source_path,
-                options=ingest_options,
+            job = self._prepare_library_ingest_job_admitted(
+                source_path=source_path,
+                ingest_options=ingest_options,
                 title=title,
                 author=author,
                 keywords=keywords,
+                perform_analysis=perform_analysis,
+                chunk_enabled=False,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                batch_id=None,
+                backend="server",
+                research_source_operation_id=research_source_operation_id,
+                require_persisted=False,
             )
         except NotAWebClipSource as exc:
             job = self.library_ingest_jobs.submit(
@@ -2945,23 +5765,12 @@ class LibraryIngestQueueMixin:
                 perform_analysis=perform_analysis,
                 origin="server",
                 ingest_options=ingest_options,
+                research_source_operation_id=research_source_operation_id,
             )
-            failed = self.library_ingest_jobs.mark_failed(
+            return self.library_ingest_jobs.mark_failed(
                 job.job_id, error=str(exc), permanent=True
-            )
-            return failed if failed is not None else job
-
-        job = self.library_ingest_jobs.submit(
-            source_path=source_path,
-            title=title,
-            author=author,
-            keywords=keywords,
-            perform_analysis=perform_analysis,
-            detected_type="web",
-            origin="server",
-            ingest_options=ingest_options,
-        )
-        self._send_web_clip_job(job.job_id, kwargs)
+            ) or job
+        self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
     @work(group="library_ingest_remote_submit")
@@ -2972,6 +5781,22 @@ class LibraryIngestQueueMixin:
         one-shot submissions on the user's behalf, and neither should be able to
         pile up.
         """
+        job = self.library_ingest_jobs.get_job(job_id)
+        if job is not None and job.research_source_operation_id:
+            try:
+                self._validate_research_source_operation_authority(
+                    job.research_source_operation_id,
+                    expected_origin="server",
+                )
+            except ValueError:
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=(
+                        "The captured Server workspace authority changed before "
+                        "submission. Restore it and retry this intake."
+                    ),
+                )
+                return
         service = getattr(self, "server_media_reading_service", None)
         clip = getattr(service, "ingest_web_content", None)
         if not callable(clip):
@@ -3017,6 +5842,22 @@ class LibraryIngestQueueMixin:
         coroutine, so staying on the event loop keeps every registry mutation
         on the UI thread without marshalling.
         """
+        job = self.library_ingest_jobs.get_job(job_id)
+        if job is not None and job.research_source_operation_id:
+            try:
+                self._validate_research_source_operation_authority(
+                    job.research_source_operation_id,
+                    expected_origin="server",
+                )
+            except ValueError:
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=(
+                        "The captured Server workspace authority changed before "
+                        "submission. Restore it and retry this intake."
+                    ),
+                )
+                return
         service = getattr(self, "server_media_reading_service", None)
         submit = getattr(service, "submit_ingest_jobs", None) or getattr(
             service, "submit_media_ingest_jobs", None
@@ -3399,8 +6240,28 @@ class LibraryIngestQueueMixin:
                     return
                 job, payload = claim
                 try:
+                    generic_options = (job.ingest_options or {}).get("generic", {})
+                    overwrite_existing = bool(
+                        generic_options.get(
+                            "overwrite_existing",
+                            generic_option_default("overwrite_existing", False),
+                        )
+                        if isinstance(generic_options, dict)
+                        else generic_option_default("overwrite_existing", False)
+                    )
+                    generate_embeddings = bool(
+                        generic_options.get(
+                            "generate_embeddings",
+                            generic_option_default("generate_embeddings", True),
+                        )
+                        if isinstance(generic_options, dict)
+                        else generic_option_default("generate_embeddings", True)
+                    )
                     media_id, _media_uuid, _message = persist_parsed_media(
-                        payload, self.media_db
+                        payload,
+                        self.media_db,
+                        overwrite_existing=overwrite_existing,
+                        generate_embeddings=generate_embeddings,
                     )
                     # ``add_media_with_keywords`` returns ``media_id=None`` on
                     # exactly one success path: the duplicate skip ("already
@@ -3459,20 +6320,13 @@ class LibraryIngestQueueMixin:
                             media_id = existing.get("id")
                             if content_hash is None:
                                 content_hash = existing.get("content_hash")
-                    if was_duplicate:
-                        progress = {
-                            "message": (
-                                f"{INGEST_DUPLICATE_PROGRESS_PREFIX} — "
-                                "matched an existing item; nothing new was "
-                                "imported."
-                            )
-                        }
-                    else:
-                        # (task-2016) The basename, not the absolute path:
-                        # the row line already identifies the file and the
-                        # details surface carries the full path.
-                        source_name = Path(job.source_path).name or job.source_path
-                        progress = {"message": f"Imported {source_name}"}
+                    # (task-3301) Includes the "analysis skipped: ..."
+                    # annotation when the payload carries a skip reason.
+                    progress = _library_ingest_done_progress(
+                        job.source_path,
+                        was_duplicate=was_duplicate,
+                        payload=payload,
+                    )
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,
@@ -3496,7 +6350,18 @@ class LibraryIngestQueueMixin:
                         error=_sanitize_library_ingest_error(exc),
                         permanent=classify_parse_failure(exc),
                         error_detail={
-                            "category": "write_error",
+                            # (task-14821 / xhigh review round) The stage
+                            # covers two different things: refusing an
+                            # empty extraction (BEFORE any write) and a
+                            # genuine database write failure. Stamping
+                            # both "write_error" told users nothing was
+                            # saved because of a write problem when there
+                            # had been nothing to save -- and, since
+                            # "write_error" is the one category that still
+                            # earns the optimistic retry advisory, the
+                            # blanket DEFAULT smuggled that advisory back
+                            # in for every unclassified cause.
+                            "category": _library_ingest_write_failure_category(exc),
                             "message": str(exc),
                             "exception_type": exc.__class__.__name__,
                         },
@@ -3507,12 +6372,93 @@ class LibraryIngestQueueMixin:
 
 
 # --- Main App ---
+def _build_generated_video_store():
+    from tldw_chatbook.Video_Generation.video_store import VideoStore
+
+    store = VideoStore()
+    try:
+        store.enforce_retention()
+    except Exception as exc:
+        logger.warning(
+            "Generated-video startup retention failed (error_type={}).",
+            type(exc).__name__,
+        )
+    return store
+
+
+def _build_notes_scope_service(
+    *,
+    chachanotes_db: Any,
+    local_notes_service: Any,
+    server_service: Any,
+    policy_enforcer: Any,
+    sync_scope_service: Any,
+) -> NotesScopeService:
+    """Compose the Notes facade over the shared local database.
+
+    Args:
+        chachanotes_db: Existing local ChaChaNotes database handle, if available.
+        local_notes_service: Local flat-note service implementation.
+        server_service: Server-backed Notes service implementation.
+        policy_enforcer: Authorization policy enforcer shared by the app.
+        sync_scope_service: Optional Sync-v2 scope service.
+
+    Returns:
+        A Notes scope facade with one shared local folder repository.
+    """
+    folder_repository = (
+        LocalNoteFolderRepository(chachanotes_db)
+        if chachanotes_db is not None
+        else None
+    )
+    return NotesScopeService(
+        local_notes_service=local_notes_service,
+        server_service=server_service,
+        policy_enforcer=policy_enforcer,
+        sync_scope_service=sync_scope_service,
+        folder_repository=folder_repository,
+    )
+
+
+_SETUP_STARTUP_NETWORKING_ACTIONS = frozenset({"offer", "prompt", "home"})
+
+
+def setup_owns_startup_networking(
+    app_config: Mapping[str, Any], environ: Mapping[str, str]
+) -> bool:
+    """Return whether first-run setup owns automatic networking this startup."""
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        setup_recovery_action,
+    )
+
+    return (
+        setup_recovery_action(app_config, environ) in _SETUP_STARTUP_NETWORKING_ACTIONS
+    )
+
+
+def _select_profile_database(notes_service: object | None) -> Any:
+    """Return the seeded injected profile DB, or the seeded lazy global DB."""
+    injected = getattr(notes_service, "db", None)
+    return seed_builtin_content(injected) if injected else get_chachanotes_db_lazy()
+
+
 class TldwCli(
-    LibraryIngestQueueMixin, App[None]
+    # TextSelectionCrashGuard sits before App so its on_event wrapper is the
+    # last line of defense against Textual 8.x's text-selection MouseDown
+    # crash on a mid-recompose widget (task-14903) -- see the mixin's module
+    # docstring for the signature it (and ONLY it) drops.
+    TextSelectionCrashGuard,
+    LibraryIngestQueueMixin,
+    App[None],
 ):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
 
     _runtime_policy_projection_snapshot: tuple[str, str | None] = ("local", None)
+
+    def action_command_palette(self) -> None:
+        """Open the app's stable Textual command palette."""
+        if self.use_command_palette and not StableCommandPalette.is_open(self):
+            self.push_screen(StableCommandPalette(id="--command-palette"))
 
     @property
     def current_runtime_backend(self) -> str:
@@ -3537,49 +6483,83 @@ class TldwCli(
 
     # Product name shown in the terminal title (legacy "tldw CLI" retired).
     TITLE = "tldw chatbook"
-    # CSS file path
-    CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
-    # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
-    # SHELL_DESTINATION_ORDER, plus F7/F8/F9 for the remaining destinations
-    # (Lab, Logs, Settings) so every destination has a keyboard route.
-    SHELL_DESTINATION_HOTKEYS: tuple[str, ...] = tuple(
-        f"ctrl+{digit}" for digit in "1234567890"
-    )
-    SHELL_DESTINATION_FKEYS: tuple[str, ...] = ("f7", "f8", "f9")
+    # CSS file paths, read in order. The screen/modal CSS lifted out of Python
+    # (TASK-15450) brackets the bundle: the scope-prefixed stream first, so it
+    # loses the specificity ties that writing the scope selector out created,
+    # and the self stream last, where Textual used to append a screen's `CSS` on
+    # first open. They stay separate files, not bundle modules, because Textual
+    # accumulates `$variable` definitions per source and several of these blocks
+    # carry local `$ds-*` fallbacks that would otherwise clobber the real design
+    # tokens for the rest of the bundle. See css/build_css.py.
+    CSS_PATH = [
+        str(build_css.screen_css_paths(Path(__file__).parent / "css")[0]),
+        str(Path(__file__).parent / "css/tldw_cli_modular.tcss"),
+        str(build_css.screen_css_paths(Path(__file__).parent / "css")[1]),
+    ]
+
+    def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
+        """Add the consolidated widget-defaults stylesheet as one CSS source.
+
+        TASK-15450: Textual registers a separate stylesheet source per widget
+        class that declares ``DEFAULT_CSS``, and its parse cache is an
+        ``LRUCache(64)``. A full destination tour used to end at 94 sources, past
+        which *every* ``Stylesheet.parse()`` ran fully cold (125-380 ms measured)
+        on each first mount of a not-yet-seen widget class. The widget CSS now
+        lives in ``css/widget_defaults.tcss``, generated from the class-level
+        ``BUNDLED_CSS`` declarations by ``build_css.py``, and is registered here
+        as a single source.
+
+        The sheets are added here (rather than as a plain ``DEFAULT_CSS`` class
+        attribute) for two reasons: they are read at app start, so a boot-time
+        CSS rebuild is picked up by the same run, and each needs its own
+        tie-breaker. Selectors that already named their own widget keep
+        tie-breaker 0, the cascade position their class's ``DEFAULT_CSS`` had.
+        Selectors that gained a written-out scope prefix cost one specificity
+        point more than Textual's injected one, so they take a tie-breaker below
+        every other default-CSS source and lose the ties that shift created --
+        which are exactly the ties they used to lose outright. See
+        ``css/widget_css.py`` for the derivation.
+
+        Returns:
+            The default-CSS stack, widget defaults first.
+        """
+        css_dir = Path(__file__).parent / "css"
+        sources = build_css.widget_defaults_sources(css_dir)
+        if len(sources) != 2:
+            # Never fatal: the app still runs, just with unstyled widgets whose
+            # CSS was consolidated. Loud, because that is a build/packaging bug,
+            # not a user-facing condition.
+            loguru_logger.error(
+                "Consolidated widget CSS incomplete: generated sheet count {}",
+                len(sources),
+            )
+        return sources + super()._get_default_css()
+
+    # Shell shortcuts are keyed by stable destination ID so inserting a new
+    # destination cannot transfer an existing shortcut to another screen.
     BINDINGS = (
         [
             Binding("ctrl+q", "quit", "Quit App", show=True),
             Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
             Binding("f1", "show_workbench_help", "Help", show=True),
             Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
-        ]
-        + [
             Binding(
-                key,
-                f"shell_destination({index})",
-                f"Go to {destination.accessible_label}",
+                "ctrl+shift+f",
+                FOCUS_TOGGLE_PALETTE_ENTRY[1],
+                "Focus Mode",
                 show=False,
-            )
-            for index, (key, destination) in enumerate(
-                zip(SHELL_DESTINATION_HOTKEYS, SHELL_DESTINATION_ORDER)
-            )
+            ),
         ]
         + [
-            # 10 = len of the ctrl+digit layer ("1234567890"); a class-body
-            # comprehension cannot reference class-level names, so this stays a
-            # literal.
             Binding(
-                key,
-                f"shell_destination({10 + fkey_index})",
+                SHELL_DESTINATION_SHORTCUTS[destination.destination_id],
+                f"shell_destination({destination.destination_id!r})",
                 f"Go to {destination.accessible_label}",
-                show=True,
+                show=SHELL_DESTINATION_SHORTCUTS[
+                    destination.destination_id
+                ].startswith("f"),
             )
-            for fkey_index, (key, destination) in enumerate(
-                zip(
-                    SHELL_DESTINATION_FKEYS,
-                    SHELL_DESTINATION_ORDER[len("1234567890") :],
-                )
-            )
+            for destination in SHELL_DESTINATION_ORDER
         ]
     )
     COMMANDS = App.COMMANDS | {
@@ -3648,8 +6628,9 @@ class TldwCli(
     # the DBStatusManager resolves the visible widget on the active screen.
     # DB Size checker - now using AppFooterStatus
     _db_size_status_widget: Optional[AppFooterStatus] = None
-    # DB size update timer moved to DBStatusManager
-    _token_count_update_timer: Optional[Timer] = None
+    # DB size update timer moved to DBStatusManager; the 10 s token-count
+    # timer that used to live here was retired by task-21133 (its consumer
+    # surface went with task-17653).
     ui_responsiveness_monitor: UIResponsivenessMonitor | None = None
     _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
@@ -3685,6 +6666,13 @@ class TldwCli(
         # Track startup timing
         self._startup_start_time = time.perf_counter()
         self._startup_phases = {}
+        # Real per-task durations of the phase-3 parallel initializers,
+        # stamped on the worker thread by `_timed_init_task` (TASK-21111).
+        self._startup_parallel_tasks: dict[str, float] = {}
+        # Backing slots for the lazily-resolved credential store
+        # (TASK-21111(b)); see the `server_credential_store` property.
+        self._server_credential_store: Any | None = None
+        self._server_credential_store_unavailable_reason: str | None = None
 
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
@@ -3706,10 +6694,54 @@ class TldwCli(
 
         super().__init__()
 
+        # TASK-21115: a consolidated (BUNDLED_CSS) class adds no stylesheet
+        # source at first mount, so a dynamic first mount can resolve against
+        # a stale parse in which a base class's defaults still carry
+        # tie-breaker 0 and shadow the consolidated sheet's rules (Textual's
+        # `add_source` lowers a stored tie-breaker without arming a reparse).
+        # This subclass reparses when that happens -- restoring exactly the
+        # cascade per-class DEFAULT_CSS produced. See
+        # `css/tie_aware_stylesheet.py` for the measured failure shape.
+        self.stylesheet = TieAwareStylesheet(variables=self.get_css_variables())
+
         # Phase 1: Basic initialization
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.library_new_profile_admission = first_profile_created_this_session()
+        self.console_image_edit_operations = ImageEditOperationRegistry()
+        self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
+        # Persona Buddy controller is built lazily on first access
+        # (TASK-21103): constructing it imports Persona_Visual and PIL
+        # (1.28 s cold), and both consumers (screen reconcile, Console
+        # sink) already tolerate its absence. Slots must exist before
+        # `ConsoleRuntime(self)` below, whose constructor reads the
+        # persona_buddy_controller property. See that property.
+        self._persona_buddy_controller: Any | None = None
+        self._persona_buddy_controller_lock = threading.Lock()
+        # task-15860 (headless wake): the Console runtime -- chat store,
+        # provider gateway, agent bridge, chat controller -- is constructed
+        # by the APP, not by `ChatScreen`, and it OUTLIVES every Console
+        # screen. Screens are never cached (`_create_navigation_screen`), so
+        # anything that must survive a navigation cannot be built on one.
+        # `ChatScreen.on_unmount` now ends one VISIT
+        # (`leave_console_runtime`); the runtime itself is destroyed once,
+        # here, at exit (`_shutdown_console_runtime`).
+        self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
+        self._console_runtime_shutdown_task: asyncio.Task[None] | None = None
+        self.generated_video_store = _build_generated_video_store()
+        # TASK-13157: snapshot any TOML parse failure `load_settings()` just
+        # hit -- captured here (mirroring `_instance_lock_status` below, the
+        # same "detect at __init__, stash, notify once mounted" shape)
+        # because `load_settings()`/`load_cli_config_and_ensure_existence()`
+        # both silently fall back to in-memory defaults on a parse failure
+        # rather than raising; the app has no UI to notify through yet at
+        # this point in construction. `_maybe_warn_config_load_failure`
+        # turns this into a persistent, file-and-error-naming notification
+        # once the initial screen is up -- previously this degradation
+        # (including the resolved data directory silently becoming the
+        # `default_user` profile) had no visible signal at all.
+        self._config_load_failure = get_config_load_failure()
         # RAG-53 (task-7): advisory per-profile instance lock. The profile
         # (and thus its data dir) is final as soon as config is loaded --
         # earliest sound point for this. Detection only: never blocks,
@@ -3726,9 +6758,8 @@ class TldwCli(
             )
         except Exception as _instance_lock_exc:
             logger.debug(
-                "Instance lock acquisition failed unexpectedly ({}): {}",
+                "Instance lock acquisition failed unexpectedly (%s)",
                 type(_instance_lock_exc).__name__,
-                _instance_lock_exc,
             )
             self._instance_lock_status = InstanceLockStatus(acquired=True)
         self.tts_service = build_default_tts_service(self.app_config)
@@ -3737,6 +6768,11 @@ class TldwCli(
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
         self._tts_profile_service: TTSProfileService | None = None
+        self._audio_cpp_artifact_lease_coordinator: (
+            AudioCppArtifactLeaseCoordinator | None
+        ) = None
+        self._tts_voice_bundle_service: "TTSVoiceBundlePortabilityService | None" = None
+        self._tts_voice_bundle_service_close_task: asyncio.Task[None] | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
         )
@@ -3746,6 +6782,7 @@ class TldwCli(
         load_runtime_policy_for_app(self)
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
+        self.audio_cpp_model_install_owner = AudioCppModelInstallOwner()
         self.file_notes_session_owner = build_file_notes_session_owner()
         self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
         #: TASK-1143 (F5): count of Console agent runs/rounds the last
@@ -3823,32 +6860,58 @@ class TldwCli(
         user_name_for_notes = settings.get("USERS_NAME", "default_tui_user")
         self.notes_user_id = user_name_for_notes
 
-        # Run independent initializations in parallel
+        # Run independent initializations in parallel.
+        #
+        # TASK-21111(a): each task is timed AROUND ITS OWN EXECUTION, on the
+        # worker thread, and the duration is stashed in
+        # `self._startup_parallel_tasks`. The previous shape started the clock
+        # in the `as_completed` loop immediately before `future.result()` --
+        # by which point `as_completed` had already yielded the future
+        # *because it was done*, so `result()` returned instantly and every
+        # task logged 0.000s. The parallel phase (measured here at 82% of
+        # construction on a fresh profile) could not be attributed at all.
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             # Submit all independent initialization tasks
             futures = {
                 executor.submit(
-                    self._init_notes_service, user_name_for_notes
+                    self._timed_init_task,
+                    "notes_service",
+                    self._init_notes_service,
+                    user_name_for_notes,
                 ): "notes_service",
-                executor.submit(self._init_providers_models): "providers_models",
-                executor.submit(self._init_prompts_service): "prompts_service",
-                executor.submit(self._init_media_db): "media_db",
+                executor.submit(
+                    self._timed_init_task,
+                    "providers_models",
+                    self._init_providers_models,
+                ): "providers_models",
+                executor.submit(
+                    self._timed_init_task,
+                    "prompts_service",
+                    self._init_prompts_service,
+                ): "prompts_service",
+                executor.submit(
+                    self._timed_init_task, "media_db", self._init_media_db
+                ): "media_db",
             }
 
-            # Wait for all tasks to complete and log individual timings
+            # Wait for all tasks to complete and log their real durations.
             for future in concurrent.futures.as_completed(futures):
                 task_name = futures[future]
                 try:
-                    task_start = time.perf_counter()
                     future.result()
-                    task_duration = time.perf_counter() - task_start
-                    logger.info(
-                        f"Parallel init task '{task_name}' completed in {task_duration:.3f}s"
-                    )
                 except Exception as e:
+                    # The duration is still recorded (the wrapper stamps it in
+                    # a `finally`), and a slow FAILING task is exactly the one
+                    # worth timing.
                     logger.opt(exception=True).error(
-                        f"Parallel init task '{task_name}' failed: {e}"
+                        f"Parallel init task '{task_name}' failed after "
+                        f"{self._startup_parallel_tasks.get(task_name, 0.0):.3f}s: {e}"
                     )
+                    continue
+                logger.info(
+                    f"Parallel init task '{task_name}' completed in "
+                    f"{self._startup_parallel_tasks.get(task_name, 0.0):.3f}s"
+                )
 
         # Log total parallel phase time
         parallel_duration = time.perf_counter() - phase_start
@@ -3875,6 +6938,13 @@ class TldwCli(
             f"App __init__: Determined initial tab value: {self._initial_tab_value}"
         )
         # current_tab reactive will be set in on_mount after UI is composed
+
+        # --- Focus mode (task-18812) ---
+        self.focus_mode = False
+        self._focus_mode_config = bool(get_cli_setting("general", "focus_mode", False))
+        # Set by _resolve_initial_shell_route when onboarding outranks a
+        # focus request at startup; restored when the wizard lands on Chat.
+        self._deferred_focus_request: bool = False
 
         self._rich_log_handler: Optional[RichLogHandler] = (
             None  # For the RichLog widget in Logs tab
@@ -3922,9 +6992,16 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        self._screen_preimport_thread: threading.Thread | None = None
+        # task-21110: the splash-overlapped warm-up of the INITIAL route's
+        # module. Separate from `_screen_preimport_thread` (the whole-registry
+        # pass that starts after first paint) because the two run at different
+        # times for different reasons; both are idempotent on their own handle.
+        self._initial_screen_preimport_thread: threading.Thread | None = None
 
         self._ui_ready = False  # Track if UI is fully composed
         self._shutting_down = False  # Track if app is shutting down
+        self._quit_in_progress = False
 
         # --- Assign DB instances for event handlers ---
         if self.prompts_service_initialized:
@@ -3949,17 +7026,11 @@ class TldwCli(
             client_provider=self.server_context_provider,
         )
 
-        if (
-            self.notes_service
-            and hasattr(self.notes_service, "db")
-            and self.notes_service.db
-        ):
-            self.chachanotes_db = (
-                self.notes_service.db
-            )  # ChaChaNotesDB is used by NotesInteropService
+        if getattr(self.notes_service, "db", None):
+            self.chachanotes_db = _select_profile_database(self.notes_service)
             logging.info("Assigned self.notes_service.db to self.chachanotes_db")
         else:  # Fallback to global if notes_service didn't set it up as expected on itself
-            lazy_db = get_chachanotes_db_lazy()
+            lazy_db = _select_profile_database(self.notes_service)
             if lazy_db:
                 self.chachanotes_db = lazy_db
                 logging.info(
@@ -3979,12 +7050,51 @@ class TldwCli(
                 policy_enforcer=self.service_policy_enforcer,
             )
         )
-        self.notes_scope_service = NotesScopeService(
+        self.notes_scope_service = _build_notes_scope_service(
+            chachanotes_db=self.chachanotes_db,
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=getattr(self, "sync_scope_service", None),
         )
+        # TASK-21108: the lasting-sync runtime is built on FIRST ACCESS, not
+        # here. Its construction is what drags `Notes/notes_sync_runtime` and
+        # (through the TASK-21112 start gate) `Notes/notes_sync_legacy` --
+        # together 15 modules and ~21 ms, measured 2026-08-23 -- into the
+        # `import tldw_chatbook.app` closure, for an object nothing reads until
+        # `on_mount` starts it. The property below still accepts assignment,
+        # so a test can substitute a runtime double exactly as before.
+        #
+        # BE HONEST ABOUT WHAT THIS BUYS. `on_mount` reads the property
+        # unconditionally to call `.start()`, and Textual dispatches Mount
+        # inside `batch_update()` with `_ready()`/first paint in the `finally`
+        # after it (textual/app.py:3428-3457). So on a real boot these 15
+        # modules are RELOCATED from import time to mount time, still before
+        # first paint -- measured: 0/15 resident after `import
+        # tldw_chatbook.app`, 15/15 after `run_test()` on a zero-profile
+        # boot. The TASK-21112 gate suppresses STARTING, not CONSTRUCTING.
+        # What this does buy is a clean import closure (so the guard can see
+        # future drift) and no cost at all for consumers that import the
+        # module without running the app. Gating construction on the same
+        # evidence would make it a real win, but the evidence lives in
+        # `notes_sync_legacy` -- reading it imports 12 of the 15 -- and it
+        # would split the "configured?" decision that TASK-21112 centralised
+        # in `_start_once`. Tracked as a follow-up, deliberately not done here.
+        #
+        # The two collaborators the eager build READ here are captured here
+        # too, so deferring WHEN the owner is built does not also change
+        # WHICH objects it binds. This is not hypothetical: the File Notes
+        # lifecycle tests replace `app.file_notes_session_owner` between
+        # construction and mount, and a build that re-read the attribute at
+        # mount would bind the replacement (and, there, crash on it).
+        self._notes_sync_file_notes_binding = (
+            self.file_notes_session_owner.current_binding
+        )
+        self._notes_sync_scope_service = self.notes_scope_service
+        self._notes_sync_runtime_owner: "NotesSyncRuntimeOwner | None" = None
+        self._notes_sync_runtime_owner_lock = threading.Lock()
+        self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
+        self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
         # RAG admin trio (server/local/scope) is built lazily on first access
         # (task-254): its legacy UI consumers were deleted and nothing reads
         # these services at startup, so eager construction only added launch
@@ -3998,6 +7108,11 @@ class TldwCli(
         self._wire_study_services()
         self._wire_research_services()
         self._wire_character_persona_services()
+        # Persona Buddy: the controller slot itself is initialized earlier
+        # (before ConsoleRuntime construction); see the lazy
+        # persona_buddy_controller property (TASK-21103).
+        self._persona_buddy_unavailable_authority = None
+        self._persona_buddy_shutdown_task: asyncio.Task[None] | None = None
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -4020,10 +7135,152 @@ class TldwCli(
                     (duration / total_init_time) * 100 if total_init_time > 0 else 0
                 )
                 logger.info(f"  {phase}: {duration:.3f}s ({percentage:.1f}%)")
+                if phase == "parallel_init":
+                    # Sub-phases: these overlap each other and their parent,
+                    # so they are indented and NOT additive with the phases
+                    # above (TASK-21111).
+                    for task, task_duration in sorted(
+                        self._startup_parallel_tasks.items(),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    ):
+                        task_share = (
+                            (task_duration / duration) * 100 if duration > 0 else 0
+                        )
+                        logger.info(
+                            f"    - {task}: {task_duration:.3f}s "
+                            f"({task_share:.1f}% of parallel_init)"
+                        )
         logger.info("==============================")
 
         # Final memory check
         log_resource_usage()
+
+    def _timed_init_task(self, task_name: str, func: Callable[..., Any], *args: Any):
+        """Run one phase-3 initializer and record how long IT took.
+
+        Args:
+            task_name: Key under which the duration is recorded in
+                ``self._startup_parallel_tasks``.
+            func: The initializer to run.
+            *args: Positional arguments forwarded to ``func``.
+
+        Returns:
+            Whatever ``func`` returns.
+
+        The timing is taken on the worker thread, around the call itself, so
+        it survives however long the future then sits completed before
+        ``as_completed`` yields it (TASK-21111). Recorded in a ``finally`` so
+        a failing task is timed too. ``dict`` item assignment is atomic under
+        the GIL and each task writes a distinct key, so no lock is needed.
+        """
+        task_start = time.perf_counter()
+        try:
+            return func(*args)
+        finally:
+            self._startup_parallel_tasks[task_name] = time.perf_counter() - task_start
+
+    def _construct_notes_sync_runtime_owner(self) -> "NotesSyncRuntimeOwner":
+        """Build the application-owned lasting-sync runtime (TASK-21108).
+
+        Named ``_construct_`` rather than the house ``_build_`` prefix on
+        purpose: ``Tests/Notes/test_notes_sync_cutover.py`` fences the cutover
+        keywords by matching call names that END WITH
+        ``build_notes_sync_runtime_owner``, and a ``_build_...`` wrapper would
+        register as a second such call and defeat the fence.
+
+        Moved out of ``__init__`` so `Notes/notes_sync_runtime` and
+        `Notes/notes_sync_legacy` leave the app import closure; the body is
+        the one this app has always run, including the TASK-21112 start gate.
+        Construction performs no I/O: ``NotesDeviceStateStore`` only records
+        the path, and the gate's ``Path.exists()`` neither opens nor creates
+        the database.
+
+        Returns:
+            NotesSyncRuntimeOwner: The unstarted runtime owner.
+        """
+        from .Notes.notes_sync_legacy import (  # noqa: PLC0415
+            legacy_sync_directory_configured,
+        )
+        from .Notes.notes_sync_runtime import (  # noqa: PLC0415
+            build_notes_sync_legacy_migrator,
+            build_notes_sync_runtime_owner,
+        )
+
+        notes_sync_state_path = get_notes_sync_state_db_path()
+        notes_sync_migrator = build_notes_sync_legacy_migrator(
+            database_path=notes_sync_state_path,
+            legacy_connection=lambda: self.chachanotes_db.get_connection(),
+            settings=self.app_config,
+            note_scope_id=ScopeType.LOCAL_NOTE.value,
+            file_notes_binding=self._notes_sync_file_notes_binding,
+            private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
+        )
+        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
+            get_notes_sync_watcher_intervals(self.app_config)
+        )
+        return build_notes_sync_runtime_owner(
+            notes_scope_service=self._notes_sync_scope_service,
+            cutover_admitted=True,
+            profile_process_is_sole=self._instance_lock_status.acquired,
+            database_path=notes_sync_state_path,
+            migrate_legacy=notes_sync_migrator,
+            file_notes_binding=self._notes_sync_file_notes_binding,
+            local_user_id=self.notes_user_id,
+            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
+                self.app_config
+            ),
+            # TASK-21112 boot gate: start only on actual configuration — the
+            # legacy [notes] sync-directory key (one-time migration path) or
+            # a state DB already on disk. Path.exists() never opens or
+            # creates the database; a zero-profile boot therefore creates no
+            # notes-sync state at all. First-time setup (review_setup)
+            # force-starts the runtime on demand. On Python 3.12
+            # Path.exists() RAISES PermissionError (pathlib no longer
+            # swallows EACCES); on a sandboxed profile that deliberately
+            # rides the gate's fail-open path — one full start attempt,
+            # which is the safe direction and is memoized.
+            start_evidence=(
+                lambda settings=self.app_config, state_path=notes_sync_state_path: (
+                    legacy_sync_directory_configured(settings)
+                    or state_path.exists()
+                )
+            ),
+            watcher_interval_seconds=notes_sync_watcher_interval,
+            watcher_max_interval_seconds=notes_sync_watcher_max_interval,
+        )
+
+    @property
+    def notes_sync_runtime_owner(self) -> "NotesSyncRuntimeOwner":
+        """The lasting-sync runtime owner, built lazily and cached.
+
+        Built under a lock so a racing first access cannot produce two
+        runtimes over the same state database. ``on_mount`` is the first
+        reader in production.
+
+        Returns:
+            NotesSyncRuntimeOwner: The cached runtime owner.
+        """
+        owner = self._notes_sync_runtime_owner
+        if owner is None:
+            with self._notes_sync_runtime_owner_lock:
+                owner = self._notes_sync_runtime_owner
+                if owner is None:
+                    owner = self._construct_notes_sync_runtime_owner()
+                    self._notes_sync_runtime_owner = owner
+        return owner
+
+    @notes_sync_runtime_owner.setter
+    def notes_sync_runtime_owner(self, owner: "NotesSyncRuntimeOwner") -> None:
+        """Substitute the runtime owner (tests install doubles this way).
+
+        Takes the same lock as the getter so the slot is coherent in both
+        directions: an assignment racing a first read cannot interleave with
+        the build. Non-reentrant is safe here because the build never assigns
+        through this property.
+        """
+        with self._notes_sync_runtime_owner_lock:
+            self._notes_sync_runtime_owner = owner
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).
@@ -4097,28 +7354,309 @@ class TldwCli(
             self._build_rag_admin_services()
         return self._rag_admin_scope_service
 
+    def _persona_buddy_configured_enabled(self) -> bool:
+        """Report whether ``[persona_buddy] enabled`` is set in config.
+
+        Parses only the stdlib preference contract (``Persona_Buddy.
+        preferences`` behind the now-lazy package init) -- never the
+        controller chain, so a disabled profile stays PIL-free.
+
+        Returns:
+            bool: True when the persisted preferences enable the Buddy.
+        """
+        from .Persona_Buddy.preferences import (  # noqa: PLC0415 - stdlib-only seam; keeps PIL off the boot path (TASK-21103)
+            parse_persona_buddy_preferences,
+        )
+
+        config = getattr(self, "app_config", None)
+        section = config.get("persona_buddy", {}) if isinstance(config, dict) else {}
+        return parse_persona_buddy_preferences(section).enabled
+
+    def _build_persona_buddy_controller(self) -> Any | None:
+        """Construct and cache the app-owned Buddy controller (TASK-21103).
+
+        Constructor semantics are identical to the eager wiring this
+        replaced. Importing the controller module here is what pulls
+        Persona_Visual and PIL, so it must stay out of module scope. Built
+        under a lock so a racing first access from a worker thread cannot
+        construct two controllers; idempotent once built.
+
+        Returns:
+            The cached controller, or None when the persona services this
+            controller wires to are not present yet (early in ``__init__``,
+            or on skeletal test apps) -- callers retry on next access.
+        """
+        with self._persona_buddy_controller_lock:
+            if self._persona_buddy_controller is not None:
+                return self._persona_buddy_controller
+            # Only the persona service gates construction: the old eager
+            # wiring ran right after _wire_character_persona_services() and
+            # passed self.chachanotes_db through as-is (it is legitimately
+            # None on test-factory apps; the controller tolerates that).
+            local_persona_service = getattr(
+                self, "local_character_persona_service", None
+            )
+            if local_persona_service is None:
+                return None
+            profile_db = getattr(self, "chachanotes_db", None)
+            from .Persona_Buddy.controller import (  # noqa: PLC0415 - imports Persona_Visual + PIL; first feature use only (TASK-21103)
+                PersonaBuddyController,
+                load_local_persona_portrait,
+            )
+            from .Persona_Buddy.preferences import (  # noqa: PLC0415
+                parse_persona_buddy_preferences,
+            )
+
+            self._persona_buddy_controller = PersonaBuddyController(
+                preferences=parse_persona_buddy_preferences(
+                    self.app_config.get("persona_buddy", {})
+                ),
+                local_persona_service=local_persona_service,
+                portrait_loader=partial(
+                    load_local_persona_portrait,
+                    local_persona_service,
+                ),
+                profile_db=profile_db,
+                profile_root=get_user_data_dir(),
+                reduced_motion=bool(
+                    get_cli_setting("appearance", "reduce_motion", False)
+                ),
+                scheduler=self.call_after_refresh,
+            )
+            return self._persona_buddy_controller
+
+    def ensure_persona_buddy_controller(self) -> Any | None:
+        """Build (if needed) and return the Buddy controller for feature use.
+
+        Explicit Buddy actions (e.g. Personas Workbench "Use for Buddy" on a
+        profile whose preferences still say disabled) go through here: unlike
+        the passive property, this constructs regardless of the persisted
+        ``enabled`` flag so enabling from a disabled state works end to end.
+
+        Returns:
+            The controller, or None when its wiring prerequisites are absent.
+        """
+        return self._build_persona_buddy_controller()
+
+    @property
+    def persona_buddy_controller(self) -> Any | None:
+        """App-owned Persona Buddy controller, built lazily (TASK-21103).
+
+        Passive consumers (screen reconcile, Console sink, Workbench status)
+        read this via ``getattr(app, "persona_buddy_controller", None)`` and
+        already tolerate None. While unbuilt, a profile whose preferences
+        leave the Buddy disabled gets None back without constructing
+        anything, keeping the every-screen-mount reconcile early-out free of
+        the Persona_Visual/PIL import cost. First access on an enabled
+        profile -- or an explicit ``ensure_persona_buddy_controller()`` call
+        from a Buddy action -- performs the one-time construction.
+
+        Returns:
+            The cached controller; None when disabled-and-unbuilt or when
+            construction prerequisites are not wired yet.
+        """
+        controller = self._persona_buddy_controller
+        if controller is not None:
+            return controller
+        if not self._persona_buddy_configured_enabled():
+            return None
+        return self._build_persona_buddy_controller()
+
+    @persona_buddy_controller.setter
+    def persona_buddy_controller(self, controller: Any | None) -> None:
+        """Inject or clear the controller slot (tests and skeletal doubles).
+
+        Args:
+            controller: The controller instance to install, or None to make
+                the lazy property construct anew on next enabled access.
+        """
+        self._persona_buddy_controller = controller
+
     def _wire_server_context_provider(self) -> None:
         self.unified_mcp_target_store = ConfiguredServerTargetStore(
             get_user_data_dir() / "mcp_server_targets.json",
         )
         self.unified_mcp_target_store.upsert_legacy_config_target(self.app_config)
-        try:
-            self.server_credential_store = build_default_server_credential_store()
-        except CredentialStoreUnavailable as exc:
-            self.server_credential_store = UnavailableServerCredentialStore(str(exc))
         self.server_context_provider = RuntimeServerContextProvider(
             runtime_context=self.runtime_policy,
             target_store=self.unified_mcp_target_store,
-            credential_store=self.server_credential_store,
+            credential_store_factory=lambda: self.server_credential_store,
             app_config=self.app_config,
         )
+
+    def _build_local_skill_trust_service(self) -> Any:
+        """Build the skill trust service. Performs OS keyring discovery.
+
+        Split out of the eager wiring (TASK-21111(b)): it is the only part
+        of the local skills stack that touches the keyring -- twice, once
+        for the rollback marker store's secure-backend probe and once for
+        the trust key cache -- and nothing at startup asks a trust question.
+        Deferring the whole SERVICE was not enough on its own: the Console's
+        agent bridge takes the skills scope facade during Chat screen mount,
+        which merely relocated the discovery from ``__init__`` to mount.
+        ``LocalSkillsService`` therefore takes this as a FACTORY and calls it
+        on the first trust decision.
+        """
+        local_skills_store_dir = default_local_skills_store_dir(get_user_data_dir())
+        trust_store_dir = default_trust_store_dir(local_skills_store_dir)
+        trust_account_scope = skill_trust_account_scope(trust_store_dir)
+        skill_trust_marker_store, reduced_rollback_protection = (
+            build_skill_trust_marker_store_with_fallback(
+                fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
+                store_dir=trust_store_dir,
+                account_scope=trust_account_scope,
+            )
+        )
+        return SkillTrustService(
+            skills_dir=local_skills_store_dir / "skills",
+            trust_store=SkillTrustStore(
+                store_dir=trust_store_dir,
+                marker_store=skill_trust_marker_store,
+            ),
+            key_cache=build_default_skill_trust_key_cache(
+                account_scope=trust_account_scope
+            ),
+            keyring_convenience_enabled=False,
+            reduced_rollback_protection=reduced_rollback_protection,
+        )
+
+    def _build_local_skills_stack(self) -> None:
+        """Build the local skills service + scope facade. Idempotent.
+
+        Body moved out of ``_wire_watchlists_and_notifications_services``
+        (TASK-21111(b)). Keyring-free: the trust service is handed over as a
+        factory. The collaborators it reads were captured at construction
+        time, not re-read now, so deferring changes WHEN it runs and not
+        WHAT it binds (the TASK-21108 trap).
+
+        Each slot is filled only if still unset, so an injected double (a
+        test assigning one of them between construction and first read) is
+        never clobbered by a later sibling access.
+        """
+        if None not in (self._local_skills_service, self._skills_scope_service):
+            return
+        policy_enforcer, server_skills_service = self._local_skills_stack_inputs
+        if self._local_skills_service is None:
+            self._local_skills_service = LocalSkillsService(
+                store_dir=default_local_skills_store_dir(get_user_data_dir()),
+                policy_enforcer=policy_enforcer,
+                trust_service_factory=lambda: self.local_skill_trust_service,
+            )
+        if self._skills_scope_service is None:
+            self._skills_scope_service = SkillsScopeService(
+                local_service=self._local_skills_service,
+                server_service=server_skills_service,
+                policy_enforcer=policy_enforcer,
+            )
+
+    @property
+    def local_skill_trust_service(self) -> Any:
+        """Local skill trust service, built on first access (TASK-21111(b))."""
+        if self._local_skill_trust_service is None:
+            self._local_skill_trust_service = self._build_local_skill_trust_service()
+        return self._local_skill_trust_service
+
+    @local_skill_trust_service.setter
+    def local_skill_trust_service(self, service: Any) -> None:
+        self._local_skill_trust_service = service
+
+    @property
+    def local_skills_service(self) -> Any:
+        """Local skills service, built on first access (TASK-21111(b))."""
+        self._build_local_skills_stack()
+        return self._local_skills_service
+
+    @local_skills_service.setter
+    def local_skills_service(self, service: Any) -> None:
+        self._local_skills_service = service
+
+    @property
+    def skills_scope_service(self) -> Any:
+        """Skills scope facade, built on first access (TASK-21111(b))."""
+        self._build_local_skills_stack()
+        return self._skills_scope_service
+
+    @skills_scope_service.setter
+    def skills_scope_service(self, service: Any) -> None:
+        self._skills_scope_service = service
+
+    def _resolve_server_credential_store(self) -> None:
+        """Build the OS-backed credential store, or the unavailable stand-in.
+
+        The body ``_wire_server_context_provider`` used to run inline. It is
+        deferred because ``build_default_server_credential_store()`` calls
+        ``keyring.get_keyring()``, whose first invocation performs backend
+        discovery (11.3 ms on macOS, including the Security.framework ctypes
+        load) -- work no boot needs unless the user actually uses server
+        mode. TASK-21111(b).
+
+        Sets both ``_server_credential_store`` and
+        ``_server_credential_store_unavailable_reason``; the fallback choice
+        and its warning are unchanged, only their timing.
+        """
+        try:
+            self._server_credential_store = build_default_server_credential_store()
+            self._server_credential_store_unavailable_reason = None
+        except CredentialStoreUnavailable as exc:
+            self._server_credential_store = UnavailableServerCredentialStore(str(exc))
+            self._server_credential_store_unavailable_reason = str(exc)
+            logger.warning(
+                "No secure OS credential store available; server tokens will "
+                "remain config-only (reason={}).",
+                str(exc),
+            )
+
+    @property
+    def server_credential_store(self) -> Any:
+        """The app's credential store, resolved on first use (TASK-21111(b))."""
+        if self._server_credential_store is None:
+            self._resolve_server_credential_store()
+        return self._server_credential_store
+
+    @server_credential_store.setter
+    def server_credential_store(self, store: Any) -> None:
+        """Inject a credential store (tests, explicit reconfiguration).
+
+        Keeps the reason consistent with the store, so the pair can never
+        disagree the way two independently-assigned attributes could.
+        """
+        self._server_credential_store = store
+        self._server_credential_store_unavailable_reason = (
+            store.message if isinstance(store, UnavailableServerCredentialStore) else None
+        )
+
+    @property
+    def server_credential_store_unavailable_reason(self) -> str | None:
+        """Why no OS credential store is in use, or None. Resolves on read."""
+        if self._server_credential_store is None:
+            self._resolve_server_credential_store()
+        return self._server_credential_store_unavailable_reason
+
+    @server_credential_store_unavailable_reason.setter
+    def server_credential_store_unavailable_reason(self, reason: str | None) -> None:
+        self._server_credential_store_unavailable_reason = reason
 
     def open_study_screen(
         self,
         scope_context: Optional[StudyScopeContext] = None,
         *,
         initial_section: Optional[str] = None,
+        origin: Optional[str] = None,
     ) -> None:
+        """Stage Study handoffs and navigate to the Study screen.
+
+        Args:
+            scope_context: Scoped study context to apply, or None to clear
+                any pending scope.
+            initial_section: Study section to land on, or None to clear any
+                pending section.
+            origin: Where the user is coming FROM (``STUDY_ORIGINS``:
+                "home" or "library"), threaded to StudyScreen so its
+                breadcrumb and Escape target name the actual origin
+                (task-4011). None clears the channel and StudyScreen falls
+                back to its historical Library default (task-2854's one
+                considered origin).
+        """
         if scope_context is None:
             self.pending_handoffs.clear_pending(HandoffChannel.STUDY_SCOPE)
         elif not self._stage_handoff(
@@ -4134,6 +7672,15 @@ class TldwCli(
             HandoffChannel.STUDY_INITIAL_SECTION,
             initial_section,
             recovery="Study section could not be opened. Try again.",
+        ):
+            return
+
+        if origin is None:
+            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_ORIGIN)
+        elif not self._stage_handoff(
+            HandoffChannel.STUDY_ORIGIN,
+            origin,
+            recovery="Study could not be opened. Try again.",
         ):
             return
         self.post_message(NavigateToScreen(TAB_STUDY))
@@ -4187,26 +7734,22 @@ class TldwCli(
             return
         self.post_message(NavigateToScreen(TAB_CHAT))
 
-    def stage_console_prompt_insert(self, text: str) -> None:
-        """Stage a resolved Library prompt body for the Console composer and navigate there.
+    def stage_console_prompt_insert(
+        self,
+        application: PromptVariableApplication,
+    ) -> None:
+        """Stage a guarded Prompt application and then navigate to Console.
 
-        ``ChatHandoffPayload``-free direct route (Task 12): Library's prompt
-        editor "Use in Console" action only ever needs to land plain text
-        into the Console draft -- appended onto whatever the user was
-        already composing, never replacing it -- so this deliberately skips
-        ``open_chat_with_handoff``'s richer RAG-evidence-aware staging
-        machinery. Mirrors that method's stage-then-navigate shape, but the
-        payload is a bare string and there is no tabs-enabled gate: whether
-        the insert actually lands is decided by ``ChatScreen`` once it
-        settles this claim (it alone owns Console's provider/model
-        readiness state).
+        The typed, memory-only application carries the final selected lanes
+        plus destination/session/staleness guards. Console remains the only
+        owner allowed to settle the claim and mutate its active draft.
 
         Args:
-            text: The prompt's ``user_prompt`` body to insert.
+            application: Validated Prompt application to stage.
         """
         if not self._stage_handoff(
             HandoffChannel.CONSOLE_PROMPT_INSERT,
-            text,
+            application,
             recovery="Console prompt could not be staged. Review it and try again.",
         ):
             return
@@ -4381,27 +7924,62 @@ class TldwCli(
     ) -> HomeControlResult:
         """Retry the active Home item through the configured adapter.
 
-        Library ingest job targets (``local:ingest:<job_id>``) are requeued
-        directly through ``retry_library_ingest_job`` -- the real requeue
-        seam over ``self.library_ingest_jobs`` -- instead of falling through
-        to ``_handle_home_control_action``/the adapter, which has no
-        visibility into the in-memory ingest job registry and always
-        degrades to the honest "not connected to an active run service yet"
-        fallback for this target shape. Non-ingest targets (approvals,
-        watchlist runs, schedules) are unaffected and still route through
-        the adapter exactly as before.
+        Library ingest targets (``local:ingest:<job_id>``) use the ingest
+        retry seam instead of the generic Home adapter. Ordinary jobs retain
+        synchronous registry requeueing; Research-owned jobs schedule their
+        durable catalog-stage retry and report Research Workspace recovery.
+        Non-ingest targets are unaffected and still route through the adapter.
         """
         if target_id is not None and str(target_id).startswith("local:ingest:"):
             job_id = str(target_id)[len("local:ingest:") :]
-            requeued = self.retry_library_ingest_job(job_id)
-            if requeued is None:
+            source = self.library_ingest_jobs.get_job(job_id)
+            operation_id = str(
+                getattr(source, "research_source_operation_id", "") or ""
+            ).strip()
+            research_retry_requested = bool(
+                source is not None
+                and operation_id
+                and self._schedule_research_source_catalog_retry(
+                    source,
+                    operation_id=operation_id,
+                    notify_unavailable=False,
+                )
+            )
+            requeued = (
+                None
+                if operation_id
+                else self.retry_library_ingest_job(job_id)
+            )
+            if research_retry_requested:
+                basename = escape_markup(
+                    Path(str(source.source_path)).name or str(source.source_path)
+                )
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Research source retry requested for {basename}.",
+                    recovery_route=TAB_RESEARCH_WORKSPACE,
+                    target_id=target_id,
+                    target_route=TAB_RESEARCH_WORKSPACE,
+                )
+            elif operation_id:
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.UNAVAILABLE,
+                    message=self._RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY,
+                    severity="warning",
+                    recovery_route=TAB_RESEARCH_WORKSPACE,
+                    target_id=target_id,
+                    target_route=TAB_RESEARCH_WORKSPACE,
+                )
+            elif requeued is None:
                 # Unknown job id, or the job is no longer FAILED (e.g. it
                 # was already retried/finished by the time the button was
                 # pressed) -- ``requeue`` is a documented no-op in that case.
                 result = HomeControlResult(
                     action=HomeControlAction.RETRY,
                     status=HomeControlResultStatus.UNAVAILABLE,
-                    message="This ingest job can no longer be retried.",
+                    message="This import job can no longer be retried.",
                     severity="warning",
                     recovery_route="library",
                     target_id=target_id,
@@ -4430,8 +8008,14 @@ class TldwCli(
         )
 
     def open_home_flashcards_review(self) -> None:
-        """Open the Study screen directly on the flashcards review surface."""
-        self.open_study_screen(initial_section="flashcards")
+        """Open the Study screen directly on the flashcards review surface.
+
+        task-4011: this is the one entry into Study that does NOT come from
+        Library's staging canvas, so it declares its origin -- StudyScreen's
+        breadcrumb reads "Home ▸ Study" and Escape returns to Home instead
+        of a Library canvas the user never visited.
+        """
+        self.open_study_screen(initial_section="flashcards", origin="home")
 
     def _local_flashcards_due_count(self) -> int | None:
         """Count due flashcards for the Home mirror; None when the DB is absent."""
@@ -4533,6 +8117,9 @@ class TldwCli(
         return result
 
     def _wire_character_persona_services(self) -> None:
+        from .DB.VisualIdentity_DB import VisualIdentityRepository
+        from .Persona_Visual.repository import PersonaVisualRepository
+
         self.server_character_persona_service = (
             ServerCharacterPersonaService.from_server_context_provider(
                 self.server_context_provider,
@@ -4543,6 +8130,70 @@ class TldwCli(
             self.chachanotes_db,
             persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
         )
+        self.actor_pack_repository = ActorPackRepository(self.chachanotes_db)
+        self.persona_actor_pack_coordinator = PersonaActorPackCoordinator(
+            self.actor_pack_repository,
+            self.local_character_persona_service,
+        )
+        # task-21106: crash recovery no longer runs here — synchronous SQLite
+        # during __init__ cost every boot and crashed the test app factory
+        # (which builds the app with chachanotes_db=None), silently disarming
+        # the CSS parse-cache cliff guard. `ensure_actor_pack_recovery` now
+        # runs it once per app session: kicked on a background thread from
+        # `_schedule_deferred_startup_work`, and hard-gated ahead of the
+        # Personas screen's first library read and (inside the coordinator)
+        # every `create_persona` mutation.
+        self.actor_pack_recovery_error: str | None = None
+        self.actor_pack_creation_service = ActorPackCreationService(
+            self.chachanotes_db,
+            self.actor_pack_repository,
+            self.persona_actor_pack_coordinator,
+        )
+        self.actor_pack_export_service = ActorPackExportService(
+            self.chachanotes_db,
+            self.local_character_persona_service,
+            self.actor_pack_repository,
+            persona_visual_repository=PersonaVisualRepository(self.chachanotes_db),
+            visual_identity_repository=VisualIdentityRepository(self.chachanotes_db),
+            profile_root=get_user_data_dir(),
+        )
+        self.actor_pack_export_controller = ActorPackExportController(
+            self.actor_pack_export_service
+        )
+        self._actor_pack_export_shutdown_task: asyncio.Task[None] | None = None
+        self.actor_pack_import_service = None
+        self.actor_pack_activation_service = None
+        self.actor_pack_import_controller = None
+        if self.chachanotes_db is not None:
+            # task-22216: this construction is pure — the staging crash
+            # sweep no longer runs inside ActorPackImportService.__init__
+            # (a secure_private_directory walk + scandir on every boot,
+            # the task-21106 class). `ensure_actor_pack_staging_sweep`
+            # runs it once per app session from the deferred startup
+            # worker; the service itself gates `inspect_archive` on the
+            # same once-lock, so an import racing the worker still sweeps
+            # first. Guarded by
+            # Tests/App/test_boot_construct_fs_side_effects.py.
+            actor_pack_profile_root = get_user_data_dir()
+            self.actor_pack_import_service = ActorPackImportService(
+                self.actor_pack_repository,
+                staging_root=actor_pack_profile_root / "actor_pack_imports",
+                profile_root=actor_pack_profile_root,
+                local_service=self.local_character_persona_service,
+            )
+            self.actor_pack_activation_service = ActorPackActivationService(
+                self.chachanotes_db,
+                self.local_character_persona_service,
+                self.actor_pack_repository,
+                self.persona_actor_pack_coordinator,
+                self.actor_pack_import_service,
+            )
+            self.actor_pack_import_controller = ActorPackImportController(
+                self.actor_pack_import_service,
+                self.actor_pack_activation_service,
+                refresh_callbacks=(self._refresh_after_actor_pack_import,),
+            )
+        self._actor_pack_import_shutdown_task: asyncio.Task[None] | None = None
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,
@@ -4564,6 +8215,75 @@ class TldwCli(
             server_service=self.server_chat_dictionary_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+
+    def ensure_actor_pack_recovery(self) -> None:
+        """Run Actor Pack crash recovery once per app session (task-21106).
+
+        Safe to call from any thread and idempotent: the once-guard lives on
+        the coordinator (screens are never cached, so a per-mount flag would
+        re-run recovery on every Personas visit). Callers that may touch
+        recovery-affected state before the deferred startup kick has finished
+        call this first — from a worker thread, because a non-trivial recovery
+        does real SQLite work.
+
+        Preserves the exact `__init__`-era outcome mapping: a coordination
+        failure records ``actor_pack_recovery_failed``; retained quarantined
+        intents record ``actor_pack_recovery_blocked``. With no ChaChaNotes DB
+        (the test app factory builds the app without one) recovery is skipped
+        entirely, matching a boot where the profile store never opened.
+        """
+        coordinator = getattr(self, "persona_actor_pack_coordinator", None)
+        if coordinator is None or getattr(self, "chachanotes_db", None) is None:
+            return
+        first_run = not coordinator.recovery_attempted
+        recovery = coordinator.ensure_recovered()
+        if coordinator.recovery_error is not None:
+            self.actor_pack_recovery_error = "actor_pack_recovery_failed"
+            if first_run:
+                self.loguru_logger.error(
+                    "Actor Pack recovery failed: actor_pack_recovery_failed"
+                )
+        elif recovery is not None and recovery.blocked_intent_ids:
+            self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+            if first_run:
+                self.loguru_logger.warning(
+                    "Actor Pack recovery retained quarantined intents: "
+                    "actor_pack_recovery_blocked"
+                )
+
+    def ensure_actor_pack_staging_sweep(self) -> None:
+        """Run the Actor Pack staging crash-sweep once per session (task-22216).
+
+        Safe to call from any thread: the once-gate (and the lock that
+        serializes it against a first ``inspect_archive``) lives on the
+        import service. Called from the deferred startup worker; runs on a
+        thread because the sweep does real filesystem I/O.
+
+        A sweep failure is absorbed and logged rather than raised — the
+        pre-move behavior (the sweep ran inside ``TldwCli.__init__`` via
+        the service constructor, so a failure aborted app construction
+        outright) is deliberately softened to match the task-21106
+        recovery seam: the app stays up, the service's gate stays open,
+        and the next import attempt retries the sweep and surfaces the
+        same categorized error to the user.
+        """
+        service = getattr(self, "actor_pack_import_service", None)
+        if service is None:
+            return
+        try:
+            service.ensure_staging_swept()
+        except ActorPackImportError as exc:
+            # Category tokens only — the importer's errors are path-free by
+            # contract, and this sink is persistent (TASK-15103 rules).
+            self.loguru_logger.warning(
+                "Actor Pack staging sweep failed (will retry on first "
+                f"import use): {exc.category}"
+            )
+        except Exception as exc:
+            self.loguru_logger.warning(
+                "Actor Pack staging sweep failed (will retry on first "
+                f"import use): {type(exc).__name__}"
+            )
 
     def _wire_chat_conversation_services(self) -> None:
         trace_db = getattr(self, "chachanotes_db", None)
@@ -4688,6 +8408,83 @@ class TldwCli(
             )
             self.local_workspace_db = None
             self.workspace_registry_service = None
+
+    def _wire_research_source_association(self) -> None:
+        """Compose durable post-ingest association services."""
+
+        try:
+            self.research_paste_staging_store = ResearchPasteStagingStore(
+                get_user_data_dir() / "research_paste_staging"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Private Research paste staging unavailable"
+            )
+            self.research_paste_staging_store = None
+        try:
+            from .Research_Workspace import (
+                LocalResearchWorkspaceAdapter,
+                ServerResearchWorkspaceAdapter,
+                WorkspaceDataSource,
+            )
+
+            if self.local_workspace_db is None:
+                raise RuntimeError("Workspace database is unavailable.")
+            operation_store = ResearchSourceOperationStore(self.local_workspace_db)
+            coordinator = ResearchSourceAssociationCoordinator(
+                operation_store=operation_store,
+                ingest_jobs=self.library_ingest_jobs,
+                local_registry=self.workspace_registry_service,
+                server_service=self.server_notes_workspace_service,
+                server_context_provider=self.server_context_provider,
+                catalog_requeuer=self._requeue_research_source_catalog_job,
+                catalog_dispatcher=self._dispatch_research_source_catalog_job,
+            )
+            readiness_adapters = {}
+            if self.workspace_registry_service is not None:
+                readiness_adapters[WorkspaceDataSource.LOCAL] = (
+                    LocalResearchWorkspaceAdapter(
+                        self.workspace_registry_service,
+                        media_scope_service=getattr(
+                            self, "media_reading_scope_service", None
+                        ),
+                    )
+                )
+            if (
+                self.server_notes_workspace_service is not None
+                and self.server_context_provider is not None
+            ):
+                readiness_adapters[WorkspaceDataSource.SERVER] = (
+                    ServerResearchWorkspaceAdapter(
+                        self.server_notes_workspace_service,
+                        self.server_context_provider,
+                        media_scope_service=getattr(
+                            self, "media_reading_scope_service", None
+                        ),
+                    )
+                )
+            readiness_coordinator = ResearchSourceReadinessCoordinator(
+                operation_store=operation_store,
+                adapters=readiness_adapters,
+            )
+            scheduler = ResearchSourceAssociationScheduler(
+                coordinator=coordinator,
+                operation_store=operation_store,
+                readiness_coordinator=readiness_coordinator,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Research source association unavailable during app wiring"
+            )
+            self.research_source_operation_store = None
+            self.research_source_association_coordinator = None
+            self.research_source_readiness_coordinator = None
+            self.research_source_association_scheduler = None
+            return
+        self.research_source_operation_store = operation_store
+        self.research_source_association_coordinator = coordinator
+        self.research_source_readiness_coordinator = readiness_coordinator
+        self.research_source_association_scheduler = scheduler
 
     def _build_chatbook_db_paths(self) -> dict[str, str]:
         return {
@@ -4853,18 +8650,8 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
         )
         self.library_rag_search_service = LibraryLocalRagSearchService(self)
-        self.library_ingest_jobs = LibraryIngestJobRegistry()
-        # F3 parallel-parse coordinator state (see LibraryIngestQueueMixin):
-        # the lazily-created parse-pool handle, the parse->write handoff
-        # (job_id -> parsed payload dict, populated by a pool completion and
-        # drained by the writer's claim), and the shutdown flag pool
-        # callbacks check before touching a closing app.
-        self._ingest_parse_pool = None
-        self._ingest_parse_pool_generation: int = 0
-        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
-        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
-        self._ingest_parsed_payloads: dict[str, dict] = {}
-        self._ingest_shutdown: bool = False
+        self._init_library_ingest_runtime_state()
+        self._wire_research_source_association()
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
@@ -4923,10 +8710,53 @@ class TldwCli(
 
     def _wire_watchlists_and_notifications_services(self) -> None:
         """Initialize source-aware watchlists and local notification services."""
+        # task-15463: ONE SubscriptionsDB for this whole wiring. `db_factory`
+        # used to be `lambda: SubscriptionsDB(...)`, and `LocalWatchlistsService.
+        # _db()` called it on every service method -- so nearly every watchlists
+        # read rebuilt the database object, paying a ~52-statement schema
+        # `executescript` plus migration probes each time (3.4 ms against
+        # 0.04 ms on a held instance; 35 ms for the first build; five-plus per
+        # screen refresh). The same instance is handed to the projections, the
+        # scheduled-check handler and the bundle service below, which already
+        # shared one eager instance among themselves.
+        #
+        # Safe to share across threads: `SubscriptionsDB` connections are
+        # thread-local (`DB/Subscriptions_DB.py`'s `conn` property), so each
+        # `asyncio.to_thread` worker that touches this instance opens its own
+        # connection to the same file. `db_factory` stays a callable because it
+        # is the injectable seam tests repoint (`Tests/UI/
+        # test_watchlists_inspector.py`).
+        subscriptions_db = SubscriptionsDB(
+            get_subscriptions_db_path(), CLI_APP_CLIENT_ID
+        )
+        # Held on the app so the FTS-backfill worker can reuse it instead of
+        # constructing a second one -- see `_backfill_subscription_items_fts`,
+        # where a concurrent second `_initialize_schema` was measured
+        # poisoning a live connection's schema view.
+        self.subscriptions_db = subscriptions_db
+        # task-19561, Qodo review of PR #1972: the startup reconcile sweep runs
+        # as a deferred startup task, i.e. AFTER `on_mount` has already started
+        # the scheduler worker -- and the scheduler ticks immediately, so a due
+        # watchlist check can have launched a real `queued`/`running` row by the
+        # time the sweep looks. Unscoped, the sweep failed that live row as
+        # "interrupted".
+        #
+        # The boundary is captured HERE, in `__init__`'s wiring, rather than
+        # moved earlier in `on_mount`, precisely so that no future edit to
+        # `on_mount`'s ordering can reintroduce the race: at this point there is
+        # no event loop at all, so nothing in this process can yet have inserted
+        # into these tables. Everything this process later creates gets a
+        # strictly higher AUTOINCREMENT id and is therefore out of the sweep's
+        # reach by construction. See `Subscriptions/startup_reconcile.py`.
+        from tldw_chatbook.Subscriptions.startup_reconcile import (
+            capture_prior_process_boundary,
+        )
+
+        self._subscriptions_prior_process_boundary = capture_prior_process_boundary(
+            subscriptions_db
+        )
         self.local_watchlists_service = LocalWatchlistsService(
-            db_factory=lambda: SubscriptionsDB(
-                get_subscriptions_db_path(), CLI_APP_CLIENT_ID
-            )
+            db_factory=lambda: subscriptions_db
         )
         try:
             self.server_watchlists_service = ServerWatchlistsService.from_config(
@@ -4975,9 +8805,9 @@ class TldwCli(
         )
         server_client = SchedulingServerClient(self.server_notifications_service)
 
-        subscriptions_db = SubscriptionsDB(
-            get_subscriptions_db_path(), CLI_APP_CLIENT_ID
-        )
+        # `subscriptions_db` is the single instance built at the top of this
+        # method (task-15463); it used to be constructed here, separately from
+        # the service's own per-call construction.
         watchlist_projection = WatchlistProjection(subscriptions_db)
 
         # `briefing_projection` is built here, BEFORE `SchedulingService`, so
@@ -5001,6 +8831,17 @@ class TldwCli(
             runtime_source="local",
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
+            # task-18937: reminder mutations must reach the live scheduler
+            # queue on the next tick. The loop itself is constructed further
+            # down, so the callback resolves it lazily -- wiring
+            # `self.scheduler_loop.request_reload` directly here would freeze
+            # `None`/AttributeError in before the loop exists (same getter
+            # discipline as `BriefingJobHandler`'s chachanotes_db_getter).
+            on_queue_changed=lambda: (
+                getattr(self, "scheduler_loop", None).request_reload()
+                if getattr(self, "scheduler_loop", None) is not None
+                else None
+            ),
         )
 
         watchlist_checks_enabled = get_cli_setting(
@@ -5042,6 +8883,13 @@ class TldwCli(
                 chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
             )
 
+        # task-19561: shutdown has to be able to reach the generations this
+        # handler spawns, and the scheduler loop is not a route to them --
+        # they are bare `asyncio.Task`s, not workers, deliberately detached
+        # from the tick. Keeping the handler itself on the app is the only
+        # handle `on_unmount` has.
+        self._briefing_job_handler = briefing_handler
+
         handlers: dict[str, Handler] = {
             "reminder": ReminderHandler(
                 dispatch_service=self.notification_dispatch_service
@@ -5056,13 +8904,21 @@ class TldwCli(
             self.scheduling_service.db,
             handlers=handlers,
             poll_interval=get_cli_setting(
-                "scheduling", "scheduler_poll_interval_seconds", 30
+                "scheduling",
+                "scheduler_poll_interval_seconds",
+                SCHEDULER_POLL_INTERVAL_SECONDS,
             ),
             watchlist_projection=(
                 watchlist_projection if watchlist_handler is not None else None
             ),
             briefing_projection=(
                 briefing_projection if briefing_handler is not None else None
+            ),
+            missed_fire_grace_seconds=get_cli_setting(
+                "scheduling", "missed_fire_grace_seconds", MISSED_FIRE_GRACE_SECONDS
+            ),
+            handler_timeout_seconds=get_cli_setting(
+                "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
             ),
         )
         self.notifications_scope_service = NotificationsScopeService(
@@ -5218,53 +9074,12 @@ class TldwCli(
             server_service=self.server_outputs_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.local_research_service = LocalResearchService(
-                get_research_db_path(),
-                notification_dispatcher=self.notification_dispatch_service,
-                notification_app=self,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Local research service unavailable during app wiring"
-            )
-            self.local_research_service = None
-        try:
-            self.server_research_service = ServerResearchService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_research_service = ServerResearchService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.research_scope_service = ResearchScopeService(
-            local_service=self.local_research_service,
-            server_service=self.server_research_service,
-            policy_enforcer=self.service_policy_enforcer,
-            sync_scope_service=getattr(self, "sync_scope_service", None),
-        )
-        self.local_research_search_service = LocalResearchSearchService(
-            policy_enforcer=self.service_policy_enforcer,
-        )
-        try:
-            self.server_research_search_service = (
-                ServerResearchSearchService.from_config(
-                    self.app_config,
-                    policy_enforcer=self.service_policy_enforcer,
-                )
-            )
-        except ValueError:
-            self.server_research_search_service = ServerResearchSearchService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.research_search_scope_service = ResearchSearchScopeService(
-            local_service=self.local_research_search_service,
-            server_service=self.server_research_search_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
+        # Research services: ONE wiring path, not two. This used to duplicate
+        # `_wire_research_services` verbatim here (task-16332); the method's
+        # own already-wired guard makes calling it from this earlier-in-
+        # `__init__` bootstrap equivalent to the old embedded copy, and the
+        # later direct `_wire_research_services()` call then early-returns.
+        self._wire_research_services()
         self.local_chat_grammars_service = LocalChatGrammarsService(
             store_path=get_user_data_dir() / "tldw_chatbook_chat_grammars.json",
             policy_enforcer=self.service_policy_enforcer,
@@ -5344,37 +9159,22 @@ class TldwCli(
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
-        local_skills_store_dir = default_local_skills_store_dir(get_user_data_dir())
-        trust_store_dir = default_trust_store_dir(local_skills_store_dir)
-        trust_account_scope = skill_trust_account_scope(trust_store_dir)
-        skill_trust_marker_store, reduced_rollback_protection = (
-            build_skill_trust_marker_store_with_fallback(
-                fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
-                store_dir=trust_store_dir,
-                account_scope=trust_account_scope,
-            )
-        )
-        self.local_skill_trust_service = SkillTrustService(
-            skills_dir=local_skills_store_dir / "skills",
-            trust_store=SkillTrustStore(
-                store_dir=trust_store_dir,
-                marker_store=skill_trust_marker_store,
-            ),
-            key_cache=build_default_skill_trust_key_cache(
-                account_scope=trust_account_scope
-            ),
-            keyring_convenience_enabled=False,
-            reduced_rollback_protection=reduced_rollback_protection,
-        )
-        self.local_skills_service = LocalSkillsService(
-            store_dir=local_skills_store_dir,
-            policy_enforcer=self.service_policy_enforcer,
-            trust_service=self.local_skill_trust_service,
-        )
-        self.skills_scope_service = SkillsScopeService(
-            local_service=self.local_skills_service,
-            server_service=self.server_skills_service,
-            policy_enforcer=self.service_policy_enforcer,
+        # The local skills stack (trust service -> local service -> scope
+        # facade) is built on first access, not here: constructing the trust
+        # service performs OS keyring backend discovery TWICE (marker store +
+        # key cache) for a feature most boots never touch (TASK-21111(b)).
+        # Every consumer reads these through `getattr(app_instance, ...)` at
+        # UI time, so a property is a drop-in.
+        self._local_skill_trust_service: Any | None = None
+        self._local_skills_service: Any | None = None
+        self._skills_scope_service: Any | None = None
+        # Captured NOW, at the timing the eager build had: `_build_local_
+        # skills_stack` must not re-read collaborators that a test (or a
+        # later boot step) may reassign between construction and first use
+        # (the TASK-21108 deferral trap).
+        self._local_skills_stack_inputs = (
+            self.service_policy_enforcer,
+            self.server_skills_service,
         )
         try:
             self.server_tools_service = ServerToolsService.from_config(
@@ -5642,14 +9442,43 @@ class TldwCli(
         """Worker body: index subscription_items rows that predate the FTS
         index (task-688). Started from ``on_mount`` via
         ``run_worker(thread=True)`` so a large backlog never blocks app
-        startup or screen mount. Builds its own ``SubscriptionsDB`` instance
-        rather than reusing one built on another thread, since SQLite
-        connections in this codebase are thread-local and not shared.
+        startup or screen mount.
+
+        Uses the app's single ``SubscriptionsDB`` (task-15463). It used to
+        construct its own, on the theory that a thread-local connection
+        cannot be shared -- but thread-locality is exactly what makes sharing
+        the INSTANCE safe: this worker thread gets its own connection from it.
+        Constructing a second instance re-ran ``_initialize_schema`` -- a
+        ~52-statement ``executescript`` plus migrations, measured at 238 ms --
+        on a worker thread *while the app was already serving screens*, and
+        any connection opened during that window cached a schema view without
+        the tables it was rewriting. That is not theoretical: with per-call
+        database construction it showed up as the intermittent
+        ``OperationalError: no such table: subscription_items`` documented in
+        ``Tests/UI/test_watchlists_inspector.py``, self-healing on retry
+        because the next call built a new connection; against a held instance
+        the poisoned connection survives, and the write that lands on it just
+        fails. One instance, one schema initialization, no window.
+
+        ``close()`` below stays, and what it does is worth stating exactly.
+        ``SubscriptionsDB.close`` closes only the CALLING thread's connection
+        and clears that thread's slot. This body runs on a **pooled** thread
+        (Textual's thread workers run on asyncio's default executor, which is
+        shared with every ``asyncio.to_thread`` hop in the app), so the
+        connection it closes belongs to a pool thread that will later serve
+        other watchlists work on this same shared instance. That is safe for
+        exactly one reason: the ``conn`` property re-opens lazily, so the next
+        hop scheduled onto that thread gets a fresh connection instead of a
+        closed one. It is not safe to "improve" this into a close of the
+        instance itself.
         """
         db = None
         db_path = get_subscriptions_db_path()
         try:
-            db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
+            db = getattr(self, "subscriptions_db", None)
+            if db is None:
+                # Only a harness that skipped service wiring gets here.
+                db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
             backfill_subscription_items_fts(db)
         except FTSBackfillError as exc:
             logger.opt(exception=True).error(
@@ -5675,6 +9504,70 @@ class TldwCli(
                         "Failed to close SubscriptionsDB {} after FTS backfill.",
                         db_path,
                     )
+
+    def _backfill_chachanotes_messages_fts(self) -> None:
+        """Worker body: reinsert messages the v45->v46 migration no longer
+        indexes inline (task-21100). Started from ``on_mount`` via
+        ``run_worker(thread=True)`` so an upgraded profile's index rebuild
+        never blocks boot or first paint; each chunk commits in its own
+        transaction, so a kill at any point leaves a consistent, resumable
+        index (state = ``messages_fts_docsize`` membership, in the DB
+        itself).
+
+        Uses the app's shared ``CharactersRAGDB`` singleton -- thread-local
+        connections are exactly what makes that safe from a worker thread
+        (see ``_backfill_subscription_items_fts`` for the incident that
+        taught this). Unlike that worker, no ``close()`` here: pooled threads
+        serve ChaChaNotes work constantly, and the thread-local connection
+        this run opens is the same one later hops on this thread reuse.
+
+        On an up-to-date database the loop's first chunk finds nothing and
+        the whole call is one indexed scan -- cheap, and it doubles as
+        self-healing for any run interrupted before completion.
+
+        task-22200: the driver paces itself (inter-chunk sleep + backoff on
+        lock-queue timeouts) so this run yields the write lock to foreground
+        UI writes instead of convoying against them for the whole first
+        post-upgrade session. The worker's own cancellation flag is passed
+        through as ``should_abort`` -- pacing makes the run longer, and a
+        thread worker that never polls ``is_cancelled`` would make shutdown
+        wait out every remaining pause; the driver polls it between chunks
+        and inside every sleep, and stopping is safe because the resume
+        frontier lives in the database.
+        """
+        from textual.worker import NoActiveWorker, get_current_worker
+
+        from tldw_chatbook.DB.chachanotes_fts_backfill import (
+            ChaChaNotesFTSBackfillError,
+            backfill_chachanotes_messages_fts,
+        )
+
+        try:
+            worker = get_current_worker()
+        except NoActiveWorker:
+            worker = None  # direct calls in tests/harnesses run un-cancellable
+        should_abort = (lambda: worker.is_cancelled) if worker is not None else None
+
+        try:
+            db = get_chachanotes_db_lazy()
+            if db is None:
+                logger.debug(
+                    "ChaChaNotes messages FTS backfill skipped: no database instance."
+                )
+                return
+            backfill_chachanotes_messages_fts(db, should_abort=should_abort)
+        except ChaChaNotesFTSBackfillError as exc:
+            logger.opt(exception=True).error(
+                "ChaChaNotes messages FTS backfill failed after indexing {} "
+                "row(s) this run; older messages may be missing from search "
+                "until the next app start resumes it.",
+                exc.rows_indexed,
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                "ChaChaNotes messages FTS backfill failed; older messages may "
+                "be missing from search until the next app start resumes it."
+            )
 
     def _wire_server_parity_state_repositories(self) -> None:
         try:
@@ -6004,18 +9897,79 @@ class TldwCli(
     # unreferenced here but out of this task's scope.
 
     def _setup_buffered_logging(self):
-        """Set up a persistent buffered logging handler for screen navigation mode."""
+        """Set up a persistent buffered logging handler for screen navigation mode.
+
+        TASK-19555 (privacy). This is the ONE choke point every in-app
+        diagnostic passes through, and the two stores it fills have different
+        jobs and therefore different privacy bars:
+
+        * ``_log_records`` is the LIVE VIEW. It stays descriptive -- redacting
+          it would empty the Logs screen of the content the screen exists to
+          show -- but every line is first stripped of credentials and of the
+          operating-system account name, which are never worth reading and are
+          the two things a screenshot or a shoulder-surfer must not capture.
+        * ``_log_buffer`` is the SHARE ARTIFACT: the exact payload
+          ``LogsWindow._on_copy_all`` joins onto the system clipboard. It holds
+          the metadata-only form, because "Copy all" bulk-exports thousands of
+          lines the user has never read -- consent that cannot be informed.
+          Anything a user deliberately shares, they share by filtering the view
+          and pressing "Copy visible".
+
+        Both stores are bounded to the same window, so the share action cannot
+        export more history than the screen admits to keeping.
+        """
         from collections import deque
         import logging
 
-        # Create a buffer to store ALL log messages (no max length)
+        from tldw_chatbook.UI.Logs_Window import MAX_LOG_RECORDS
+        from tldw_chatbook.Utils.log_sanitizer import (
+            REDACTION_MARKER,
+            redact_log_line,
+        )
+        from tldw_chatbook.Utils.persistent_diagnostics import (
+            PersistentDiagnosticFilter,
+            safe_metadata_token,
+        )
+
+        # The clipboard payload for "Copy all". Bounded (TASK-19555): an
+        # unbounded session buffer is a memory leak and a disclosure surface,
+        # and it let "Copy all" export far more history than the Logs screen
+        # itself retains or discloses in its status line.
         if not hasattr(self, "_log_buffer"):
-            self._log_buffer = deque()  # No maxlen - keep all logs
+            self._log_buffer = deque(maxlen=MAX_LOG_RECORDS)
 
         # Structured records (level, name, formatted message) for the Logs
         # screen's filtering; bounded like the RichLog widget itself.
         if not hasattr(self, "_log_records"):
-            self._log_records = deque(maxlen=10000)
+            self._log_records = deque(maxlen=MAX_LOG_RECORDS)
+
+        # The SAME admission rule the rotating file handler uses, so the
+        # clipboard and the disk sink cannot drift apart on what counts as
+        # metadata-only. Reused as an object, not re-implemented.
+        share_admission = PersistentDiagnosticFilter()
+
+        def _share_line(record, formatted, formatter):
+            """Return the metadata-only form of one record for the clipboard.
+
+            Schema-validated ADR-029 metadata events pass through verbatim --
+            they are already the safe artifact. Everything else keeps its
+            timestamp, logger, level and exception type, and loses its message
+            body: the body is where interpolated paths, titles, queries,
+            prompts, tool arguments and provider payloads live, and no
+            sink-side rule can tell those apart from the wording around them.
+            """
+            if share_admission.filter(record):
+                return formatted
+            detail = ""
+            exc_type = record.exc_info[0] if record.exc_info else None
+            if exc_type is not None:
+                name = safe_metadata_token(getattr(exc_type, "__name__", ""))
+                detail = f" (exception_type={name})"
+            stamp = formatter.formatTime(record, formatter.datefmt)
+            return (
+                f"{stamp} - {record.name} - {record.levelname} - "
+                f"{REDACTION_MARKER}{detail}"
+            )
 
         # Create a custom handler that stores logs in the buffer
         class PersistentLogHandler(logging.Handler):
@@ -6026,8 +9980,10 @@ class TldwCli(
 
             def emit(self, record):
                 try:
-                    msg = self.format(record)
-                    self.buffer.append(msg)
+                    formatted = self.format(record)
+                    formatter = self.formatter or logging.Formatter()
+                    self.buffer.append(_share_line(record, formatted, formatter))
+                    msg = redact_log_line(formatted)
                     self.app._log_records.append((record.levelname, record.name, msg))
 
                     # Preferred live path: the Logs screen's LogsWindow applies
@@ -6064,43 +10020,30 @@ class TldwCli(
             logging.getLogger().addHandler(self._persistent_log_handler)
             logger.info("Persistent logging handler set up for screen navigation")
 
-        # The app logs via loguru; the persistent handler is stdlib-only.
-        # Bridge loguru records into the stdlib root logger so the Logs
-        # screen's buffer sees the application's own logging (without this,
-        # only stdlib-logging modules ever appear there).
-        if not hasattr(self, "_loguru_bridge_installed"):
-            self._loguru_bridge_installed = True
-
-            def _loguru_to_stdlib(message) -> None:
-                record = message.record
-                logging.getLogger(record["name"]).handle(
-                    logging.LogRecord(
-                        name=record["name"],
-                        level=record["level"].no,
-                        pathname=getattr(record["file"], "path", ""),
-                        lineno=record["line"],
-                        msg=str(message).rstrip("\n"),
-                        args=(),
-                        exc_info=record["exception"],
-                        created=record["time"].timestamp(),
-                    )
-                )
-
-            try:
-                from loguru import logger as _loguru
-
-                _loguru.add(_loguru_to_stdlib, level=0, format="{message}")
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Failed to install loguru->stdlib bridge for Logs screen"
-                )
+        # The app logs via loguru and the persistent handler is stdlib-only,
+        # but NO bridge is installed here: `Logging_Config._setup_logging`
+        # already forwards every loguru record into stdlib logging
+        # (`_forward_loguru_to_standard`, level TRACE, diagnose=False per
+        # task-2119), and it runs before this method on every boot path —
+        # either early at process start or via `configure_application_
+        # logging` in `_setup_logging`. A second sink here made every loguru
+        # record reach the root logger twice, so the Logs screen showed each
+        # application log line — and counted each error — twice
+        # (TASK-15422).
 
         # Initialize current log widget reference
         self._current_log_widget = None
 
     def _display_buffered_logs(self, log_widget):
-        """Display all buffered logs in the RichLog widget."""
-        if not hasattr(self, "_log_buffer"):
+        """Display all buffered logs in the RichLog widget.
+
+        Reads ``_log_records`` (the live-view store), NOT ``_log_buffer``
+        (the metadata-only clipboard artifact) -- TASK-19555. This legacy
+        path currently has no callers; it is pointed at the right store so
+        that reviving it shows a maintainer real diagnostics rather than a
+        screen of redaction markers.
+        """
+        if not hasattr(self, "_log_records"):
             return
 
         # Store reference to current log widget
@@ -6110,13 +10053,13 @@ class TldwCli(
         log_widget.clear()
 
         # Write all buffered messages to the widget
-        for msg in self._log_buffer:
+        for _level, _name, msg in self._log_records:
             log_widget.write(msg)
 
         # Scroll to the latest entry
         log_widget.scroll_end()
 
-        logger.debug(f"Displayed {len(self._log_buffer)} buffered log entries")
+        logger.debug(f"Displayed {len(self._log_records)} buffered log entries")
 
     def _setup_logging(self):
         """Set up logging for the application.
@@ -6298,17 +10241,15 @@ class TldwCli(
             return
 
     def _stop_footer_status_timers(self) -> None:
-        """Stop footer status timers and clear their diagnostic entries."""
-        timer = getattr(self, "_token_count_update_timer", None)
-        if timer is not None:
-            try:
-                timer.stop()
-            except Exception as exc:
-                logger.debug(f"Footer token timer stop skipped: {exc}")
-            finally:
-                self._token_count_update_timer = None
+        """Clear the footer status timers' diagnostic entries.
+
+        The timer object itself is owned by ``DBStatusManager`` and stopped
+        by its ``stop_periodic_updates()``; both shutdown hooks call that
+        immediately before this. task-21133 removed the second, token-count
+        timer this method also used to own, so there is no longer a handle
+        to stop here.
+        """
         self._record_ui_responsiveness_timer_stopped("footer-db-size-periodic")
-        self._record_ui_responsiveness_timer_stopped("footer-token-periodic")
 
     def _record_footer_timer_created(self, name: str) -> None:
         """Record footer timer creation without making diagnostics mandatory."""
@@ -6365,6 +10306,83 @@ class TldwCli(
     # wedged one costs a few seconds instead of the session.
     NAVIGATION_FLUSH_TIMEOUT_SECONDS: float = 5.0
 
+    @staticmethod
+    def _persona_buddy_authority(controller: Any, snapshot: Any) -> tuple[Any, ...]:
+        """Return the exact app-lifetime authority for one visual decision."""
+
+        return (
+            id(controller),
+            snapshot.generation,
+            snapshot.selection,
+            snapshot.preferences_generation,
+            snapshot.profile_generation,
+        )
+
+    def is_persona_buddy_confirmed_unavailable(
+        self, controller: Any, snapshot: Any
+    ) -> bool:
+        """Query and clear the app-owned unavailable marker by exact authority."""
+
+        authority = self._persona_buddy_authority(controller, snapshot)
+        marker = getattr(self, "_persona_buddy_unavailable_authority", None)
+        if marker is not None and marker != authority:
+            self._persona_buddy_unavailable_authority = None
+            return False
+        return marker == authority
+
+    def confirm_persona_buddy_unavailable(
+        self,
+        *,
+        screen: Any,
+        view: Any,
+        view_generation: int,
+        controller: Any,
+        snapshot: Any,
+        visual: Any,
+    ) -> bool:
+        """Publish unavailable only for the exact current app/screen/view authority."""
+
+        current_controller = getattr(self, "persona_buddy_controller", None)
+        try:
+            current_screen = self.screen
+        except Exception:
+            return False
+        if (
+            controller is not current_controller
+            or current_screen is not screen
+            or not screen.is_attached
+            or screen._persona_buddy_view is not view
+            or screen.persona_buddy_view_generation != view_generation
+            or not view.is_attached
+        ):
+            return False
+        current = controller.snapshot()
+        if (
+            self._persona_buddy_authority(controller, current)
+            != self._persona_buddy_authority(controller, snapshot)
+            or current.visual is not visual
+            or visual is None
+            or visual.available
+        ):
+            return False
+        self._persona_buddy_unavailable_authority = self._persona_buddy_authority(
+            controller, current
+        )
+        return True
+
+    async def reconcile_persona_buddy_view(self) -> bool:
+        """Reconcile the active screen and report whether its Buddy is absent."""
+
+        from .UI.Navigation.base_app_screen import BaseAppScreen
+
+        try:
+            screen = self.screen
+        except Exception:
+            return False
+        if not isinstance(screen, BaseAppScreen) or not screen.is_active:
+            return False
+        return await screen.reconcile_persona_buddy_view()
+
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 
@@ -6386,8 +10404,96 @@ class TldwCli(
         UI freeze (root-caused 2026-07-11). UX continuity across visits is
         owned by ``ScreenStateStore`` through each screen's
         ``save_state``/``restore_state`` boundary, not instance reuse.
+
+        One documented exception, since task-15860: Console's message
+        history is NOT in that snapshot. It lives in the app-owned
+        ``ConsoleRuntime``'s ``ConsoleChatStore``, which outlives every
+        ``ChatScreen``; Console's snapshot carries only view state (image
+        view modes, the task-resume projection, the staged live-work
+        launch). Two sources of truth is what that snapshot had become --
+        a turn that ran while Console was unmounted persisted to
+        ChaChaNotes and was then overwritten, unseen, by a snapshot taken
+        before it (executed: ``Docs/superpowers/plans/2026-08-14-headless-
+        wake-task-0-report.md``, P3b). Screens still die on navigation;
+        only the runtime survives.
         """
+        if screen_name == TAB_RESEARCH_WORKSPACE:
+            return self._create_research_workspace_screen(screen_class)
         return screen_class(self)
+
+    def _create_research_workspace_screen(self, screen_class: type):
+        """Late-bind the foundation to the currently active owner services."""
+
+        from .Research_Workspace import (
+            LocalResearchWorkspaceAdapter,
+            ResearchPresentationOverlayStore,
+            ResearchWorkspaceController,
+            ServerResearchWorkspaceAdapter,
+            WorkspaceDataSource,
+        )
+
+        ports = {}
+        local_service = getattr(self, "workspace_registry_service", None)
+        media_scope_service = getattr(self, "media_reading_scope_service", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        association_scheduler = getattr(
+            self, "research_source_association_scheduler", None
+        )
+        if local_service is not None:
+            ports[WorkspaceDataSource.LOCAL] = LocalResearchWorkspaceAdapter(
+                local_service,
+                media_scope_service=media_scope_service,
+                operation_store=operation_store,
+                association_scheduler=association_scheduler,
+                notes_scope_service=getattr(self, "notes_scope_service", None),
+                notes_user_id=getattr(self, "notes_user_id", ""),
+            )
+        server_service = getattr(self, "server_notes_workspace_service", None)
+        server_context_provider = getattr(self, "server_context_provider", None)
+        if server_service is not None and server_context_provider is not None:
+            ports[WorkspaceDataSource.SERVER] = ServerResearchWorkspaceAdapter(
+                server_service,
+                server_context_provider,
+                media_scope_service=media_scope_service,
+                operation_store=operation_store,
+                association_scheduler=association_scheduler,
+            )
+        controller = ResearchWorkspaceController(ports)
+        overlay_store = ResearchPresentationOverlayStore(
+            get_user_data_dir() / "research_workspace_overlay.json"
+        )
+        return screen_class(
+            self,
+            controller=controller,
+            overlay_store=overlay_store,
+            operation_store=operation_store,
+            association_scheduler=association_scheduler,
+            paste_staging_store=getattr(
+                self, "research_paste_staging_store", None
+            ),
+        )
+
+    async def _reconcile_research_quick_notes_startup(self) -> None:
+        """Resume one bounded global Local Quick Note receipt page."""
+
+        from .Research_Workspace import LocalResearchWorkspaceAdapter
+
+        registry = getattr(self, "workspace_registry_service", None)
+        notes_scope = getattr(self, "notes_scope_service", None)
+        notes_user_id = str(getattr(self, "notes_user_id", "") or "").strip()
+        if registry is None or notes_scope is None or not notes_user_id:
+            return
+        try:
+            await LocalResearchWorkspaceAdapter(
+                registry,
+                notes_scope_service=notes_scope,
+                notes_user_id=notes_user_id,
+            ).reconcile_quick_notes()
+        except Exception as exc:  # noqa: BLE001 - startup recovery must degrade safely
+            logger.warning(
+                "Research Quick Note startup reconciliation deferred: {}",
+                type(exc).__name__,
+            )
 
     def _valid_startup_route_ids(self) -> set[str]:
         """Return route ids allowed in startup config during the shell migration."""
@@ -6431,22 +10537,97 @@ class TldwCli(
         decision the wizard offer uses: if the wizard is about to be
         offered, land on Home beneath it.
         """
+        # task-18812: record the focus request BEFORE the onboarding branches
+        # return Home — a first-run launch defers it (the wizard navigates to
+        # the Console on completion, and _handle_first_run_wizard_result then
+        # restores the request) instead of silently discarding it. Any
+        # non-onboarding route below applies it immediately.
+        _focus_requested = bool(
+            getattr(self, "_cli_focus_override", False)
+            or getattr(self, "_focus_mode_config", False)
+        )
         if self.app_config.get("_first_run", False):
+            self._deferred_focus_request = _focus_requested
             return TAB_HOME
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-                should_offer_wizard,
+                setup_recovery_action,
             )
 
-            if should_offer_wizard(self.app_config, os.environ):
+            if setup_recovery_action(self.app_config, os.environ) in {
+                "offer",
+                "prompt",
+                "home",
+            }:
+                self._deferred_focus_request = _focus_requested
                 return TAB_HOME
         except Exception:
-            logger.debug("Wizard-offer route check failed", exc_info=True)
+            logger.debug("Wizard startup route check failed (category=runtime)")
+        # task-18812: focus mode is Console-only by definition, so a focus
+        # request forces the route — onboarding branches ABOVE still win
+        # (spec: first-run wins).
+        if _focus_requested:
+            self.focus_mode = True
+            return TAB_CHAT
         return getattr(self, "_initial_tab_value", TAB_CHAT)
+
+    def _set_focus_mode(self, enabled: bool) -> None:
+        """Set focus mode and apply it to the Console if it is on screen.
+
+        task-18812 / ADR-071. Duck-types the content screen (it may or may
+        not be the Console — do NOT import ChatScreen here; the screen
+        registry keeps app.py free of screen imports for circular-import
+        reasons). Enabling while elsewhere navigates to the Console first;
+        the screen's mount-time ``_apply_focus_chrome`` read then applies
+        the chrome. Disabling only clears the flag.
+        """
+        self.focus_mode = enabled
+        content_screen = self._navigation_outgoing_screen()
+        apply_chrome = getattr(content_screen, "_apply_focus_chrome", None)
+        if callable(apply_chrome):
+            apply_chrome()
+        elif enabled:
+            self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def action_toggle_focus_mode(self) -> None:
+        """Ctrl+Shift+F: toggle the chrome-free Console focus mode."""
+        self._set_focus_mode(not self.focus_mode)
+
+    def _clear_focus_if_leaving_console(self, screen_name: str) -> None:
+        """Single exit rule (ADR-071): focus mode is Console-only — any
+        navigation to another route restores normal chrome on arrival."""
+        if screen_name != TAB_CHAT:
+            self.focus_mode = False
 
     def _current_runtime_identity(self) -> RuntimeIdentity:
         """Return the screen-snapshot scope from authoritative runtime state."""
         return RuntimeIdentity.from_state(self.runtime_policy.state)
+
+    def console_prompt_target_projection(
+        self,
+    ) -> ConsolePromptTargetProjection | None:
+        """Return the app-owned Console Prompt target for the current runtime.
+
+        Returns:
+            The compatible sanitized projection, or ``None`` when Console has
+            not published one for the authoritative runtime snapshot.
+        """
+        return self.screen_state_store.restore_console_prompt_target(
+            TAB_CHAT,
+            self._current_runtime_identity(),
+        )
+
+    def library_rag_search_execution_lock(self) -> asyncio.Lock:
+        """Return the app-lifetime admission lock for Library retrieval calls.
+
+        Returns:
+            The shared Library-only admission lock for this app session.
+        """
+        lock = getattr(self, "_library_rag_search_execution_lock_instance", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._library_rag_search_execution_lock_instance = lock
+        return lock
 
     def _screen_navigation_lock(self) -> asyncio.Lock:
         """Return the lock serializing `handle_screen_navigation` attempts.
@@ -6537,6 +10718,131 @@ class TldwCli(
                 self._notify_navigation_failure(message.screen_name)
                 raise
 
+    #: Bound on the dismiss-the-overlays loop below. Each pass removes one
+    #: pushed screen, and dismissing one can legitimately reveal another
+    #: (a picker opened from a dialog); nothing real stacks this deep, so a
+    #: stack that will not reduce inside the bound is a stuck stack, not a
+    #: busy one.
+    _MAX_NAVIGATION_OVERLAY_DISMISSALS: int = 16
+
+    def _navigation_outgoing_screen(self) -> Any:
+        """Return the CONTENT screen a navigation is leaving.
+
+        The screen stack is ``[Textual's default screen, the content screen,
+        *pushed screens]``: startup pushes exactly one routed screen
+        (``_push_initial_screen``) and every navigation replaces it, so
+        index 1 is the tab the user is on and anything above it is an
+        overlay. ``self.screen`` is the TOP of that stack, which is the
+        overlay whenever one is open -- see ``_dismiss_navigation_overlays``
+        for why that distinction is load-bearing.
+
+        Returns:
+            The content screen at the base of the stack, or ``self.screen``
+            when the stack is too short for that position to exist (before
+            the initial push, and in tests that drive the handler with no
+            mounted stack at all).
+        """
+        try:
+            stack = self._screen_stack
+        except Exception:  # pragma: no cover - defensive; no mode, no stack
+            return self.screen
+        if len(stack) >= 2:
+            return stack[1]
+        return self.screen
+
+    @staticmethod
+    def _navigation_overlay_awaiter_pending(screen: Any) -> bool:
+        """Report whether ``screen`` still owes a ``push_screen_wait`` result."""
+        callbacks = getattr(screen, "_result_callbacks", None)
+        if not callbacks:
+            return False
+        future = getattr(callbacks[-1], "future", None)
+        return future is not None and not future.done()
+
+    async def _dismiss_navigation_overlays(self, screen_name: str) -> bool:
+        """Reduce the screen stack to its content screen before switching.
+
+        TASK-16300. Textual's ``App.switch_screen``
+        (``textual/app.py:3001-3032``) pops only ``self._screen_stack[-1]``
+        and appends the new screen; ``_replace_screen`` then unmounts only
+        that popped screen. So switching while ANY pushed screen sits above
+        the content screen replaces THE OVERLAY and leaves the content
+        screen resident in the stack -- mounted, message pump running,
+        ``on_unmount`` never fired, its timers and controllers alive behind
+        whatever the user is now looking at, and a second live instance of
+        it created the moment they navigate back. That directly violates
+        the invariant ``_create_navigation_screen`` documents (screens die
+        on navigation; ``ScreenStateStore`` carries continuity instead),
+        and it is the state the wake-integrity arc traced two live Console
+        failures to (tasks 15970/15971).
+
+        Overlays are dismissed rather than popped because ``switch_screen``
+        and ``pop_screen`` both call ``_pop_result_callback()`` WITHOUT
+        invoking it (``textual/app.py:3020``): a modal opened through
+        ``push_screen_wait`` holds a future in that callback, so discarding
+        it uncalled leaves the awaiting worker suspended forever -- it has
+        no timeout and nothing else ever resolves it.
+        ``Screen.dismiss(None)`` calls the callback first
+        (``textual/screen.py:2048-2070``), so the awaiter resumes with the
+        same ``None`` every user-driven close already delivers (``Escape``,
+        ``action_dismiss``, a bare ``dismiss()``) -- the value existing
+        callers, including the ones that map it to a decline, are already
+        written against. Refusing to navigate while a modal is awaited was
+        the alternative and is worse: awaited modals are the common kind,
+        and a nav shortcut that silently no-ops is indistinguishable from a
+        wedged app.
+
+        Args:
+            screen_name: Route being navigated to, for log context.
+
+        Returns:
+            ``True`` when the stack is reduced to its content screen and the
+            switch may proceed; ``False`` when an overlay would not leave,
+            in which case the caller must abort rather than switch and
+            recreate the very leak this exists to prevent.
+        """
+        for _ in range(self._MAX_NAVIGATION_OVERLAY_DISMISSALS):
+            stack = self._screen_stack
+            if len(stack) <= 2:
+                return True
+            overlay = stack[-1]
+            logger.info(
+                "Dismissing pushed screen before navigating "
+                "(route=%s, screen=%s, awaited=%s).",
+                screen_name,
+                type(overlay).__name__,
+                self._navigation_overlay_awaiter_pending(overlay),
+            )
+            try:
+                dismissed = overlay.dismiss(None)
+                if inspect.isawaitable(dismissed):
+                    await dismissed
+            except Exception as exc:
+                logger.warning(
+                    "Pushed screen refused to dismiss before navigation "
+                    "(route=%s, screen=%s, exception_category=%s).",
+                    screen_name,
+                    type(overlay).__name__,
+                    type(exc).__name__,
+                )
+                return False
+            stack = self._screen_stack
+            if stack and stack[-1] is overlay:
+                logger.warning(
+                    "Pushed screen stayed on the stack after dismissal "
+                    "(route=%s, screen=%s).",
+                    screen_name,
+                    type(overlay).__name__,
+                )
+                return False
+        logger.warning(
+            "Screen stack did not reduce to its content screen within %s "
+            "dismissals (route=%s).",
+            self._MAX_NAVIGATION_OVERLAY_DISMISSALS,
+            screen_name,
+        )
+        return False
+
     async def _handle_screen_navigation_locked(self, message: NavigateToScreen) -> None:
         """Body of `handle_screen_navigation`, run under its FIFO lock."""
         requested_screen = message.screen_name
@@ -6556,7 +10862,14 @@ class TldwCli(
         )
         logger.info(f"Navigating to screen: {requested_screen}")
 
-        current_screen = self.screen
+        # NOT ``self.screen`` (TASK-16300): with a pushed screen on top --
+        # the nav overflow menu, the command palette, a picker, a confirm
+        # dialog -- ``self.screen`` IS that overlay, and every hook below
+        # (flush, confirm, transition admission, and ``save_state`` inside
+        # ``_complete_screen_navigation``) was asked of it. Overlays answer
+        # none of them, so Console's busy-fleet confirmation never ran and
+        # the tab being left was never snapshotted.
+        current_screen = self._navigation_outgoing_screen()
 
         # Screens are never reused across navigations, so anything the
         # outgoing screen has not persisted is destroyed with its instance.
@@ -6600,7 +10913,7 @@ class TldwCli(
                 # confirm. Abandoning the wait does not abandon the save --
                 # the note-save worker is a separate task and keeps running.
                 logger.warning(
-                    "Screen flush timed out after {}s; staying put (route={}).",
+                    "Screen flush timed out after %ss; staying put (route=%s).",
                     self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
                     screen_name,
                 )
@@ -6617,7 +10930,7 @@ class TldwCli(
                 # The outgoing instance may be the only place pending edits
                 # still exist, so a failed flush must abort the transition.
                 logger.warning(
-                    "Screen flush failed (route={}, exception_category={}).",
+                    "Screen flush failed (route=%s, exception_category=%s).",
                     screen_name,
                     type(exc).__name__,
                 )
@@ -6656,7 +10969,7 @@ class TldwCli(
                 # proceed and tear down live work the user was never asked
                 # about -- fail closed, same as the flush veto above.
                 logger.warning(
-                    "Screen navigation confirm failed (route={}, exception_category={}).",
+                    "Screen navigation confirm failed (route=%s, exception_category=%s).",
                     screen_name,
                     type(exc).__name__,
                 )
@@ -6725,14 +11038,14 @@ class TldwCli(
             if exc is not None:
                 logger.warning(
                     "Screen flush eventually failed after navigation gave up "
-                    "waiting (route={}, exception_category={}).",
+                    "waiting (route=%s, exception_category=%s).",
                     screen_name,
                     type(exc).__name__,
                 )
             else:
                 logger.info(
                     "Screen flush eventually completed after navigation gave "
-                    "up waiting (route={}).",
+                    "up waiting (route=%s).",
                     screen_name,
                 )
 
@@ -6811,6 +11124,15 @@ class TldwCli(
                 if outgoing_screen_class is not None:
                     outgoing_key = resolved_outgoing_key
 
+        # A Console snapshot that fails to be replaced below must not survive
+        # with its published prompt-target projection attached (the stale
+        # target `publish_console_prompt_target` would otherwise be read back
+        # against). Since task-15860 this discards VIEW state only: Console's
+        # sessions and transcripts live in the app-owned `ConsoleRuntime`
+        # store, which no snapshot lifecycle can drop.
+        if outgoing_key == TAB_CHAT:
+            self.screen_state_store.discard(outgoing_key)
+
         save_state = getattr(current_screen, "save_state", None)
         if outgoing_key and callable(save_state):
             try:
@@ -6821,18 +11143,38 @@ class TldwCli(
                         state,
                         runtime_identity,
                     )
+                    if outgoing_key == TAB_CHAT:
+                        projection_getter = getattr(
+                            current_screen,
+                            "console_prompt_target_projection",
+                            None,
+                        )
+                        try:
+                            projection = (
+                                projection_getter()
+                                if callable(projection_getter)
+                                else None
+                            )
+                        except Exception:
+                            projection = None
+                        if isinstance(projection, ConsolePromptTargetProjection):
+                            self.screen_state_store.publish_console_prompt_target(
+                                outgoing_key,
+                                projection,
+                                runtime_identity,
+                            )
                     logger.debug(
-                        "Saved screen snapshot for canonical route: {}",
+                        "Saved screen snapshot for canonical route: %s",
                         outgoing_key,
                     )
                 else:
                     logger.warning(
-                        "Screen snapshot save skipped (route={}, reason=non_mapping).",
+                        "Screen snapshot save skipped (route=%s, reason=non_mapping).",
                         outgoing_key,
                     )
             except Exception as exc:
                 logger.warning(
-                    "Screen snapshot save failed (route={}, exception_category={}).",
+                    "Screen snapshot save failed (route=%s, exception_category=%s).",
                     outgoing_key,
                     type(exc).__name__,
                 )
@@ -6864,14 +11206,14 @@ class TldwCli(
                 try:
                     restore_state(restored_state)
                     logger.debug(
-                        "Restored screen snapshot for canonical route: {}",
+                        "Restored screen snapshot for canonical route: %s",
                         current_tab_value,
                     )
                 except Exception as exc:
                     self.screen_state_store.discard(current_tab_value)
                     logger.warning(
                         "Screen snapshot restore failed "
-                        "(route={}, exception_category={}).",
+                        "(route=%s, exception_category=%s).",
                         current_tab_value,
                         type(exc).__name__,
                     )
@@ -6889,10 +11231,26 @@ class TldwCli(
                 except Exception as exc:
                     logger.warning(
                         "Navigation context application failed "
-                        "(route={}, exception_category={}).",
+                        "(route=%s, exception_category=%s).",
                         current_tab_value,
                         type(exc).__name__,
                     )
+
+            # TASK-16300: `switch_screen` replaces the TOP of the stack, so
+            # the content screen has to BE the top before it runs -- see
+            # `_dismiss_navigation_overlays`. Done here, after the veto
+            # hooks and the construction of the incoming screen, so a
+            # navigation that never happens never costs the user the dialog
+            # they had open. Failing to reduce aborts: switching anyway is
+            # exactly how the outgoing screen is left resident.
+            if not await self._dismiss_navigation_overlays(screen_name):
+                logger.warning(
+                    "Aborting navigation: a pushed screen would not leave "
+                    "the stack (route=%s).",
+                    screen_name,
+                )
+                self._notify_navigation_failure(screen_name)
+                return
 
             # Use switch_screen to replace the current screen
             try:
@@ -6914,6 +11272,14 @@ class TldwCli(
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
 
+            # task-18812: the exit rule runs only once the switch has
+            # SUCCEEDED -- flush vetoes, confirmations, admission, and mount
+            # failures above all `return` with the Console still resident, so
+            # clearing earlier would desync the app flag from the mounted
+            # screen's -focus class (the next toggle would do the wrong
+            # visible action).
+            self._clear_focus_if_leaving_console(screen_name)
+
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
             logger.error(f"Unknown screen requested: {requested_screen}")
@@ -6929,7 +11295,7 @@ class TldwCli(
             await handler.handle_tts_request(event)
         else:
             self.loguru_logger.error("TTS handler not initialized")
-            await self.post_message(
+            self.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="TTS service not available",
@@ -6943,21 +11309,53 @@ class TldwCli(
     ) -> None:
         """Route a trusted Console snapshot without logging private content."""
         self.loguru_logger.info("Trusted Console speech request received")
-        handler = await self._ensure_tts_handler()
+        try:
+            handler = await self._ensure_tts_handler()
+        except asyncio.CancelledError:
+            event.report_outcome(False)
+            raise
+        except Exception as error:
+            self.loguru_logger.error(
+                "TTS handler initialization failed "
+                "(operation=trusted_console_speech, exception_category={})",
+                type(error).__name__,
+            )
+            event.report_outcome(False)
+            return
         if handler:
-            await handler.handle_tts_request(event)
+            try:
+                await handler.handle_tts_request(event)
+            except asyncio.CancelledError:
+                event.report_outcome(False)
+                raise
+            except Exception as error:
+                self.loguru_logger.error(
+                    "TTS handler request failed "
+                    "(operation=trusted_console_speech, exception_category={})",
+                    type(error).__name__,
+                )
+                event.report_outcome(False)
         else:
             self.loguru_logger.error(
                 "TTS handler not initialized "
                 "(operation=trusted_console_speech, "
                 "outcome_code=handler_unavailable)"
             )
-            await self.post_message(
-                TTSCompleteEvent(
-                    message_id=event.message_id,
-                    error="TTS service not available",
+            try:
+                self.post_message(
+                    TTSCompleteEvent(
+                        message_id=event.message_id,
+                        error="TTS service not available",
+                    )
                 )
-            )
+            except Exception as error:
+                self.loguru_logger.error(
+                    "TTS unavailable notice failed "
+                    "(operation=trusted_console_speech, exception_category={})",
+                    type(error).__name__,
+                )
+            finally:
+                event.report_outcome(False)
 
     @on(TTSGlobalOverrideDecisionEvent)
     async def handle_tts_global_override_decision_event(
@@ -7026,9 +11424,41 @@ class TldwCli(
     @on(TTSCompleteEvent)
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
         """Handle TTS generation completion."""
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
+            ChatMessageEnhanced,
+        )
+
         self.loguru_logger.info(f"TTS complete for message {event.message_id}")
+        playback_lifecycle = getattr(event, "playback_lifecycle", None)
+
+        lifecycle_failure_completion = bool(
+            event.error
+            and playback_lifecycle is not None
+            and playback_lifecycle.state == "failed"
+        )
+        if (
+            playback_lifecycle is not None
+            and not playback_lifecycle.is_current()
+            and not lifecycle_failure_completion
+        ):
+            handler = getattr(self, "_tts_handler", None)
+            discard = getattr(handler, "discard_stale_console_completion", None)
+            if callable(discard):
+                try:
+                    await discard(
+                        event.message_id,
+                        event.audio_file,
+                        playback_lifecycle,
+                    )
+                except Exception:
+                    playback_lifecycle.report_terminal("failed")
+            else:
+                playback_lifecycle.report_terminal("stopped")
+            return
 
         if event.error:
+            if playback_lifecycle is not None:
+                playback_lifecycle.report("failed")
             self.notify(f"TTS failed: {event.error}", severity="error")
             # Update widget state back to idle on error
             try:
@@ -7052,6 +11482,27 @@ class TldwCli(
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
+            # The Console transcript's action row renders from the screen's
+            # `_console_speaking_message_id`, not from a legacy widget — on
+            # failure it must be cleared too, or the row keeps "⏹ Stop
+            # speech" with no speech to stop (TASK-15422).
+            if playback_lifecycle is None:
+                for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+                    if (
+                        getattr(screen, "_console_speaking_message_id", None)
+                        == event.message_id
+                    ):
+                        screen._console_speaking_message_id = None
+                        sync = getattr(screen, "_sync_native_console_chat_ui", None)
+                        if callable(sync):
+                            try:
+                                await sync()
+                            except Exception:
+                                self.loguru_logger.error(
+                                    "Console speak-state resync failed after a "
+                                    "TTS error"
+                                )
+                        break
             if event.global_override_token is not None:
                 self.run_worker(
                     self._offer_tts_global_override(event.global_override_token),
@@ -7060,6 +11511,11 @@ class TldwCli(
         else:
             # Update widget state to ready with audio file
             if event.audio_file and event.audio_file.exists():
+                if (
+                    playback_lifecycle is not None
+                    and not playback_lifecycle.is_current()
+                ):
+                    return
                 try:
                     widget_found = False
                     if event.message_id:
@@ -7100,12 +11556,25 @@ class TldwCli(
                         # which has no per-message playback control), so
                         # there is nothing for the user to click - play the
                         # generated audio immediately instead of going silent.
-                        self.post_message(
-                            TTSPlaybackEvent(action="play", message_id=event.message_id)
+                        accepted = self.post_message(
+                            TTSPlaybackEvent(
+                                action="play",
+                                message_id=event.message_id,
+                                playback_lifecycle=playback_lifecycle,
+                            )
                         )
+                        if accepted is False and playback_lifecycle is not None:
+                            playback_lifecycle.report("failed")
                 except Exception as e:
+                    if playback_lifecycle is not None:
+                        playback_lifecycle.report("failed")
                     self.loguru_logger.error(f"Error playing audio: {e}")
                     self.notify("Failed to play audio", severity="error")
+            elif (
+                playback_lifecycle is not None
+                and playback_lifecycle.state == "generating"
+            ):
+                playback_lifecycle.report("failed")
 
             # Remove TTS generating class from message
             try:
@@ -7128,6 +11597,10 @@ class TldwCli(
     @on(TTSProgressEvent)
     async def handle_tts_progress_event(self, event: TTSProgressEvent) -> None:
         """Handle TTS generation progress updates."""
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
+            ChatMessageEnhanced,
+        )
+
         self.loguru_logger.debug(
             f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}"
         )
@@ -7171,9 +11644,25 @@ class TldwCli(
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control."""
-        handler = await self._ensure_tts_handler()
-        if handler:
-            await handler.handle_tts_playback(event)
+        await self.control_tts_playback(event)
+
+    async def control_tts_playback(self, event: TTSPlaybackEvent) -> None:
+        """Run playback control directly and preserve handler callback order."""
+        try:
+            handler = await self._ensure_tts_handler()
+            if handler:
+                await handler.handle_tts_playback(event)
+            else:
+                event.report_outcome(False)
+                if event.playback_lifecycle is not None:
+                    event.playback_lifecycle.report_terminal("failed")
+        except asyncio.CancelledError:
+            event.report_outcome(False)
+            raise
+        except Exception:
+            event.report_outcome(False)
+            if event.playback_lifecycle is not None:
+                event.playback_lifecycle.report_terminal("failed")
 
     @on(STTSPlaygroundGenerateEvent)
     async def handle_stts_playground_generate_event(
@@ -7209,6 +11698,13 @@ class TldwCli(
         handler = getattr(self, "_stts_handler", None)
         if handler is not None:
             handler.on_stts_provider_configuration_changed(event)
+        if event.provider_id == "audio_cpp":
+            from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+
+            current_screen = getattr(self, "screen", None)
+            if current_screen is not None:
+                for window in current_screen.query(LLMManagementWindow):
+                    window.refresh_model_library_observations()
 
     @on(STTSAudioBookGenerateEvent)
     async def handle_stts_audiobook_generate_event(
@@ -7306,9 +11802,254 @@ class TldwCli(
 
         profile_service = getattr(self, "_tts_profile_service", None)
         if profile_service is None:
-            profile_service = TTSProfileService(repository, self.tts_service)
+            profile_service = TTSProfileService(
+                repository,
+                self.tts_service,
+                artifact_lease_coordinator=(
+                    self._ensure_audio_cpp_artifact_lease_coordinator()
+                ),
+            )
             self._tts_profile_service = profile_service
         return profile_service
+
+    def _saved_audio_cpp_managed_consumers(
+        self,
+    ) -> tuple[AudioCppManagedConsumerIdentity, ...]:
+        """Project only exact managed identities from immutable saved Settings."""
+
+        try:
+            config = project_audio_cpp_settings_config(self.app_config)
+        except (TypeError, ValueError):
+            config = AudioCppSettingsConfig()
+        return tuple(
+            AudioCppManagedConsumerIdentity(
+                recipe_id=package.recipe_id,
+                recipe_revision=package.recipe_revision,
+                model_id=package.public_model_id,
+                managed_artifact=package.managed_artifact,
+            )
+            for package in config.guided_packages
+            if package.managed_artifact is not None
+        )
+
+    def _ensure_audio_cpp_artifact_lease_coordinator(
+        self,
+    ) -> AudioCppArtifactLeaseCoordinator:
+        """Return the one app-owned coordinator over the shared artifact owner."""
+
+        coordinator = self._audio_cpp_artifact_lease_coordinator
+        if coordinator is None:
+            coordinator = AudioCppArtifactLeaseCoordinator(
+                managed_service(),
+                saved_settings_snapshot=self._saved_audio_cpp_managed_consumers,
+            )
+            self._audio_cpp_artifact_lease_coordinator = coordinator
+        return coordinator
+
+    def _audio_cpp_removal_settings_inputs(
+        self,
+    ) -> tuple[
+        AudioCppSettingsConfig,
+        AudioCppSettingsConfig | None,
+        TTSPreferencesSnapshot,
+        TTSPreferencesSnapshot | None,
+    ]:
+        """Read saved plus exact detached-or-mounted Speech/TTS draft state."""
+
+        try:
+            saved = project_audio_cpp_settings_config(self.app_config)
+            saved_preferences = TTSPreferencesSnapshot.from_settings(self.app_config)
+        except (TypeError, ValueError):
+            raise ProfileRepositoryError("unavailable") from None
+
+        draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None
+        stored_settings_state = False
+        store = getattr(self, "screen_state_store", None)
+        if store is not None:
+            try:
+                stored = store.restore(TAB_SETTINGS, self._current_runtime_identity())
+            except Exception:
+                raise ProfileRepositoryError("unavailable") from None
+            if stored is not None:
+                stored_settings_state = True
+                if "speech_tts_panel_draft" in stored:
+                    candidate = stored["speech_tts_panel_draft"]
+                    if type(candidate) is not SpeechTTSPanelDraftSnapshot:
+                        raise ProfileRepositoryError("unavailable")
+                    draft_snapshot = candidate
+        if draft_snapshot is None and not stored_settings_state:
+            current_screen = getattr(self, "screen", None)
+            candidate = getattr(current_screen, "_speech_tts_draft_snapshot", None)
+            if type(candidate) is SpeechTTSPanelDraftSnapshot:
+                draft_snapshot = candidate
+
+        if draft_snapshot is None:
+            return saved, None, saved_preferences, None
+        try:
+            provider = draft_snapshot.state.providers.get("audio_cpp")
+            if not isinstance(provider, dict):
+                raise ValueError
+            draft = AudioCppSettingsConfig.from_mapping(provider)
+            draft_preferences = draft_snapshot.state.defaults.snapshot()
+        except (TypeError, ValueError):
+            raise ProfileRepositoryError("unavailable") from None
+        return saved, draft, saved_preferences, draft_preferences
+
+    async def _audio_cpp_model_library_observation_snapshot(
+        self,
+        references: tuple["ArtifactRef", ...],
+    ) -> AudioCppModelLibraryObservationSnapshot:
+        """Collect shared evidence once, then project every exact package ref."""
+
+        from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+        if type(references) is not tuple or any(
+            type(reference) is not ArtifactRef for reference in references
+        ):
+            raise TypeError("references must be a tuple of ArtifactRef values")
+        if len(set(references)) != len(references):
+            raise ValueError("references must be unique")
+        if not references:
+            return AudioCppModelLibraryObservationSnapshot(())
+
+        saved, draft, saved_preferences, draft_preferences = (
+            self._audio_cpp_removal_settings_inputs()
+        )
+
+        profile_service = await self._ensure_tts_profile_service()
+        if profile_service is None:
+            raise ProfileRepositoryError("unavailable")
+        profiles_with_counts = (
+            await profile_service.bounded_profile_assignment_snapshot()
+        )
+
+        try:
+            configuration = (
+                await self.tts_service.registry.provider_configuration_snapshot(
+                    "audio_cpp"
+                )
+            )
+            staged_config = (
+                None
+                if configuration.staged_config is None
+                else AudioCppSettingsConfig.from_mapping(configuration.staged_config)
+            )
+            applied_config = AudioCppSettingsConfig.from_mapping(
+                configuration.applied_config
+            )
+            supervisor = getattr(self.tts_service, "_audio_cpp_supervisor", None)
+            admission = None if supervisor is None else supervisor.admission_snapshot()
+        except Exception:
+            # Runtime evidence is safety-relevant; fail closed without exposing
+            # collaborator details through the removal review.
+            raise ProfileRepositoryError("unavailable") from None
+
+        def contains(
+            config: AudioCppSettingsConfig | None,
+            reference: ArtifactRef,
+        ) -> bool:
+            return config is not None and any(
+                package.managed_artifact is not None
+                and (
+                    package.managed_artifact.artifact_id,
+                    package.managed_artifact.revision,
+                    package.managed_artifact.variant,
+                )
+                == (reference.artifact_id, reference.revision, reference.variant)
+                for package in config.guided_packages
+            )
+
+        live = admission is not None and admission.state in {
+            "starting",
+            "running",
+            "draining",
+            "stopping",
+        }
+        return AudioCppModelLibraryObservationSnapshot(
+            tuple(
+                project_audio_cpp_artifact_removal_evidence(
+                    reference,
+                    saved_settings=saved,
+                    draft_settings=draft,
+                    saved_preferences=saved_preferences,
+                    draft_preferences=draft_preferences,
+                    profiles=profiles_with_counts,
+                    staged_runtime_ids=(
+                        (f"settings-generation-{configuration.staged_generation}",)
+                        if contains(staged_config, reference)
+                        else ()
+                    ),
+                    live_runtime_ids=(
+                        (f"process-generation-{admission.process_generation}",)
+                        if live and contains(applied_config, reference)
+                        else ()
+                    ),
+                )
+                for reference in references
+            )
+        )
+
+    async def _audio_cpp_artifact_removal_evidence(
+        self,
+        reference: "ArtifactRef",
+    ) -> AudioCppArtifactRemovalEvidence:
+        """Collect Task 9 removal evidence through the shared bulk snapshot."""
+
+        snapshot = await TldwCli._audio_cpp_model_library_observation_snapshot(
+            self,
+            (reference,),
+        )
+        return snapshot.observations[0]
+
+    async def _ensure_tts_voice_bundle_service(
+        self,
+    ) -> "TTSVoiceBundlePortabilityService | None":
+        """Construct the app-owned portability owner only on first use."""
+
+        if getattr(self, "_tts_voice_bundle_service_close_task", None) is not None:
+            return None
+        profile_service = await self._ensure_tts_profile_service()
+        if profile_service is None:
+            return None
+        service = getattr(self, "_tts_voice_bundle_service", None)
+        if service is None:
+            # TASK-21108: deferred to this single construction site so the
+            # 1,857-line module stays off the app import path.
+            from tldw_chatbook.TTS.voice_bundle_service import (  # noqa: PLC0415
+                TTSVoiceBundlePortabilityService,
+            )
+
+            service = TTSVoiceBundlePortabilityService(
+                get_user_data_dir() / "tts_voice_bundle_portability",
+                self._tts_profile_repository,
+                self.tts_service,
+                profile_mutation_fence=profile_service.consumer_mutation_fence,
+                artifact_lease_coordinator=(
+                    self._ensure_audio_cpp_artifact_lease_coordinator()
+                ),
+            )
+            self._tts_voice_bundle_service = service
+        return service
+
+    async def _close_tts_voice_bundle_service(self) -> None:
+        """Close and join portability before repository authority is released."""
+
+        service = getattr(self, "_tts_voice_bundle_service", None)
+        if service is None:
+            return
+        close_task = getattr(self, "_tts_voice_bundle_service_close_task", None)
+        if close_task is None:
+
+            async def close_portability() -> None:
+                await service.close()
+                await service.wait_closed()
+
+            close_task = asyncio.create_task(
+                close_portability(),
+                name="close_tts_voice_bundle_service",
+            )
+            self._tts_voice_bundle_service_close_task = close_task
+        await join_retained_task(close_task)
 
     async def _close_tts_profile_repository(self) -> None:
         """Definitively close the app-owned profile repository once."""
@@ -7349,9 +12090,15 @@ class TldwCli(
         )
 
     async def _close_owned_tts_resources(self) -> None:
-        """Close both app-owned TTS resources without masking cancellation."""
+        """Close app-owned TTS resources without masking cancellation."""
 
         failures: list[tuple[str, BaseException]] = []
+        if hasattr(self, "_close_tts_voice_bundle_service"):
+            try:
+                await self._close_tts_voice_bundle_service()
+            except BaseException as portability_close_error:
+                failures.append(("voice_bundle_service", portability_close_error))
+
         try:
             await self._close_tts_profile_repository()
         except BaseException as profile_close_error:
@@ -7384,10 +12131,36 @@ class TldwCli(
             )
         raise primary_error
 
+    def _observe_notes_sync_runtime_start(self, task: asyncio.Task[None]) -> None:
+        """Consume a detached startup failure without exposing private detail."""
+
+        if task.cancelled():
+            return
+        if task.exception() is not None:
+            logger.error("Notes sync runtime startup failed.")
+            return
+        screen = self.screen
+        refresh = getattr(screen, "refresh_notes_sync_runtime", None)
+        if callable(refresh):
+            self.call_after_refresh(refresh)
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._bind_tts_service()
+        self._notes_sync_runtime_start_task = asyncio.create_task(
+            self.notes_sync_runtime_owner.start(),
+            name="start_notes_sync_runtime",
+        )
+        self._notes_sync_runtime_start_task.add_done_callback(
+            self._observe_notes_sync_runtime_start
+        )
         mount_start = time.perf_counter()
+
+        # task-19561: hand the process-level SIGTERM/SIGINT handler this app
+        # and its running loop, so a termination signal becomes an ordinary
+        # `App.exit()` instead of an `os._exit(0)` through the middle of
+        # whatever was writing at the time.
+        register_running_app(self)
 
         # TASK-1240. Anchors a session in the persistent log; its absence dates
         # a crash to before this point. Wrapped: `persist_event` raises on a
@@ -7428,7 +12201,13 @@ class TldwCli(
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
         # a corrupt/unreadable store falls back to starting empty.
-        self._restore_ingest_jobs()
+        self._restore_ingest_jobs_and_schedule_research_sources()
+        self.run_worker(
+            self._reconcile_research_quick_notes_startup(),
+            group="research-quick-notes-startup-reconciliation",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
         # Update splash screen progress only if splash screen is active
         if self.splash_screen_active and self._splash_screen_widget:
@@ -7565,7 +12344,36 @@ class TldwCli(
         # Only schedule post-mount setup if splash screen is not active
         if not self.splash_screen_active:
             # Schedule setup to run after initial rendering.
-            asyncio.create_task(self._run_no_splash_post_mount_setup())
+            # task-19561: this was a bare `create_task` whose result nobody
+            # held. The event loop keeps only a weak reference to a task, so
+            # the whole no-splash startup path could be garbage-collected
+            # mid-flight. `_create_deferred_startup_task` keeps the strong
+            # reference AND puts it in the set shutdown already cancels.
+            self._create_deferred_startup_task(
+                self._run_no_splash_post_mount_setup(),
+                name="no_splash_post_mount_setup",
+            )
+        else:
+            # task-21110: with the splash up, the branch above schedules
+            # nothing -- the initial screen is pushed only once
+            # `SplashScreen.Closed` arrives, and its module is imported
+            # synchronously on this loop at that moment. Overlap that import
+            # with the splash instead of serializing behind it.
+            #
+            # The zero branch is not hypothetical tidiness: Textual 8's
+            # `set_timer(0.0)` divides by the interval inside `Timer._run`,
+            # so a 0s delay raises ZeroDivisionError in the timer's own task
+            # and the callback NEVER fires -- silently, because nobody
+            # retrieves that task's exception. Measured while A/B-ing this
+            # delay: the "0.0s" arm looked like a clean no-stutter win purely
+            # because no pre-import had happened at all.
+            if SPLASH_INITIAL_SCREEN_PREIMPORT_DELAY_SECONDS > 0:
+                self.set_timer(
+                    SPLASH_INITIAL_SCREEN_PREIMPORT_DELAY_SECONDS,
+                    self._schedule_initial_screen_preimport,
+                )
+            else:
+                self.call_after_refresh(self._schedule_initial_screen_preimport)
 
         # Theme registration
         theme_start = time.perf_counter()
@@ -7599,17 +12407,15 @@ class TldwCli(
         self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
 
         # Start the background scheduler loop for reminders and scheduled tasks.
+        # A COROUTINE worker, never thread=True: scheduled watchlist checks
+        # dispatch from this loop, and the watchlists in-flight guard
+        # (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is lock-free on
+        # the invariant that every check entrant runs on the app's one event
+        # loop. Moving dispatch off-loop needs a lock there.
         self.scheduler_worker = self.run_worker(
             self.scheduler_loop.run(),
             exclusive=True,
             group="scheduling",
-        )
-
-        # ADR-020: non-blocking startup refresh of stale model catalogs.
-        self.run_worker(
-            self._refresh_model_catalogs(),
-            exclusive=True,
-            group="model-catalog-refresh",
         )
 
         # task-688: index subscription_items rows scraped before the FTS5
@@ -7622,6 +12428,17 @@ class TldwCli(
             thread=True,
             exclusive=True,
             group="subscriptions-fts-backfill",
+        )
+
+        # task-21100: reinsert the messages the v45->v46 FTS reset no longer
+        # indexes inline, so an upgraded profile's chat history becomes fully
+        # searchable again without ever blocking boot on the index rewrite.
+        # thread=True for the same reason as the subscriptions backfill above.
+        self.run_worker(
+            self._backfill_chachanotes_messages_fts,
+            thread=True,
+            exclusive=True,
+            group="chachanotes-fts-backfill",
         )
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
@@ -7680,6 +12497,12 @@ class TldwCli(
             catalog_settings = load_model_catalog_settings(load_settings())
             if not catalog_settings.auto_refresh_enabled:
                 return
+            if not catalog_settings.refresh_consent_recorded:
+                # ADR-020 amendment: the startup check is confirm-first.
+                # Scheduling-side consent gate normally intercepts this
+                # before the worker spawns; keep the check here so the
+                # refresh never runs unconsented by any other path.
+                return
             report = await self.local_llm_provider_catalog_service.refresh_stale_configured_providers(
                 catalog_settings=catalog_settings,
                 disk_store=self.model_catalog_disk_store,
@@ -7694,7 +12517,7 @@ class TldwCli(
                 self.post_message(ModelCatalogRefreshed(providers=refreshed))
             message = format_refresh_notification(report)
             if message:
-                has_failure = any(
+                has_failure = report.disk_write_failed or any(
                     outcome.status == "failed" or outcome.write_failed
                     for outcome in report.outcomes
                 )
@@ -7712,6 +12535,117 @@ class TldwCli(
                 f"{type(exc).__name__}"
             )
 
+    def _schedule_startup_model_catalog_refresh(
+        self,
+        *,
+        after_setup_completion: bool = False,
+        environ: Mapping[str, str] | None = None,
+    ) -> bool:
+        """Schedule the automatic catalog pass once when setup releases it.
+
+        ADR-020 amendment (confirm-first): when the user has never answered
+        the consent question, a modal is shown instead of the refresh; the
+        refresh itself is only scheduled from the consent callback.
+        """
+        if getattr(self, "_startup_model_catalog_refresh_scheduled", False):
+            return False
+        if not after_setup_completion and setup_owns_startup_networking(
+            self.app_config,
+            os.environ if environ is None else environ,
+        ):
+            return False
+
+        try:
+            from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+                load_model_catalog_settings,
+            )
+
+            catalog_settings = load_model_catalog_settings(load_settings())
+        except Exception as exc:
+            logger.error(
+                "Failed to load model catalog settings for startup refresh "
+                f"scheduling (after_setup_completion={after_setup_completion}): "
+                f"{type(exc).__name__}"
+            )
+            return False
+        if catalog_settings.auto_refresh_enabled and (
+            not catalog_settings.refresh_consent_recorded
+        ):
+            self._startup_model_catalog_refresh_scheduled = True
+            self._startup_model_catalog_consent_required = True
+            self.call_after_refresh(self._push_model_catalog_consent_modal)
+            return True
+
+        self._startup_model_catalog_refresh_scheduled = True
+        self.run_worker(
+            self._refresh_model_catalogs,
+            exclusive=True,
+            group="model-catalog-refresh",
+        )
+        return True
+
+    def _push_model_catalog_consent_modal(self) -> None:
+        """Show the one-time consent dialog for online model-list checks."""
+        if self.is_headless:
+            # Headless/embedded runs have no user to answer a modal; stay
+            # unconsented (no refresh) rather than blocking startup behind
+            # an unanswerable dialog.
+            return
+        try:
+            from tldw_chatbook.UI.Screens.model_catalog_consent import (
+                ModelCatalogConsentModal,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to import the model catalog consent modal "
+                f"(screen=model_catalog_consent): {type(exc).__name__}"
+            )
+            return
+        self.push_screen(ModelCatalogConsentModal(), self._handle_model_catalog_consent)
+
+    async def _handle_model_catalog_consent(self, allowed: bool | None) -> None:
+        """Persist the consent answer; on allow, run the startup refresh."""
+        # Only the boolean singleton True counts as consent — truthy garbage
+        # (e.g. a non-bool reaching this callback) falls through to the deny
+        # path, mirroring the settings parser's strict validator.
+        allowed = allowed is True
+        try:
+            from tldw_chatbook.config import save_settings_to_cli_config
+
+            section = {"refresh_consent_recorded": True}
+            if not allowed:
+                section["auto_refresh_enabled"] = False
+            saved = await asyncio.to_thread(
+                save_settings_to_cli_config, {"model_catalog": section}
+            )
+        except Exception as exc:
+            # No traceback: the log file sink runs with diagnose=True, which
+            # would dump frame locals (including the app's config) into the log.
+            logger.error(
+                "Failed to persist model catalog consent "
+                f"(allowed={allowed!r}, section=model_catalog): "
+                f"{type(exc).__name__}"
+            )
+            saved = False
+        if allowed:
+            if not saved:
+                self.notify(
+                    "Your choice couldn't be saved; you'll be asked again next launch.",
+                    title="Model catalog",
+                    severity="warning",
+                )
+            self.run_worker(
+                self._refresh_model_catalogs,
+                exclusive=True,
+                group="model-catalog-refresh",
+            )
+        else:
+            self.notify(
+                "Online model-list checks stay off. You can enable them any "
+                "time in Settings.",
+                title="Model catalog",
+            )
+
     @on(ModelCatalogRefreshed)
     async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:
         # Textual delivers App-posted messages to App handlers only; forward
@@ -7722,17 +12656,44 @@ class TldwCli(
 
         await forward_model_catalog_refreshed(self, event)
 
-    def _maybe_offer_first_run_wizard(self) -> None:
-        """Offer the setup wizard once; otherwise nudge unfinished setups."""
+    def _maybe_offer_first_run_wizard(self) -> bool:
+        """Offer the setup wizard once; otherwise nudge unfinished setups.
+
+        Returns:
+            True iff the wizard OR the recovery dialog was pushed this
+            launch (the ``"offer"`` and ``"prompt"`` branches); False for
+            every other outcome (already scheduled, the resume-toast
+            "none" branch -- which still runs and notifies -- or a caught
+            exception). Callers use this to decide whether a lower-
+            priority startup offer (e.g. the project-.SKILLS import
+            prompt, spec 2026-08-17 §5.4) should defer to next launch
+            instead of competing with the wizard OR the recovery dialog
+            for the user's attention -- both branches push a screen onto
+            the stack, so both must suppress the lower-priority offer
+            (final review 2026-08-17, Finding 3: the "prompt" branch used
+            to return False here, letting the skills-import modal stack
+            on top of a just-pushed ``SetupRecoveryDialog``).
+        """
+        if getattr(self, "_first_run_startup_action_scheduled", False):
+            return False
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-                should_offer_wizard,
+                setup_recovery_action,
                 should_show_resume_toast,
             )
 
-            if should_offer_wizard(self.app_config, os.environ):
+            action = setup_recovery_action(self.app_config, os.environ)
+            if action == "offer":
+                self._first_run_startup_action_scheduled = True
                 self.call_after_refresh(self._push_first_run_wizard)
-            elif should_show_resume_toast(self.app_config, os.environ):
+                return True
+            elif action == "prompt":
+                self._first_run_startup_action_scheduled = True
+                self.call_after_refresh(self._push_first_run_recovery_dialog)
+                return True
+            elif action == "none" and should_show_resume_toast(
+                self.app_config, os.environ
+            ):
                 self.notify(
                     "Setup isn't finished — run it any time from "
                     "Settings ▸ Diagnostics ▸ Run setup wizard.",
@@ -7740,8 +12701,44 @@ class TldwCli(
                     severity="information",
                     timeout=8,
                 )
-        except Exception as e:
-            logger.error(f"First-run wizard offer failed: {e}")
+        except Exception as exc:
+            logger.error(
+                "First-run startup action failed (error_type={})",
+                type(exc).__name__,
+            )
+        return False
+
+    def _maybe_warn_config_load_failure(self) -> None:
+        """Warn (never block) when boot's config load fell back to defaults.
+
+        TASK-13157: a config.toml that fails to parse was previously a
+        completely silent failure -- `load_settings()`/`load_cli_config_and_
+        ensure_existence()` both return bare in-memory defaults with no
+        signal, which a live-verification incident showed can silently
+        resolve the data directory to the `default_user` profile instead of
+        the configured one, with no error, toast, or log line a normal user
+        would ever see. `self._config_load_failure` was snapshotted in
+        `__init__` (before the UI existed to notify through); this surfaces
+        it once the initial screen is up, naming the exact file and parse
+        error so the user knows their saved settings are NOT the ones
+        currently in effect. `timeout=None` only reaches Textual's own
+        5-second default (`App.NOTIFICATION_TIMEOUT`), not "persistent", so
+        this passes an explicit long timeout instead -- this is not a
+        transient event and must not be missed the way the silent fallback
+        it replaces was.
+        """
+        failure = getattr(self, "_config_load_failure", None)
+        if failure is None:
+            return
+        self.notify(
+            f"Your configuration file could not be parsed and was NOT used "
+            f"this session -- running on built-in defaults instead (this may "
+            f"include the wrong user profile). File: {failure.path}  "
+            f"Error: {failure.message}",
+            title="Config file failed to load",
+            severity="error",
+            timeout=60,
+        )
 
     def _maybe_warn_second_instance(self) -> None:
         """Warn (never block) when another instance already holds this profile.
@@ -7775,14 +12772,279 @@ class TldwCli(
             FirstRunSetupWizard(self), self._handle_first_run_wizard_result
         )
 
-    def _handle_first_run_wizard_result(self, result: dict | None) -> None:
-        if not isinstance(result, dict):
-            return  # cancelled / finish-later: resume toast handles next launch
-        exit_route = result.get("exit_route")
-        if exit_route:
-            from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    def _maybe_offer_project_skills_import(self) -> None:
+        """Offer to import a project's .SKILLS/ folder (spec 2026-08-17 §5.4).
 
-            self.post_message(NavigateToScreen(str(exit_route)))
+        ``exit_on_error=False`` matches the repo's own precedent for an
+        optional, best-effort worker (``action_quit``'s ``_confirm_and_quit``,
+        the screen-navigation dispatch worker): Textual's default
+        (``exit_on_error=True``) makes ANY unhandled exception in the worker
+        exit the whole app, which an optional startup nicety must never do.
+        The worker body below additionally never lets an exception reach the
+        worker at all -- this is belt AND suspenders.
+        """
+        try:
+            self.run_worker(
+                self._discover_project_skills_for_startup,
+                thread=True,
+                exclusive=True,
+                group="project-skills-discovery",
+                exit_on_error=False,
+            )
+        except Exception:
+            logger.opt(exception=True).debug("project-skills startup offer failed")
+
+    def _discover_project_skills_for_startup(self) -> None:
+        """Worker body: every line here must be exception-safe.
+
+        This runs on a worker thread with ``exit_on_error=False`` set above,
+        but that alone still leaves an unhandled exception logged as a
+        worker error and the offer silently dropped with a stack trace in
+        the logs -- an entirely optional startup nicety earns a clean,
+        quiet no-op instead. ``get_cli_setting``/``get_user_data_dir`` (I/O,
+        config parsing), ``startup_discovery_for`` (filesystem walk), and
+        ``call_from_thread`` (can raise if the app is already shutting down
+        mid-walk) are all covered by the one try/except below.
+        """
+        try:
+            from tldw_chatbook.config import get_cli_setting, get_user_data_dir
+            from tldw_chatbook.Skills_Interop.project_skills_prompt import (
+                startup_discovery_for,
+            )
+
+            try:
+                cwd = Path.cwd().resolve()
+            except OSError:
+                return  # launch directory deleted out from under the process
+            discovery = startup_discovery_for(
+                cwd,
+                enabled=bool(
+                    get_cli_setting("skills", "project_skills_prompt_enabled", True)
+                ),
+                ledger_dir=get_user_data_dir(),
+            )
+            if discovery is None:
+                return
+            self.call_from_thread(self._push_project_skills_import_modal, discovery)
+        except Exception:
+            logger.opt(exception=True).debug("project-skills startup discovery failed")
+
+    def _push_project_skills_import_modal(self, discovery) -> None:
+        from tldw_chatbook.Widgets.project_skills_import_modal import (
+            maybe_offer_project_skills_import,
+        )
+
+        maybe_offer_project_skills_import(self, (discovery,))
+
+    def _push_first_run_recovery_dialog(self) -> None:
+        from tldw_chatbook.UI.Wizards.first_run_recovery_dialog import (
+            SetupRecoveryDialog,
+        )
+
+        self.push_screen(SetupRecoveryDialog(), self._handle_first_run_recovery_result)
+
+    def _handle_first_run_recovery_result(self, result: str | None) -> None:
+        if result not in {"resume", "start_over", "later"}:
+            return
+        self.run_worker(
+            self._apply_first_run_recovery_result(result),
+            exclusive=True,
+            group="first-run-recovery",
+        )
+
+    async def _apply_first_run_recovery_result(self, result: str) -> None:
+        if result == "later":
+            return
+
+        from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+        from tldw_chatbook.config import save_settings_to_cli_config
+
+        resume_draft = None
+        if result == "resume":
+            draft = wizard_state.read_setup_draft(self.app_config)
+            if draft is None or draft.resume_attempted:
+                return
+            resume_draft = wizard_state.SetupDraft(
+                version=draft.version,
+                track=draft.track,
+                active_step_id=draft.active_step_id,
+                values=draft.values,
+                resume_attempted=True,
+            )
+            settings, delete_keys = wizard_state.build_setup_draft_mutation(
+                resume_draft
+            )
+        elif result == "start_over":
+            settings, delete_keys = wizard_state.build_setup_draft_mutation(None)
+        else:
+            return
+
+        try:
+            if delete_keys:
+                saved = await asyncio.to_thread(
+                    save_settings_to_cli_config,
+                    settings,
+                    delete_keys=delete_keys,
+                )
+            else:
+                saved = await asyncio.to_thread(save_settings_to_cli_config, settings)
+        except Exception as exc:
+            logger.error(
+                "First-run recovery persistence failed (error_type={})",
+                type(exc).__name__,
+            )
+            saved = False
+        if not saved:
+            self.notify(
+                "Setup recovery could not be saved. Try again.",
+                severity="error",
+            )
+            self._schedule_first_run_recovery_retry()
+            return
+
+        self._mirror_first_run_setup_mutation(settings, delete_keys)
+        self.push_screen(
+            FirstRunSetupWizard(self, resume_draft=resume_draft),
+            self._handle_first_run_wizard_result,
+        )
+
+    def _schedule_first_run_recovery_retry(self) -> None:
+        """Reopen one actionable recovery prompt after a failed mutation."""
+
+        if getattr(self, "_first_run_recovery_retry_scheduled", False):
+            return
+        self._first_run_recovery_retry_scheduled = True
+        self._first_run_startup_action_scheduled = False
+        self.call_after_refresh(self._show_first_run_recovery_retry)
+
+    def _show_first_run_recovery_retry(self) -> None:
+        if not getattr(self, "_first_run_recovery_retry_scheduled", False):
+            return
+        self._first_run_recovery_retry_scheduled = False
+        self._first_run_startup_action_scheduled = True
+        current_screen = type(self.screen).__name__
+        if current_screen in {"SetupRecoveryDialog", "FirstRunSetupWizard"}:
+            return
+        self._push_first_run_recovery_dialog()
+
+    def _mirror_first_run_setup_mutation(
+        self,
+        settings: Mapping[str, Mapping[str, object]],
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> None:
+        """Mirror the exact first-run recovery mutation after a successful write."""
+
+        first_run = self.app_config.setdefault("first_run", {})
+        if not isinstance(first_run, dict):
+            first_run = {}
+            self.app_config["first_run"] = first_run
+        values = settings.get("first_run")
+        if isinstance(values, Mapping):
+            first_run.update(values)
+        for key in delete_keys.get("first_run", ()):
+            first_run.pop(key, None)
+
+    def _handle_first_run_wizard_result(self, result: dict | None) -> None:
+        if type(result) is not dict:
+            return  # cancelled / finish-later: recovery state handles next launch
+        exit_route = result.get("exit_route")
+        completed = result.get("completed")
+        exit_context = result.get("exit_context")
+        if exit_route is None:
+            if completed is not True or exit_context is not None:
+                return
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
+            return
+        if type(exit_route) is not str:
+            return
+
+        # task-18812: consume a deferred focus request from a first-run
+        # launch (--focus / focus_mode config) at the moment the wizard
+        # finishes, BEFORE payload validation -- the request's fate must
+        # not depend on how valid the wizard's result dict is. Focus is
+        # Console-only: it applies when the exit route is Chat, and is
+        # simply dropped for any other destination.
+        if getattr(self, "_deferred_focus_request", False):
+            self._deferred_focus_request = False
+            if exit_route == TAB_CHAT:
+                self.focus_mode = True
+            else:
+                self.focus_mode = False
+
+        screen_context: dict[str, object] = {}
+        if exit_route == TAB_SETTINGS:
+            if completed is not False or type(exit_context) is not dict:
+                return
+            if set(exit_context) != {"category"}:
+                return
+            category = exit_context.get("category")
+            if type(category) is not str:
+                return
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
+            )
+
+            if category not in set(REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES.values()):
+                return
+            screen_context = {"category": category}
+        elif exit_route in {TAB_CHAT, TAB_HOME}:
+            if completed is not True:
+                return
+            if exit_context is not None and (
+                type(exit_context) is not dict or exit_context
+            ):
+                return
+        else:
+            return
+
+        # Dismissing a rerun over Console already uncovers that same mounted
+        # Console. Replacing it here would interrupt first-chat rollback and
+        # focus resync. Other destinations still remount to refresh their state.
+        if (
+            not screen_context
+            and exit_route == TAB_CHAT
+            and getattr(self, "current_tab", None) == TAB_CHAT
+        ):
+            # The already-mounted Console kept chrome from its unfocused
+            # mount; apply the restored request in place.
+            if self.focus_mode:
+                apply_chrome = getattr(
+                    self._navigation_outgoing_screen(), "_apply_focus_chrome", None
+                )
+                if callable(apply_chrome):
+                    apply_chrome()
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
+            return
+
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+        if completed is not True:
+            self.post_message(NavigateToScreen(exit_route, screen_context))
+            return
+
+        async def navigate_then_schedule_catalog_consent() -> None:
+            try:
+                await self.handle_screen_navigation(
+                    NavigateToScreen(exit_route, screen_context)
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._schedule_startup_model_catalog_refresh(
+                    after_setup_completion=True
+                )
+                raise
+            self._schedule_startup_model_catalog_refresh(
+                after_setup_completion=True
+            )
+
+        self.run_worker(
+            navigate_then_schedule_catalog_consent(),
+            group="first-run-exit-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
     def handle_first_run_wizard_result(self, result: dict | None) -> None:
         """Public alias for ``_handle_first_run_wizard_result``.
@@ -7863,7 +13125,7 @@ class TldwCli(
             except Exception as exc:
                 logger.warning(
                     "Initial navigation context application failed "
-                    "(route={}, exception_category={}).",
+                    "(route=%s, exception_category=%s).",
                     initial_tab,
                     type(exc).__name__,
                 )
@@ -7875,11 +13137,27 @@ class TldwCli(
             f"Screen navigation: Pushed initial {screen_class.__name__}"
             f" (target={resolved_screen_name})"
         )
-        self._maybe_offer_first_run_wizard()
+        wizard_offered = self._maybe_offer_first_run_wizard()
         try:
             self._maybe_warn_second_instance()
         except Exception as e:
             logger.error(f"Second-instance warning failed: {e}")
+
+        # Schedule after splash and the initial screen, before optional startup
+        # offers; ADR-020 consent owns this launch when it is still required.
+        self._schedule_startup_model_catalog_refresh()
+        if not wizard_offered and not getattr(
+            self, "_startup_model_catalog_consent_required", False
+        ):
+            # Spec 2026-08-17 §5.4: wizard wins; .SKILLS offer defers to next launch.
+            self._maybe_offer_project_skills_import()
+        try:
+            self._maybe_warn_config_load_failure()
+        except Exception as e:
+            logger.error(
+                "Config load failure warning failed (error_type=%s)",
+                type(e).__name__,
+            )
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""
@@ -8076,10 +13354,6 @@ class TldwCli(
         """Updates the database size information in the shell status line."""
         await self.db_status_manager.update_db_sizes()
 
-    async def update_token_count_display(self) -> None:
-        """Updates the token count in the footer when on Chat tab."""
-        await self.db_status_manager.update_token_count_display()
-
     def _active_footer_status(self) -> Optional[AppFooterStatus]:
         """The visible screen's footer, falling back to the default-screen one.
 
@@ -8132,6 +13406,33 @@ class TldwCli(
     def _schedule_deferred_startup_work(self) -> None:
         """Start nonessential services after the first interactive UI frame."""
 
+        # task-21106: Actor Pack crash recovery moved here from __init__ —
+        # synchronous SQLite has no place on the construction path. A thread
+        # worker (not a coroutine) because recovery does blocking DB I/O; the
+        # coordinator's own once-guard makes every later surface-side call
+        # (Personas mount, create_persona) a cached no-op.
+        self.run_worker(
+            self.ensure_actor_pack_recovery,
+            name="deferred_actor_pack_recovery",
+            group="actor_pack_recovery",
+            thread=True,
+            exclusive=True,
+            exit_on_error=False,
+        )
+        # task-22216: the Actor Pack staging crash-sweep moved here from
+        # ActorPackImportService.__init__ (reached from __init__ via
+        # _wire_character_persona_services) — synchronous filesystem I/O
+        # has no place on the construction path. The service's once-gate
+        # also fires at the entry of inspect_archive, so whichever comes
+        # first sweeps and the other is a cached no-op.
+        self.run_worker(
+            self.ensure_actor_pack_staging_sweep,
+            name="deferred_actor_pack_staging_sweep",
+            group="actor_pack_staging_sweep",
+            thread=True,
+            exclusive=True,
+            exit_on_error=False,
+        )
         self.set_timer(
             DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
             self._schedule_footer_status_updates,
@@ -8140,7 +13441,15 @@ class TldwCli(
             DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
             self._start_deferred_audio_service_initialization,
         )
+        self.set_timer(
+            DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS,
+            self._schedule_screen_preimport,
+        )
         self.schedule_media_cleanup()
+        self._create_deferred_startup_task(
+            self._reconcile_interrupted_subscription_work(),
+            name="deferred_subscription_interrupt_reconcile",
+        )
         coordinator = getattr(
             self,
             "citation_artifact_ownership_coordinator",
@@ -8160,6 +13469,99 @@ class TldwCli(
             self._create_deferred_startup_task(
                 self._migrate_legacy_citations_idle_unit(),
                 name="deferred_legacy_citation_migration",
+            )
+        self._schedule_launch_wake()
+
+    def _schedule_launch_wake(self) -> None:
+        """Deliver a supervisor wake this install already owed at launch.
+
+        task-15860 Task 6. A background sub-agent that finished while the
+        app was closed -- or one whose delivery the user quit out from
+        under -- used to wait for the next Console visit. It no longer
+        does, under the owner's mark-gated ruling: only a conversation
+        that already carries a durable ``FLEET_UNSEEN`` mark AND an owed
+        ``agent_runs`` row is delivered, behind the existing ``[agents]
+        autowake_enabled`` (there is no separate launch switch).
+
+        **The common path costs one indexed read and constructs nothing.**
+        With no marks -- every install that has never run a background
+        sub-agent, and every one whose results have all been seen -- this
+        returns before touching the Console store, provider gateway, agent
+        bridge (so ``agent_runs.db`` is not even opened) or controller.
+        That is pinned in ``Tests/UI/test_console_launch_wake.py``.
+        """
+        try:
+            from tldw_chatbook.Chat.console_launch_wake import (
+                LAUNCH_WAKE_TASK_NAME,
+                deliver_launch_wakes,
+                marked_conversations_at_launch,
+            )
+
+            marked = marked_conversations_at_launch(self)
+            if not marked:
+                return
+            self._create_deferred_startup_task(
+                deliver_launch_wakes(self, marked),
+                name=LAUNCH_WAKE_TASK_NAME,
+            )
+        except Exception:  # noqa: BLE001 -- a launch never dies on this
+            logger.opt(exception=True).warning(
+                "Launch wake scheduling failed; owed wakes stay staged for "
+                "the next Console visit."
+            )
+
+    async def _reconcile_interrupted_subscription_work(self) -> None:
+        """Un-wedge subscriptions rows a previous process never finished.
+
+        task-19561. ``local_watchlist_runs`` (``queued``/``running``),
+        ``briefings``/``briefing_scripts``/``briefing_audio``
+        (``generating``) all carry a status only the process doing the work
+        can move off, and several of them double as one-at-a-time guards --
+        so a row stranded by a termination does not merely look wrong, it
+        shuts the feature. Until now the only sweep was UI-gated: it ran
+        when the user happened to open the matching Watchlists pane, scoped
+        to that one watchlist.
+
+        Doing it on the way *in* is what makes it durable. A reconcile on
+        the way out can only cover terminations the process survives long
+        enough to run it -- never ``SIGKILL``, a crash, or a battery going
+        flat, which are exactly the cases that strand a row. Runs on a
+        thread (SQLite) and is best-effort: a failed sweep is logged and the
+        launch continues.
+
+        Scoped by the boundary ``_wire_watchlists_and_notifications_services``
+        captured when it opened the database, so this cannot fail a row the
+        scheduler -- started earlier, in ``on_mount`` -- launched moments ago
+        (Qodo review of PR #1972). No boundary means no sweep: leaving a row
+        wedged is recoverable on the next launch, failing a live one is not.
+        """
+        db = getattr(self, "subscriptions_db", None)
+        if db is None:
+            return
+        boundary = getattr(self, "_subscriptions_prior_process_boundary", None)
+        if boundary is None:
+            self.loguru_logger.warning(
+                "Startup reconcile skipped: no prior-process boundary was "
+                "captured, so an unscoped sweep could fail live rows."
+            )
+            return
+        from tldw_chatbook.Subscriptions.startup_reconcile import (
+            reconcile_interrupted_subscription_work,
+        )
+
+        try:
+            reconciled = await asyncio.to_thread(
+                reconcile_interrupted_subscription_work, db, boundary
+            )
+        except Exception as exc:  # noqa: BLE001 - a launch never dies on this
+            self.loguru_logger.warning(
+                f"Startup reconcile of interrupted subscriptions work failed "
+                f"type={type(exc).__name__}"
+            )
+            return
+        if any(reconciled.values()):
+            self.loguru_logger.info(
+                f"Startup reconcile failed interrupted subscriptions work: {reconciled}"
             )
 
     async def _reconcile_citation_artifact_ownership(self) -> None:
@@ -8237,7 +13639,19 @@ class TldwCli(
             self._legacy_citation_migration_in_flight = False
 
     def _schedule_footer_status_updates(self) -> None:
-        """Wire status-line DB/token status updates after UI readiness."""
+        """Wire the status-line DB-size updates after UI readiness.
+
+        task-21133: this used to arm a second pair of timers -- a 0.5 s
+        one-shot and a 10 s interval -- for a token counter whose entire
+        consumer surface task-17653 removed. Nothing armed the footer's
+        ``#footer-token-count`` chip any more (``BaseAppScreen`` composes
+        every ``AppFooterStatus`` with ``show_token_count=False``, and that
+        is the only construction site in the package), so each tick resolved
+        the active footer, ran three ``query_one`` selectors that no live
+        screen composes, and threw the answer away in a debug log. The
+        interval, its handle, and the whole chain behind it are gone; the
+        DB-size timers below are unchanged.
+        """
 
         def record_footer_timer(name: str) -> None:
             record_timer = getattr(self, "_record_footer_timer_created", None)
@@ -8256,8 +13670,8 @@ class TldwCli(
             # resolve the ACTIVE screen's footer via `_active_footer_status`.
             # Splash and the first-run wizard mount no AppFooterStatus, so a
             # miss here must not abort timer setup (task-2721: it previously
-            # logged two tracebacks per fresh install and left the DB-size and
-            # token timers never started for the whole session).
+            # logged two tracebacks per fresh install and left the DB-size
+            # timers never started for the whole session).
             try:
                 self._db_size_status_widget = self.query_one(AppFooterStatus)
                 self.loguru_logger.info("AppFooterStatus widget instance acquired.")
@@ -8277,14 +13691,6 @@ class TldwCli(
             self.loguru_logger.info(
                 "DB size update timer started for the shell status line (interval: 2 minutes)."
             )
-
-            self.set_timer(0.5, self.update_token_count_display)
-            record_footer_timer("footer-token-periodic")
-            self._token_count_update_timer = self.set_interval(
-                10,
-                lambda: self.call_after_refresh(self.update_token_count_display),
-            )
-            self.loguru_logger.info("Token count update timer started (10s interval).")
         except Exception as e_db_size:
             self.loguru_logger.opt(exception=True).error(
                 f"Error setting up DB size indicator for the shell status line: {e_db_size}",
@@ -8295,6 +13701,300 @@ class TldwCli(
 
         self._schedule_tts_initialization()
         self._schedule_stts_initialization()
+
+    def _screen_preimport_enabled(self) -> bool:
+        """Whether the background screen-module pre-importer should run.
+
+        On by default. Off under pytest (``PYTEST_CURRENT_TEST`` -- the same
+        signal ``Utils/optional_deps.py`` and ``Metrics/metrics_logger.py``
+        already gate background/eager behavior on) so the test suite's many
+        ``app.run_test()`` instances don't each spin up an extra
+        background-import thread for a mechanism most tests never look at.
+        ``TLDW_SCREEN_PREIMPORT`` overrides in either direction: ``"0"``/
+        ``"false"`` forces it off even outside pytest, ``"1"``/``"true"``
+        forces it on even under pytest -- used by this feature's own tests to
+        exercise the real scheduling path rather than only the worker method.
+        """
+        override = os.environ.get("TLDW_SCREEN_PREIMPORT")
+        if override is not None:
+            return override.strip().lower() not in ("", "0", "false", "no")
+        return "PYTEST_CURRENT_TEST" not in os.environ
+
+    def _screen_preimport_route_order(self) -> tuple[ScreenRoute, ...]:
+        """Ordered, module-deduplicated routes for the background pre-importer.
+
+        Several canonical route ids share one module (``"ccp"``/``"personas"``
+        both target ``personas_screen.PersonasScreen``, ``"tools_settings"``/
+        ``"mcp"`` both target ``mcp_screen.MCPScreen``) -- importing each
+        module once is enough, a second ``import_module`` call for the same
+        name is just a dict lookup, but there's no reason to schedule the
+        redundant work. ``SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS`` (chat/
+        library/settings, the audit's three multi-thousand-line modules) go
+        first; the rest of the registry follows in stable sorted order.
+
+        Route ids that are ALSO a key in the alias table are skipped: at real
+        navigation time, ``_lookup_route()`` resolves the alias to a
+        *different* canonical route before ever reaching this dict entry
+        (e.g. ``"customize"`` -> the ``settings`` route; ``_SCREEN_ROUTES
+        ["customize"]``, pointing at a ``customize_screen`` module that no
+        longer exists, is unreachable dead metadata kept for history). Task-
+        15472 review round 1: pre-importing it anyway logged a "Screen route
+        unavailable: customize: No module named ..." warning on every single
+        boot -- a route no click can ever reach should not be attempted.
+        """
+        shadowed_route_ids = set(registered_screen_aliases())
+        routes_by_id = {
+            route.screen_name: route for route in registered_screen_routes()
+        }
+        ordered: list[ScreenRoute] = []
+        seen_modules: set[str] = set()
+
+        def _consider(route: ScreenRoute | None) -> None:
+            if route is None or route.screen_name in shadowed_route_ids:
+                return
+            if route.module_path in seen_modules:
+                return
+            ordered.append(route)
+            seen_modules.add(route.module_path)
+
+        for route_id in SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS:
+            _consider(routes_by_id.get(route_id))
+        for route in registered_screen_routes():
+            _consider(route)
+        return tuple(ordered)
+
+    def _preimport_screens(self, routes: Iterable[ScreenRoute]) -> None:
+        """Warm ``sys.modules`` for ``routes``, one route at a time.
+
+        Runs on a background thread (see ``_schedule_screen_preimport``),
+        never the asyncio loop -- ``import_module`` is CPU-bound (bytecode
+        compile/exec for chat_screen.py's ~20k lines and friends) and would
+        stall UI responsiveness if it ran inline on the event loop. Python's
+        import system serializes concurrent imports of the same module
+        through its own per-module lock, and a completed import is cached in
+        ``sys.modules``, so this is safe to race against a real navigation's
+        own ``import_module`` call: nothing is ever imported twice for real,
+        and a route the user never visits just cost one idle-thread import
+        that would otherwise have happened on their first click to it.
+
+        Each route calls ``ScreenRoute.load_screen_class()`` -- the exact
+        method the real navigation path calls -- wrapped in its own
+        ``try/except Exception``. ``load_screen_class()`` already swallows
+        ``ImportError``/``AttributeError`` and logs a warning; the broader
+        catch here is belt-and-suspenders so one screen module raising
+        something stranger at import time can't kill the thread or block the
+        remaining routes. Either way a failed import is never cached in
+        ``sys.modules`` (CPython evicts a partially-initialized module on
+        import failure), so a pre-import attempt that fails changes nothing
+        about what a real navigation to that route does next: it fails again,
+        identically (AC #3).
+
+        TASK-21113 added pacing BETWEEN routes: after each import the thread
+        hands the event loop back a slice proportional to what it just took
+        (see ``SCREEN_PREIMPORT_YIELD_RATIO`` and friends), and parks
+        entirely while a screen navigation is resolving. Both are strictly
+        between-route, so the single-route call this method also serves --
+        task-21110's initial-screen warm-up, racing the splash -- reaches its
+        one ``load_screen_class()`` with nothing added in front of it. The
+        loop also drops out on ``_shutting_down`` so quit does not wait on a
+        daemon thread's remaining registry.
+
+        Args:
+            routes: The routes to pre-import, in order. Factored out of
+                ``_preimport_heavy_screens`` so tests can target one or two
+                routes directly instead of the whole registry.
+        """
+        yield_ratio, max_gap = self._screen_preimport_pacing()
+        previous_cost = 0.0
+        for index, route in enumerate(routes):
+            if index:
+                self._pause_between_preimports(
+                    min(previous_cost * yield_ratio, max_gap)
+                )
+            if getattr(self, "_shutting_down", False):
+                return
+            started = time.monotonic()
+            try:
+                route.load_screen_class()
+            except Exception as exc:
+                self.loguru_logger.debug(
+                    "Screen pre-import failed (route={}, error_type={})",
+                    route.screen_name,
+                    type(exc).__name__,
+                )
+            previous_cost = time.monotonic() - started
+
+    def _screen_preimport_pacing(self) -> tuple[float, float]:
+        """``(yield_ratio, max_gap_seconds)`` for the between-route pause.
+
+        One helper so the core-count question is answered in exactly one
+        place. It governs the SPECULATIVE whole-registry pass only, and
+        deliberately not task-21110's initial-screen warm-up, which shares
+        ``_preimport_screens`` but passes a single route: that import is work
+        the boot is certainly going to pay either way, and moving it off the
+        event loop is worth more, not less, on a slow machine (task-21110
+        measured splash-close-to-usable -46% on a cold first boot). Slowing
+        or skipping it would put a certain cost back on the loop to avoid a
+        speculative one. A single-route list has no between-route gap, so
+        that separation needs no branch.
+        """
+        if _usable_cpu_count() < SCREEN_PREIMPORT_LOW_CORE_THRESHOLD:
+            return (
+                SCREEN_PREIMPORT_LOW_CORE_YIELD_RATIO,
+                SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS,
+            )
+        return (SCREEN_PREIMPORT_YIELD_RATIO, SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS)
+
+    def _screen_navigation_in_progress(self) -> bool:
+        """Whether a screen navigation currently holds the FIFO nav lock.
+
+        Read from the pre-import thread, so it must not touch the loop:
+        ``asyncio.Lock.locked()`` is a plain attribute read, and the
+        attribute is read directly rather than through
+        ``_screen_navigation_lock()`` so a probe never *constructs* a lock
+        off-loop. Absent lock (nothing has navigated yet) means not
+        navigating.
+        """
+        lock = getattr(self, "_screen_navigation_lock_instance", None)
+        if lock is None:
+            return False
+        try:
+            return bool(lock.locked())
+        except Exception:
+            return False
+
+    def _pause_between_preimports(self, gap_seconds: float) -> None:
+        """Yield the CPU between two route imports, then wait out any nav.
+
+        Runs on the pre-import daemon thread. The park is bounded by
+        ``SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS`` and abandoned
+        immediately on ``_shutting_down`` so neither a wedged navigation nor
+        a quit can leave this thread sleeping in a loop.
+        """
+        if gap_seconds > 0:
+            time.sleep(gap_seconds)
+        # Counted, not accumulated: summing 0.05 a hundred times lands either
+        # side of 5.0 depending on float rounding, which would make the bound
+        # off by one at random.
+        polls = 0
+        while (
+            polls < SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS
+            and not getattr(self, "_shutting_down", False)
+            and self._screen_navigation_in_progress()
+        ):
+            time.sleep(SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS)
+            polls += 1
+
+    def _preimport_heavy_screens(self) -> None:
+        """Warm ``sys.modules`` for every registered screen route.
+
+        See ``_preimport_screens`` for the per-route mechanics; this just
+        supplies the full, priority-ordered route list.
+        """
+        self._preimport_screens(self._screen_preimport_route_order())
+
+    def _initial_screen_preimport_route(self) -> ScreenRoute | None:
+        """The route whose module ``_push_initial_screen`` is about to import.
+
+        Resolved through ``resolve_screen_route()`` -- the same alias /
+        shell-destination lookup ``_push_initial_screen`` itself goes through
+        via ``resolve_screen_target()``, minus the ``load_screen_class()``
+        call that would do the import here, on the loop, which is the whole
+        thing being avoided. If the two ever disagree the warm-up simply
+        warms the wrong module and the real push pays its import as it does
+        today; it can never push a different screen.
+
+        Returns ``None`` when the configured target is not routable, in which
+        case there is nothing to warm: ``_push_initial_screen`` handles that
+        case by falling back to chat, and reproducing that fallback here
+        would duplicate a rare error path for no measurable gain.
+        """
+        try:
+            return resolve_screen_route(self._resolve_initial_shell_route())
+        except Exception as exc:
+            self.loguru_logger.debug(
+                "Initial-screen pre-import route resolution failed (error_type={})",
+                type(exc).__name__,
+            )
+            return None
+
+    def _schedule_initial_screen_preimport(self) -> None:
+        """Warm the initial screen's module while the splash is still up.
+
+        task-21110. Boot with the splash enabled (the default) is strictly
+        serial: the splash owns the event loop for its full duration, and only
+        when it closes does ``_push_initial_screen`` synchronously
+        ``import_module`` the initial route's module on that same loop --
+        measured at 0.31s warm and 0.94s on a first boot after an upgrade,
+        for the 306 in-package modules chat_screen adds on top of the
+        636-module boot closure. The existing pre-importer cannot
+        help: it is armed by ``_schedule_deferred_startup_work`` at the tail of
+        ``_post_mount_setup``, which itself only runs *after* that push.
+
+        This moves a start time, not machinery: the work is the exact
+        ``_preimport_screens`` body the whole-registry pass already uses, with
+        its per-module-lock race semantics (a real navigation racing this
+        thread blocks on CPython's own import lock and then finds the finished
+        module in ``sys.modules``; a failed import is never cached, so the real
+        push fails identically to today). Worst case if the user skips the
+        splash mid-import, the push blocks on that same lock -- no worse than
+        the synchronous import it replaces.
+
+        Gated on ``_screen_preimport_enabled()`` so the pre-import feature has
+        exactly one on/off switch (``TLDW_SCREEN_PREIMPORT``, default off under
+        pytest), and re-checked against ``splash_screen_active`` because a
+        keypress can close the splash inside the scheduling delay -- past that
+        point the push either already happened or is imminent, and a second
+        thread would only contend with it.
+
+        Deliberately NOT gated on core count (TASK-21113). The two
+        pre-importers share ``_preimport_screens`` and one enable switch, but
+        the core-count question has opposite answers for them: the
+        whole-registry pass is speculative work for screens the user may
+        never open, so a slow machine should be throttled; this one is the
+        initial screen's own import, which the boot pays either way, and
+        moving it off the event loop is worth *more* on a slow machine
+        (task-21110 measured close-to-usable -46% on a cold first boot).
+        Throttling it would put a certain cost back on the loop to dodge a
+        speculative one. See ``_screen_preimport_pacing``.
+        """
+        if not self._screen_preimport_enabled():
+            return
+        if self._shutting_down:
+            return
+        if self._initial_screen_preimport_thread is not None:
+            return
+        if not self.splash_screen_active:
+            return
+        if getattr(self, "_initial_screen_pushed", False):
+            return
+        route = self._initial_screen_preimport_route()
+        if route is None:
+            return
+        thread = threading.Thread(
+            target=self._preimport_screens,
+            args=((route,),),
+            name="tldw-initial-screen-preimport",
+            daemon=True,
+        )
+        self._initial_screen_preimport_thread = thread
+        thread.start()
+
+    def _schedule_screen_preimport(self) -> None:
+        """Start the background screen-module pre-importer, at most once."""
+        if not self._screen_preimport_enabled():
+            return
+        if self._shutting_down:
+            return
+        if self._screen_preimport_thread is not None:
+            return
+        thread = threading.Thread(
+            target=self._preimport_heavy_screens,
+            name="tldw-screen-preimport",
+            daemon=True,
+        )
+        self._screen_preimport_thread = thread
+        thread.start()
 
     def _schedule_tts_initialization(self) -> None:
         if self._tts_handler is not None:
@@ -8386,24 +14086,6 @@ class TldwCli(
             return self._stts_handler
         return await self._initialize_stts_service()
 
-    async def play_current_audio(self) -> None:
-        """Play the current S/TT/S audio after lazy service initialization."""
-
-        handler = await self._ensure_stts_handler()
-        if handler is None:
-            self.notify("S/TT/S service not available", severity="error")
-            return
-        await handler.play_current_audio()
-
-    async def export_current_audio(self, target_path: Path) -> None:
-        """Export the current S/TT/S audio after lazy service initialization."""
-
-        handler = await self._ensure_stts_handler()
-        if handler is None:
-            self.notify("S/TT/S service not available", severity="error")
-            return
-        await handler.export_current_audio(target_path)
-
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
 
@@ -8411,18 +14093,7 @@ class TldwCli(
         self._shutting_down = True
 
         # Cancel all active workers first
-        try:
-            active_workers = [w for w in self.workers if not w.is_finished]
-            if active_workers:
-                self.loguru_logger.info(
-                    f"Cancelling {len(active_workers)} active workers"
-                )
-                for worker in active_workers:
-                    worker.cancel()
-                # Give workers a moment to cancel
-                await asyncio.sleep(0.1)
-        except Exception as e:
-            self.loguru_logger.error(f"Error cancelling workers: {e}")
+        await self._cancel_and_settle_workers("shutdown request")
 
         if self._rich_log_handler:
             await self._rich_log_handler.stop_processor()
@@ -8433,6 +14104,54 @@ class TldwCli(
         self._stop_footer_status_timers()
         self.loguru_logger.info("DB size update timer stopped.")
         # --- End Stop DB Size Update Timer ---
+
+    async def _cancel_and_settle_workers(self, phase: str) -> None:
+        """Cancel every live worker and actually wait for them, bounded.
+
+        task-19561. Both shutdown hooks used to cancel their workers and
+        then ``await asyncio.sleep(0.1)`` -- a flat wait that is
+        simultaneously too long (nothing to wait for on a quiet exit) and
+        far too short (a worker mid-``await`` gets one tick, and a thread
+        worker gets nothing at all), and which never observed the outcome
+        either way. Waiting on the workers themselves is both faster in the
+        common case and honest in the uncommon one; the timeout keeps a
+        worker that ignores cancellation from turning quit into a hang, and
+        says which ones they were.
+        """
+        try:
+            active_workers = [w for w in self.workers if not w.is_finished]
+            if not active_workers:
+                return
+            self.loguru_logger.info(
+                f"Cancelling {len(active_workers)} active workers ({phase})"
+            )
+            for worker in active_workers:
+                worker.cancel()
+            # `asyncio.wait`, NOT `wait_for(...)`: on expiry `wait_for`
+            # cancels what it is waiting on and awaits that cancellation, so
+            # anything that does not honour a cancel hangs the very call
+            # meant to bound it. `wait` returns the stragglers instead.
+            waiters = [asyncio.ensure_future(w.wait()) for w in active_workers]
+            _, unsettled = await asyncio.wait(
+                waiters, timeout=WORKER_CANCELLATION_GRACE_SECONDS
+            )
+            for waiter in waiters:
+                if waiter.done() and not waiter.cancelled():
+                    # WorkerCancelled/WorkerFailed are the expected outcomes
+                    # of cancelling at shutdown; retrieve them so they do not
+                    # resurface as "exception was never retrieved".
+                    waiter.exception()
+                else:
+                    waiter.cancel()
+            if unsettled:
+                stragglers = [w.name for w in active_workers if not w.is_finished]
+                self.loguru_logger.warning(
+                    f"{len(stragglers)} worker(s) did not settle within "
+                    f"{WORKER_CANCELLATION_GRACE_SECONDS}s of cancellation "
+                    f"({phase}): {stragglers}"
+                )
+        except Exception as e:
+            self.loguru_logger.error(f"Error cancelling workers ({phase}): {e}")
 
     async def _close_server_context_provider_cached_client(self) -> None:
         server_context_provider = getattr(self, "server_context_provider", None)
@@ -8457,6 +14176,57 @@ class TldwCli(
         if client is not None and getattr(client, "sessions", None):
             await client.disconnect_all()
 
+    async def _close_local_writing_service(self) -> None:
+        """Release the writing suite's held SQLite connections (TASK-21125).
+
+        Peeks the slot rather than reading through any accessor: a service that
+        was never wired must not be constructed purely to close it. A close
+        failure is logged (type name only) and never allowed to abort the rest
+        of unmount.
+
+        Runs on a thread, NOT inline. ``close()`` waits for an autosave still
+        running on a worker thread, and a synchronous call here froze the event
+        loop for the whole settle timeout (measured: 5.00 s during which a 50 ms
+        ticker fired zero times) -- which also starved the very operation it was
+        waiting for.
+        """
+        service = getattr(self, "local_writing_service", None)
+        if service is None:
+            return
+        try:
+            await asyncio.to_thread(service.close)
+        except Exception as exc:
+            self.loguru_logger.error(
+                f"Error closing local writing service: {type(exc).__name__}"
+            )
+
+    async def _close_local_research_service(self) -> None:
+        """Release the research store's held SQLite connections (TASK-21127).
+
+        Peeks the slot rather than reading through any accessor: a service that
+        was never wired must not be constructed purely to close it. A close
+        failure is logged (type name only) and never allowed to abort the rest
+        of unmount.
+
+        Runs on a thread, NOT inline. ``close()`` waits for an operation still
+        running on the research backend thread (a run's progress write, say),
+        and a synchronous call here would freeze the event loop for the whole
+        settle timeout -- which also starves the very operation it is waiting
+        for (the TASK-21125 review's MAJOR-3 finding).
+        """
+        service = getattr(self, "local_research_service", None)
+        if service is None:
+            return
+        close = getattr(service, "close", None)
+        if not callable(close):
+            return
+        try:
+            await asyncio.to_thread(close)
+        except Exception as exc:
+            self.loguru_logger.error(
+                f"Error closing local research service: {type(exc).__name__}"
+            )
+
     async def _shutdown_file_notes_session_owner(self) -> None:
         """Settle the process-owned File Notes Git lifecycle exactly once."""
         owner = getattr(self, "file_notes_session_owner", None)
@@ -8471,8 +14241,168 @@ class TldwCli(
             self._file_notes_session_owner_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_notes_sync_runtime(self) -> None:
+        """Settle the application-owned lasting-sync runtime exactly once."""
+
+        # TASK-21108: a runtime that was never built was never started, so
+        # there is nothing to settle -- and reading the lazy property here
+        # would construct one purely to shut it down.
+        if getattr(self, "_notes_sync_runtime_owner", None) is None:
+            return
+        task = getattr(self, "_notes_sync_runtime_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                self.notes_sync_runtime_owner.shutdown(),
+                name="shutdown_notes_sync_runtime",
+            )
+            self._notes_sync_runtime_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown_console_image_edits(self) -> None:
+        """Cancel and settle app-owned H3 edits exactly once before teardown."""
+        task = self._console_image_edit_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                self.console_image_edit_operations.shutdown(),
+                name="shutdown_console_image_edits",
+            )
+            self._console_image_edit_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _flush_persona_buddy_geometry(self) -> None:
+        """Land any debounced Buddy geometry before admission closes.
+
+        TASK-21122: the mounted view coalesces geometry writes behind a
+        250 ms debounce. Because `_shutdown_persona_buddy` ends the
+        controller BEFORE Textual unmounts screens, a nudge inside that
+        window would reach `persist_preferences_revision` after admission
+        closed and be refused -- silently losing the user's last move.
+        Draining every mounted view here, while the controller is still
+        accepting writes, is what keeps it durable.
+        """
+        screens: list[Any] = []
+        stacks = getattr(self, "_screen_stacks", None)
+        if isinstance(stacks, dict):
+            for stack in stacks.values():
+                screens.extend(stack or ())
+        else:
+            try:
+                screens.extend(self.screen_stack)
+            except Exception:
+                return
+        seen: set[int] = set()
+        for screen in screens:
+            if id(screen) in seen:
+                continue
+            seen.add(id(screen))
+            flush = getattr(screen, "flush_persona_buddy_geometry", None)
+            if not callable(flush):
+                continue
+            try:
+                pending = flush()
+                if inspect.isawaitable(pending):
+                    await pending
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("persona_buddy_geometry_flush_failed")
+
+    async def _shutdown_persona_buddy(self) -> None:
+        """Drain the app-owned Buddy before profile database teardown.
+
+        Peeks the lazy controller slot (TASK-21103): a controller that was
+        never built has nothing to drain, and going through the property
+        here could CONSTRUCT one (importing Persona_Visual + PIL) purely to
+        shut it down.
+        """
+        task = self._persona_buddy_shutdown_task
+        if task is None:
+            controller = self._persona_buddy_controller
+            if controller is None:
+                return
+            # Debounced geometry must land while the controller still
+            # accepts writes (TASK-21122).
+            await self._flush_persona_buddy_geometry()
+            task = asyncio.create_task(
+                controller.shutdown(),
+                name="shutdown_persona_buddy",
+            )
+            self._persona_buddy_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown_actor_pack_export(self) -> None:
+        """Cancel and drain Actor Pack export before profile teardown."""
+
+        controller = getattr(self, "actor_pack_export_controller", None)
+        if controller is None:
+            return
+        task = getattr(self, "_actor_pack_export_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                controller.shutdown(),
+                name="shutdown_actor_pack_export",
+            )
+            self._actor_pack_export_shutdown_task = task
+        await asyncio.shield(task)
+
+    def _refresh_after_actor_pack_import(self, result: object) -> None:
+        """Fence mounted Persona Buddy state after a committed Persona import."""
+
+        if getattr(result, "actor_kind", None) == "persona":
+            self.persona_buddy_controller.invalidate_profile()
+
+    async def _shutdown_actor_pack_import(self) -> None:
+        """Cancel and drain Actor Pack import before profile teardown."""
+
+        controller = getattr(self, "actor_pack_import_controller", None)
+        if controller is None:
+            return
+        task = getattr(self, "_actor_pack_import_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                controller.shutdown(),
+                name="shutdown_actor_pack_import",
+            )
+            self._actor_pack_import_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown_console_runtime(self) -> None:
+        """Destroy the app-owned Console runtime exactly once, at exit.
+
+        task-15860: the runtime survives every navigation away from
+        Console, so the unmount Textual performs at exit is no longer what
+        ends it -- this is. `ConsoleRuntime.dispose` runs the permanent
+        teardown in the order `ChatScreen.on_unmount` used to:
+        `controller.shutdown()`, then `gateway.aclose()`. Idempotent: the
+        runtime detaches itself from the app on the way out.
+        """
+        task = self._console_runtime_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                dispose_console_runtime(self),
+                name="shutdown_console_runtime",
+            )
+            self._console_runtime_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown_app_owned_lifecycles(self) -> None:
+        """Drain durable app-owned work before Textual closes screen state."""
+        await self._shutdown_notes_sync_runtime()
+        await self._shutdown_actor_pack_import()
+        await self._shutdown_actor_pack_export()
+        # Console shutdown terminally fences every trusted Buddy producer
+        # before Buddy itself closes admission and drains owned work.
+        await self._shutdown_console_runtime()
+        await self._shutdown_persona_buddy()
+        coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
+        if coordinator is not None:
+            await coordinator.shutdown()
+        await self.audio_cpp_model_install_owner.shutdown()
+        await self._shutdown_console_image_edits()
+        await self._shutdown_file_notes_session_owner()
+
     async def _shutdown(self) -> None:
-        """Settle File Notes Git before Textual closes screens and replicas."""
+        """Settle app-owned durable work before Textual closes screens."""
         cancellation: asyncio.CancelledError | None = None
         owner_error: BaseException | None = None
         shutdown_task = asyncio.current_task()
@@ -8481,7 +14411,7 @@ class TldwCli(
         )
         while True:
             try:
-                await self._shutdown_file_notes_session_owner()
+                await self._shutdown_app_owned_lifecycles()
             except asyncio.CancelledError as error:
                 next_cancellation_requests = (
                     shutdown_task.cancelling() if shutdown_task is not None else 0
@@ -8506,7 +14436,7 @@ class TldwCli(
         if shutdown_error is not None:
             if owner_error is not None:
                 shutdown_error.add_note(
-                    "File Notes session owner shutdown also failed before "
+                    "App-owned lifecycle shutdown also failed before "
                     "Textual screen teardown"
                 )
             if cancellation is not None:
@@ -8518,7 +14448,7 @@ class TldwCli(
             if cancellation is not None:
                 owner_error.add_note(
                     "Application shutdown cancellation was delayed while "
-                    "preserving the owner shutdown failure"
+                    "preserving the lifecycle shutdown failure"
                 )
             raise owner_error
         if cancellation is not None:
@@ -8568,6 +14498,13 @@ class TldwCli(
         import asyncio
 
         logging.info("--- App Unmounting ---")
+        # task-19561: from here to process death, everything is teardown.
+        # Arm the bound now rather than at the entry point, so the deadline
+        # covers this method too -- and so a quit that wedges inside cleanup
+        # is bounded exactly like a SIGTERM that does. Idempotent and
+        # monotonic: a signal-armed watchdog already holds a tighter
+        # deadline and this call leaves it alone.
+        arm_exit_watchdog(reason="app unmount")
         # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
         # line is app_started ended abruptly. Wrapped, and deliberately so:
         # this line sits ABOVE the entire shutdown sequence -- DB closes,
@@ -8579,28 +14516,26 @@ class TldwCli(
         except Exception:
             pass
         try:
-            await self._shutdown_file_notes_session_owner()
+            await self._shutdown_app_owned_lifecycles()
         except Exception as error:
             self.loguru_logger.warning(
-                "File Notes session owner fallback shutdown failed "
+                "App-owned lifecycle fallback shutdown failed "
                 f"type={type(error).__name__}"
             )
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
 
-        # F3: shut down the Library ingest parse pool. Final shutdown
-        # order, explicit (Task 4 review):
-        #   1. `_ingest_shutdown = True` + pool reference detached
-        #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- pool
-        #      callbacks short-circuit on their own thread before
-        #      marshaling from this point on.
-        #   2. `pool.terminate()` + `pool.join()` on a detached daemon
-        #      thread, NEVER this (loop) thread -- terminating inline here
-        #      could deadlock against a result-handler thread parked inside
-        #      `call_from_thread` (see `_shutdown_ingest_parse_pool`'s
-        #      docstring). `terminate()` kills every in-flight parse worker
-        #      process immediately -- no waiting on a possibly-long
-        #      transcription/OCR job.
+        # F3/TASK-601: shut down both Library ingest worker boundaries. Final
+        # shutdown order, explicit:
+        #   1. `_ingest_shutdown = True` + executor/pool references detached
+        #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- their
+        #      callbacks short-circuit before marshaling from this point on.
+        #   2. Executor close, then `pool.terminate()` + `pool.join()`, on one
+        #      detached daemon thread, NEVER this (loop) thread -- terminating
+        #      inline here could deadlock against a result-handler thread
+        #      parked inside `call_from_thread` (see that method's docstring).
+        #      `terminate()` kills every in-flight light parse worker process
+        #      immediately -- no waiting on a possibly-long OCR job.
         #   3. The writer (the exclusive `library_ingest_queue` thread
         #      worker) is swept up by the generic worker cancellation
         #      below, same as every other worker.
@@ -8656,27 +14591,6 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up STTS handler: {e}")
 
-            # Stop subscription scheduler if it exists
-            if (
-                hasattr(self, "_subscription_scheduler")
-                and self._subscription_scheduler
-            ):
-                try:
-                    await self._subscription_scheduler.stop()
-                    self.loguru_logger.info("Subscription scheduler stopped")
-                except Exception as e:
-                    self.loguru_logger.error(
-                        f"Error stopping subscription scheduler: {e}"
-                    )
-
-            # Stop auto-sync manager if it exists
-            if hasattr(self, "_auto_sync_manager") and self._auto_sync_manager:
-                try:
-                    self._auto_sync_manager.stop()
-                    self.loguru_logger.info("Auto-sync manager stopped")
-                except Exception as e:
-                    self.loguru_logger.error(f"Error stopping auto-sync manager: {e}")
-
             # Stop the background scheduler loop cleanly.
             scheduler_loop = getattr(self, "scheduler_loop", None)
             scheduler_worker = getattr(self, "scheduler_worker", None)
@@ -8697,6 +14611,27 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
 
+            # task-19561: stopping the scheduler worker does NOT stop the
+            # generations it dispatched. `BriefingJobHandler.handle` spawns
+            # each one as a bare `asyncio.Task` (Locked Decision 3 -- a
+            # multi-minute LLM call must not stall the tick), so they are
+            # absent from `App.workers` and survived every cancellation
+            # above, only to be destroyed mid-flight when the loop closed.
+            # Cancel them here, while the loop is still alive to deliver it.
+            briefing_handler = getattr(self, "_briefing_job_handler", None)
+            if briefing_handler is not None:
+                try:
+                    cancelled = await briefing_handler.shutdown()
+                    if cancelled:
+                        self.loguru_logger.info(
+                            f"Cancelled {cancelled} in-flight scheduled briefing "
+                            "generation(s)"
+                        )
+                except Exception as e:
+                    self.loguru_logger.error(
+                        f"Error stopping scheduled briefing generations: {e}"
+                    )
+
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.
             try:
@@ -8707,12 +14642,8 @@ class TldwCli(
                     f"Error disconnecting local MCP client sessions: {e}"
                 )
 
-            # Cancel any pending workers
-            for worker in self.workers:
-                if not worker.is_finished:
-                    worker.cancel()
-            # Wait briefly for workers to complete
-            await asyncio.sleep(0.1)
+            # Cancel any pending workers and wait for them, bounded.
+            await self._cancel_and_settle_workers("unmount")
 
             # Stop media cleanup timer
             if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
@@ -8824,18 +14755,35 @@ class TldwCli(
 
                     # Run in background to avoid blocking
                     self.run_worker(kill_afplay_processes, name="kill_afplay")
-            import asyncio
-
-            # Shutdown thread pool executors
-            try:
-                # Get the default executor if it exists
-                loop = asyncio.get_event_loop()
-                if hasattr(loop, "_default_executor") and loop._default_executor:
-                    self.loguru_logger.info("Shutting down default executor")
-                    loop._default_executor.shutdown(wait=False)
-                    loop._default_executor = None
-            except Exception as e:
-                self.loguru_logger.error(f"Error shutting down executor: {e}")
+            # task-19561: this used to reach into `loop._default_executor`,
+            # call `shutdown(wait=False)` and then set the private attribute
+            # to `None`. Nulling it is what made the situation worse, not
+            # better: `asyncio.run`'s `Runner.close()` ends with `await
+            # loop.shutdown_default_executor(THREAD_JOIN_TIMEOUT)`, which
+            # JOINS the worker threads while the loop is still alive. With
+            # `_default_executor` set to `None` that coroutine returns at its
+            # second line, and the very threads this block was trying to
+            # hurry along were instead left for `threading._shutdown()` to
+            # join with no bound at all. `run_worker(..., thread=True)` runs
+            # on that same default executor (Textual's `Worker._run_threaded`
+            # ends in `loop.run_in_executor(None, ...)`), so this is not a
+            # corner case.
+            #
+            # Precise about the other half, because it is easy to overclaim:
+            # `shutdown_default_executor` sets `_executor_shutdown_called`
+            # BEFORE its `if self._default_executor is None: return`, so the
+            # "a stray late `run_in_executor` raises" fence applied at the
+            # merge base too. What nulling actually cost was the join -- plus
+            # a window between this block and `Runner.close()` in which a late
+            # `run_in_executor` would build a brand-new pool (that one IS
+            # real, `BaseEventLoop.run_in_executor` creates one when
+            # `_default_executor` is None and the fence is not yet set).
+            #
+            # Doing nothing here is the fix: the public, bounded shutdown
+            # runs a few milliseconds later, on its own. Verified on CPython
+            # 3.12.11, where `constants.THREAD_JOIN_TIMEOUT` is 300s -- far
+            # looser than the exit watchdog armed at the top of this method,
+            # which is what actually bounds the wait.
 
             # Clean up any lingering subprocess
             for proc in (
@@ -8855,37 +14803,33 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error terminating subprocess: {e}")
 
-            # Force-set daemon flag on ThreadPoolExecutor and AudioPlayer threads
+            # task-19561: a loop that force-set `thread.daemon = True` on
+            # every live `ThreadPoolExecutor*`/`AudioPlayer*` thread used to
+            # sit here. CPython raises `RuntimeError: cannot set daemon
+            # status of active thread` for every one of them, so it changed
+            # nothing and logged an ERROR per thread while doing it. The
+            # "Active non-daemon threads remaining" warning that followed
+            # reported the same threads a moment before the process was
+            # going to wait on them anyway, with no way to act on it.
+            # Both are gone. What replaces them is the exit watchdog armed
+            # at the top of this method: it names the threads still alive
+            # at the moment the wait actually becomes a hang, and ends the
+            # process rather than merely describing it.
+
+            # Threads that expose a cooperative stop() still get asked --
+            # that half was never dead code.
             for thread in threading.enumerate():
-                if thread.name.startswith(("ThreadPoolExecutor", "AudioPlayer")):
+                if thread is threading.main_thread() or not thread.is_alive():
+                    continue
+                stop = getattr(thread, "stop", None)
+                if callable(stop):
                     try:
-                        thread.daemon = True
-                        self.loguru_logger.info(f"Set daemon flag on {thread.name}")
+                        stop()
+                        self.loguru_logger.info(f"Stopped thread: {thread.name}")
                     except Exception as e:
                         self.loguru_logger.error(
-                            f"Could not set daemon flag on {thread.name}: {e}"
+                            f"Error stopping thread {thread.name}: {e}"
                         )
-
-            # Log any remaining non-daemon threads
-            active_threads = [
-                t
-                for t in threading.enumerate()
-                if t.is_alive() and not t.daemon and t != threading.main_thread()
-            ]
-            if active_threads:
-                self.loguru_logger.warning(
-                    f"Active non-daemon threads remaining: {[t.name for t in active_threads]}"
-                )
-                # Attempt to stop them if they have stop methods
-                for thread in active_threads:
-                    if hasattr(thread, "stop") and callable(thread.stop):
-                        try:
-                            thread.stop()
-                            self.loguru_logger.info(f"Stopped thread: {thread.name}")
-                        except Exception as e:
-                            self.loguru_logger.error(
-                                f"Error stopping thread {thread.name}: {e}"
-                            )
         except Exception as e:
             self.loguru_logger.error(f"Error checking active threads: {e}")
 
@@ -8894,6 +14838,16 @@ class TldwCli(
         store = getattr(self, "_library_ingest_jobs_store", None)
         if store is not None:
             store.close()
+
+        # Release the writing suite's held SQLite connections (TASK-21125).
+        await self._close_local_writing_service()
+
+        # Release the research store's held SQLite connections (TASK-21127).
+        await self._close_local_research_service()
+
+        # Nothing this app owns is left to ask; a signal from here on has
+        # no orderly path to offer and should unwind the main thread.
+        unregister_running_app(self)
 
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
@@ -8913,23 +14867,6 @@ class TldwCli(
     #
     ########################################################################
     # Notes editor changes are handled inside the Library screen, not dispatched here.
-
-    # Collections/Tags event handlers
-    @on(Message)
-    async def on_collections_tag_message(self, event: Message) -> None:
-        """Handle Collections/Tag events."""
-        from .Event_Handlers import collections_tag_events
-
-        if event.__class__.__name__ == "KeywordRenameEvent":
-            await collections_tag_events.handle_keyword_rename(self, event)
-        elif event.__class__.__name__ == "KeywordMergeEvent":
-            await collections_tag_events.handle_keyword_merge(self, event)
-        elif event.__class__.__name__ == "KeywordDeleteEvent":
-            await collections_tag_events.handle_keyword_delete(self, event)
-        elif event.__class__.__name__ == "BatchAnalysisStartEvent":
-            from .Event_Handlers import multi_item_review_events
-
-            await multi_item_review_events.handle_batch_analysis_start(self, event)
 
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:
@@ -9210,21 +15147,16 @@ class TldwCli(
         )
         self.push_screen(WorkbenchHelpPanel(state))
 
-    def action_shell_destination(self, index: int | str) -> None:
-        """Navigate to the shell destination at ``index`` (Ctrl+1..9, Ctrl+0 layer).
+    def action_shell_destination(self, destination_id: str) -> None:
+        """Navigate to the shell destination identified by a stable ID.
 
         Args:
-            index: Zero-based destination index. Textual binding action arguments
-                are passed as strings, so this is accepted as either an ``int``
-                (direct calls/tests) or ``str`` (hotkey bindings) and coerced.
+            destination_id: Shell destination ID from the Textual binding.
         """
         try:
-            idx = int(index)
-        except (ValueError, TypeError):
+            destination = get_shell_destination(destination_id)
+        except KeyError:
             return
-        if idx < 0 or idx >= len(SHELL_DESTINATION_ORDER):
-            return
-        destination = SHELL_DESTINATION_ORDER[idx]
         self.post_message(NavigateToScreen(destination.primary_route))
 
     async def action_focus_next_workbench_pane(self) -> None:
@@ -9241,80 +15173,141 @@ class TldwCli(
         )
 
     def action_quit(self) -> None:
-        """Handle application quit - save persistent caches before exiting."""
-        loguru_logger.info("Application quit initiated")
+        """Dispatch one guarded asynchronous pre-quit confirmation worker."""
 
-        # Set flag to prevent new operations
-        self._shutting_down = True
-
-        # Force stop any playing audio and cleanup
-        if hasattr(self, "audio_player"):
-            try:
-                import asyncio
-
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Create cleanup tasks
-                    async def cleanup_audio():
-                        try:
-                            await asyncio.wait_for(
-                                self.audio_player.stop(), timeout=0.5
-                            )
-                        except asyncio.TimeoutError:
-                            loguru_logger.warning("Audio stop timed out")
-                        try:
-                            await asyncio.wait_for(
-                                self.audio_player.cleanup(), timeout=0.5
-                            )
-                        except asyncio.TimeoutError:
-                            loguru_logger.warning("Audio cleanup timed out")
-
-                    # Schedule cleanup
-                    asyncio.create_task(cleanup_audio())
-                else:
-                    # Synchronous cleanup if no event loop
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(self.audio_player.cleanup())
-                    loop.close()
-                loguru_logger.info("Audio player stopped and cleaned up")
-            except Exception as e:
-                loguru_logger.error(f"Error stopping audio during quit: {e}")
-
-        # Cancel media cleanup timer if it exists
-        if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
-            self._media_cleanup_timer.stop()
-
-        # Note autosave is owned by the Library notes editor; no legacy quit-save path remains.
-
-        # Try to save caches but don't let it block quitting
+        if self._quit_in_progress:
+            return
+        self._quit_in_progress = True
+        quit_flow = self._confirm_and_quit()
         try:
-            # Import with timeout protection
-            import threading
+            self.run_worker(
+                quit_flow,
+                group="application-quit",
+                exclusive=True,
+                exit_on_error=False,
+            )
+        except Exception:
+            quit_flow.close()
+            self._quit_in_progress = False
+            loguru_logger.warning(
+                "Application quit worker could not start; staying in the app"
+            )
 
-            def save_caches_with_timeout():
-                # Note: The old cache service is deprecated
-                # The simplified RAG service handles caching internally
-                # and doesn't require explicit save on shutdown
-                loguru_logger.debug(
-                    "Cache saving skipped - handled by simplified RAG service"
+    async def _confirm_and_quit(self) -> None:
+        """Confirm the active screen, then execute one approved cleanup pass."""
+
+        loguru_logger.info("Application quit initiated")
+        try:
+            current_screen = self.screen
+            confirm_quit = getattr(current_screen, "confirm_quit", None)
+            if callable(confirm_quit):
+                decision = confirm_quit()
+                if inspect.isawaitable(decision):
+                    decision = await decision
+                if decision is False:
+                    self._quit_in_progress = False
+                    return
+        except Exception:
+            loguru_logger.warning("Pre-quit confirmation failed; staying in the app")
+            self._quit_in_progress = False
+            try:
+                self.notify(
+                    "Couldn't confirm quitting; staying in Chatbook.",
+                    severity="warning",
                 )
+            except Exception:
+                pass
+            return
 
-            # Run cache saving in a separate thread with timeout
-            save_thread = threading.Thread(target=save_caches_with_timeout)
-            save_thread.daemon = True  # Don't let this thread prevent app exit
+        try:
+            prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
+            if callable(prepare_for_quit):
+                preparation = prepare_for_quit()
+                if inspect.isawaitable(preparation):
+                    await preparation
+        except Exception:
+            loguru_logger.warning("Pre-quit shutdown guard failed; staying in the app")
+            self._quit_in_progress = False
+            try:
+                self.notify(
+                    "Couldn't prepare a safe shutdown; staying in Chatbook.",
+                    severity="warning",
+                )
+            except Exception:
+                pass
+            return
+
+        self._shutting_down = True
+        await self._run_approved_quit_cleanup()
+
+    async def _run_approved_quit_cleanup(self) -> None:
+        """Preserve quit ordering without blocking the Textual event loop."""
+
+        try:
+            await self._cleanup_audio_for_quit()
+            media_timer = getattr(self, "_media_cleanup_timer", None)
+            if media_timer is not None:
+                try:
+                    media_timer.stop()
+                except Exception:
+                    loguru_logger.warning(
+                        "Media cleanup timer could not stop during quit"
+                    )
+            try:
+                await asyncio.to_thread(self._run_blocking_quit_persistence)
+            except Exception:
+                loguru_logger.warning("Blocking quit persistence failed")
+        finally:
+            self.exit()
+
+    async def _cleanup_audio_for_quit(self) -> None:
+        """Stop and release app-owned audio before the final exit."""
+
+        audio_player = getattr(self, "audio_player", None)
+        if audio_player is None:
+            return
+        try:
+            await asyncio.wait_for(audio_player.stop(), timeout=0.5)
+        except asyncio.TimeoutError:
+            loguru_logger.warning("Audio stop timed out")
+        except Exception:
+            loguru_logger.warning("Audio stop failed during quit")
+        try:
+            await asyncio.wait_for(audio_player.cleanup(), timeout=0.5)
+        except asyncio.TimeoutError:
+            loguru_logger.warning("Audio cleanup timed out")
+        except Exception:
+            loguru_logger.warning("Audio cleanup failed during quit")
+
+    @staticmethod
+    def _save_shutdown_caches_with_timeout() -> None:
+        """Retain the existing bounded cache-save compatibility pass."""
+
+        loguru_logger.debug("Cache saving skipped - handled by simplified RAG service")
+
+    def _run_blocking_quit_persistence(self) -> None:
+        """Run timed joins and configuration persistence off the app loop."""
+
+        try:
+            save_thread = threading.Thread(
+                target=self._save_shutdown_caches_with_timeout,
+                name="chatbook-quit-cache-save",
+                daemon=True,
+            )
             save_thread.start()
-            save_thread.join(timeout=2.0)  # Wait max 2 seconds
-
+            save_thread.join(timeout=2.0)
             if save_thread.is_alive():
                 loguru_logger.warning("Cache save timed out - proceeding with quit")
-        except Exception as e:
-            loguru_logger.error(f"Error in quit handler: {e}")
+        except Exception:
+            loguru_logger.warning("Error in quit cache handler")
 
-        if not persist_cli_config_for_shutdown():
-            loguru_logger.warning("Configuration shutdown persistence failed")
-
-        # Always call the parent quit method
-        self.exit()
+        try:
+            persisted = persist_cli_config_for_shutdown()
+        except Exception:
+            loguru_logger.warning("Configuration shutdown persistence raised an error")
+        else:
+            if not persisted:
+                loguru_logger.warning("Configuration shutdown persistence failed")
 
     ########################################################
     # --- End of Watchers and Helper Methods ---
@@ -9351,8 +15344,295 @@ def _is_source_tree(package_root: Path) -> bool:
     return (package_root.parent / "pyproject.toml").is_file()
 
 
+#: A class-level ``BUNDLED_CSS`` / ``BUNDLED_SCREEN_CSS`` *assignment*, which is
+#: what makes a module an input to the generated stylesheets. Anchored on the
+#: assignment rather than matching the bare name anywhere in the file: four
+#: package modules -- including this one, via ``_generated_css_is_stale``'s own
+#: docstring -- discuss the marker while declaring nothing, and a plain substring
+#: test made every edit to any of them rebuild the CSS on the next boot, quietly
+#: rewriting the committed bundle's ``Generated:`` timestamp. A module that has
+#: just *gained* a declaration is still caught: a declaration is an assignment.
+_BUNDLED_CSS_DECLARATION_RE = re.compile(r"^\s*BUNDLED_(?:SCREEN_)?CSS\s*[:=]", re.M)
+
+
+def _load_css_build_manifest(css_dir: Path) -> dict[str, list] | None:
+    """Load the builder's content manifest, or ``None`` when absent/invalid.
+
+    The manifest is written by ``build_css.write_build_manifest`` beside the
+    generated sheets; see TASK-18910. Each entry is ``[sha256, mtime_at_build]``.
+    Any read/parse/shape problem returns ``None`` so the caller falls back to
+    the legacy mtime rule -- a broken manifest costs one spurious rebuild,
+    never a missed one.
+    """
+    try:
+        import json
+
+        with open(css_dir / build_css.BUILD_MANIFEST_FILENAME, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not data:
+        # An empty manifest is treated as absent: the max() over its entries
+        # would raise, and an empty build is not a state the builder can
+        # produce (it always records at least the CSS_MODULES that exist).
+        return None
+    manifest: dict[str, list] = {}
+    for key, value in data.items():
+        if (
+            not isinstance(key, str)
+            or not isinstance(value, list)
+            or len(value) != 2
+            or not isinstance(value[0], str)
+            or not isinstance(value[1], (int, float))
+        ):
+            return None  # unknown shape: treat as absent
+        manifest[key] = value
+    return manifest
+
+
+def _save_css_build_manifest(css_dir: Path, manifest: dict[str, list]) -> None:
+    """Persist an updated manifest (mtime refreshes after hash confirmation).
+
+    Best-effort: a write failure costs one re-hash on the next boot, never a
+    missed or spurious rebuild -- the in-memory decision has already been
+    made with the correct data.
+    """
+    try:
+        import json
+
+        (css_dir / build_css.BUILD_MANIFEST_FILENAME).write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
+    """Return whether the generated stylesheets need rebuilding, and why.
+
+    Source-tree boots rebuild the CSS when its inputs have moved on. Before
+    TASK-15450 every input was a ``.tcss`` module, so checking those mtimes was
+    exhaustive. Four of the five generated sheets are now built from class-level
+    ``BUNDLED_CSS`` / ``BUNDLED_SCREEN_CSS`` literals in Python modules, so a
+    widget-CSS edit would otherwise have *no effect* until someone remembered to
+    run ``build_css.py`` by hand -- where editing ``DEFAULT_CSS`` used to take
+    effect on the very next run, because Textual read it straight off the class.
+
+    A Python module counts as an input only if it is *newer than the build* and
+    actually mentions the marker. Both halves matter. Treating every ``.py`` as
+    an input was tried first and is wrong: editing ``app.py`` -- or any of the
+    ~1,640 files in this package -- would then re-run the build subprocess on
+    every single developer boot. Reading files to find the marker is likewise
+    only affordable because the mtime test has already narrowed the set, which is
+    normally empty. Checking the marker rather than the list of modules the
+    sheets currently name is what catches a module that has just *gained* a
+    ``BUNDLED_CSS`` declaration -- exactly the file a "nothing happened" bug
+    report starts from.
+
+    Cost: one ``os.walk`` of the package, ~0.3 ms warm for ~1,640 files, plus a
+    read of each file changed since the last build (normally none). It runs only
+    under ``_is_source_tree`` -- for developers, never for a wheel install -- and
+    never on the per-frame or per-keystroke paths.
+
+    Known gap: *deleting* a module that carried ``BUNDLED_CSS`` leaves no newer
+    file behind, so it is not detected here. The CSS bundle guard in CI covers
+    that; this check is a dev-loop convenience, not the authority.
+
+    Args:
+        package_root: The installed ``tldw_chatbook`` package directory.
+
+    Returns:
+        ``(stale, reason)``; ``reason`` is a log-ready phrase, empty when fresh.
+    """
+    css_dir = package_root / "css"
+    generated = [
+        css_dir / "tldw_cli_modular.tcss",
+        css_dir / build_css.WIDGET_DEFAULTS_SELF_FILENAME,
+        css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
+    ]
+    missing = [path.name for path in generated if not path.is_file()]
+    if missing:
+        return True, f"generated stylesheet(s) not found: {', '.join(missing)}"
+
+    # Compare against the OLDEST generated sheet: any one of them being behind
+    # its sources is enough to require a rebuild.
+    oldest = min(path.stat().st_mtime for path in generated)
+
+    # TASK-18910: when the builder's content manifest is present it is
+    # AUTHORITATIVE. Each recorded input is mtime-compared first and hashed
+    # when its mtime differs from the recorded build time IN EITHER
+    # DIRECTION -- which removes the false positives (branch switch /
+    # ``git checkout`` / stash pop rewrite mtimes without changing content;
+    # each cost a ~0.7 s synchronous rebuild) while still catching content
+    # restored with a preserved or backdated timestamp (``cp -p``,
+    # rsync -a), which a "newer than the build" test alone would treat as
+    # unchanged. It also closes a masking gap the pure-mtime rule had: a
+    # pull that brings regenerated sheets (new sheet mtimes) together with
+    # a source edit made without a local rebuild never fired, because the
+    # edited source was no longer "newer than the build". Inputs whose
+    # hash confirms unchanged content have their recorded mtime refreshed
+    # so a one-time mtime move does not re-hash on every later boot. No
+    # manifest (first boot after the change, or a wheel install) keeps the
+    # legacy mtime rule; the manifest self-heals on the next rebuild.
+    manifest = _load_css_build_manifest(css_dir)
+    if manifest is not None:
+        import hashlib
+
+        from .Utils.path_validation import validate_path
+
+        def _sha256(path: Path) -> str | None:
+            digest = hashlib.sha256()
+            try:
+                with open(path, "rb") as handle:
+                    for chunk in iter(
+                        lambda: handle.read(build_css.HASH_CHUNK_SIZE_BYTES), b""
+                    ):
+                        digest.update(chunk)
+            except OSError:
+                return None
+            return digest.hexdigest()
+
+        # A "newer than the build" reference for the declaration scan below:
+        # the newest mtime recorded in the manifest (any input mtime past it
+        # is one the build never saw, whether or not it is in the manifest).
+        newest_recorded = max(entry[1] for entry in manifest.values())
+
+        manifest_dirty = False
+        seen = set()
+        for key, entry in sorted(manifest.items()):
+            recorded_hash, recorded_mtime = entry[0], entry[1]
+            # Manifest keys are joined into filesystem paths; a hand-edited
+            # manifest must not be able to point the stat/hash reads outside
+            # the package (Qodo security finding on PR #1831).
+            try:
+                source = validate_path(key, package_root, allow_hidden=True)
+            except ValueError:
+                return True, f"{key} in the build manifest escapes the package"
+            try:
+                source_mtime = source.stat().st_mtime
+            except OSError:
+                # Deleted input: the sheets still carry its rules, so a
+                # rebuild is required (the pre-manifest code could not see
+                # deletions at all -- see its "Known gap" note).
+                return True, f"{key} (recorded in the build manifest) was deleted"
+            seen.add(key)
+            if source_mtime == recorded_mtime:
+                continue  # unchanged since the build; skip hashing
+            if _sha256(source) != recorded_hash:
+                return True, f"{key} changed since the build"
+            # Hash-confirmed unchanged: refresh the recorded mtime so this
+            # mtime move is not re-hashed on every subsequent boot.
+            manifest[key] = [recorded_hash, source_mtime]
+            manifest_dirty = True
+
+        if manifest_dirty:
+            _save_css_build_manifest(css_dir, manifest)
+
+        # A module that has GAINED a BUNDLED_CSS declaration since the build
+        # is not in the manifest; catch it by scanning declarations in any
+        # .py newer than the newest recorded build input. A backdated NEW
+        # carrier cannot be distinguished from pre-build files by mtime, so
+        # the scan also admits files older than the build when they were
+        # not part of the recorded set and sit in a CSS-declaring
+        # neighbourhood -- bounded by the manifest's own key set: any .py
+        # NOT in the manifest is either new or predates the manifest, and
+        # reading it once is cheap relative to a rebuild.
+        skip = {"__pycache__", *widget_css.EXCLUDED_DIRS}
+        for dirpath, dirnames, filenames in os.walk(package_root):
+            dirnames[:] = [name for name in dirnames if name not in skip]
+            for filename in filenames:
+                if not filename.endswith(".py"):
+                    continue
+                source = os.path.join(dirpath, filename)
+                key = Path(source).relative_to(package_root).as_posix()
+                if key in seen:
+                    continue  # already verified above
+                try:
+                    if os.stat(source).st_mtime <= newest_recorded:
+                        continue
+                    with open(source, "r", encoding="utf-8", errors="ignore") as handle:
+                        text = handle.read()
+                except OSError:
+                    continue
+                if _BUNDLED_CSS_DECLARATION_RE.search(text):
+                    return (
+                        True,
+                        f"{filename} gained a BUNDLED_CSS declaration since the build",
+                    )
+        return False, ""
+
+    # Legacy path (no manifest): the pre-TASK-18910 mtime rule, unchanged.
+    for subdir in ("core", "layout", "components", "features", "utilities"):
+        subdir_path = css_dir / subdir
+        if not subdir_path.is_dir():
+            continue
+        for module in subdir_path.glob("*.tcss"):
+            if module.stat().st_mtime > oldest:
+                return True, f"CSS module {module.name} is newer than the build"
+
+    skip = {"__pycache__", *widget_css.EXCLUDED_DIRS}
+    for dirpath, dirnames, filenames in os.walk(package_root):
+        # Match the builder's own view of what an input is: `iter_blocks` skips
+        # these directories, so a vendored file mentioning the marker must not
+        # trigger a rebuild that would then ignore it.
+        dirnames[:] = [name for name in dirnames if name not in skip]
+        for filename in filenames:
+            if not filename.endswith(".py"):
+                continue
+            source = os.path.join(dirpath, filename)
+            try:
+                if os.stat(source).st_mtime <= oldest:
+                    continue
+                with open(source, "r", encoding="utf-8", errors="ignore") as handle:
+                    text = handle.read()
+            except OSError:
+                continue  # vanished mid-walk; not our problem to report
+            if _BUNDLED_CSS_DECLARATION_RE.search(text):
+                return True, f"{filename} carries widget CSS newer than the build"
+
+    return False, ""
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability)."""
+    parser = argparse.ArgumentParser(
+        description="tldw chatbook - A Textual TUI for chatting with LLMs",
+        prog="tldw-cli",
+    )
+    parser.add_argument(
+        "--serve", action="store_true", help="Run the application as a web server"
+    )
+    parser.add_argument(
+        "--host", type=str, help="Host address for web server (default: localhost)"
+    )
+    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
+    parser.add_argument("--web-title", type=str, help="Title for the web page")
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug mode for web server"
+    )
+    parser.add_argument(
+        "--focus",
+        action="store_true",
+        help="Start chrome-free in the Console (hides nav bar and workbench header)",
+    )
+    return parser
+
+
 # --- Main execution block ---
 if __name__ == "__main__":
+    # Record the launch directory first, before anything can chdir -- the
+    # `python -m tldw_chatbook.app` path does not route through
+    # main_cli_runner, so it needs its own capture (set-once; harmless if
+    # already recorded). See workspace_context_note for why this matters.
+    from tldw_chatbook.Tools.workspace_file_roots import (
+        set_launch_cwd as _set_launch_cwd,
+    )
+
+    _set_launch_cwd()
+
     # Initialize logging first
     early_logging_app = initialize_early_logging()
 
@@ -9401,35 +15681,13 @@ if __name__ == "__main__":
             css_dir.mkdir(exist_ok=True)
 
             # Check if modular CSS needs to be built
-            modular_css_path = css_dir / "tldw_cli_modular.tcss"
             build_script_path = css_dir / "build_css.py"
 
-            # Check if any module is newer than the built file
-            should_rebuild = False
-            if not modular_css_path.exists():
-                should_rebuild = True
-                logging.info("Modular CSS file not found, will build it")
-            elif build_script_path.exists():
-                # Check if any module file is newer than the built file
-                modular_mtime = modular_css_path.stat().st_mtime
-                for subdir in [
-                    "core",
-                    "layout",
-                    "components",
-                    "features",
-                    "utilities",
-                ]:
-                    subdir_path = css_dir / subdir
-                    if subdir_path.exists():
-                        for css_file in subdir_path.glob("*.tcss"):
-                            if css_file.stat().st_mtime > modular_mtime:
-                                should_rebuild = True
-                                logging.info(
-                                    f"Module {css_file.name} is newer than built CSS, rebuilding"
-                                )
-                                break
-                    if should_rebuild:
-                        break
+            # Check whether any input -- a .tcss module or a Python module
+            # carrying BUNDLED_CSS -- has moved on since the last build.
+            should_rebuild, reason = _generated_css_is_stale(package_root)
+            if should_rebuild:
+                logging.info("Generated CSS is stale during module entry; rebuilding")
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")
@@ -9535,34 +15793,68 @@ if __name__ == "__main__":
 
     warm_up_image_protocol()
 
+    # argparse terminates here on --help (exit 0) and invalid arguments
+    # (exit 2), same as the console-script path -- no guard: swallowing
+    # SystemExit would print usage and then launch the TUI anyway.
+    _main_args = _build_arg_parser().parse_args()
+
+    # task-18908: --serve historically only worked via the console-script
+    # entry; this __main__ path parsed the flags and then ignored them,
+    # silently binding the config default port. Route them exactly like
+    # main_cli_runner does.
+    if _main_args.serve:
+        from .Web_Server.serve import check_web_server_available, run_web_server
+
+        if not check_web_server_available():
+            loguru_logger.error("Web server feature is not available!")
+            loguru_logger.error("Install with: pip install tldw_chatbook[web]")
+            raise SystemExit(1)
+
+        loguru_logger.info("Starting tldw_chatbook in web server mode")
+        run_web_server(
+            host=_main_args.host,
+            port=_main_args.port,
+            title=_main_args.web_title,
+            debug=_main_args.debug,
+        )
+        raise SystemExit(0)
+
+    # task-19561: `python -m tldw_chatbook.app` installed no signal handlers
+    # at all, so SIGTERM took the process out with the kernel default -- even
+    # more abrupt than the console script's `os._exit(0)`. Both entry points
+    # now share one bounded, graceful mechanism.
+    install_termination_handlers()
+
+    # task-21100: pending ChaChaNotes migrations replay inside TldwCli's
+    # constructor, before anything can paint -- the terminal is the only
+    # surface that exists at this phase, so say what the pause is there.
+    from tldw_chatbook.Utils.db_upgrade_notice import (
+        print_db_upgrade_notice_if_pending,
+    )
+
+    print_db_upgrade_notice_if_pending()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
+    app_instance._cli_focus_override = bool(_main_args.focus)
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:
         app_instance.run()
     except KeyboardInterrupt:
         loguru_logger.info("--- KeyboardInterrupt received ---")
-        # Force cleanup inline
-        import threading
-        import concurrent.futures
-
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
     except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
         # This might run even if app exits early internally in run()
         loguru_logger.info("--- FINALLY block after app.run() ---")
+        # Everything from here is interpreter teardown -- `asyncio.run`'s
+        # executor join, `threading._shutdown()`, `atexit`. None of it is
+        # interruptible from Python, so this is the last point a bound can
+        # be placed on it. Idempotent: a SIGTERM-armed watchdog already
+        # holds a tighter deadline and this call leaves it alone.
+        arm_exit_watchdog(reason="interpreter exit")
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 
@@ -9595,11 +15887,13 @@ def get_app():
     package_root = Path(__file__).parent
     if _is_source_tree(package_root):
         css_dir = package_root / "css"
-        modular_css_path = css_dir / "tldw_cli_modular.tcss"
         build_script_path = css_dir / "build_css.py"
 
-        if not modular_css_path.exists() and build_script_path.exists():
-            print("Building modular CSS...")
+        # Same staleness rule as the main entry points: a missing generated
+        # sheet, or any input newer than the build (TASK-15450).
+        stale, reason = _generated_css_is_stale(package_root)
+        if stale and build_script_path.exists():
+            print(f"Building modular CSS: {reason}")
             import subprocess
 
             subprocess.run([sys.executable, str(build_script_path)], check=True)
@@ -9613,6 +15907,14 @@ def main_cli_runner():
     This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
     """
+    # Record the launch directory at the earliest point in the process, before
+    # anything can chdir. The workspace-context note appended to agent prompts
+    # expresses workspace roots relative to this (never as absolute host
+    # paths). Set-once: harmless if another entry path already recorded it.
+    from tldw_chatbook.Tools.workspace_file_roots import set_launch_cwd
+
+    set_launch_cwd()
+
     # Configure logging to suppress verbose debug messages early
     import logging
     import os
@@ -9637,64 +15939,17 @@ def main_cli_runner():
     # Set environment variable to suppress FFmpeg output
     os.environ["TORCHAUDIO_LOG_LEVEL"] = "ERROR"
 
-    # Set up signal handlers for clean exit
-    import signal
-    import os
-    import atexit
-
-    def force_cleanup():
-        """Force cleanup on exit"""
-        import threading
-        import concurrent.futures
-
-        # Force kill any Higgs-related threads first
-        for thread in threading.enumerate():
-            thread_name = thread.name.lower()
-            if any(
-                name in thread_name
-                for name in ["higgs", "boson", "serve_engine", "audio"]
-            ):
-                loguru_logger.warning(f"Force killing thread: {thread.name}")
-                try:
-                    # Mark as daemon to not block exit
-                    thread.daemon = True
-                except Exception:
-                    pass
-
-        # Force daemon all threads
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-
-        # Clear thread pool queues
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
-
-        # Force clear any PyTorch CUDA resources
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-        except Exception:
-            pass
-
-    # Register cleanup
-    atexit.register(force_cleanup)
-
-    def signal_handler(signum, frame):
-        loguru_logger.info(f"Received signal {signum}, forcing clean exit")
-        force_cleanup()
-        os._exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    # task-19561: SIGTERM used to be answered here by `os._exit(0)` from
+    # inside the handler, after an `atexit`-registered `force_cleanup` that
+    # tried to daemonize already-started threads (a `RuntimeError` every
+    # time) and cleared `concurrent.futures.thread._threads_queues` (which
+    # only ever robs `_python_exit` of the sentinels that let idle executor
+    # threads finish). `os._exit` skipped Textual's `on_unmount` entirely --
+    # no database closed, no transaction rolled back, and any row already
+    # flipped to `running` stranded there permanently. The handlers below
+    # run the ordinary shutdown path and keep a hard exit only as the
+    # bounded, last-resort escape. See `Utils/app_shutdown.py`.
+    install_termination_handlers()
 
     # Initialize logging first
     initialize_early_logging()
@@ -9723,35 +15978,13 @@ def main_cli_runner():
             css_dir.mkdir(exist_ok=True)
 
             # Check if modular CSS needs to be built
-            modular_css_path = css_dir / "tldw_cli_modular.tcss"
             build_script_path = css_dir / "build_css.py"
 
-            # Check if any module is newer than the built file
-            should_rebuild = False
-            if not modular_css_path.exists():
-                should_rebuild = True
-                logging.info("Modular CSS file not found, will build it")
-            elif build_script_path.exists():
-                # Check if any module file is newer than the built file
-                modular_mtime = modular_css_path.stat().st_mtime
-                for subdir in [
-                    "core",
-                    "layout",
-                    "components",
-                    "features",
-                    "utilities",
-                ]:
-                    subdir_path = css_dir / subdir
-                    if subdir_path.exists():
-                        for css_file in subdir_path.glob("*.tcss"):
-                            if css_file.stat().st_mtime > modular_mtime:
-                                should_rebuild = True
-                                logging.info(
-                                    f"Module {css_file.name} is newer than built CSS, rebuilding"
-                                )
-                                break
-                    if should_rebuild:
-                        break
+            # Check whether any input -- a .tcss module or a Python module
+            # carrying BUNDLED_CSS -- has moved on since the last build.
+            should_rebuild, reason = _generated_css_is_stale(package_root)
+            if should_rebuild:
+                logging.info("Generated CSS is stale during CLI entry; rebuilding")
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")
@@ -9773,25 +16006,7 @@ def main_cli_runner():
             logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
     # Parse command line arguments
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="tldw chatbook - A Textual TUI for chatting with LLMs",
-        prog="tldw-cli",
-    )
-    parser.add_argument(
-        "--serve", action="store_true", help="Run the application as a web server"
-    )
-    parser.add_argument(
-        "--host", type=str, help="Host address for web server (default: localhost)"
-    )
-    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
-    parser.add_argument("--web-title", type=str, help="Title for the web page")
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode for web server"
-    )
-
-    args = parser.parse_args()
+    args = _build_arg_parser().parse_args()
 
     # If --serve flag is provided, run as web server
     if args.serve:
@@ -9827,34 +16042,31 @@ def main_cli_runner():
 
     warm_up_image_protocol()
 
+    # task-21100: pending ChaChaNotes migrations replay inside TldwCli's
+    # constructor, before anything can paint -- the terminal is the only
+    # surface that exists at this phase, so say what the pause is there.
+    from .Utils.db_upgrade_notice import print_db_upgrade_notice_if_pending
+
+    print_db_upgrade_notice_if_pending()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
+    app_instance._cli_focus_override = bool(args.focus)
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:
         app_instance.run()
     except KeyboardInterrupt:
         loguru_logger.info("--- KeyboardInterrupt received ---")
-        # Force cleanup inline
-        import threading
-        import concurrent.futures
-
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
     except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
         # This might run even if app exits early internally in run()
         loguru_logger.info("--- FINALLY block after app.run() ---")
+        # Bound interpreter teardown (see the identical call in the
+        # `__main__` block for why this is the last placeable bound).
+        arm_exit_watchdog(reason="interpreter exit")
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 

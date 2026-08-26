@@ -67,7 +67,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     #: `SourcesPane._SELECTED_ROW_STYLE` -- see that attribute's docstring.
     _SELECTED_ROW_STYLE = "reverse bold"
 
-    runs = reactive[list[dict[str, Any]]]([], recompose=True)
+    runs = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_run = reactive[dict[str, Any] | None](None)
     #: task-2306. Deliberately NOT `recompose=True`, unlike `runs`: both are
     #: rewritten on every run selection, and a pane recompose rebuilds
@@ -76,7 +76,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     #: would then read as a non-user highlight. They are pushed into the live
     #: detail widgets instead, the same in-place discipline
     #: `_update_selection_highlight` already uses for the table itself.
-    run_items = reactive[list[dict[str, Any]]]([])
+    run_items = reactive[list[dict[str, Any]]](list)
     run_logs = reactive("")
     #: Why the Items table looks the way it does, whenever the rows alone
     #: would mislead (review wave, Important 1 / Minor 2). An empty items
@@ -302,6 +302,16 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
                 # a clean one that merely found nothing.
                 f"{dispositions.get('error', 0)} error"
             )
+            # task-16838: URLs this run never checked because another check
+            # of the same source was already running (a scheduled check
+            # overlapping a Check Now). Conditional, unlike `error`: an
+            # omitted segment always means a true zero -- the counts are
+            # zero-filled at write time and `.get(..., 0)` covers rows from
+            # before the counter existed -- so absence is not ambiguous, and
+            # a rare event does not widen every normal run's line.
+            skipped = dispositions.get("skipped", 0)
+            if skipped:
+                base += f" | {skipped} skipped (check already running)"
         return base
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -499,7 +509,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     def _start_run_poll(self, run: dict[str, Any]) -> None:
         self.run_poll(run)
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="watchlists-runs-poll")
     async def run_poll(self, run: dict[str, Any]) -> None:
         """Poll the selected run while it is running.
 

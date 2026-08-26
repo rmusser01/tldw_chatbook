@@ -32,6 +32,16 @@ Migrate the existing `Tools/web_search_tool.py` onto the catalog as planned (del
 
 Session-scoped, in-memory on `ConsoleChatSession`, claude-code `TodoWrite` semantics. **Decision (user):** do NOT port tldw_server's `notes.tasks.*` system — too heavy for the goal; noted here so the question doesn't get re-asked.
 
+> **Superseded for Console session tasks (TASK-13216, 2026-08-11).** This
+> document preserves the historical `todo_write` phase decision. The governing
+> replacement is
+> `Docs/superpowers/specs/2026-08-11-local-todo-task-api-design.md`: a supplied
+> Console session store registers `todo_create`, `todo_update`, `todo_get`, and
+> `todo_list`; stable session-local IDs and exact expected-version CAS protect
+> atomic mutations, while pure task records and the next-ID high-water mark
+> remain process-memory-only across in-process navigation. Unrelated web, file,
+> Git, shell, and permission content in this re-plan remains unchanged.
+
 ### 2.4 `fs_patch` — PORT
 
 Port tldw_server's `filesystem_diff.py` (~290 lines, self-contained unified-diff applier) into `Tools/patch_tool_impls.py`. `fs_patch` tool: applies a unified diff to workspace files; `mutates` tag; confinement via `resolve_workspace_path` per target file; dry-run/--check mode returns the would-be result without writing.

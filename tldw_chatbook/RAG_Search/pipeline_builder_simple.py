@@ -321,12 +321,29 @@ def _rrf_merge_parallel_results(
 
     The FTS5 source lists (media, conversations, notes) are interleaved
     rank-fairly into a single FTS leg; ``search_semantic`` results form the
-    vector leg. The two legs are fused with Reciprocal Rank Fusion (k=60 by
-    default) and an alpha-weighted blend where alpha weights the vector leg
-    (0 = FTS only, 1 = vector only).
+    vector leg. The two legs are fused with Reciprocal Rank Fusion and an
+    alpha-weighted blend where alpha weights the vector leg (0 = FTS only,
+    1 = vector only).
 
     Alpha precedence: step ``config.alpha`` -> ``hybrid_alpha`` runtime
     param -> ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` -> 0.7.
+
+    k precedence (TASK-4110 review, mirrors alpha's): step
+    ``config.rrf_k`` -> the active profile's ``search.rrf_k`` -> shipped
+    default (``config.DEFAULT_HYBRID_RRF_K``, 5)
+    (``resolve_rrf_k``'s own fallback chain). Before this, ``rrf_k`` had NO
+    profile fallback while ``alpha`` did, so a default change would move
+    this (Chat RAG) hybrid path without moving
+    ``RAGService._fuse_hybrid_results`` (Library hybrid), or vice versa --
+    the two live fusion call sites disagreeing on a value measured on one.
+
+    DISCLOSURE (TASK-4110 Task 5): the shipped ``SearchConfig.rrf_k``
+    default is now 5, measured on the Library hybrid path, and this path
+    picks it up through that profile fallback -- so in practice **this merge
+    now fuses at k=5 too**, without ever having been measured here. That is
+    deliberate (one value, not two silently divergent ones) but it is a
+    carried assumption: TASK-3501, which owns this legacy blend, should
+    unify or consciously diverge the two paths when it lands.
 
     Args:
         func_names: Retrieval function name per results list, same order.
@@ -350,6 +367,21 @@ def _rrf_merge_parallel_results(
     def result_key(result: SearchResult):
         return (result.source, result.id)
 
+    # EXEMPT from TASK-15700's form tiering, verified rather than assumed.
+    # `RAGService._keyword_search` had to tier this same round robin because
+    # its sub-legs can return rows from two different MATCH forms in one
+    # query (a fallback construction widens a zero-row sub-leg), and a
+    # fallback row taking leg rank 1 from an untouched primary row cost the
+    # vector-blind fixture its hybrid rescue. This path's FTS legs are
+    # `search_media_fts5` / `search_conversations_fts5` /
+    # `search_notes_fts5`, which call the DB-level searches
+    # (`media_db.search_media_db`, `db.search_conversations_by_content`,
+    # `db.search_notes`). None of them reads
+    # `SearchConfig.fts_match_construction`, none runs
+    # `_fts5_match_expressions` / `_fts_rows_with_fallback`, and none stamps
+    # `fts_match` -- there is no second form for these lists to carry and so
+    # nothing to partition. The unification of this legacy blend with the
+    # engine's is TASK-3501's; do not refactor it here speculatively.
     fts_leg = interleave_rankings(fts_lists, key=result_key)
     vector_leg = interleave_rankings(vector_lists, key=result_key)
 

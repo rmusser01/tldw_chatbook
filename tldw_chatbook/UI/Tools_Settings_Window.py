@@ -11,14 +11,15 @@
 # migrate surviving behavior to the Settings screen before this module is deleted.
 #
 # Imports
-from typing import TYPE_CHECKING, Optional, List, Dict, NamedTuple
+from typing import TYPE_CHECKING, Any, Optional, List, Dict, NamedTuple
 import asyncio
+import base64
 import io
 import json
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from functools import partial
 from pathlib import Path
 
@@ -46,6 +47,11 @@ from textual.widgets import (
 )
 from textual.message import Message
 from textual.worker import NoActiveWorker, get_current_worker
+
+# task-3240: WEB_DEEP_SEARCH_GATE_KEY relocated to its actual runtime
+# consumer (Agents/local_tool_provider.py); re-exported here so this
+# (deprecated) window's own code and tests keep working unchanged.
+from ..Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY  # noqa: F401
 from textual.widgets import Markdown
 from textual import on
 
@@ -72,6 +78,7 @@ from tldw_chatbook.config import (
     get_subscriptions_db_path,
     get_user_data_dir,
     coerce_bool_setting,
+    load_console_library_migration_seed,
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
@@ -131,12 +138,60 @@ SETTINGS_DATABASES = (
 #: in the SAME [tools] table the GateableTool switches write, so the Tool
 #: Settings view gets it its own row plus explicit save/reset handling
 #: instead of a GateableTool table entry.
-WEB_DEEP_SEARCH_GATE_KEY = "web_deep_search_enabled"
+#:
+#: task-3240: WEB_DEEP_SEARCH_GATE_KEY itself relocated to
+#: Agents/local_tool_provider.py (its actual runtime consumer); the
+#: back-compat re-export now lives in the top-of-file import block
+#: (Qodo PR #1453 — three-group import ordering).
+
 WEB_DEEP_SEARCH_TOOL_NAME = "web_deep_search"
 
 #: TASK-2775: the About text's canonical home is Utils/about_text (rendered by
 #: the F9 Settings screen's About category); re-exported here for back-compat.
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN  # noqa: E402,F401
+
+
+def _character_backup_json_default(value: Any) -> str:
+    """json.dumps fallback for the row types SQLite hands back (task-15769).
+
+    `list_character_cards` rows carry `created_at`/`last_modified` as
+    ``datetime`` objects, which crashed the whole backup dump with
+    ``TypeError: Object of type datetime is not JSON serializable`` even for
+    image-free cards. Anything else unexpected still raises, so a new
+    non-serializable column can never silently ship garbage.
+    """
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _serialize_character_cards_for_backup(characters: List[Dict[str, Any]]) -> str:
+    """Serialize character-card rows into the JSON backup dump (task-15769).
+
+    The raw `image` BLOB (``bytes``) is replaced by a plain-base64
+    ``image_base64`` string -- the same compatibility shape
+    `Chat_Functions.load_characters` produces, and deliberately NOT the
+    data-URI form `export_character_card_to_json` embeds, because the import
+    chain (`parse_v1_card` -> `import_and_save_character_from_file*`)
+    b64decodes the raw string, so a prefixed value would not round-trip.
+    """
+    serializable: List[Dict[str, Any]] = []
+    for card in characters:
+        card = dict(card)
+        image = card.pop("image", None)
+        if isinstance(image, (bytes, bytearray, memoryview)):
+            card["image_base64"] = base64.b64encode(bytes(image)).decode("ascii")
+        elif image is not None:
+            # Not a BLOB (unexpected but conceivable via TEXT affinity);
+            # keep the value rather than silently dropping it.
+            card["image"] = image
+        serializable.append(card)
+    return json.dumps(
+        serializable,
+        indent=2,
+        ensure_ascii=False,
+        default=_character_backup_json_default,
+    )
 
 
 class ToolsSettingsWindow(Container):
@@ -987,7 +1042,7 @@ class ToolsSettingsWindow(Container):
 
                     yield Label("Model:", classes="settings-label")
                     yield Input(
-                        value=character_config.get("model", "claude-3-haiku-20240307"),
+                        value=character_config.get("model", "claude-haiku-4-5"),
                         id="general-character-model",
                         classes="settings-input",
                         placeholder="e.g., claude-3-haiku, gpt-3.5-turbo",
@@ -2399,7 +2454,7 @@ class ToolsSettingsWindow(Container):
         widgets.append(Label("Default Model:", classes="form-label"))
         widgets.append(
             Input(
-                value=char_config.get("model", "claude-3-haiku-20240307"),
+                value=char_config.get("model", "claude-haiku-4-5"),
                 id="config-character-model",
                 placeholder="Enter model name",
             )
@@ -2468,83 +2523,11 @@ class ToolsSettingsWindow(Container):
         yield Container(*widgets, classes="config-form")
 
     def _compose_notes_config_form(self) -> ComposeResult:
-        """Form for notes configuration."""
-        notes_config = self.config_data.get("notes", {})
-
-        conflict_options = [
-            ("Newer Wins", "newer_wins"),
-            ("Ask User", "ask"),
-            ("Disk Wins", "disk_wins"),
-            ("Database Wins", "db_wins"),
-        ]
-
-        sync_direction_options = [
-            ("Bidirectional", "bidirectional"),
-            ("Disk to Database", "disk_to_db"),
-            ("Database to Disk", "db_to_disk"),
-        ]
-
-        widgets = []
-
-        widgets.append(
-            Static("Notes Synchronization Settings", classes="form-section-title")
+        """Point legacy settings users to the lasting-sync Library flow."""
+        yield Container(
+            Static("Notes folder sync is managed from Library → Notes → Add from files…", classes="form-section-title"),
+            classes="config-form",
         )
-
-        widgets.append(Label("Sync Directory:", classes="form-label"))
-        widgets.append(
-            Input(
-                value=notes_config.get("sync_directory", "~/Documents/Notes"),
-                id="config-notes-sync-directory",
-                placeholder="~/Documents/Notes",
-            )
-        )
-
-        widgets.append(
-            Checkbox(
-                "Enable Auto Sync on Startup",
-                value=notes_config.get("auto_sync_enabled", False),
-                id="config-notes-auto-sync",
-            )
-        )
-
-        widgets.append(
-            Checkbox(
-                "Sync on Close",
-                value=notes_config.get("sync_on_close", False),
-                id="config-notes-sync-on-close",
-            )
-        )
-
-        widgets.append(Label("Conflict Resolution:", classes="form-label"))
-        widgets.append(
-            Select(
-                options=conflict_options,
-                value=notes_config.get("conflict_resolution", "newer_wins"),
-                id="config-notes-conflict-resolution",
-            )
-        )
-
-        widgets.append(Label("Sync Direction:", classes="form-label"))
-        widgets.append(
-            Select(
-                options=sync_direction_options,
-                value=notes_config.get("sync_direction", "bidirectional"),
-                id="config-notes-sync-direction",
-            )
-        )
-
-        # Action buttons
-        widgets.append(
-            Container(
-                Button(
-                    "Save Notes Config", id="save-notes-config-form", variant="primary"
-                ),
-                Button("Reset Section", id="reset-notes-config-form"),
-                classes="form-actions",
-            )
-        )
-
-        yield Container(*widgets, classes="config-form")
 
     def _compose_tts_config_form(self) -> ComposeResult:
         """Form for TTS configuration."""
@@ -4059,7 +4042,7 @@ class ToolsSettingsWindow(Container):
             ).value = default_char_provider
             self.query_one(
                 "#general-character-model", Input
-            ).value = "claude-3-haiku-20240307"
+            ).value = "claude-haiku-4-5"
             self.query_one("#general-character-temperature", Input).value = "0.8"
 
             # Reset Encryption
@@ -4111,7 +4094,7 @@ class ToolsSettingsWindow(Container):
                     streaming=False,
                 ),
                 thread=True,
-                exclusive=True,
+                exclusive=True, group="tools-settings-test-chat-connection",
             )
             test_response = extract_response_content(raw)
 
@@ -4248,7 +4231,7 @@ class ToolsSettingsWindow(Container):
                             streaming=False,
                         ),
                         thread=True,
-                        exclusive=True,
+                        exclusive=True, group="tools-settings-test-all-api-keys",
                     )
 
                     if extract_response_content(raw):
@@ -4794,7 +4777,7 @@ class ToolsSettingsWindow(Container):
             self.query_one("#config-anthropic-api-key", Input).value = "<API_KEY_HERE>"
             self.query_one(
                 "#config-anthropic-model", Input
-            ).value = "claude-3-haiku-20240307"
+            ).value = "claude-sonnet-5"
             self.query_one("#config-anthropic-temperature", Input).value = "0.7"
 
             self.app_instance.notify("API configuration reset to defaults!")
@@ -5590,7 +5573,7 @@ class ToolsSettingsWindow(Container):
             self.query_one("#config-character-provider", Select).value = "Anthropic"
             self.query_one(
                 "#config-character-model", Input
-            ).value = "claude-3-haiku-20240307"
+            ).value = "claude-haiku-4-5"
             self.query_one(
                 "#config-character-system-prompt", TextArea
             ).text = "You are roleplaying as a witty pirate captain."
@@ -5606,61 +5589,12 @@ class ToolsSettingsWindow(Container):
             )
 
     async def _save_notes_config_form(self) -> None:
-        """Save notes configuration form."""
-        try:
-            save_setting_to_cli_config(
-                "notes",
-                "sync_directory",
-                self.query_one("#config-notes-sync-directory", Input).value,
-            )
-            save_setting_to_cli_config(
-                "notes",
-                "auto_sync_enabled",
-                self.query_one("#config-notes-auto-sync", Checkbox).value,
-            )
-            save_setting_to_cli_config(
-                "notes",
-                "sync_on_close",
-                self.query_one("#config-notes-sync-on-close", Checkbox).value,
-            )
-            save_setting_to_cli_config(
-                "notes",
-                "conflict_resolution",
-                self.query_one("#config-notes-conflict-resolution", Select).value,
-            )
-            save_setting_to_cli_config(
-                "notes",
-                "sync_direction",
-                self.query_one("#config-notes-sync-direction", Select).value,
-            )
-
-            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
-            self.app_instance.notify("Notes configuration saved!")
-        except Exception as e:
-            self.app_instance.notify(
-                f"Error saving notes config: {e}", severity="error"
-            )
+        """Keep the retired settings action inert."""
+        self.app_instance.notify("Manage Notes folder sync from Library → Notes.")
 
     async def _reset_notes_config_form(self) -> None:
-        """Reset notes configuration form to defaults."""
-        try:
-            self.query_one(
-                "#config-notes-sync-directory", Input
-            ).value = "~/Documents/Notes"
-            self.query_one("#config-notes-auto-sync", Checkbox).value = False
-            self.query_one("#config-notes-sync-on-close", Checkbox).value = False
-            self.query_one(
-                "#config-notes-conflict-resolution", Select
-            ).value = "newer_wins"
-            self.query_one(
-                "#config-notes-sync-direction", Select
-            ).value = "bidirectional"
-
-            self.app_instance.notify("Notes configuration reset to defaults!")
-        except Exception as e:
-            self.app_instance.notify(
-                f"Error resetting notes config: {e}", severity="error"
-            )
+        """Keep the retired settings action inert."""
+        self.app_instance.notify("Manage Notes folder sync from Library → Notes.")
 
     async def _save_tts_config_form(self) -> None:
         """Save TTS configuration form."""
@@ -6387,7 +6321,11 @@ class ToolsSettingsWindow(Container):
                 return
 
             if chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
+                db = CharactersRAGDB(
+                    str(chachanotes_path),
+                    "export_operation",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
                 conversations = db.list_all_active_conversations(limit=10000)
 
                 export_path = export_dir / f"conversations_{timestamp}.json"
@@ -6454,7 +6392,11 @@ class ToolsSettingsWindow(Container):
             # Export from ChaChaNotes database
             chachanotes_path = self._get_database_path("chachanotes", db_config)
             if chachanotes_path and chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
+                db = CharactersRAGDB(
+                    str(chachanotes_path),
+                    "export_operation",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
                 notes = db.list_notes(limit=10000)
 
                 for note in notes:
@@ -6530,13 +6472,21 @@ class ToolsSettingsWindow(Container):
             # Export from ChaChaNotes database
             chachanotes_path = self._get_database_path("chachanotes", db_config)
             if chachanotes_path and chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
-                characters = db.list_character_cards(limit=10000)
+                db = CharactersRAGDB(
+                    str(chachanotes_path),
+                    "export_operation",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
+                # A backup must contain the avatar image, so opt into the
+                # image-bearing projection (task-15474 made image-free the
+                # default) and serialize through the BLOB-safe helper
+                # (task-15769).
+                characters = db.list_character_cards(limit=10000, include_image=True)
 
                 export_path = export_dir / f"characters_{timestamp}.json"
                 create_private_text(
                     export_path,
-                    json.dumps(characters, indent=2, ensure_ascii=False),
+                    _serialize_character_cards_for_backup(characters),
                     application_owned_directory=export_dir,
                 )
 

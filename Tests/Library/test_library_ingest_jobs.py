@@ -5,11 +5,353 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
+import pytest
 
+from tldw_chatbook.Library import library_ingest_jobs
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ACTIVE_INGEST_REF_LIMIT,
+    ActiveIngestConsentScope,
+    ActiveIngestJobRef,
+    ActiveIngestSubmissionRefused,
     IngestJobState,
+    LibraryIngestJob,
     LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
+    normalize_active_ingest_source,
 )
+
+
+def test_active_source_key_normalizes_relative_dot_segments_and_case(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        library_ingest_jobs.os.path,
+        "normcase",
+        lambda value: value.replace("/", "\\").lower(),
+    )
+
+    relative = normalize_active_ingest_source(
+        "./Folder/../Folder/NOTE.txt", origin="local"
+    )
+    absolute = normalize_active_ingest_source(
+        str(tmp_path / "folder" / "note.TXT"), origin="local"
+    )
+
+    assert relative == absolute
+    assert relative.origin == "local"
+
+
+def test_active_source_key_preserves_case_when_platform_normcase_does(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(library_ingest_jobs.os.path, "normcase", lambda value: value)
+
+    upper = normalize_active_ingest_source("Note.txt", origin="local")
+    lower = normalize_active_ingest_source("note.txt", origin="local")
+
+    assert upper != lower
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("HTTPS://Example.COM", "https://example.com/"),
+        ("http://example.com:80/a#one", "http://EXAMPLE.com/a#two"),
+        ("https://example.com:443/a?q=1", "https://example.com/a?q=1"),
+    ],
+)
+def test_active_source_key_normalizes_only_safe_url_equivalences(left, right):
+    assert normalize_active_ingest_source(
+        left, origin="server"
+    ) == normalize_active_ingest_source(right, origin="server")
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("https://example.com/A", "https://example.com/a"),
+        ("https://example.com/a?x=1&y=2", "https://example.com/a?y=2&x=1"),
+        ("https://example.com/a%2Fb", "https://example.com/a/b"),
+        ("https://example.com:444/a", "https://example.com/a"),
+    ],
+)
+def test_active_source_key_preserves_meaningful_url_distinctions(left, right):
+    assert normalize_active_ingest_source(
+        left, origin="server"
+    ) != normalize_active_ingest_source(right, origin="server")
+
+
+def test_find_active_source_matches_filters_state_origin_and_visibility(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    queued = registry.submit(source_path=source, origin="local")
+    parsing = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(parsing.job_id)
+    writing = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(writing.job_id)
+    registry.mark_writing(writing.job_id)
+    terminal = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(terminal.job_id)
+    registry.mark_writing(terminal.job_id)
+    registry.mark_done(terminal.job_id, media_id=1)
+    registry.submit(source_path=source, origin="server")
+
+    matches = registry.find_active_source_matches([source], origin="local")
+
+    assert [job.job_id for job in matches] == [
+        queued.job_id,
+        parsing.job_id,
+        writing.job_id,
+    ]
+    matches[0].source_path = "mutated"
+    assert registry.get_job(queued.job_id).source_path == source
+
+
+def test_find_active_source_matches_deduplicates_candidate_keys(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    job = registry.submit(source_path=source)
+
+    matches = registry.find_active_source_matches(
+        [source, str(tmp_path / "." / "a.txt")], origin="local"
+    )
+
+    assert [item.job_id for item in matches] == [job.job_id]
+
+
+def test_dispatch_hold_excludes_queue_until_persistence_first_release(tmp_path):
+    """The runner must not claim a Research job before its durable link exists."""
+
+    from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+
+    store = LibraryIngestJobsDB(tmp_path / "held.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(store)
+    held = registry.submit(
+        source_path="/managed/paste.txt",
+        research_source_operation_id="operation-held",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    ordinary = registry.submit(source_path="/ordinary.txt", require_persisted=True)
+    observed: list[tuple[bool, bool]] = []
+    registry.add_listener(
+        lambda: observed.append(
+            (
+                bool(store.all_jobs()[0]["dispatch_held"]),
+                bool(registry.get_job(held.job_id).dispatch_held),
+            )
+        )
+    )
+
+    assert registry.next_queued().job_id == ordinary.job_id
+    released = registry.release_dispatch_hold(held.job_id, require_persisted=True)
+
+    assert released is not None and released.dispatch_held is False
+    assert observed == [(False, False)]
+    assert registry.next_queued().job_id == held.job_id
+    store.close()
+
+
+def test_dispatch_held_requeue_requires_store_before_mutation() -> None:
+    registry = LibraryIngestJobRegistry()
+    failed = registry.submit(
+        source_path="/managed/retry.txt",
+        research_source_operation_id="operation-retry-held",
+    )
+    registry.mark_failed(failed.job_id, error="retry")
+
+    with pytest.raises(RuntimeError, match="persistence store"):
+        registry.requeue(failed.job_id, dispatch_held=True)
+
+    current = registry.get_job(failed.job_id)
+    assert current is not None and not current.superseded
+    assert len(registry.jobs()) == 1
+
+
+def test_research_retry_release_atomically_claims_dispatch(tmp_path) -> None:
+    """A released retry is durably active, never generically queueable."""
+
+    from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+
+    store = LibraryIngestJobsDB(tmp_path / "retry-claim.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(store)
+    source = registry.submit(
+        source_path="/managed/retry.txt",
+        research_source_operation_id="operation-retry-claim",
+        require_persisted=True,
+    )
+    registry.mark_failed(
+        source.job_id,
+        error="retry",
+        require_persisted=True,
+    )
+    retry = registry.requeue(source.job_id, dispatch_held=True)
+    assert retry is not None
+
+    claimed = registry.release_dispatch_hold(retry.job_id, require_persisted=True)
+
+    assert claimed is not None
+    assert claimed.state is IngestJobState.PARSING
+    assert claimed.dispatch_held is False
+    assert registry.next_queued() is None
+    row = next(row for row in store.all_jobs() if row["job_id"] == retry.job_id)
+    assert row["state"] == "parsing"
+    assert row["dispatch_held"] == 0
+    store.close()
+
+
+def test_active_consent_scope_is_order_stable_and_candidate_mutation_sensitive(
+    tmp_path,
+):
+    first = str(tmp_path / "a.txt")
+    second = str(tmp_path / "b.txt")
+    active_ids = ("ingest-job-1",)
+
+    original = build_active_ingest_consent_scope(
+        [first, second],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+    reordered = build_active_ingest_consent_scope(
+        [second, first],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+    added = build_active_ingest_consent_scope(
+        [first, second, str(tmp_path / "c.txt")],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+    removed = build_active_ingest_consent_scope(
+        [first],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+    changed = build_active_ingest_consent_scope(
+        [first, str(tmp_path / "renamed.txt")],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+
+    assert original == reordered
+    assert original.covers(reordered) is True
+    assert original.covers(added) is False
+    assert original.covers(removed) is False
+    assert original.covers(changed) is False
+    assert isinstance(original, ActiveIngestConsentScope)
+
+
+def test_active_consent_scope_covers_only_current_active_ids_from_same_snapshot(
+    tmp_path,
+):
+    sources = [str(tmp_path / "a.txt"), str(tmp_path / "b.txt")]
+    armed = build_active_ingest_consent_scope(
+        sources,
+        origin="local",
+        active_job_ids=("ingest-job-1", "ingest-job-2"),
+        active_source_count=2,
+    )
+    lifecycle_shrink = build_active_ingest_consent_scope(
+        sources,
+        origin="local",
+        active_job_ids=("ingest-job-2",),
+        active_source_count=1,
+    )
+    newly_active = build_active_ingest_consent_scope(
+        sources,
+        origin="local",
+        active_job_ids=("ingest-job-1", "ingest-job-2", "ingest-job-3"),
+        active_source_count=2,
+    )
+
+    assert armed.covers(lifecycle_shrink) is True
+    assert armed.covers(newly_active) is False
+
+
+def test_active_consent_scope_fails_closed_when_active_ids_exceed_safe_limit(
+    tmp_path,
+):
+    source = str(tmp_path / "a.txt")
+    too_many_ids = tuple(
+        f"ingest-job-{index}" for index in range(ACTIVE_INGEST_REF_LIMIT + 1)
+    )
+    truncated = build_active_ingest_consent_scope(
+        [source],
+        origin="local",
+        active_job_ids=too_many_ids,
+        active_source_count=1,
+    )
+
+    assert len(truncated.active_job_ids) == ACTIVE_INGEST_REF_LIMIT
+    assert truncated.active_job_count == ACTIVE_INGEST_REF_LIMIT + 1
+    assert truncated.active_job_ids_complete is False
+    assert truncated.covers(truncated) is False
+
+
+def test_active_consent_scope_and_refusal_do_not_expose_candidate_paths(tmp_path):
+    private_source = str(tmp_path / "private-name.txt")
+    scope = build_active_ingest_consent_scope(
+        [private_source],
+        origin="local",
+        active_job_ids=("ingest-job-1",),
+        active_source_count=1,
+    )
+    refusal = ActiveIngestSubmissionRefused(
+        (ActiveIngestJobRef("ingest-job-1", IngestJobState.QUEUED),),
+        consent_scope=scope,
+    )
+
+    rendered = f"{scope!s} {scope!r} {refusal!s} {refusal!r}"
+    assert private_source not in rendered
+    assert refusal.consent_scope is scope
+    assert refusal.candidate_changed is False
+
+
+def test_find_active_source_matches_deeply_isolates_mutable_job_fields(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path=source,
+        ingest_options={"pdf": {"engine": "pymupdf"}},
+        error_detail={"diagnostic": {"code": "pending"}},
+    )
+    registry.restore([job], next_id=2)
+
+    match = registry.find_active_source_matches([source], origin="local")[0]
+    match.ingest_options["pdf"]["engine"] = "mutated"
+    match.error_detail["diagnostic"]["code"] = "mutated"
+
+    stored = registry.get_job(job.job_id)
+    assert stored.ingest_options == {"pdf": {"engine": "pymupdf"}}
+    assert stored.error_detail == {"diagnostic": {"code": "pending"}}
+
+
+def test_active_ingest_refusal_exposes_only_bounded_safe_refs():
+    refs = tuple(
+        ActiveIngestJobRef(f"ingest-job-{index}", IngestJobState.QUEUED)
+        for index in range(ACTIVE_INGEST_REF_LIMIT + 2)
+    )
+    refusal = ActiveIngestSubmissionRefused(refs)
+
+    assert len(refusal.matches) == ACTIVE_INGEST_REF_LIMIT
+    assert "ingest-job-1" not in str(refusal)
+    assert "source_path" not in repr(refusal)
+    assert set(vars(refusal)) == {
+        "candidate_changed",
+        "consent_scope",
+        "matches",
+        "match_count",
+    }
 
 
 def test_submit_assigns_sequential_ids_and_queued_state() -> None:
@@ -106,6 +448,7 @@ def test_mark_writing_transitions_from_parsing() -> None:
     assert writing.started_at == parsing.started_at
     # detected_type persists across the transition too.
     assert writing.detected_type == "plaintext"
+    assert writing.progress == {"phase": "writing", "message": "Saving to Library"}
 
 
 def test_mark_writing_rejects_a_job_that_is_not_parsing() -> None:
@@ -456,6 +799,31 @@ def test_listener_fires_once_per_successful_mutation() -> None:
     assert len(calls) == 7
 
 
+def test_completion_listener_observes_settled_research_job() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(
+        source_path="/tmp/research.txt",
+        research_source_operation_id="research-op-listener",
+    )
+    observations: list[tuple[IngestJobState, int | None, str | None]] = []
+
+    def observe() -> None:
+        current = registry.get_job(job.job_id)
+        assert current is not None
+        observations.append(
+            (
+                current.state,
+                current.media_id,
+                current.research_source_operation_id,
+            )
+        )
+
+    registry.add_listener(observe)
+    registry.mark_done(job.job_id, media_id=41)
+
+    assert observations == [(IngestJobState.DONE, 41, "research-op-listener")]
+
+
 def test_listener_exception_is_swallowed_and_other_listeners_still_run() -> None:
     registry = LibraryIngestJobRegistry()
     calls: list[str] = []
@@ -775,6 +1143,160 @@ class _FakeStore:
         self.deletes.append(job_id)
 
 
+# --- transient parse progress (task-207) -----------------------------------
+
+
+def test_transient_progress_uses_progress_listener_without_persisting() -> None:
+    """A local tick must update the projection without lifecycle churn or I/O."""
+    registry = LibraryIngestJobRegistry()
+    store = _FakeStore()
+    registry.attach_store(store)
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    lifecycle_calls: list[str] = []
+    progress_calls: list[tuple[object, object]] = []
+    registry.add_listener(lambda: lifecycle_calls.append("lifecycle"))
+    registry.add_progress_listener(
+        lambda before, after: progress_calls.append((before, after))
+    )
+    persisted_before = len(store.upserts)
+
+    updated = registry.update_progress(
+        job.job_id,
+        progress={"phase": "extracting", "message": "Extracting"},
+        persist=False,
+    )
+
+    assert updated is not None
+    assert updated.progress == {"phase": "extracting", "message": "Extracting"}
+    assert lifecycle_calls == []
+    assert progress_calls[0][0].progress is None
+    assert progress_calls[0][1].progress == updated.progress
+    assert len(store.upserts) == persisted_before
+
+
+def test_progress_listener_removal_stops_future_progress_notifications() -> None:
+    """Removing a progress observer must prevent only its later callbacks."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    calls: list[str] = []
+
+    def listener(before, after) -> None:
+        calls.append(after.progress["message"])
+
+    registry.add_progress_listener(listener)
+    registry.update_progress(job.job_id, progress={"message": "Extracting"})
+    registry.remove_progress_listener(listener)
+    registry.update_progress(job.job_id, progress={"message": "Chunking"})
+
+    assert calls == ["Extracting"]
+
+
+def test_progress_listener_exception_is_isolated_from_other_progress_listeners() -> (
+    None
+):
+    """A broken observer must not prevent another observer seeing the tick."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    calls: list[str] = []
+
+    def bad_listener(before, after) -> None:
+        raise RuntimeError("boom")
+
+    registry.add_progress_listener(bad_listener)
+    registry.add_progress_listener(
+        lambda before, after: calls.append(after.progress["message"])
+    )
+
+    registry.update_progress(job.job_id, progress={"message": "Extracting"})
+
+    assert calls == ["Extracting"]
+
+
+def test_server_progress_persists_by_default_for_reconciliation() -> None:
+    """Removing the default persistence would make server reconciliation stale."""
+    registry = LibraryIngestJobRegistry()
+    store = _FakeStore()
+    registry.attach_store(store)
+    job = registry.submit(source_path="/tmp/report.txt", origin="server")
+    persisted_before = len(store.upserts)
+
+    updated = registry.update_progress(
+        job.job_id, progress={"phase": "processing", "message": "Processing"}
+    )
+
+    assert updated is not None
+    assert len(store.upserts) == persisted_before + 1
+
+
+def test_progress_rejects_terminal_job_without_notification_or_persistence() -> None:
+    """Allowing terminal telemetry would overwrite the authoritative receipt."""
+    registry = LibraryIngestJobRegistry()
+    store = _FakeStore()
+    registry.attach_store(store)
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
+    registry.mark_done(job.job_id, media_id=1, progress={"message": "Imported"})
+    calls: list[str] = []
+    registry.add_progress_listener(lambda before, after: calls.append("progress"))
+    persisted_before = len(store.upserts)
+
+    updated = registry.update_progress(
+        job.job_id, progress={"phase": "extracting", "message": "Late tick"}
+    )
+
+    assert updated is None
+    assert calls == []
+    assert len(store.upserts) == persisted_before
+
+
+def test_identical_progress_is_a_noop_without_notification_or_persistence() -> None:
+    """Not short-circuiting equal ticks would cause needless UI and DB work."""
+    registry = LibraryIngestJobRegistry()
+    store = _FakeStore()
+    registry.attach_store(store)
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    progress = {"phase": "extracting", "message": "Extracting"}
+    registry.update_progress(job.job_id, progress=progress)
+    calls: list[str] = []
+    registry.add_progress_listener(lambda before, after: calls.append("progress"))
+    persisted_before = len(store.upserts)
+
+    updated = registry.update_progress(job.job_id, progress=progress)
+
+    assert updated is not None
+    assert updated.progress == progress
+    assert calls == []
+    assert len(store.upserts) == persisted_before
+
+
+def test_progress_snapshots_and_return_value_do_not_share_registry_payload() -> None:
+    """Shallow snapshots would let listeners corrupt the registry payload."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    listener_after = []
+    registry.add_progress_listener(lambda before, after: listener_after.append(after))
+    payload = {"phase": "extracting", "message": "Extracting", "detail": {"page": 1}}
+
+    updated = registry.update_progress(job.job_id, progress=payload)
+    payload["detail"]["page"] = 2
+    listener_after[0].progress["detail"]["page"] = 3
+    updated.progress["detail"]["page"] = 4
+
+    stored = registry.jobs()[0]
+
+    assert stored.progress == {
+        "phase": "extracting",
+        "message": "Extracting",
+        "detail": {"page": 1},
+    }
+
+
 def test_submit_starts_retry_count_zero_and_requeue_increments():
     reg = LibraryIngestJobRegistry()
     j = reg.submit(source_path="/a.mp3")
@@ -816,6 +1338,24 @@ def test_store_hook_none_is_pure_and_errors_swallowed():
     reg2.attach_store(_Boom())
     j = reg2.submit(source_path="/b.mp3")  # store raises, mutation still succeeds
     assert j.state.value == "queued"
+
+
+def test_terminal_listener_still_fires_when_best_effort_store_fails():
+    class _Boom:
+        def upsert_job(self, job):
+            raise RuntimeError("disk full")
+
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(_Boom())
+    job = registry.submit(source_path="/source.txt")
+    observed = []
+    registry.add_listener(lambda: observed.append(registry.get_job(job.job_id).state))
+
+    settled = registry.mark_failed(job.job_id, error="safe failure")
+
+    assert settled is not None
+    assert settled.state is IngestJobState.FAILED
+    assert observed == [IngestJobState.FAILED]
 
 
 def test_plan_restore_normalizes_interrupted_and_prunes():
@@ -977,6 +1517,25 @@ def test_plan_restore_cap_one_prunes_to_newest():
     assert [j.job_id for j in plan.jobs] == ["ingest-job-2"]
     assert plan.delete_ids == ["ingest-job-1"]
     assert plan.next_id == 3
+
+
+def test_plan_restore_never_prunes_a_durable_dispatch_hold():
+    """History caps cannot delete an undispatched two-owner transaction."""
+
+    from tldw_chatbook.Library.library_ingest_jobs import plan_restore
+
+    rows = _done_rows(3)
+    rows[0].update(
+        state="queued",
+        research_source_operation_id="operation-held-oldest",
+        dispatch_held=1,
+    )
+
+    plan = plan_restore(rows, max_persisted=2, now_iso="2026-08-24T10:00:00+00:00")
+
+    assert [job.job_id for job in plan.jobs] == ["ingest-job-1", "ingest-job-3"]
+    assert plan.jobs[0].dispatch_held is True
+    assert plan.delete_ids == ["ingest-job-2"]
 
 
 # --- Library ingestion improvements: options / progress / error detail ---

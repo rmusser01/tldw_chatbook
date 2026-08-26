@@ -36,7 +36,7 @@ class PersonasLoreTryItWidget(Vertical):
         Binding("ctrl+enter", "run_preview", "Run preview", show=False, priority=True),
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasLoreTryItWidget {
         height: auto;
         max-height: 60%;

@@ -3,6 +3,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Input, ListView
 
 from tldw_chatbook.Widgets.Persona_Widgets.conversation_attach_picker import (
+    SEARCH_DEBOUNCE_SECONDS,
     ConversationAttachPicker,
 )
 
@@ -50,7 +51,9 @@ async def test_picker_filter_narrows_then_selects():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.screen.query_one("#conversation-attach-search", Input).value = "beta"
-        await pilot.pause()
+        # Debounced (task-15476): the list only rebuilds once the filter
+        # settles, not on every keystroke.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         app.screen.query_one("#conversation-attach-list", ListView).index = 0
         await pilot.pause()
         await pilot.click("#conversation-attach-confirm")

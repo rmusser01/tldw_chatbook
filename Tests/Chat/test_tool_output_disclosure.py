@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -11,6 +12,20 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
+
+def _row_text(app, message_id: str) -> str:
+    """Renderer-agnostic visible text of one transcript row.
+
+    The row became a `Vertical` in 065970aa4 (roleplay speaker theming), so
+    `row.render()` now returns `Blank` and asserting against it is vacuous.
+    Read the mounted child Statics instead -- deliberately NOT the row's
+    `renderable` compatibility projection, which is derived from the row's
+    in-memory message and would pass even if the mounted children never
+    repainted, i.e. exactly the defect these tests exist to catch.
+    """
+    row = app.query_one(f"#console-message-{message_id}")
+    parts = [str(static.renderable) for static in row.query(Static)]
+    return "\n".join(parts) if parts else str(row.render())
 
 def _marker(full: str | None, content: str = "⚙ read_file → data… (+900 chars)"):
     return ConsoleChatMessage(
@@ -99,9 +114,7 @@ async def test_full_tool_output_is_reachable_from_the_mounted_transcript():
     app = _TranscriptHarness()
     async with app.run_test() as pilot:
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
-        row = app.query_one("#console-message-tool-1")
-
-        assert "result row 59" not in str(row.render()), (
+        assert "result row 59" not in _row_text(app, "tool-1"), (
             "precondition: the collapsed row shows a preview, not everything"
         )
 
@@ -109,7 +122,7 @@ async def test_full_tool_output_is_reachable_from_the_mounted_transcript():
         await pilot.pause()
         await pilot.pause()
 
-        expanded = str(app.query_one("#console-message-tool-1").render())
+        expanded = _row_text(app, "tool-1")
         assert "result row 59" in expanded, (
             f"the full result is still unreachable on screen: {expanded[:200]!r}"
         )
@@ -118,9 +131,7 @@ async def test_full_tool_output_is_reachable_from_the_mounted_transcript():
         transcript.toggle_tool_output("tool-1")
         await pilot.pause()
         await pilot.pause()
-        assert "result row 59" not in str(
-            app.query_one("#console-message-tool-1").render()
-        ), "expanding must be reversible"
+        assert "result row 59" not in _row_text(app, "tool-1"), "expanding must be reversible"
 
 
 @pytest.mark.asyncio
@@ -141,7 +152,7 @@ async def test_pressing_o_expands_the_selected_marker():
         await pilot.pause()
         await pilot.pause()
 
-        expanded = str(app.query_one("#console-message-tool-1").render())
+        expanded = _row_text(app, "tool-1")
         assert "result row 59" in expanded, (
             f"pressing 'o' did not reveal the full result: {expanded[:160]!r}"
         )
@@ -217,8 +228,8 @@ async def test_two_calls_in_one_turn_expand_independently():
         await pilot.pause()
         await pilot.pause()
 
-        assert "UNIQUE-A" in str(app.query_one("#console-message-t-a").render())
-        assert "UNIQUE-B" not in str(app.query_one("#console-message-t-b").render()), (
+        assert "UNIQUE-A" in _row_text(app, "t-a")
+        assert "UNIQUE-B" not in _row_text(app, "t-b"), (
             "expanding one call revealed another -- the toggle is not per row"
         )
 
@@ -250,3 +261,29 @@ def test_expanded_state_is_pruned_when_messages_leave_the_transcript():
         "expansion state outlived the message it belonged to: "
         f"{transcript._expanded_tool_output_ids}"
     )
+
+
+@pytest.mark.unit
+def test_toggle_ignores_unknown_and_nonexpandable_messages():
+    """The shared disclosure seam must not create dead expansion state."""
+    transcript = ConsoleTranscript()
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                id="user",
+                content="ordinary content",
+            ),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.TOOL,
+                id="empty-tool",
+                content="",
+            ),
+        ]
+    )
+
+    transcript.toggle_tool_output("unknown")
+    transcript.toggle_tool_output("user")
+    transcript.toggle_tool_output("empty-tool")
+
+    assert transcript._expanded_tool_output_ids == set()

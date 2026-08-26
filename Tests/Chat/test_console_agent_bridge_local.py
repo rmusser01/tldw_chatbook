@@ -41,6 +41,8 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+from Tests.Agents.test_agent_service import FleetChat
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
@@ -107,7 +109,7 @@ def test_combined_stamp_scope_isolates_both(tmp_path):
             self.log = []
 
         @contextmanager
-        def stamp_scope(self):
+        def stamp_scope(self, run_id):
             saved = self.stamps
             self.stamps = {}
             self.log.append("enter")
@@ -120,7 +122,8 @@ def test_combined_stamp_scope_isolates_both(tmp_path):
     p1, p2 = FakeProvider(), FakeProvider()
     scope = _combine_state_scopes([p1.stamp_scope, p2.stamp_scope])
     assert scope is not None
-    with scope():
+    # PR2a Task 5: each scope takes the run id whose slice it guards.
+    with scope("run-1"):
         assert p1.stamps == {} and p2.stamps == {}
     assert p1.stamps == {"x": "approve_once"} and p2.stamps == {"x": "approve_once"}
     assert p1.log == ["enter", "exit"] and p2.log == ["enter", "exit"]
@@ -142,7 +145,7 @@ def test_provider_without_stamp_scope_is_skipped():
             self.log = []
 
         @contextmanager
-        def stamp_scope(self):
+        def stamp_scope(self, run_id):
             self.log.append("enter")
             try:
                 yield
@@ -166,7 +169,7 @@ def test_provider_without_stamp_scope_is_skipped():
     real = WithScope()
     scope = _combine_state_scopes(_scopes_for(NoScope(), real))
     assert scope is not None
-    with scope():
+    with scope("run-1"):
         pass
     assert real.log == ["enter", "exit"]
 
@@ -316,13 +319,22 @@ def test_skill_run_child_still_approval_gated(tmp_path):
         approval_calls.append(pending)
         return {"web_fetch": "approve_once"}
 
-    chat = _ScriptedChat(
+    # PR2a Task 6.5: the fleet is ON by default and a SKILL's spawn goes
+    # through the same `spawn` closure as `spawn_subagent`, so the skill
+    # child runs on its own thread. Addressed per agent instead of one
+    # ordered queue; the child is keyed by the task text `_StubSkillsService`
+    # renders for it. The replies themselves are unchanged.
+    chat = FleetChat(
         [
             _fence("web-research", {"args": "the question"}),  # primary: skill
-            _fence("web_fetch", {"url": "http://example.com/"}),  # child: local
-            "child synthesis",  # child final
             "primary final",
-        ]
+        ],
+        {
+            "RENDERED[web-research](the question)": [
+                _fence("web_fetch", {"url": "http://example.com/"}),  # child: local
+                "child synthesis",  # child final
+            ]
+        },
     )
     service = AgentService(
         db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),

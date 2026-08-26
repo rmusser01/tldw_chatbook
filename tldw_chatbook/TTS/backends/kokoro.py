@@ -48,7 +48,7 @@ from tldw_chatbook.TTS.voice_blend_paths import (
     write_private_json,
 )
 from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.path_validation import validate_path, validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
     verify_trusted_directory,
@@ -57,6 +57,120 @@ from tldw_chatbook.Utils.private_paths import (
 #######################################################################################################################
 #
 # Kokoro TTS Backend Implementation
+
+
+#: Connect / read timeouts for every Kokoro asset download (task-19560).
+#:
+#: `requests.get(..., stream=True)` with no timeout waits forever on a
+#: half-open connection. These downloads are hundreds of megabytes and ran
+#: inline on the event loop, so a stalled CDN froze the whole TUI with no
+#: error and no way out. The read timeout applies per-chunk, not to the whole
+#: transfer, so a slow-but-progressing download is not killed.
+KOKORO_DOWNLOAD_CONNECT_TIMEOUT = 15.0
+KOKORO_DOWNLOAD_READ_TIMEOUT = 60.0
+KOKORO_DOWNLOAD_TIMEOUT = (
+    KOKORO_DOWNLOAD_CONNECT_TIMEOUT,
+    KOKORO_DOWNLOAD_READ_TIMEOUT,
+)
+
+#: Log a progress line at most this often during a long download.
+_KOKORO_PROGRESS_INTERVAL_SECONDS = 2.0
+
+
+def _kokoro_stream_download(
+    url: str,
+    destination: str,
+    *,
+    label: str,
+    hasher: "hashlib._Hash | None" = None,
+) -> str:
+    """Stream ``url`` to ``destination`` atomically, with timeouts and progress.
+
+    Blocking by design -- callers run it via ``asyncio.to_thread`` so the event
+    loop stays responsive (task-19560).
+
+    Writes to a ``.part`` sibling and ``os.replace``s it into place only after
+    the body is fully read, so an interrupted or failed download can never
+    leave a truncated file that the next run's ``os.path.exists`` check treats
+    as a complete model.
+
+    Args:
+        url: Source URL.
+        destination: Final path to place the file at.
+        label: Human-readable name used in progress logs.
+        hasher: Optional hash object updated with each chunk.
+
+    Returns:
+        The destination path.
+
+    Raises:
+        requests.RequestException: On any transport failure or timeout.
+    """
+    parent = os.path.dirname(destination) or "."
+    os.makedirs(parent, exist_ok=True)
+    # Qodo #4: every filesystem write in this app goes through
+    # path_validation. These destinations are internally derived (config'd
+    # model/voice dirs), not user input, but validating anyway means a
+    # future caller passing a traversal-shaped path is refused here rather
+    # than discovering the rule does not apply to downloads.
+    validate_path(destination, parent, redact_paths=True)
+    partial = destination + ".part"
+
+    try:
+        with requests.get(
+            url, stream=True, timeout=KOKORO_DOWNLOAD_TIMEOUT
+        ) as response:
+            response.raise_for_status()
+            total = response.headers.get("content-length")
+            total_bytes = int(total) if total and total.isdigit() else 0
+            written = 0
+            last_log = time.monotonic()
+
+            with open(partial, "wb") as handle:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if not chunk:
+                        continue
+                    handle.write(chunk)
+                    if hasher is not None:
+                        hasher.update(chunk)
+                    written += len(chunk)
+
+                    now = time.monotonic()
+                    if now - last_log >= _KOKORO_PROGRESS_INTERVAL_SECONDS:
+                        if total_bytes:
+                            logger.info(
+                                f"{label}: {written / 1048576:.1f} MB of "
+                                f"{total_bytes / 1048576:.1f} MB "
+                                f"({100 * written / total_bytes:.0f}%)"
+                            )
+                        else:
+                            logger.info(
+                                f"{label}: {written / 1048576:.1f} MB downloaded"
+                            )
+                        last_log = now
+
+        os.replace(partial, destination)
+        logger.info(f"{label}: complete ({written / 1048576:.1f} MB)")
+        return destination
+    except BaseException:
+        # Includes cancellation: never leave a partial file behind that the
+        # next run would mistake for a finished download.
+        try:
+            if os.path.exists(partial):
+                os.remove(partial)
+        except OSError as cleanup_exc:
+            # No path here on purpose. `partial` is `destination + ".part"`,
+            # and two of this function's four call sites pass the user's
+            # CONFIGURED model/voice directory, so the path is user data.
+            # The two diagnostics this file lost in the same change
+            # ("Downloaded model to {self.model_path}") were removed for
+            # exactly that reason; the label identifies the download without
+            # naming where it lives.
+            logger.debug(
+                f"{label}: could not remove the partial file; "
+                f"error_type={type(cleanup_exc).__name__}"
+            )
+        raise
 
 
 class KokoroTTSBackend(LocalTTSBackend):
@@ -278,16 +392,28 @@ class KokoroTTSBackend(LocalTTSBackend):
                     url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
                     # Expected SHA256 checksum for kokoro-v0_19.onnx
 
-                    response = requests.get(url, stream=True)
-                    response.raise_for_status()
-
-                    # Download to temporary file first
-                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                        hasher = hashlib.sha256()
-                        for chunk in response.iter_content(chunk_size=8192):
-                            tmp_file.write(chunk)
-                            hasher.update(chunk)
-                        tmp_path = tmp_file.name
+                    # task-19560: the transfer runs off the event loop with
+                    # timeouts; the checksum-verify + move below is unchanged.
+                    hasher = hashlib.sha256()
+                    # Qodo #1 + #3: the previous form nested a string literal
+                    # inside an f-string expression, which is only legal from
+                    # Python 3.12 (PEP 701) -- on this project's 3.11 floor the
+                    # whole module failed to import. It also used a
+                    # pid-deterministic name, so two concurrent initialisations
+                    # in one process clobbered each other's in-flight download
+                    # and the checksum/move then operated on the wrong file.
+                    # mkstemp gives a unique path and creates it 0600.
+                    tmp_fd, tmp_path = tempfile.mkstemp(
+                        prefix="kokoro-download-", suffix="-model.onnx"
+                    )
+                    os.close(tmp_fd)
+                    await asyncio.to_thread(
+                        _kokoro_stream_download,
+                        url,
+                        tmp_path,
+                        label="Kokoro ONNX model",
+                        hasher=hasher,
+                    )
 
                     # Verify checksum
                     actual_checksum = hasher.hexdigest()
@@ -326,16 +452,28 @@ class KokoroTTSBackend(LocalTTSBackend):
 
                     url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 
-                    response = requests.get(url, stream=True)
-                    response.raise_for_status()
-
-                    # Download to temporary file first
-                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                        hasher = hashlib.sha256()
-                        for chunk in response.iter_content(chunk_size=8192):
-                            tmp_file.write(chunk)
-                            hasher.update(chunk)
-                        tmp_path = tmp_file.name
+                    # task-19560: the transfer runs off the event loop with
+                    # timeouts; the checksum-verify + move below is unchanged.
+                    hasher = hashlib.sha256()
+                    # Qodo #1 + #3: the previous form nested a string literal
+                    # inside an f-string expression, which is only legal from
+                    # Python 3.12 (PEP 701) -- on this project's 3.11 floor the
+                    # whole module failed to import. It also used a
+                    # pid-deterministic name, so two concurrent initialisations
+                    # in one process clobbered each other's in-flight download
+                    # and the checksum/move then operated on the wrong file.
+                    # mkstemp gives a unique path and creates it 0600.
+                    tmp_fd, tmp_path = tempfile.mkstemp(
+                        prefix="kokoro-download-", suffix="-voices.bin"
+                    )
+                    os.close(tmp_fd)
+                    await asyncio.to_thread(
+                        _kokoro_stream_download,
+                        url,
+                        tmp_path,
+                        label="Kokoro voices file",
+                        hasher=hasher,
+                    )
 
                     # Log checksum for future reference
                     actual_checksum = hasher.hexdigest()
@@ -1065,15 +1203,14 @@ class KokoroTTSBackend(LocalTTSBackend):
                 if not REQUESTS_AVAILABLE:
                     raise ImportError("requests library required for model download")
                 url = "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth?download=true"
-                response = requests.get(url, stream=True)
-                response.raise_for_status()
-
-                os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-                with open(self.model_path, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-
-                logger.info(f"Downloaded model to {self.model_path}")
+                # task-19560: off the event loop, with timeouts, and atomic --
+                # this is a several-hundred-MB transfer.
+                await asyncio.to_thread(
+                    _kokoro_stream_download,
+                    url,
+                    self.model_path,
+                    label="Kokoro PyTorch model",
+                )
                 self._load_pytorch_model()
             except Exception as e:
                 logger.error(f"Failed to download model: {e}")
@@ -1090,15 +1227,12 @@ class KokoroTTSBackend(LocalTTSBackend):
                 if not REQUESTS_AVAILABLE:
                     raise ImportError("requests library required for voice download")
                 url = f"https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{voice}.pt?download=true"
-                response = requests.get(url, stream=True)
-                response.raise_for_status()
-
-                os.makedirs(self.voice_dir, exist_ok=True)
-                with open(voice_path, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-
-                logger.info(f"Downloaded voice to {voice_path}")
+                await asyncio.to_thread(
+                    _kokoro_stream_download,
+                    url,
+                    voice_path,
+                    label=f"Kokoro voice '{voice}'",
+                )
             except Exception as e:
                 logger.error(f"Failed to download voice {voice}: {e}")
                 raise ValueError(

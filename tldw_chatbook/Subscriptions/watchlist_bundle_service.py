@@ -199,6 +199,34 @@ class WatchlistBundleService:
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    def get_watchlist_by_name_ci(self, name: str) -> dict[str, Any] | None:
+        """Find a watchlist by stripped, Unicode-case-insensitive name.
+
+        Args:
+            name: Watchlist name to resolve.
+
+        Returns:
+            The matching watchlist dict, or ``None`` when no match exists.
+        """
+        def normalize(value: Any) -> str:
+            return str(value or "").strip().lower()
+
+        with self._db.transaction() as conn:
+            # SQLite LOWER() is ASCII-only. Register the exact Python
+            # normalization this lookup used before it moved into SQL, so
+            # ADR-043 reuse still treats names such as ÄI/äi as equal.
+            conn.create_function(
+                "watchlist_name_key", 1, normalize, deterministic=True
+            )
+            row = conn.execute(
+                "SELECT id, name, description, tags, is_active, sort_order "
+                "FROM watchlists "
+                "WHERE watchlist_name_key(name) = ? "
+                "ORDER BY id LIMIT 1",
+                (normalize(name),),
+            ).fetchone()
+        return self._row_to_dict(row) if row is not None else None
+
     # --- Membership ---
 
     def add_source(self, watchlist_id: int, subscription_id: int) -> None:
@@ -296,20 +324,22 @@ class WatchlistBundleService:
             watchlist_id: The watchlist whose sources to list.
 
         Returns:
-            One dict per source with ``id``, ``name`` and ``type``, in the
+            One dict per source with ``id``, ``name``, ``type`` and ``url``
+            (TASK-3604: the OPML export needs the feed address), in the
             order the sources were added.
         """
-        rows = self._db.conn.execute(
-            """
-            SELECT s.id, s.name, s.type
-            FROM watchlist_sources ws
-            JOIN subscriptions s ON s.id = ws.subscription_id
-            WHERE ws.watchlist_id = ?
-            ORDER BY ws.added_at, s.id
-            """,
-            (watchlist_id,),
-        ).fetchall()
-        return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT s.id, s.name, s.type, s.source
+                FROM watchlist_sources ws
+                JOIN subscriptions s ON s.id = ws.subscription_id
+                WHERE ws.watchlist_id = ?
+                ORDER BY ws.added_at, s.id
+                """,
+                (watchlist_id,),
+            ).fetchall()
+        return [{"id": row[0], "name": row[1], "type": row[2], "url": row[3]} for row in rows]
 
     def list_all_source_rows(self) -> list[dict[str, Any]]:
         """Every source, in the shape the tree and the scoped summary render.
@@ -335,20 +365,22 @@ class WatchlistBundleService:
         source readout needs its own resolver for this scope.
 
         Returns:
-            One dict per unassigned source with ``id``, ``name`` and
-            ``type``, ordered case-insensitively by name then id.
+            One dict per unassigned source with ``id``, ``name``, ``type``
+            and ``url`` (TASK-3604: the OPML export needs the feed
+            address), ordered case-insensitively by name then id.
         """
-        rows = self._db.conn.execute(
-            """
-            SELECT s.id, s.name, s.type
-            FROM subscriptions s
-            WHERE NOT EXISTS (
-                SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = s.id
-            )
-            ORDER BY LOWER(s.name), s.id
-            """
-        ).fetchall()
-        return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT s.id, s.name, s.type, s.source
+                FROM subscriptions s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = s.id
+                )
+                ORDER BY LOWER(s.name), s.id
+                """
+            ).fetchall()
+        return [{"id": row[0], "name": row[1], "type": row[2], "url": row[3]} for row in rows]
 
     def get_watchlist_item_counts(self) -> dict[int, dict[str, int]]:
         """Item totals and unread counts for every watchlists tree node.
@@ -374,3 +406,30 @@ class WatchlistBundleService:
             sources with no items are absent.
         """
         return self._db.get_source_item_counts()
+
+    def get_flagged_items_count(self) -> int:
+        """Global starred-item count, for the Starred root's badge (TASK-3072).
+
+        Thin delegation, same contract as `get_watchlist_item_counts` above:
+        the tree's loader reaches every one of its inputs through this
+        service rather than holding a second accessor onto
+        ``SubscriptionsDB`` directly.
+
+        Returns:
+            How many items are starred, across every source and status.
+        """
+        return self._db.get_flagged_items_count()
+
+    def get_unread_items_count_since(self, since: str) -> int:
+        """Unread items at/after `since`, for the Today root's badge (TASK-3791).
+
+        Thin delegation, same contract as `get_flagged_items_count` above.
+
+        Args:
+            since: Inclusive ISO floor (the screen passes local midnight,
+                UTC-shaped to match the stored dates).
+
+        Returns:
+            How many unread items carry an effective date at/after the floor.
+        """
+        return self._db.get_unread_items_count_since(since)

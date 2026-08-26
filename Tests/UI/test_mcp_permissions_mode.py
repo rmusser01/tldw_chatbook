@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, Input, Static
 
 import tldw_chatbook
@@ -85,7 +89,7 @@ def _tool_row(
     )
 
 
-class PermissionsModeApp(App):
+class PermissionsModeApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[object] = []
@@ -626,6 +630,53 @@ async def test_legend_line_renders_fixed_marker_key():
         )
 
 
+# -- task-3240: gate-off breadcrumb appended to the legend -------------------
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_appends_gate_breadcrumb_to_the_legend():
+    """PRIMARY discoverability breadcrumb (task-3240): when the workbench
+    passes a non-None `gate_breadcrumb`, it renders as a second line under
+    the fixed `_LEGEND_TEXT` -- the legend itself must stay intact so the
+    marker key it already teaches is never lost."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()],
+            kill_switch=False,
+            preview="",
+            gate_breadcrumb="3 tool gate(s) are off — enable them in the "
+            "built-in server's detail (Servers mode).",
+        )
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert "• override" in legend  # base legend text survives
+        assert "3 tool gate(s) are off" in legend
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
+    """`gate_breadcrumb=None` (the default -- every gate is on) must render
+    exactly the bare legend, and a later call must be how a previously
+    shown breadcrumb clears (mirrors `echo`'s own "next render clears"
+    contract)."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview="", gate_breadcrumb="2 off"
+        )
+        await pilot.pause()
+        await canvas.update_matrix([_global_row()], kill_switch=False, preview="")
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert legend == (
+            "• override · ⚠ definition changed · ⚑ high-risk floor · "
+            "Space cycles Inherit → Allow → Ask → Off"
+        )
+
+
 # -- UX batch item 11: adaptive Tags column ----------------------------------
 
 
@@ -844,7 +895,7 @@ async def test_update_server_profiles_markup_safe():
 
 
 def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """`MCPPermissionsMode.DEFAULT_CSS` gives `#mcp-perm-table` the same
+    """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-table` the same
     `height: auto; max-height: 70%;` discipline T7 (P3 UX batch) gave
     `#mcp-tools-table`/`#mcp-servers-table` -- so it hugs its own row count
     instead of ballooning to fill the canvas and stranding the
@@ -876,7 +927,7 @@ def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
 
 
 def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """`MCPPermissionsMode.DEFAULT_CSS` gives `#mcp-perm-preview`
+    """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-preview`
     `height: auto;` so the policy-preview Static hugs its own (one- or
     two-sentence) content instead of competing with the matrix table above
     for the canvas's remaining space. Pins the matching bundle-layer copy
@@ -913,7 +964,7 @@ def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
 # to 0x0 under the real app stylesheet's global widget rules) ---------------
 
 
-class PermissionsModeAppWithBundledCSS(App):
+class PermissionsModeAppWithBundledCSS(ConsolidatedCSSApp):
     """Mirrors `ToolsModeAppWithBundledCSS` (test_mcp_tools_mode.py) --
     loads the real generated bundle as CSS_PATH so the matrix table and
     kill-switch row contest their actual CSS priority battle exactly as

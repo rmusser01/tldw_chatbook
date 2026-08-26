@@ -17,8 +17,9 @@ composition differs from the Console's ``_compose_local_provider``
 - ``kill_switch`` reads the store's kill switch guarded: a raising read is
   treated as engaged (fail closed), mirroring the controller's compose-time
   discipline.
-- NO ``todo_store`` (Console-session-scoped state; ``todo_write`` is simply
-  absent from the composed catalog), NO session-approval seam, NO
+- NO Console ``SessionTodoStore`` (so ``todo_create``, ``todo_update``,
+  ``todo_get``, and ``todo_list`` are unregistered; the retired
+  ``todo_write`` is also absent), NO session-approval seam, NO
   ``persist_approval`` (there is no approval to persist).
 
 Deferred: ``record_decision`` is deliberately NOT wired. The server's audit
@@ -28,25 +29,91 @@ here record nothing for now.
 
 ``_local_agent_tool_registrations`` turns a composed provider's catalog
 into binding-ready ``LocalToolRegistration`` entries (name, description,
-JSON parameters, handler); ``MCP/server.py`` binds them onto FastMCP when
+JSON parameters, handler); ``MCP/server.py`` stages them on the gateway when
 ``[mcp] expose_local_tools`` is enabled.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Any, Callable, NamedTuple
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.config import get_subscriptions_db_path
+from tldw_chatbook.DB.Subscriptions_DB import (
+    SubscriptionsDB,
+    SubscriptionsDBReadError,
+    SubscriptionsDBUnavailableError,
+)
 from tldw_chatbook.MCP.permission_store import resolve_effective_state
+from tldw_chatbook.runtime_policy.bootstrap import (
+    load_default_runtime_source_state,
+)
+from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 
 EXTERNAL_NO_CALLBACK_REFUSAL = (
     "tool requires operator approval (permission state is 'ask' and external "
     "MCP clients cannot approve); an operator must grant 'allow' for this "
     "tool in the Console or permission store"
 )
+
+
+class _LazyWatchlistsDBResolver:
+    """Open and retain one external-MCP read-only Watchlists database."""
+
+    def __init__(self) -> None:
+        self._database: SubscriptionsDB | None = None
+        self._pending_cleanup: tuple[SubscriptionsDB, Exception] | None = None
+        self._lock = threading.Lock()
+
+    def __call__(self) -> SubscriptionsDB:
+        database = self._database
+        if database is not None:
+            return database
+
+        with self._lock:
+            database = self._database
+            if database is not None:
+                return database
+
+            if self._pending_cleanup is not None:
+                candidate, failure = self._pending_cleanup
+                try:
+                    candidate.close()
+                except Exception:  # noqa: BLE001 -- retry same cleanup later
+                    raise failure from None
+                self._pending_cleanup = None
+
+            candidate: SubscriptionsDB | None = None
+            try:
+                candidate = SubscriptionsDB(get_subscriptions_db_path(), read_only=True)
+                candidate.assert_agent_read_ready()
+            except Exception as failure:
+                if candidate is not None:
+                    try:
+                        candidate.close()
+                    except Exception:  # noqa: BLE001 -- preserve readiness failure
+                        if isinstance(failure, SubscriptionsDBUnavailableError):
+                            retained_failure = SubscriptionsDBUnavailableError()
+                        elif isinstance(failure, SubscriptionsDBReadError):
+                            retained_failure = SubscriptionsDBReadError()
+                        elif isinstance(failure, FileNotFoundError):
+                            retained_failure = FileNotFoundError()
+                        elif isinstance(failure, ImportError):
+                            retained_failure = ImportError()
+                        else:
+                            retained_failure = RuntimeError(
+                                "Watchlists database initialization failed"
+                            )
+                        self._pending_cleanup = (candidate, retained_failure)
+                raise
+
+            self._database = candidate
+            return candidate
 
 
 def build_server_local_provider(
@@ -58,7 +125,7 @@ def build_server_local_provider(
     take effect immediately); approval_callback is None (fail closed);
     no_callback_refusal is EXTERNAL_NO_CALLBACK_REFUSAL; kill_switch from
     the store. Follows _compose_local_provider's discipline minus the
-    Console-only seams (session approvals, persist, todo store).
+    Console-only seams (session approvals, persist, SessionTodoStore).
 
     Args:
         workspace_root: Confinement root for all path-taking tools.
@@ -67,8 +134,9 @@ def build_server_local_provider(
             must provide ``load() -> dict`` and ``get_kill_switch() -> bool``.
 
     Returns:
-        A ``LocalToolProvider`` whose catalog excludes ``todo_write`` and
-        whose ask-state calls fail closed with
+        A ``LocalToolProvider`` whose catalog excludes ``todo_create``,
+        ``todo_update``, ``todo_get``, ``todo_list``, and the retired
+        ``todo_write``, and whose ask-state calls fail closed with
         ``EXTERNAL_NO_CALLBACK_REFUSAL``.
     """
 
@@ -77,75 +145,53 @@ def build_server_local_provider(
         # mirroring _compose_local_provider's compose-time discipline.
         try:
             return bool(permission_store.get_kill_switch())
-        except Exception as exc:  # noqa: BLE001 -- fail closed on a store read failure
+        except Exception:  # noqa: BLE001 -- fail closed on a store read failure
             logger.warning(
-                f"local_server_tools: kill-switch read failed (treating as engaged): {exc}"
+                "Local MCP tool kill-switch state unavailable; failing closed."
             )
             return True
 
+    def _resolve_state(hub: Any) -> Any:
+        try:
+            payload = permission_store.load()
+            return resolve_effective_state(payload, hub)
+        except Exception:  # noqa: BLE001 -- provider maps the fixed failure safely
+            raise RuntimeError("permission state unavailable") from None
+
+    watchlists_service = WatchlistsToolService(
+        db_resolver=_LazyWatchlistsDBResolver(),
+        # Owner-module loader (TASK-18609): constructing the store here
+        # violated the runtime-policy ownership boundary.
+        runtime_source_loader=load_default_runtime_source_state,
+    )
     return LocalToolProvider(
         workspace_root=Path(workspace_root).resolve(),
-        resolve_state=lambda hub: resolve_effective_state(permission_store.load(), hub),
+        resolve_state=_resolve_state,
         kill_switch=_kill_switch,
         approval_callback=None,
         no_callback_refusal=EXTERNAL_NO_CALLBACK_REFUSAL,
+        watchlists_service=watchlists_service,
     )
 
 
 class LocalToolRegistration(NamedTuple):
-    """One local tool ready to bind onto a FastMCP server.
-
-    ``description``/``parameters`` come from the provider's ``load_schema``
-    and are kept for introspection and future SDK versions -- FastMCP
-    derives input schemas from Python type annotations, not JSON schema,
-    so the binding layer registers each tool with a generic
-    ``arguments: dict`` signature today.
-    """
+    """One local tool ready for all-or-none gateway publication."""
 
     name: str
     description: str
-    parameters: dict
-    handler: Callable[[dict], Any]
+    parameters: dict[str, Any]
+    handler: Callable[[dict[str, Any]], ToolResult]
 
 
 def _make_registration_handler(
     provider: LocalToolProvider, tool_id: str
-) -> Callable[[dict], Any]:
-    """Build one tool handler with a clean ``handler(arguments: dict)`` signature.
+) -> Callable[[dict[str, Any]], ToolResult]:
+    """Return a handler that preserves the provider's canonical result."""
 
-    A factory (not a closure default-arg) keeps the signature free of
-    extra parameters so FastMCP's annotation-derived schema sees only
-    ``arguments``. Fail-safe: ``invoke()`` never raises, so a malformed
-    (non-dict) arguments payload becomes an error dict, not an exception.
-    """
-
-    def handler(arguments: dict) -> Any:
-        result = provider.invoke(tool_id, arguments)
-        if result.ok:
-            return result.content
-        # server.py error-dict convention (server.py:187/:209).
-        return {"error": result.error}
+    def handler(arguments: dict[str, Any]) -> ToolResult:
+        return provider.invoke(tool_id, arguments)
 
     return handler
-
-
-def _parameter_summary(parameters: dict) -> str:
-    """Render a compact parameter summary for appending to a tool description.
-
-    FastMCP derives schemas from type annotations, so the generic
-    ``arguments: dict`` binding leaves external clients with no parameter
-    documentation; this carries the essentials (names, required, types) in
-    the description instead. Returns "" when there are no properties.
-    """
-    properties = parameters.get("properties") or {}
-    if not properties:
-        return ""
-    required = set(parameters.get("required") or ())
-    parts = [
-        f"{name}{' (required)' if name in required else ''}: {spec.get('type', 'any')}"
-        for name, spec in properties.items()
-    ]
-    return " Parameters: " + "; ".join(parts) + "."
 
 
 def _local_agent_tool_registrations(
@@ -153,10 +199,10 @@ def _local_agent_tool_registrations(
 ) -> list[LocalToolRegistration]:
     """Build the binding-ready registration list for a provider's catalog.
 
-    One registration per catalog entry (``todo_write`` is already absent
-    from the server composition's catalog). Each handler calls
-    ``provider.invoke`` and returns ``result.content`` on success or
-    ``{"error": result.error}`` on refusal/failure.
+    One registration per catalog entry. The server composition supplies no
+    Console ``SessionTodoStore``, so all four task tools and the retired
+    ``todo_write`` are already absent. Each handler returns the exact
+    ``ToolResult`` from ``provider.invoke`` for the gateway to classify.
     """
     registrations: list[LocalToolRegistration] = []
     for entry in provider.list_catalog():

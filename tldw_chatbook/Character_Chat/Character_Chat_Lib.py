@@ -34,6 +34,18 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     ConflictError,
     InputError,
 )
+from tldw_chatbook.Chat.provider_continuation import (  # noqa: E402
+    dump_provider_continuation_json,
+    read_provider_continuation_json,
+)
+from tldw_chatbook.Chat.assistant_generation_state import (  # noqa: E402
+    assistant_state_allows_provider_history,
+    normalize_assistant_generation_state,
+    render_exported_assistant_content,
+)
+from tldw_chatbook.model_capabilities import (  # noqa: E402
+    moonshot_model_returns_reasoning_content,
+)
 from tldw_chatbook.Utils.path_validation import (  # noqa: E402
     validate_path,
     validate_path_simple,
@@ -54,6 +66,45 @@ from tldw_chatbook.TTS.profile_portability import (  # noqa: E402
 #
 # Constants
 DEFAULT_CHARACTER_ID = 1
+_EXPORTED_HISTORY_FORMAT = "tldw_chat_history"
+_EXPORTED_HISTORY_FORMAT_VERSION = 1
+_MAX_EXPORTED_HISTORY_FILE_BYTES = 16 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_MESSAGES = 10_000
+_MAX_EXPORTED_HISTORY_CONTENT_CHARS = 1_000_000
+_MAX_EXPORTED_HISTORY_TOTAL_CONTENT_CHARS = 8 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_ID_CHARS = 256
+_MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS = 1024 * 1024
+_MAX_EXPORTED_HISTORY_PRIVATE_BYTES = 8 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_JSON_DEPTH = 32
+
+
+def _json_depth_is_bounded(value: object, limit: int) -> bool:
+    """Return whether decoded JSON stays within the import nesting limit."""
+    stack = [(value, 1)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > limit:
+            return False
+        if isinstance(current, dict):
+            stack.extend(
+                (item, depth + 1) for key, item in current.items() if key != "_private"
+            )
+        elif isinstance(current, list):
+            stack.extend((item, depth + 1) for item in current)
+    return True
+
+
+def _read_bounded_chat_history(source: Any) -> str:
+    """Read at most one ordinary-history resource ceiling plus one byte."""
+    raw = source.read(_MAX_EXPORTED_HISTORY_FILE_BYTES + 1)
+    if isinstance(raw, bytes):
+        if len(raw) > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+            raise ValueError("Chat history exceeds safety limits.")
+        return raw.decode("utf-8")
+    text = str(raw)
+    if len(text.encode("utf-8")) > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+        raise ValueError("Chat history exceeds safety limits.")
+    return text
 
 
 @dataclass(frozen=True, slots=True)
@@ -531,7 +582,7 @@ def replace_placeholders(
     return processed_text
 
 
-def compose_character_card_text(
+def compose_character_card_template(
     *,
     name: str,
     system_prompt: str = "",
@@ -540,9 +591,8 @@ def compose_character_card_text(
     scenario: str = "",
     message_example: str = "",
     post_history_instructions: str = "",
-    user_name: str = "User",
 ) -> str:
-    """Join a character card's prompt-bearing fields into one macro-resolved block.
+    """Join a character card's prompt-bearing fields without resolving macros.
 
     task-1744: this is the ONE card->prompt joiner. It is shared by the
     character-probe eval engine
@@ -560,9 +610,8 @@ def compose_character_card_text(
     are prefixed with a label so a model can tell persona description from
     an in-character instruction. Fields are joined with a blank line
     between them, in that fixed order, and macros (``{{char}}``/``{{user}}``
-    and their aliases -- see :func:`replace_placeholders`) are resolved
-    once over the JOINED text rather than per-field, since prose can carry
-    a macro across what would otherwise be a field boundary.
+    and their aliases -- see :func:`replace_placeholders`) remain byte-exact
+    for trusted template provenance.
 
     Args:
         name: The character's already-resolved display name (the caller
@@ -575,10 +624,8 @@ def compose_character_card_text(
         scenario: The card's scenario field.
         message_example: The card's example dialogue.
         post_history_instructions: The card's post-history instructions.
-        user_name: What ``{{user}}`` (and its aliases) resolve to.
-
     Returns:
-        str: The macro-resolved, joined card text, or ``""`` if every field
+        str: The raw joined card text, or ``""`` if every field
         is empty or whitespace-only. What an empty result MEANS is left to
         the caller: the character-probe engine treats it as "no card text
         at all" and may still emit steering alone, while Console substitutes
@@ -600,10 +647,31 @@ def compose_character_card_text(
         f"Example dialogue:\n{message_example}" if message_example.strip() else "",
         post_history_instructions if post_history_instructions.strip() else "",
     ]
-    text = "\n\n".join(part.strip() for part in parts if part and part.strip())
-    if not text:
-        return ""
-    return replace_placeholders(text, name, user_name)
+    return "\n\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def compose_character_card_text(
+    *,
+    name: str,
+    system_prompt: str = "",
+    personality: str = "",
+    description: str = "",
+    scenario: str = "",
+    message_example: str = "",
+    post_history_instructions: str = "",
+    user_name: str = "User",
+) -> str:
+    """Join and resolve a character card's prompt-bearing fields."""
+    template = compose_character_card_template(
+        name=name,
+        system_prompt=system_prompt,
+        personality=personality,
+        description=description,
+        scenario=scenario,
+        message_example=message_example,
+        post_history_instructions=post_history_instructions,
+    )
+    return replace_placeholders(template, name, user_name)
 
 
 def replace_user_placeholder(
@@ -1031,6 +1099,20 @@ def process_db_messages_to_ui_history(
     for msg_data in db_messages:
         sender = msg_data.get("sender")
         content = msg_data.get("content", "")  # DB content should not be None
+
+        if sender == char_sender_identifier:
+            continuation_read = read_provider_continuation_json(
+                msg_data.get("provider_continuation_json")
+            )
+            if not assistant_state_allows_provider_history(
+                state=msg_data.get("assistant_generation_state"),
+                has_valid_continuation=(
+                    continuation_read.checkpoint is not None
+                    and continuation_read.checkpoint.state == "active"
+                ),
+                content=content,
+            ):
+                continue
 
         # Replace placeholders in the content from DB
         processed_content = replace_placeholders(
@@ -1817,8 +1899,13 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 card_data_json.get("character_version")
             ),
             "extensions": {},  # Initialize extensions
+            # task-15769: `image_base64` is the app's own backup-export /
+            # load_characters compatibility key -- treat it as an image
+            # source, not an unknown field (which would dump the whole
+            # base64 payload into extensions and lose the avatar).
             "image_base64": card_data_json.get("char_image")
-            or card_data_json.get("image"),
+            or card_data_json.get("image")
+            or card_data_json.get("image_base64"),
         }
 
         # Collect any non-standard V1 fields into 'extensions'
@@ -1838,6 +1925,7 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "character_version",
             "char_image",
             "image",
+            "image_base64",
         }
 
         extra_extensions = {}
@@ -3064,6 +3152,13 @@ def load_chat_history_from_file_and_save_to_db(
         error, JSON parsing error, character not found in DB, DB error).
     """
     filename_for_log = "chat_log_stream"
+    source_kind = (
+        "path"
+        if isinstance(file_path_or_obj, str)
+        else "stream"
+        if hasattr(file_path_or_obj, "read")
+        else "unknown"
+    )
     try:
         content_str: str
         if isinstance(file_path_or_obj, str):
@@ -3077,31 +3172,167 @@ def load_chat_history_from_file_and_save_to_db(
             try:
                 validated_path = validate_path(file_path_or_obj, base_directory)
                 filename_for_log = str(validated_path)
-                logger.debug(f"Validated chat history file path: {validated_path}")
-            except ValueError as e:
-                logger.error(
-                    f"Invalid chat history file path '{file_path_or_obj}': {e}"
-                )
+            except ValueError:
+                logger.error("Invalid chat history file path.")
                 return None, None
 
-            with open(validated_path, "r", encoding="utf-8") as f:
-                content_str = f.read()
+            if validated_path.stat().st_size > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+                raise ValueError("Chat history exceeds safety limits.")
+            with open(validated_path, "rb") as f:
+                content_str = _read_bounded_chat_history(f)
         elif hasattr(file_path_or_obj, "read"):  # File-like object
             if hasattr(file_path_or_obj, "name") and file_path_or_obj.name:
                 filename_for_log = file_path_or_obj.name
             file_path_or_obj.seek(0)
-            raw_bytes = file_path_or_obj.read()
-            content_str = (
-                raw_bytes.decode("utf-8")
-                if isinstance(raw_bytes, bytes)
-                else str(raw_bytes)
-            )
+            content_str = _read_bounded_chat_history(file_path_or_obj)
         else:
             raise ValueError(
                 "Invalid input for chat history: must be file path or file-like object."
             )
 
         chat_data_dict = json.loads(content_str)
+        if not isinstance(chat_data_dict, dict) or not _json_depth_is_bounded(
+            chat_data_dict, _MAX_EXPORTED_HISTORY_JSON_DEPTH
+        ):
+            raise ValueError("Invalid chat history.")
+
+        # Chatbook's ordinary JSON export is a bounded active-path projection,
+        # not a character-card log and not a replacement conversation graph.
+        projected_history = chat_data_dict.get("history")
+        exported_format = chat_data_dict.get("format")
+        exported_version = chat_data_dict.get("format_version")
+        if exported_format == _EXPORTED_HISTORY_FORMAT and (
+            type(exported_version) is not int
+            or exported_version != _EXPORTED_HISTORY_FORMAT_VERSION
+        ):
+            raise ValueError("Unsupported exported chat history format.")
+        if (
+            exported_format == _EXPORTED_HISTORY_FORMAT
+            and exported_version == _EXPORTED_HISTORY_FORMAT_VERSION
+        ):
+            if (
+                not isinstance(chat_data_dict.get("conversation_name"), str)
+                or not isinstance(projected_history, list)
+                or not projected_history
+                or len(projected_history) > _MAX_EXPORTED_HISTORY_MESSAGES
+                or not all(
+                    isinstance(message, dict) for message in projected_history
+                )
+            ):
+                raise ValueError("Invalid exported chat history.")
+            staged_messages: list[dict[str, Any]] = []
+            total_content_chars = 0
+            total_id_chars = 0
+            total_private_bytes = 0
+            for ordinal, message in enumerate(projected_history, start=1):
+                role = message.get("role")
+                content = message.get("content")
+                if (
+                    role not in {"user", "assistant", "system", "tool"}
+                    or not isinstance(content, str)
+                    or len(content) > _MAX_EXPORTED_HISTORY_CONTENT_CHARS
+                ):
+                    raise ValueError("Invalid exported chat history.")
+                total_content_chars += len(content)
+                if total_content_chars > _MAX_EXPORTED_HISTORY_TOTAL_CONTENT_CHARS:
+                    raise ValueError("Invalid exported chat history.")
+                for key in ("id", "parent_id", "variant_of"):
+                    identifier = message.get(key)
+                    if identifier is not None and (
+                        not isinstance(identifier, str)
+                        or len(identifier) > _MAX_EXPORTED_HISTORY_ID_CHARS
+                    ):
+                        raise ValueError("Invalid exported chat history.")
+                    total_id_chars += len(identifier or "")
+                if total_id_chars > _MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS:
+                    raise ValueError("Invalid exported chat history.")
+                staged = {"sender": role, "role": role, "content": content}
+                private = message.get("_private")
+                checkpoint = None
+                if (
+                    role == "assistant"
+                    and isinstance(private, dict)
+                    and set(private) == {"provider_continuation"}
+                ):
+                    checkpoint = read_provider_continuation_json(
+                        private.get("provider_continuation")
+                    ).checkpoint
+                    # TASK-19170: the exact-owner rule for complete
+                    # preserved-thinking checkpoints follows the versioned
+                    # kimi reasoning family; pre-19170 family checkpoints
+                    # ending with a tool round are exempt (shape guard).
+                    if (
+                        checkpoint is not None
+                        and checkpoint.provider == "moonshot"
+                        and moonshot_model_returns_reasoning_content(
+                            checkpoint.model
+                        )
+                        and checkpoint.state == "complete"
+                        and not checkpoint.rounds[-1].calls
+                        and checkpoint.rounds[-1].assistant_content != content
+                    ):
+                        checkpoint = None
+                canonical = None
+                if checkpoint is not None:
+                    canonical = dump_provider_continuation_json(checkpoint)
+                    private_bytes = len(
+                        (f'{{"provider_continuation":{canonical}}}').encode("utf-8")
+                    )
+                    if (
+                        total_private_bytes + private_bytes
+                        > _MAX_EXPORTED_HISTORY_PRIVATE_BYTES
+                    ):
+                        checkpoint = None
+                        canonical = None
+                    else:
+                        total_private_bytes += private_bytes
+                if private is not None and checkpoint is None:
+                    logger.warning(
+                        "Exact tool continuation was discarded for message {}.",
+                        ordinal,
+                    )
+                if checkpoint is not None:
+                    staged["provider_continuation_json"] = canonical
+                raw_state = message.get("assistant_generation_state")
+                if raw_state is not None and role != "assistant":
+                    raise ValueError("Invalid exported chat history.")
+                try:
+                    generation_state = normalize_assistant_generation_state(
+                        role=role,
+                        raw_state=raw_state,
+                        has_valid_active_continuation=(
+                            checkpoint is not None and checkpoint.state == "active"
+                        ),
+                    )
+                except ValueError:
+                    raise ValueError("Invalid exported chat history.") from None
+                staged["assistant_generation_state"] = (
+                    generation_state.value
+                    if generation_state is not None
+                    else None
+                )
+                staged_messages.append(staged)
+
+            title = chat_data_dict.get("conversation_name")
+            if not isinstance(title, str) or not title.strip():
+                title = "Imported Chat"
+            title = title[:255]
+            with db.transaction():
+                new_conv_id = db.add_conversation(
+                    {"title": title, "assistant_authority_id": None}
+                )
+                if not new_conv_id:
+                    raise CharactersRAGDBError("Failed to import chat history.")
+                parent_id = None
+                for staged in staged_messages:
+                    staged["conversation_id"] = new_conv_id
+                    staged["parent_message_id"] = parent_id
+                    new_message_id = db.add_message(staged)
+                    if not new_message_id:
+                        raise CharactersRAGDBError("Failed to import chat history.")
+                    parent_id = str(new_message_id)
+                db.set_conversation_active_leaf(new_conv_id, parent_id)
+            return str(new_conv_id), None
 
         # Extract character name (flexible key search)
         char_name_from_log = (
@@ -3156,7 +3387,9 @@ def load_chat_history_from_file_and_save_to_db(
                     history_pairs.append((user_m, bot_m))
             else:
                 logger.warning(
-                    f"Skipping malformed message pair at index {pair_idx} in '{filename_for_log}': {raw_pair}"
+                    "Skipping malformed message pair {} (category={}).",
+                    pair_idx,
+                    type(raw_pair).__name__,
                 )
 
         if not history_pairs:
@@ -3233,17 +3466,30 @@ def load_chat_history_from_file_and_save_to_db(
 
         return new_conv_id, character_id_from_db
 
-    except json.JSONDecodeError as e:
-        logger.error(f"Error decoding JSON from chat log '{filename_for_log}': {e}")
-    except ValueError as ve:
-        logger.error(f"Invalid data or format in chat log '{filename_for_log}': {ve}")
-    except CharactersRAGDBError as dbe:
+    except json.JSONDecodeError:
         logger.error(
-            f"Database error during chat history import from '{filename_for_log}': {dbe}"
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=JSONDecodeError).",
+            source_kind,
+        )
+    except ValueError:
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=ValueError).",
+            source_kind,
+        )
+    except CharactersRAGDBError:
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=CharactersRAGDBError).",
+            source_kind,
         )
     except Exception as e:
-        logger.opt(exception=True).error(
-            f"Unexpected error importing chat history from '{filename_for_log}': {e}"
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category={}).",
+            source_kind,
+            type(e).__name__,
         )
 
     return None, None
@@ -4288,13 +4534,40 @@ def export_conversation_to_json(
             timestamp = msg.get("timestamp", "")
             if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()
-            export_data["messages"].append(
-                {
-                    "sender": msg.get("sender", ""),
-                    "content": msg.get("content", ""),
-                    "timestamp": timestamp,
-                }
+            private = read_provider_continuation_json(
+                msg.get("provider_continuation_json")
             )
+            generation_state = normalize_assistant_generation_state(
+                role=msg.get("role") or msg.get("sender"),
+                raw_state=msg.get("assistant_generation_state"),
+                has_valid_active_continuation=(
+                    private.checkpoint is not None
+                    and private.checkpoint.state == "active"
+                ),
+            )
+            entry = {
+                "sender": msg.get("sender", ""),
+                "content": msg.get("content", ""),
+                "timestamp": timestamp,
+                "assistant_generation_state": generation_state.value
+                if generation_state is not None
+                else None,
+            }
+            # tasks 15660/15667: the message row's normalized provider
+            # usage (`messages.usage_json`, the Console cost ticker's
+            # local-only column) rides the export when present, so a
+            # conversation export accounts for what a turn actually
+            # billed -- including sub-agent spend folded back onto the
+            # assistant row when a surviving fleet child finishes. Rows
+            # with no recorded usage (every non-assistant row, plus
+            # legacy assistant rows) simply omit the key.
+            usage_json = msg.get("usage_json")
+            if usage_json:
+                try:
+                    entry["usage"] = json.loads(usage_json)
+                except (TypeError, ValueError):
+                    logger.debug("Skipping malformed usage_json on message export")
+            export_data["messages"].append(entry)
 
         return json.dumps(export_data, indent=2, ensure_ascii=False)
 
@@ -4356,7 +4629,11 @@ def export_conversation_to_text(
             if sender == "User":
                 sender = user_name
 
-            content = msg.get("content", "")
+            content = render_exported_assistant_content(
+                role=msg.get("role") or msg.get("sender"),
+                content=msg.get("content", ""),
+                state=msg.get("assistant_generation_state"),
+            )
             timestamp = msg.get("timestamp", "")
             if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()

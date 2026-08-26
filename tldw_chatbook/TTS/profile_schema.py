@@ -10,19 +10,29 @@ immutable read-only handle used for the rest of validation.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 import stat
+import struct
+from dataclasses import dataclass
 import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, cast
 from uuid import UUID
 
-from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.DB.private_sqlite import (
+    connect_private_sqlite,
+    connect_private_sqlite_descriptor,
+)
 from tldw_chatbook.DB.sql_validation import escape_identifier, validate_identifier
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_migration_journal import (
+    MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
+)
+from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.TTS.migrations.v0_to_v1 import (
     ASSIGNMENT_PROFILE_INDEX_DDL as _ASSIGNMENT_PROFILE_INDEX_DDL,
 )
@@ -34,6 +44,26 @@ from tldw_chatbook.TTS.migrations.v0_to_v1 import (
 )
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _migrate_v0_to_v1
 from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _migrate_v1_to_v2
+from tldw_chatbook.TTS.migrations.v2_to_v3 import (
+    REFERENCE_ID_INDEX as _REFERENCE_ID_INDEX,
+)
+from tldw_chatbook.TTS.migrations.v2_to_v3 import (
+    REFERENCE_ID_INDEX_DDL as _REFERENCE_ID_INDEX_DDL,
+)
+from tldw_chatbook.TTS.migrations.v2_to_v3 import (
+    REFERENCE_TABLE as _REFERENCE_TABLE,
+)
+from tldw_chatbook.TTS.migrations.v2_to_v3 import (
+    REFERENCE_TABLE_DDL as _REFERENCE_TABLE_DDL,
+)
+from tldw_chatbook.TTS.migrations.v2_to_v3 import migrate as _migrate_v2_to_v3
+from tldw_chatbook.TTS.migrations.v3_to_v4 import (
+    REFERENCE_ID_INDEX_DDL as _V4_REFERENCE_ID_INDEX_DDL,
+)
+from tldw_chatbook.TTS.migrations.v3_to_v4 import (
+    REFERENCE_TABLE_DDL as _V4_REFERENCE_TABLE_DDL,
+)
+from tldw_chatbook.TTS.migrations.v3_to_v4 import migrate as _migrate_v3_to_v4
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -45,7 +75,7 @@ from tldw_chatbook.TTS.profile_types import (
     canonical_json_options,
 )
 
-CURRENT_PROFILE_SCHEMA_VERSION = 2
+CURRENT_PROFILE_SCHEMA_VERSION = 4
 BUSY_TIMEOUT_MS = 5_000
 _DEADLINE_PROGRESS_OPCODE_INTERVAL = 1_000
 _MAX_PERSISTED_DISPLAY_NAME_CHARACTERS = 128
@@ -111,9 +141,468 @@ LEFT JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
 
 RowLike: TypeAlias = sqlite3.Row | Mapping[str, object]
 
+_MAX_EXACT_METADATA_ROWS = 1_000_000
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PostInitProfileStoreAuthority:
+    """Exact closed-store identity retained across exclusive/shared handoff."""
+
+    parent_identity: os.stat_result
+    file_identity: os.stat_result
+
+    def __repr__(self) -> str:
+        return "PostInitProfileStoreAuthority(<private>)"
+
 
 def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
+
+
+class _ExactCurrentProfileConnection:
+    """Live SQLite handle retaining the descriptor authority that admitted it."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        evidence_connection: sqlite3.Connection,
+        selected: Path,
+        parent_fd: int,
+        file_fd: int,
+        parent_identity: os.stat_result,
+        file_identity: os.stat_result,
+        sidecar_fds: dict[str, int],
+        sidecar_identities: dict[str, os.stat_result],
+    ) -> None:
+        self._connection = connection
+        self._evidence_connection = evidence_connection
+        self.selected = selected
+        self.parent_fd = parent_fd
+        self.file_fd = file_fd
+        self.parent_identity = parent_identity
+        self.file_identity = file_identity
+        self.sidecar_fds = sidecar_fds
+        self.sidecar_identities = sidecar_identities
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._connection, name)
+
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+        return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._connection.in_transaction
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    @property
+    def row_factory(self) -> object:
+        return self._connection.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value: object) -> None:
+        self._connection.row_factory = value  # type: ignore[assignment]
+
+    def close(self) -> None:
+        # The pin remains live if SQLite close fails.  Repository cleanup can
+        # safely retry this exact object while retaining the shared lease.
+        self._connection.close()
+        self._evidence_connection.close()
+        for suffix, descriptor in tuple(self.sidecar_fds.items()):
+            os.close(descriptor)
+            del self.sidecar_fds[suffix]
+        if self.file_fd >= 0:
+            os.close(self.file_fd)
+            self.file_fd = -1
+        if self.parent_fd >= 0:
+            os.close(self.parent_fd)
+            self.parent_fd = -1
+
+
+class ExactProfileStoreCleanupError(ProfileRepositoryError):
+    """Carry exact retained authority when an internal close cannot settle."""
+
+    def __init__(self, connection: _ExactCurrentProfileConnection) -> None:
+        super().__init__("operation_failed")
+        self.connection = connection
+
+
+class ExactProfileStoreNotCurrentError(ProfileRepositoryError):
+    """Signal that shared proof must yield to exclusive initialization."""
+
+    def __init__(self) -> None:
+        super().__init__("schema_partial")
+
+
+class ExactProfileStoreAuthorityError(ProfileRepositoryError):
+    """Signal that retained live-store namespace authority no longer matches."""
+
+    def __init__(self) -> None:
+        super().__init__("operation_failed")
+
+
+def _exact_store_namespace_safe(
+    parent_fd: int,
+    leaf: str,
+) -> bool:
+    publication = f".{leaf}.migration-publication.json"
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        try:
+            os.stat(
+                f"{publication}{suffix}",
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        return False
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            observed = os.stat(
+                f"{leaf}{suffix}",
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        if suffix == "-journal":
+            return False
+        if (
+            private_paths._classify_private_file_stat(
+                observed,
+                expected_uid=os.geteuid(),
+            )
+            is not None
+            or stat.S_IMODE(observed.st_mode) != 0o600
+        ):
+            return False
+    return True
+
+
+def _open_exact_store_sidecars(
+    parent_fd: int,
+    leaf: str,
+) -> tuple[dict[str, int], dict[str, os.stat_result]] | None:
+    descriptors: dict[str, int] = {}
+    identities: dict[str, os.stat_result] = {}
+    for suffix in ("-wal", "-shm"):
+        try:
+            descriptor = os.open(
+                f"{leaf}{suffix}",
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_NOCTTY", 0),
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError:
+            descriptor = -1
+        except OSError:
+            descriptor = -2
+        if descriptor >= 0:
+            observed = os.fstat(descriptor)
+            try:
+                named = os.stat(
+                    f"{leaf}{suffix}",
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                os.close(descriptor)
+                descriptor = -2
+            else:
+                if (
+                    not private_paths._same_identity(observed, named)
+                    or private_paths._classify_private_file_stat(
+                        observed,
+                        expected_uid=os.geteuid(),
+                    )
+                    is not None
+                    or stat.S_IMODE(observed.st_mode) != 0o600
+                ):
+                    os.close(descriptor)
+                    descriptor = -2
+                else:
+                    descriptors[suffix] = descriptor
+                    identities[suffix] = observed
+        if descriptor == -2:
+            for opened in descriptors.values():
+                os.close(opened)
+            raise _repository_error("operation_failed")
+    if not descriptors:
+        return None
+    if set(descriptors) != {"-wal", "-shm"}:
+        for opened in descriptors.values():
+            os.close(opened)
+        raise ExactProfileStoreNotCurrentError()
+    return descriptors, identities
+
+
+def revalidate_exact_current_profile_store(
+    connection: sqlite3.Connection,
+    path: Path | None,
+) -> None:
+    """Recheck retained exact-current authority immediately before live use."""
+
+    if not isinstance(connection, _ExactCurrentProfileConnection):
+        return
+    if (
+        path is None
+        or connection.selected != path
+        or connection.file_fd < 0
+        or connection.parent_fd < 0
+    ):
+        raise ExactProfileStoreAuthorityError()
+    reopened_parent_fd = -1
+    try:
+        reopened_parent_fd, reopened_leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=False,
+        )
+        reopened_parent = os.fstat(reopened_parent_fd)
+        opened_parent = os.fstat(connection.parent_fd)
+        opened_file = os.fstat(connection.file_fd)
+        named = os.stat(
+            path.name,
+            dir_fd=connection.parent_fd,
+            follow_symlinks=False,
+        )
+    except Exception:
+        raise ExactProfileStoreAuthorityError() from None
+    finally:
+        if reopened_parent_fd >= 0:
+            os.close(reopened_parent_fd)
+    sidecars_match = set(connection.sidecar_fds) == {"-wal", "-shm"}
+    if sidecars_match:
+        for suffix, descriptor in connection.sidecar_fds.items():
+            try:
+                opened_sidecar = os.fstat(descriptor)
+                named_sidecar = os.stat(
+                    f"{path.name}{suffix}",
+                    dir_fd=connection.parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                sidecars_match = False
+                break
+            expected_sidecar = connection.sidecar_identities[suffix]
+            if (
+                not private_paths._same_identity(opened_sidecar, expected_sidecar)
+                or not private_paths._same_identity(named_sidecar, expected_sidecar)
+                or private_paths._classify_private_file_stat(
+                    named_sidecar,
+                    expected_uid=os.geteuid(),
+                )
+                is not None
+                or stat.S_IMODE(named_sidecar.st_mode) != 0o600
+            ):
+                sidecars_match = False
+                break
+    if (
+        reopened_leaf != path.name
+        or not _same_parent_authority(reopened_parent, connection.parent_identity)
+        or not _same_parent_authority(opened_parent, connection.parent_identity)
+        or not private_paths._same_identity(opened_file, connection.file_identity)
+        or not private_paths._same_identity(named, connection.file_identity)
+        or private_paths._classify_private_file_stat(
+            named,
+            expected_uid=os.geteuid(),
+        )
+        is not None
+        or stat.S_IMODE(named.st_mode) != 0o600
+        or not sidecars_match
+        or not _exact_store_namespace_safe(
+            connection.parent_fd,
+            path.name,
+        )
+    ):
+        raise ExactProfileStoreAuthorityError()
+
+
+def _same_parent_authority(
+    observed: os.stat_result,
+    expected: os.stat_result,
+) -> bool:
+    """Compare stable identity and security metadata for one store parent."""
+
+    return (
+        observed.st_nlink > 0
+        and expected.st_nlink > 0
+        and (
+            observed.st_dev,
+            observed.st_ino,
+            observed.st_mode,
+            observed.st_uid,
+            observed.st_gid,
+        )
+        == (
+            expected.st_dev,
+            expected.st_ino,
+            expected.st_mode,
+            expected.st_uid,
+            expected.st_gid,
+        )
+    )
+
+
+def _matches_post_init_authority(
+    parent: os.stat_result,
+    file: os.stat_result,
+    expected: PostInitProfileStoreAuthority,
+) -> bool:
+    return (
+        _same_parent_authority(parent, expected.parent_identity)
+        and private_paths._same_identity(file, expected.file_identity)
+        and file.st_size == expected.file_identity.st_size
+        and file.st_nlink == 1
+        and private_paths._classify_private_file_stat(
+            file,
+            expected_uid=os.geteuid(),
+        )
+        is None
+        and stat.S_IMODE(file.st_mode) == 0o600
+    )
+
+
+def capture_post_init_profile_store_authority(
+    path: Path,
+) -> PostInitProfileStoreAuthority:
+    """Pin one closed, sidecar-free store before releasing exclusive ownership."""
+
+    parent_fd = -1
+    file_fd = -1
+    try:
+        parent_fd, leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=False,
+        )
+        parent = os.fstat(parent_fd)
+        if not _exact_store_namespace_safe(parent_fd, leaf):
+            raise _repository_error("operation_failed")
+        file_fd = os.open(
+            leaf,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0),
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(file_fd)
+        named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        provisional = PostInitProfileStoreAuthority(parent, opened)
+        if (
+            opened.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+            or not _matches_post_init_authority(parent, opened, provisional)
+            or not _matches_post_init_authority(parent, named, provisional)
+        ):
+            raise _repository_error("operation_failed")
+        os.fsync(file_fd)
+        os.fsync(parent_fd)
+        settled_parent = os.fstat(parent_fd)
+        settled_file = os.fstat(file_fd)
+        settled_named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not _matches_post_init_authority(
+                settled_parent,
+                settled_file,
+                provisional,
+            )
+            or not _matches_post_init_authority(
+                settled_parent,
+                settled_named,
+                provisional,
+            )
+            or not _exact_store_namespace_safe(parent_fd, leaf)
+        ):
+            raise _repository_error("operation_failed")
+        return provisional
+    except ProfileRepositoryError:
+        raise
+    except Exception:
+        raise _repository_error("operation_failed") from None
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def _update_metadata_digest(digest: Any, value: object) -> None:
+    """Length-frame one SQLite scalar into an incremental digest."""
+
+    if value is None:
+        payload = b""
+        tag = b"n"
+    elif type(value) is int:
+        payload = str(value).encode("ascii")
+        tag = b"i"
+    elif type(value) is float:
+        payload = struct.pack(">d", value)
+        tag = b"f"
+    elif type(value) is str:
+        payload = value.encode("utf-8")
+        tag = b"s"
+    else:
+        raise _repository_error("corrupt_data")
+    digest.update(tag)
+    digest.update(len(payload).to_bytes(8, "big"))
+    digest.update(payload)
+
+
+def _stream_exact_store_metadata_evidence(
+    connection: sqlite3.Connection,
+) -> tuple[bytes, tuple[int, int, int]]:
+    """Stream bounded exact metadata evidence without retaining rows or blobs."""
+
+    statements = (
+        """
+        SELECT profile_id, display_name, normalized_name, provider_id,
+               model_id, voice_id, response_format, speed, options_json,
+               revision, created_at, updated_at
+        FROM tts_generation_profiles
+        ORDER BY profile_id
+        """,
+        """
+        SELECT source, authority_id, character_id, profile_id,
+               created_at, updated_at
+        FROM character_tts_assignments
+        ORDER BY source, authority_id, character_id
+        """,
+        f"""
+        SELECT profile_id, reference_id, sha256, byte_length,
+               length(wav_bytes), length(CAST(reference_text AS BLOB)),
+               duration_ms, sample_rate_hz, channels, sample_encoding,
+               created_at, updated_at, recipe_id, recipe_revision
+        FROM {_REFERENCE_TABLE}
+        ORDER BY profile_id
+        """,
+    )
+    digest = hashlib.sha256()
+    counts: list[int] = []
+    total = 0
+    for table_index, statement in enumerate(statements):
+        count = 0
+        digest.update(b"t" + table_index.to_bytes(1, "big"))
+        for row in connection.execute(statement):
+            count += 1
+            total += 1
+            if total > _MAX_EXACT_METADATA_ROWS:
+                raise _repository_error("corrupt_data")
+            digest.update(b"r")
+            for value in row:
+                _update_metadata_digest(digest, value)
+        counts.append(count)
+    return digest.digest(), (counts[0], counts[1], counts[2])
 
 
 def encode_uuid(value: UUID) -> str:
@@ -367,6 +856,8 @@ def decode_assigned_snapshot(row: RowLike) -> AssignedTTSProfileSnapshot:
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_v0_to_v1,
     1: _migrate_v1_to_v2,
+    2: _migrate_v2_to_v3,
+    3: _migrate_v3_to_v4,
 }
 
 
@@ -417,7 +908,9 @@ def _validated_quoted_identifier(identifier: object, identifier_kind: str) -> st
     return escape_identifier(exact_identifier)
 
 
-def _validate_owned_schema_sql(connection: sqlite3.Connection) -> None:
+def _validate_owned_schema_sql(
+    connection: sqlite3.Connection, *, schema_version: int
+) -> None:
     expected = {
         ("table", PROFILE_TABLE): _normalized_ddl(_PROFILE_TABLE_DDL),
         ("table", ASSIGNMENT_TABLE): _normalized_ddl(_ASSIGNMENT_TABLE_DDL),
@@ -425,6 +918,15 @@ def _validate_owned_schema_sql(connection: sqlite3.Connection) -> None:
             _ASSIGNMENT_PROFILE_INDEX_DDL
         ),
     }
+    if schema_version in (3, 4):
+        expected[("table", _REFERENCE_TABLE)] = _normalized_ddl(
+            _REFERENCE_TABLE_DDL if schema_version == 3 else _V4_REFERENCE_TABLE_DDL
+        )
+        expected[("index", _REFERENCE_ID_INDEX)] = _normalized_ddl(
+            _REFERENCE_ID_INDEX_DDL
+            if schema_version == 3
+            else _V4_REFERENCE_ID_INDEX_DDL
+        )
     actual: dict[tuple[str, str], str] = {}
     for row in connection.execute(
         """
@@ -552,20 +1054,27 @@ def _run_with_deadline_progress(
 def _validate_schema(
     connection: sqlite3.Connection,
     *,
+    expected_version: int | None = None,
     check_deadline: Callable[[], None] | None = None,
 ) -> None:
     """Validate every required structural and integrity invariant.
 
-    The structural manifest is identical for v1 and v2 -- v2 has no DDL
-    change, so this same check guards both a not-yet-upgraded populated v1
-    store and an already-current v2 store.
+    Versions one and two share the legacy manifest. Version three additionally
+    owns the exact private clone-reference table and unique reference index.
     """
 
     try:
+        version = (
+            connection.execute("PRAGMA user_version").fetchone()[0]
+            if expected_version is None
+            else expected_version
+        )
+        if type(version) is not int or version not in (1, 2, 3, 4):
+            raise ValueError
         _run_with_deadline_progress(
             connection,
             check_deadline,
-            lambda: _validate_schema_body(connection),
+            lambda: _validate_schema_body(connection, schema_version=version),
         )
     except ProfileRepositoryError:
         raise
@@ -575,15 +1084,20 @@ def _validate_schema(
         raise _repository_error("schema_corrupt") from None
 
 
-def _validate_schema_body(connection: sqlite3.Connection) -> None:
+def _validate_schema_body(
+    connection: sqlite3.Connection, *, schema_version: int
+) -> None:
     """Validate schema invariants while any caller-owned progress hook is active."""
 
     try:
         if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
             raise ValueError
-        if _user_tables(connection) != {PROFILE_TABLE, ASSIGNMENT_TABLE}:
+        expected_tables = {PROFILE_TABLE, ASSIGNMENT_TABLE}
+        if schema_version in (3, 4):
+            expected_tables.add(_REFERENCE_TABLE)
+        if _user_tables(connection) != expected_tables:
             raise ValueError
-        _validate_owned_schema_sql(connection)
+        _validate_owned_schema_sql(connection, schema_version=schema_version)
 
         if _table_xinfo_manifest(connection, PROFILE_TABLE) != [
             (0, "profile_id", "TEXT", 0, None, 1, 0),
@@ -667,6 +1181,71 @@ def _validate_schema_body(connection: sqlite3.Connection) -> None:
         ) != (PROFILE_TABLE, "profile_id", "profile_id", "RESTRICT"):
             raise ValueError
 
+        if schema_version in (3, 4):
+            quoted_reference_table = _validated_quoted_identifier(
+                _REFERENCE_TABLE,
+                "table name",
+            )
+            expected_reference_manifest = [
+                (0, "profile_id", "TEXT", 0, None, 1, 0),
+                (1, "reference_id", "TEXT", 1, None, 0, 0),
+                (2, "wav_bytes", "BLOB", 1, None, 0, 0),
+                (3, "reference_text", "TEXT", 1, None, 0, 0),
+                (4, "sha256", "TEXT", 1, None, 0, 0),
+                (5, "byte_length", "INTEGER", 1, None, 0, 0),
+                (6, "duration_ms", "INTEGER", 1, None, 0, 0),
+                (7, "sample_rate_hz", "INTEGER", 1, None, 0, 0),
+                (8, "channels", "INTEGER", 1, None, 0, 0),
+                (9, "sample_encoding", "TEXT", 1, None, 0, 0),
+                (10, "created_at", "TEXT", 1, None, 0, 0),
+                (11, "updated_at", "TEXT", 1, None, 0, 0),
+            ]
+            if schema_version == 4:
+                expected_reference_manifest.extend(
+                    [
+                        (12, "recipe_id", "TEXT", 0, None, 0, 0),
+                        (13, "recipe_revision", "INTEGER", 0, None, 0, 0),
+                    ]
+                )
+            if (
+                _table_xinfo_manifest(connection, _REFERENCE_TABLE)
+                != expected_reference_manifest
+            ):
+                raise ValueError
+            if not _has_exact_primary_key_index(
+                connection, _REFERENCE_TABLE, ("profile_id",)
+            ):
+                raise ValueError
+            reference_index_rows = list(
+                connection.execute(f"PRAGMA index_list({quoted_reference_table})")
+            )
+            reference_indexes = {row["name"]: row for row in reference_index_rows}
+            reference_id_index = reference_indexes.get(_REFERENCE_ID_INDEX)
+            if (
+                len(reference_index_rows) != 2
+                or reference_id_index is None
+                or reference_id_index["origin"] != "c"
+                or reference_id_index["partial"] != 0
+                or reference_id_index["unique"] != 1
+                or not _has_exact_binary_index_keys(
+                    connection, _REFERENCE_ID_INDEX, ("reference_id",)
+                )
+            ):
+                raise ValueError
+            reference_foreign_keys = list(
+                connection.execute(f"PRAGMA foreign_key_list({quoted_reference_table})")
+            )
+            if len(reference_foreign_keys) != 1:
+                raise ValueError
+            reference_foreign_key = reference_foreign_keys[0]
+            if (
+                reference_foreign_key["table"],
+                reference_foreign_key["from"],
+                reference_foreign_key["to"],
+                reference_foreign_key["on_delete"],
+            ) != (PROFILE_TABLE, "profile_id", "profile_id", "CASCADE"):
+                raise ValueError
+
         quick_check = [row[0] for row in connection.execute("PRAGMA quick_check")]
         if quick_check != ["ok"]:
             raise ValueError
@@ -676,6 +1255,168 @@ def _validate_schema_body(connection: sqlite3.Connection) -> None:
         raise
     except Exception:
         raise _repository_error("schema_corrupt") from None
+
+
+def _validate_full_integrity(connection: sqlite3.Connection) -> None:
+    """Run full integrity and foreign-key validation before migration commit."""
+
+    if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
+        raise ValueError
+    if list(connection.execute("PRAGMA foreign_key_check")):
+        raise ValueError
+
+
+def _migration_domain_snapshot(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]]:
+    """Capture exact ordered v2 profile and assignment persistence domains."""
+
+    profiles = tuple(
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT profile_id, display_name, normalized_name, provider_id,
+                   model_id, voice_id, response_format, speed, options_json,
+                   revision, created_at, updated_at
+            FROM tts_generation_profiles
+            ORDER BY profile_id
+            """
+        )
+    )
+    assignments = tuple(
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT source, authority_id, character_id, profile_id,
+                   created_at, updated_at
+            FROM character_tts_assignments
+            ORDER BY source, authority_id, character_id
+            """
+        )
+    )
+    return profiles, assignments
+
+
+def _migration_reference_evidence(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[object, ...], ...]:
+    """Project every reference field except the WAV payload, in row order.
+
+    The projection is deliberately payload-free (TASK-21130): selecting
+    ``wav_bytes`` here materialised the whole reference table in Python, and
+    the migration held two such projections at once -- measured at 966 MiB of
+    peak allocation for a store at the 512 MiB
+    :data:`~tldw_chatbook.TTS.profile_reference_types.MAX_REFERENCE_TOTAL_BYTES`
+    bound, against this subsystem's own 256 KiB streaming norm.
+
+    Byte-for-byte payload identity is still proved, by transitivity rather
+    than by retention: the stored ``sha256`` column travels in this projection
+    verbatim, and :func:`_validate_migration_reference_rows` re-derives
+    ``sha256(wav_bytes)`` from the streamed BLOB and requires it to equal that
+    column on *both* sides of the migration (see
+    ``TTSCloneReference.__post_init__``). So ``blob_before == sha_before``,
+    ``sha_before == sha_after`` (this projection), ``sha_after == blob_after``
+    together give ``blob_before == blob_after``, and any caller comparing two
+    of these projections must run that validation at both boundaries.
+
+    ``reference_text`` is replaced by its UTF-8 length and digest so the
+    evidence retains no private transcript either; the same shape is used for
+    the downgrade-boundary evidence in ``profile_migration_candidate``.
+    """
+
+    return tuple(
+        (
+            row[0],
+            row[1],
+            len(row[2].encode("utf-8")),
+            hashlib.sha256(row[2].encode("utf-8")).hexdigest(),
+            *tuple(row[3:]),
+        )
+        for row in connection.execute(
+            f"""
+            SELECT profile_id, reference_id, reference_text, sha256,
+                   byte_length, duration_ms, sample_rate_hz, channels,
+                   sample_encoding, created_at, updated_at
+            FROM {_REFERENCE_TABLE}
+            ORDER BY profile_id
+            """
+        )
+    )
+
+
+def _validate_migration_reference_rows(
+    connection: sqlite3.Connection,
+    *,
+    schema_version: int,
+) -> None:
+    """Fully decode references at either side of the v3-to-v4 boundary."""
+
+    from tldw_chatbook.TTS.profile_reference_audio import (
+        validate_canonical_reference_wav,
+    )
+    from tldw_chatbook.TTS.profile_reference_storage import (
+        decode_reference_payload,
+        read_reference_blob,
+        validate_reference_rows,
+    )
+    from tldw_chatbook.TTS.profile_reference_types import (
+        MAX_REFERENCE_COUNT,
+        MAX_REFERENCE_TOTAL_BYTES,
+    )
+
+    if schema_version == 4:
+        validate_reference_rows(connection)
+        return
+    quota = connection.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(byte_length), 0) FROM {_REFERENCE_TABLE}"
+    ).fetchone()
+    if (
+        quota is None
+        or type(quota[0]) is not int
+        or type(quota[1]) is not int
+        or not 0 <= quota[0] <= MAX_REFERENCE_COUNT
+        or not 0 <= quota[1] <= MAX_REFERENCE_TOTAL_BYTES
+    ):
+        raise ValueError
+    seen = 0
+    for row in connection.execute(
+        f"""
+        SELECT r.rowid AS reference_rowid,
+               r.reference_id AS reference_reference_id,
+               r.reference_text, r.sha256,
+               r.byte_length AS reference_byte_length,
+               r.duration_ms AS reference_duration_ms,
+               r.sample_rate_hz AS reference_sample_rate_hz,
+               r.channels AS reference_channels,
+               r.sample_encoding AS reference_sample_encoding,
+               r.created_at AS reference_created_at,
+               r.updated_at AS reference_updated_at,
+               NULL AS reference_recipe_id,
+               NULL AS reference_recipe_revision,
+               p.model_id AS reference_model_id
+        FROM {_REFERENCE_TABLE} AS r
+        JOIN {PROFILE_TABLE} AS p ON p.profile_id = r.profile_id
+        ORDER BY r.profile_id
+        """
+    ):
+        payload = read_reference_blob(
+            connection,
+            row["reference_rowid"],
+            row["reference_byte_length"],
+        )
+        reference = decode_reference_payload(row, payload)
+        metadata = validate_canonical_reference_wav(payload)
+        if (
+            metadata.byte_length != reference.summary.byte_length
+            or metadata.duration_ms != reference.summary.duration_ms
+            or metadata.sample_rate_hz != reference.summary.sample_rate_hz
+            or metadata.channels != reference.summary.channels
+            or metadata.sample_encoding != reference.summary.sample_encoding
+        ):
+            raise ValueError
+        seen += 1
+    if seen != quota[0]:
+        raise ValueError
 
 
 class _CleanupState:
@@ -717,7 +1458,20 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
     try:
         connection.execute("BEGIN IMMEDIATE")
         version = from_version
+        domain_snapshot = (
+            ((), ()) if from_version == 0 else _migration_domain_snapshot(connection)
+        )
+        reference_evidence: tuple[tuple[object, ...], ...] = ()
+        if from_version >= 3:
+            # First link of the payload-identity chain: this proves
+            # sha256(wav_bytes) == the sha256 column for every row BEFORE the
+            # migration. The evidence captured on the next line then carries
+            # that column (never the payload) across the climb.
+            _validate_migration_reference_rows(connection, schema_version=from_version)
+            reference_evidence = _migration_reference_evidence(connection)
         while version < CURRENT_PROFILE_SCHEMA_VERSION:
+            if version == 2:
+                validate_profile_store_rows(connection)
             migration = MIGRATIONS.get(version)
             if migration is None:
                 raise RuntimeError
@@ -731,6 +1485,29 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
                 or version_row[0] != version
             ):
                 raise RuntimeError
+        _validate_full_integrity(connection)
+        _validate_schema_body(connection, schema_version=CURRENT_PROFILE_SCHEMA_VERSION)
+        if (
+            connection.execute(
+                f"SELECT count(*) FROM {_REFERENCE_TABLE} "
+                "WHERE recipe_id IS NOT NULL OR recipe_revision IS NOT NULL"
+            ).fetchone()[0]
+            != 0
+        ):
+            raise RuntimeError
+        if _migration_domain_snapshot(connection) != domain_snapshot:
+            raise RuntimeError
+        if _migration_reference_evidence(connection) != reference_evidence:
+            raise RuntimeError
+        validate_profile_store_rows(connection)
+        # Closing link of the payload-identity chain: re-derives
+        # sha256(wav_bytes) from the streamed BLOB and requires it to equal
+        # the sha256 column the evidence above just proved unchanged. Neither
+        # side ever holds more than one payload at a time.
+        _validate_migration_reference_rows(
+            connection,
+            schema_version=CURRENT_PROFILE_SCHEMA_VERSION,
+        )
         connection.commit()
     except BaseException as error:
         body_error = error
@@ -783,6 +1560,224 @@ def peek_profile_store_schema_version(path: Path) -> int | None:
                 connection.close()
             except Exception:
                 pass
+
+
+def open_exact_current_profile_store(
+    path: Path,
+    *,
+    expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
+) -> sqlite3.Connection:
+    """Open exact current v4 without migration while retaining its proof pin."""
+
+    if not isinstance(path, Path) or not path.is_absolute():
+        raise _repository_error("operation_failed")
+    parent_fd = -1
+    file_fd = -1
+    sidecar_fds: dict[str, int] = {}
+    sidecar_identities: dict[str, os.stat_result] = {}
+    descriptor: sqlite3.Connection | None = None
+    live: sqlite3.Connection | None = None
+    owned: _ExactCurrentProfileConnection | None = None
+    body_error: BaseException | None = None
+    try:
+        parent_fd, leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=False,
+        )
+        parent_identity = os.fstat(parent_fd)
+        if expected_post_init_authority is not None and not _same_parent_authority(
+            parent_identity,
+            expected_post_init_authority.parent_identity,
+        ):
+            raise _repository_error("operation_failed")
+        if not _exact_store_namespace_safe(parent_fd, leaf):
+            raise ExactProfileStoreNotCurrentError()
+        file_fd = os.open(
+            leaf,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0),
+            dir_fd=parent_fd,
+        )
+        file_identity = os.fstat(file_fd)
+        if (
+            file_identity.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+            or private_paths._classify_private_file_stat(
+                file_identity,
+                expected_uid=os.geteuid(),
+            )
+            is not None
+            or stat.S_IMODE(file_identity.st_mode) != 0o600
+        ):
+            raise ExactProfileStoreNotCurrentError()
+        named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if not private_paths._same_identity(named, file_identity) or (
+            expected_post_init_authority is not None
+            and (
+                not _matches_post_init_authority(
+                    parent_identity,
+                    file_identity,
+                    expected_post_init_authority,
+                )
+                or not _matches_post_init_authority(
+                    parent_identity,
+                    named,
+                    expected_post_init_authority,
+                )
+            )
+        ):
+            raise _repository_error("operation_failed")
+        pinned_sidecars = _open_exact_store_sidecars(parent_fd, leaf)
+        if pinned_sidecars is not None:
+            sidecar_fds, sidecar_identities = pinned_sidecars
+
+        descriptor = connect_private_sqlite_descriptor(
+            "tts.profile_store_descriptor",
+            file_fd,
+            isolation_level=None,
+        )
+        _configure_connection(descriptor)
+        descriptor_version = descriptor.execute("PRAGMA user_version").fetchone()[0]
+        if descriptor_version != CURRENT_PROFILE_SCHEMA_VERSION:
+            raise ExactProfileStoreNotCurrentError()
+        _validate_schema(descriptor)
+        validate_profile_store_rows(descriptor)
+        _stream_exact_store_metadata_evidence(descriptor)
+
+        live = connect_private_sqlite(
+            "tts.profile_store",
+            path,
+            must_exist=True,
+            expected_identity=file_identity,
+            isolation_level=None,
+        )
+        live.execute("PRAGMA query_only = ON")
+        if live.execute("PRAGMA query_only").fetchone()[0] != 1:
+            raise _repository_error("schema_corrupt")
+        # Force SQLite to acquire its main database and WAL cohort before
+        # retaining exact sidecar descriptors.
+        live.execute("PRAGMA user_version").fetchone()
+        if live.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+            raise ExactProfileStoreNotCurrentError()
+        if not sidecar_fds:
+            opened_sidecars = _open_exact_store_sidecars(parent_fd, leaf)
+            if opened_sidecars is None:
+                raise _repository_error("operation_failed")
+            sidecar_fds, sidecar_identities = opened_sidecars
+        owned = _ExactCurrentProfileConnection(
+            live,
+            evidence_connection=descriptor,
+            selected=path,
+            parent_fd=parent_fd,
+            file_fd=file_fd,
+            parent_identity=parent_identity,
+            file_identity=file_identity,
+            sidecar_fds=sidecar_fds,
+            sidecar_identities=sidecar_identities,
+        )
+        live = None
+        descriptor = None
+        parent_fd = -1
+        file_fd = -1
+        sidecar_fds = {}
+        sidecar_identities = {}
+        _configure_connection(cast(sqlite3.Connection, owned))
+        live_version = owned.execute("PRAGMA user_version").fetchone()[0]
+        if live_version != CURRENT_PROFILE_SCHEMA_VERSION:
+            raise _repository_error("schema_partial")
+        _validate_schema(cast(sqlite3.Connection, owned))
+        validate_profile_store_rows(cast(sqlite3.Connection, owned))
+        owned.execute("BEGIN")
+        _stream_exact_store_metadata_evidence(cast(sqlite3.Connection, owned))
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+        if expected_post_init_authority is not None and (
+            not _matches_post_init_authority(
+                os.fstat(owned.parent_fd),
+                os.fstat(owned.file_fd),
+                expected_post_init_authority,
+            )
+        ):
+            raise _repository_error("operation_failed")
+        owned.rollback()
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+        owned.execute("PRAGMA query_only = OFF")
+        if owned.execute("PRAGMA query_only").fetchone()[0] != 0:
+            raise _repository_error("schema_corrupt")
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+    except FileNotFoundError:
+        body_error = ExactProfileStoreNotCurrentError()
+    except BaseException as error:
+        body_error = error
+
+    if body_error is None:
+        assert owned is not None
+        return cast(sqlite3.Connection, owned)
+
+    if owned is not None:
+        try:
+            owned.close()
+        except BaseException:
+            raise ExactProfileStoreCleanupError(owned) from None
+    else:
+        if (
+            live is not None
+            and descriptor is not None
+            and parent_fd >= 0
+            and file_fd >= 0
+        ):
+            cleanup_owner = _ExactCurrentProfileConnection(
+                live,
+                evidence_connection=descriptor,
+                selected=path,
+                parent_fd=parent_fd,
+                file_fd=file_fd,
+                parent_identity=os.fstat(parent_fd),
+                file_identity=os.fstat(file_fd),
+                sidecar_fds=sidecar_fds,
+                sidecar_identities=sidecar_identities,
+            )
+            try:
+                cleanup_owner.close()
+            except BaseException:
+                raise ExactProfileStoreCleanupError(cleanup_owner) from None
+            live = None
+            descriptor = None
+            parent_fd = -1
+            file_fd = -1
+            sidecar_fds = {}
+        elif live is not None:
+            try:
+                live.close()
+            except BaseException as error:
+                if not isinstance(error, Exception):
+                    raise
+                raise _repository_error("operation_failed") from None
+        if descriptor is not None:
+            try:
+                descriptor.close()
+            except BaseException:
+                pass
+        if file_fd >= 0:
+            os.close(file_fd)
+        for opened in sidecar_fds.values():
+            os.close(opened)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+    if not isinstance(body_error, Exception):
+        raise body_error
+    if isinstance(body_error, ProfileRepositoryError):
+        raise body_error
+    raise _repository_error("schema_corrupt") from None
 
 
 def open_profile_store(
@@ -874,15 +1869,25 @@ def open_profile_store(
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power
+            # crash can lose the last commit, acceptable for this local TTS
+            # profile store) and avoids an fsync per commit. This owner is
+            # private-file only (no :memory: target), so no memory guard is
+            # needed here (task-15465).
+            connection.execute("PRAGMA synchronous = NORMAL")
             _migrate_empty_store(connection)
         elif version < CURRENT_PROFILE_SCHEMA_VERSION:
             _validate_schema(
                 connection,
+                expected_version=version,
                 check_deadline=check_deadline,
             )
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
+            # NORMAL is safe under WAL -- see the version==0 branch above for
+            # the full rationale (task-15465).
+            connection.execute("PRAGMA synchronous = NORMAL")
             _run_migrations(connection, version)
         else:
             _validate_schema(
@@ -892,6 +1897,9 @@ def open_profile_store(
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
+            # NORMAL is safe under WAL -- see the version==0 branch above for
+            # the full rationale (task-15465).
+            connection.execute("PRAGMA synchronous = NORMAL")
         _validate_schema(
             connection,
             check_deadline=check_deadline,
@@ -948,6 +1956,53 @@ def validate_profile_store_rows(
         raise
     except Exception:
         raise _repository_error("corrupt_data") from None
+
+
+def validate_profile_store_version(
+    connection: sqlite3.Connection,
+    expected_version: int,
+) -> None:
+    """Fully validate one exact supported persisted schema and its domain.
+
+    This validator is intentionally path-free so private migration and restore
+    candidates can reuse the live store's exact schema/domain codecs without
+    discovering or opening the configured repository file.
+
+    Args:
+        connection: Caller-owned connection to the candidate store.
+        expected_version: Exact supported schema version required on disk.
+
+    Raises:
+        ProfileRepositoryError: If schema, integrity, foreign keys, or any
+            decoded domain value fails closed validation.
+        BaseException: A caller control-flow signal preserved unchanged.
+    """
+
+    try:
+        if type(expected_version) is not int or expected_version not in (1, 2, 3, 4):
+            raise ValueError
+        version_row = connection.execute("PRAGMA user_version").fetchone()
+        if (
+            version_row is None
+            or len(version_row) != 1
+            or type(version_row[0]) is not int
+            or version_row[0] != expected_version
+        ):
+            raise ValueError
+        _validate_schema(connection, expected_version=expected_version)
+        _validate_full_integrity(connection)
+        validate_profile_store_rows(connection)
+        if expected_version >= 3:
+            _validate_migration_reference_rows(
+                connection,
+                schema_version=expected_version,
+            )
+    except ProfileRepositoryError:
+        raise
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            raise
+        raise _repository_error("schema_corrupt") from None
 
 
 def _source_identity(value: os.stat_result) -> tuple[int, ...]:
@@ -1191,6 +2246,7 @@ def validate_profile_candidate(
             # is never opened for write; only this disposable copy is.
             _validate_schema(
                 upgrade_connection,
+                expected_version=candidate_version,
                 check_deadline=check_deadline,
             )
             _run_migrations(upgrade_connection, candidate_version)

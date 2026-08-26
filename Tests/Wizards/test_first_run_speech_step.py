@@ -10,17 +10,30 @@ end-to-end test that drives the real (module-patched) preflight/provision
 functions through the actual @work-decorated bodies.
 """
 
+import asyncio
+import builtins
 from pathlib import Path
-from types import SimpleNamespace
+import threading
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from textual.app import App, ComposeResult
+from loguru import logger
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, RadioButton, Static
 
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+    PARAKEET_PRECISIONS,
+    parakeet_descriptor,
+    parakeet_reference,
     parakeet_v2_descriptor,
     parakeet_v2_reference,
+    parakeet_vad_descriptor,
+    parakeet_vad_reference,
 )
 from tldw_chatbook.Model_Artifacts import ArtifactRef, ProvenanceClass
 from tldw_chatbook.Model_Artifacts.acquisition import (
@@ -28,8 +41,18 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     PreflightReport,
 )
 from tldw_chatbook.Model_Artifacts.service import InstalledArtifact
+from tldw_chatbook.STT.parakeet_external import (
+    ExternalParakeetErrorCode,
+    ExternalParakeetVerificationError,
+)
+from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
-from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SpeechSetupStep
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    SetupWizardContainer,
+    SpeechSetupStep,
+    SummaryStep,
+)
 from tldw_chatbook.Widgets.ModelArtifacts import (
     InstallProgressed,
     ModelActivationControls,
@@ -37,7 +60,36 @@ from tldw_chatbook.Widgets.ModelArtifacts import (
 )
 
 
-def _installed_item(*, active: bool, ready: bool = True, error=None) -> InstalledArtifact:
+def test_curated_speech_helpers_do_not_import_the_full_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def reject_curated_registry(name: str, *args: object, **kwargs: object):
+        if name == "tldw_chatbook.Model_Artifacts.curated_registry":
+            raise AssertionError("speech helpers imported the full curated registry")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_curated_registry)
+    policy = __import__(
+        "tldw_chatbook.UI.Wizards.first_run_speech_step_state",
+        fromlist=["routing_policy"],
+    ).routing_policy()
+    model_ids = frozenset({"nemo-parakeet-tdt-0.6b-v2", "nemo-parakeet-tdt-0.6b-v3"})
+
+    assert SpeechSetupStep._curated_model_ids() == model_ids
+    assert SpeechSetupStep._curated_selections() == frozenset(
+        (model_id, precision) for model_id in model_ids for precision in ("int8", "f32")
+    )
+    assert model_ids == frozenset(
+        {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
+    )
+    assert PARAKEET_PRECISIONS == ("int8", "f32")
+
+
+def _installed_item(
+    *, active: bool, ready: bool = True, error=None
+) -> InstalledArtifact:
     return InstalledArtifact(
         path=Path("/fake/models/parakeet-v2"),
         descriptor=parakeet_v2_descriptor(),
@@ -65,18 +117,24 @@ class _FakeService:
         self.delete_calls.append(reference)
 
 
-def _report(*, destination: Path) -> PreflightReport:
-    ref = parakeet_v2_reference()
+def _report(
+    *,
+    destination: Path,
+    model: str = "nemo-parakeet-tdt-0.6b-v2",
+    precision: str = "int8",
+) -> PreflightReport:
+    descriptor = parakeet_descriptor(model, precision)
+    ref = descriptor.reference
     entry = ArtifactPreflightEntry(
         ref=ref,
-        source_url="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/x/config.json",
-        repository="istupakov/parakeet-tdt-0.6b-v2-onnx",
+        source_url=descriptor.source_url,
+        repository=descriptor.upstream_repository,
         revision=ref.revision,
-        license_id="CC-BY-4.0",
-        license_url="https://creativecommons.org/licenses/by/4.0/",
-        precision="int8",
-        total_bytes=661_191_781,
-        file_count=4,
+        license_id=descriptor.license_id,
+        license_url=descriptor.license_url,
+        precision=precision,
+        total_bytes=descriptor.expected_installed_bytes,
+        file_count=len(descriptor.files),
         already_installed=False,
         provenance=(ProvenanceClass.CHATBOOK_CURATED,),
     )
@@ -84,13 +142,45 @@ def _report(*, destination: Path) -> PreflightReport:
         root=ref,
         closure_fingerprint="f" * 64,
         entries=(entry,),
-        download_bytes=661_191_781,
+        download_bytes=descriptor.expected_installed_bytes,
         already_staged_bytes=0,
         staging_overhead_bytes=0,
         retained_bytes=0,
         destination=destination,
         free_bytes=10**12,
         required_bytes=900_000_000,
+        sufficient_space=True,
+        gating_errors=(),
+    )
+
+
+def _vad_report(*, destination: Path) -> PreflightReport:
+    descriptor = parakeet_vad_descriptor()
+    ref = descriptor.reference
+    entry = ArtifactPreflightEntry(
+        ref=ref,
+        source_url=descriptor.source_url,
+        repository=descriptor.upstream_repository,
+        revision=ref.revision,
+        license_id=descriptor.license_id,
+        license_url=descriptor.license_url,
+        precision=descriptor.precision,
+        total_bytes=descriptor.expected_installed_bytes,
+        file_count=len(descriptor.files),
+        already_installed=False,
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+    )
+    return PreflightReport(
+        root=ref,
+        closure_fingerprint="v" * 64,
+        entries=(entry,),
+        download_bytes=descriptor.expected_installed_bytes,
+        already_staged_bytes=0,
+        staging_overhead_bytes=0,
+        retained_bytes=0,
+        destination=destination,
+        free_bytes=10**12,
+        required_bytes=descriptor.expected_installed_bytes,
         sufficient_space=True,
         gating_errors=(),
     )
@@ -106,6 +196,47 @@ def _wizard(**overrides):
     return SimpleNamespace(**base)
 
 
+def _wizard_with_source(source_service, **overrides):
+    app_instance = SimpleNamespace(
+        app_config={},
+        _parakeet_source_service=source_service,
+        _ensure_parakeet_source_service=lambda: source_service,
+    )
+    return _wizard(app_instance=app_instance, **overrides)
+
+
+def _wizard_with_real_commit(source_service):
+    wizard = _wizard_with_source(source_service)
+    wizard._mirror_into_app_config = MethodType(
+        SetupWizardContainer._mirror_into_app_config,
+        wizard,
+    )
+    wizard.commit_config = MethodType(SetupWizardContainer.commit_config, wizard)
+    return wizard
+
+
+class _OwnerTrackingSource:
+    """Stateful source double: releases and accepts change observable state."""
+
+    def __init__(self, records=None):
+        self._records = dict(records or {})
+        self.owners: set[str] = set()
+        self.accepted = []
+        self.prepared_commit = None
+
+    def records(self):
+        return dict(self._records)
+
+    def release_scope(self, scope_id):
+        self.owners.discard(scope_id)
+
+    def prepare_config_commit(self, prepared):
+        return self.prepared_commit
+
+    def accept_committed(self, commit):
+        self.accepted.append(commit)
+
+
 def _step(*, installed=(), wizard=None, runtime_installed=None) -> SpeechSetupStep:
     # runtime_installed defaults to True (not the real probe) so these tests
     # are deterministic regardless of whether onnx-asr happens to be
@@ -118,7 +249,11 @@ def _step(*, installed=(), wizard=None, runtime_installed=None) -> SpeechSetupSt
     )
 
 
-class _StepHost(App):
+def _active_lookup(result):
+    return lambda model, precision, *, service: result
+
+
+class _StepHost(ConsolidatedCSSApp):
     def __init__(self, step):
         super().__init__()
         self._step = step
@@ -144,7 +279,7 @@ def _patch_app(monkeypatch) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_compose_shows_recommended_defaults_and_disables_unavailable_options():
+async def test_compose_shows_all_curated_parakeet_options():
     step = _step(installed=())
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -153,16 +288,71 @@ async def test_compose_shows_recommended_defaults_and_disables_unavailable_optio
         assert "English" in text
         assert "recommended" in text.lower()
         assert "INT8" in text
-        # A v3-only language and F32 are declared by the catalog (so the UI
-        # is honest about what the policy defines) but neither has a curated
-        # descriptor to download yet -- they must render disabled.
         radio_buttons = list(step.query(RadioButton))
-        disabled = [b for b in radio_buttons if b.disabled]
         enabled = [b for b in radio_buttons if not b.disabled]
-        assert disabled, "unavailable languages/precisions must still be listed, disabled"
-        assert enabled, "English/INT8 must be selectable"
-        assert not any("English" in str(b.label) for b in disabled)
-        assert not any(str(b.label).upper().startswith("INT8") for b in disabled)
+        assert len(enabled) == len(radio_buttons)
+        assert any("English" in str(b.label) for b in enabled)
+        assert any(str(b.label).upper().startswith("F32") for b in enabled)
+
+
+@pytest.mark.asyncio
+async def test_non_english_f32_selection_changes_the_exact_managed_target():
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+
+    policy = speech_state.routing_policy()
+    language = sorted(policy.validated_v3_languages)[0]
+    step = _step()
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#setup-speech-language-{language}")
+        await pilot.pause()
+        step.query_one("#setup-speech-precision-f32", RadioButton).value = True
+        await pilot.pause()
+
+        assert step._reference == parakeet_reference(policy.parakeet_v3_model_id, "f32")
+        assert "Parakeet v3" in step._model_label()
+        assert "F32" in step._model_label()
+
+
+@pytest.mark.asyncio
+async def test_summary_checks_the_configured_exact_artifact(tmp_path, monkeypatch):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+
+    policy = speech_state.routing_policy()
+    language = sorted(policy.validated_v3_languages)[0]
+    calls = []
+
+    def exact_active(model, precision):
+        calls.append((model, precision))
+        return tmp_path
+
+    monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: tmp_path)
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", exact_active)
+    wizard = _wizard(wizard_data={"welcome": {"track": "quick"}})
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "transcription": {
+                "default_provider": policy.parakeet_provider_id,
+                "default_model": policy.parakeet_v3_model_id,
+                "default_language": language,
+                "default_precision": "f32",
+            }
+        },
+        rag_deps_installed=lambda: False,
+        speech_runtime_installed=lambda: True,
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+
+    assert calls
+    assert set(calls) == {(policy.parakeet_v3_model_id, "f32")}
 
 
 @pytest.mark.asyncio
@@ -188,9 +378,7 @@ async def test_compose_exposes_path_free_existing_gguf_configuration():
         assert "/private/model.gguf" not in str(status.renderable)
 
 
-def test_transcribe_cpp_config_worker_reports_path_free_success(
-    tmp_path, monkeypatch
-):
+def test_transcribe_cpp_config_worker_reports_path_free_success(tmp_path, monkeypatch):
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
 
     selected = tmp_path / "private-model.gguf"
@@ -334,7 +522,7 @@ async def test_use_as_default_offered_when_active_and_configured_elsewhere():
         await pilot.pause(0.2)
         button = step.query_one(_USE_AS_DEFAULT_ID, Button)
         assert not button.disabled
-        assert "Use Parakeet v2 as my default" in str(button.label)
+        assert "Use Parakeet v2 (English, INT8) as my default" in str(button.label)
         text = "\n".join(str(s.render()) for s in step.query(Static))
         assert "installing or activating" not in text
 
@@ -435,7 +623,7 @@ async def test_pressing_use_as_default_sets_acted_flag_and_updates_copy():
         await pilot.pause(0.2)
         assert step._acted_this_run is False
 
-        await pilot.click(_USE_AS_DEFAULT_ID)
+        step.query_one(_USE_AS_DEFAULT_ID, Button).press()
         await pilot.pause(0.2)
 
         assert step._acted_this_run is True
@@ -453,18 +641,16 @@ async def test_commit_persists_after_use_as_default_without_reinstalling(monkeyp
 
     active_dir = Path("/fake/active")
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _elsewhere_wizard()
-    step = _step(
-        installed=[_installed_item(active=True, ready=True)], wizard=wizard
-    )
+    step = _step(installed=[_installed_item(active=True, ready=True)], wizard=wizard)
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.on_show()
         await pilot.pause(0.2)
-        await pilot.click(_USE_AS_DEFAULT_ID)
+        step.query_one(_USE_AS_DEFAULT_ID, Button).press()
         await pilot.pause(0.2)
 
     ok, error = await step.commit()
@@ -476,6 +662,7 @@ async def test_commit_persists_after_use_as_default_without_reinstalling(monkeyp
             "default_provider": "parakeet-onnx",
             "default_model": "nemo-parakeet-tdt-0.6b-v2",
             "default_language": "en",
+            "default_precision": "int8",
         }
     }
 
@@ -483,7 +670,7 @@ async def test_commit_persists_after_use_as_default_without_reinstalling(monkeyp
 # ---------------------------------------------------------------------------
 # Runtime-dependency gate (Important 4): mirrors RagStep's own
 # embeddings_rag_deps_installed() gate exactly -- missing extra means no
-# download is ever offered, regardless of curated/artifact-service state.
+# download remains disabled, regardless of curated/artifact-service state.
 # ---------------------------------------------------------------------------
 
 
@@ -497,7 +684,7 @@ async def test_missing_runtime_extra_shows_install_instructions_no_download_offe
         await pilot.pause(0.2)
         text = "\n".join(str(s.render()) for s in step.query(Static))
         assert "onnx-asr" in text
-        assert not step.query("#setup-speech-install")
+        assert step.query_one("#setup-speech-install", Button).disabled
         assert not step.query(ModelActivationControls)
 
 
@@ -510,7 +697,9 @@ async def test_missing_runtime_extra_message_shown_immediately_without_waiting_f
     step = _step(runtime_installed=lambda: False)
     status_text, action_widget = step._status_and_action()
     assert "onnx-asr" in status_text
-    assert action_widget is None
+    assert isinstance(action_widget, Button)
+    assert action_widget.id == "setup-speech-install"
+    assert action_widget.disabled
 
 
 @pytest.mark.asyncio
@@ -792,15 +981,35 @@ async def test_commit_is_skip_safe_when_never_verified_active(monkeypatch):
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
 
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: None
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(None)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
-    step._acted_this_run = True  # even "acted" must not matter without an active artifact
+    step._acted_this_run = (
+        True  # even "acted" must not matter without an active artifact
+    )
 
     ok, error = await step.commit()
 
     assert ok, error
+    wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_does_not_verify_or_persist_an_unavailable_selection(monkeypatch):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    active_lookup = MagicMock(return_value=Path("/should-not-be-used"))
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", active_lookup)
+    wizard = _wizard()
+    step = _step(wizard=wizard)
+    step._curated_selections = lambda: frozenset()
+    step._acted_this_run = True
+
+    ok, error = await step.commit()
+
+    assert ok, error
+    active_lookup.assert_not_called()
     wizard.commit_config.assert_not_awaited()
 
 
@@ -819,7 +1028,7 @@ async def test_commit_does_not_persist_when_active_but_user_did_not_act_this_run
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -839,7 +1048,7 @@ async def test_commit_persists_the_recommended_selection_once_verified_active(
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -854,6 +1063,7 @@ async def test_commit_persists_the_recommended_selection_once_verified_active(
             "default_provider": "parakeet-onnx",
             "default_model": "nemo-parakeet-tdt-0.6b-v2",
             "default_language": "en",
+            "default_precision": "int8",
         }
     }
 
@@ -874,7 +1084,7 @@ async def test_commit_persists_the_live_pressed_default_selection(
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -895,6 +1105,7 @@ async def test_commit_persists_the_live_pressed_default_selection(
             "default_provider": "parakeet-onnx",
             "default_model": "nemo-parakeet-tdt-0.6b-v2",
             "default_language": "en",
+            "default_precision": "int8",
         }
     }
 
@@ -916,14 +1127,10 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
-    step._curated_model_ids = lambda: frozenset(
-        {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
-    )
-    step._curated_precisions = lambda: frozenset({"int8"})
     step._acted_this_run = True
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -941,6 +1148,55 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
             "default_provider": "parakeet-onnx",
             "default_model": policy.parakeet_v3_model_id,
             "default_language": v3_language,
+            "default_precision": "int8",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_commit_requires_and_persists_the_exact_v3_f32_artifact(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+
+    policy = speech_state.routing_policy()
+    language = sorted(policy.validated_v3_languages)[0]
+    active_calls = []
+
+    def exact_active(model, precision, *, service):
+        active_calls.append((model, precision))
+        return (
+            tmp_path / "installed"
+            if (model, precision)
+            == (
+                policy.parakeet_v3_model_id,
+                "f32",
+            )
+            else None
+        )
+
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", exact_active)
+    wizard = _wizard()
+    step = _step(wizard=wizard)
+    step._acted_this_run = True
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#setup-speech-language-{language}")
+        await pilot.pause()
+        step.query_one("#setup-speech-precision-f32", RadioButton).value = True
+        await pilot.pause()
+        ok, error = await step.commit()
+
+    assert ok, error
+    assert active_calls == [(policy.parakeet_v3_model_id, "f32")]
+    assert wizard.commit_config.call_args.args[0] == {
+        "transcription": {
+            "default_provider": policy.parakeet_provider_id,
+            "default_model": policy.parakeet_v3_model_id,
+            "default_language": language,
+            "default_precision": "f32",
         }
     }
 
@@ -951,8 +1207,8 @@ async def test_commit_reports_failure_when_persistence_write_fails(monkeypatch):
 
     monkeypatch.setattr(
         wizard_module,
-        "active_managed_parakeet_v2_dir",
-        lambda service: Path("/fake/active"),
+        "active_managed_parakeet_dir",
+        _active_lookup(Path("/fake/active")),
     )
     wizard = _wizard(commit_config=AsyncMock(return_value=False))
     step = _step(wizard=wizard)
@@ -975,8 +1231,8 @@ async def test_commit_never_persists_when_the_runtime_extra_is_missing(monkeypat
 
     monkeypatch.setattr(
         wizard_module,
-        "active_managed_parakeet_v2_dir",
-        lambda service: Path("/fake/active"),
+        "active_managed_parakeet_dir",
+        _active_lookup(Path("/fake/active")),
     )
     wizard = _wizard()
     step = _step(wizard=wizard, runtime_installed=lambda: False)
@@ -1196,38 +1452,1107 @@ def test_end_to_end_install_flow_calls_the_real_wrapped_functions(
     test_install_worker_passes_a_progress_callback, the same technique for
     Library's own Parakeet v2 install worker)."""
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 
-    report = _report(destination=tmp_path / "d")
-    preflight_calls: list[None] = []
-    provision_calls: list[PreflightReport] = []
+    policy = speech_state.routing_policy()
+    language = sorted(policy.validated_v3_languages)[0]
+    report = _report(
+        destination=tmp_path / "d",
+        model=policy.parakeet_v3_model_id,
+        precision="f32",
+    )
+    preflight_calls: list[tuple[str, str]] = []
+    provision_calls: list[tuple[str, str, PreflightReport]] = []
 
-    async def fake_preflight():
-        preflight_calls.append(None)
+    async def fake_preflight(model, precision):
+        preflight_calls.append((model, precision))
         return report
 
-    async def fake_provision(passed_report, *, progress=None):
-        provision_calls.append(passed_report)
+    async def fake_provision(model, precision, passed_report, *, progress=None):
+        provision_calls.append((model, precision, passed_report))
         return tmp_path / "installed"
 
-    monkeypatch.setattr(wizard_module, "run_parakeet_v2_preflight", fake_preflight)
-    monkeypatch.setattr(wizard_module, "run_parakeet_v2_provision", fake_provision)
+    monkeypatch.setattr(wizard_module, "run_parakeet_preflight", fake_preflight)
+    monkeypatch.setattr(wizard_module, "run_parakeet_provision", fake_provision)
     fake_app = _patch_app(monkeypatch)
     fake_app.call_from_thread.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
 
     step = _step()
+    step._selected_language = language
+    step._selected_precision = "f32"
     step.notify = MagicMock()
     step._ensure_loaded = MagicMock()
     step.refresh = MagicMock()
 
     SpeechSetupStep._preflight_install.__wrapped__(step)
 
-    assert preflight_calls == [None]
+    assert preflight_calls == [(policy.parakeet_v3_model_id, "f32")]
     assert step._pending_report is report
     fake_app.push_screen.assert_called_once()
 
     SpeechSetupStep._provision_install.__wrapped__(step)
 
-    assert provision_calls == [report]
+    assert provision_calls == [(policy.parakeet_v3_model_id, "f32", report)]
     step.notify.assert_called_once()
     assert step.notify.call_args.kwargs.get("severity") == "information"
     step._ensure_loaded.assert_called_once_with(force=True)
+
+
+# ---------------------------------------------------------------------------
+# TASK-598 Task 8: user-owned external Parakeet roots in First Run.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_speech_step_shows_disk_and_managed_actions_for_exact_selection():
+    step = _step(installed=(), runtime_installed=lambda: True)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+
+        assert step.query_one("#setup-speech-use-from-disk", Button)
+        assert step.query_one("#setup-speech-install", Button)
+
+
+@pytest.mark.asyncio
+async def test_runtime_missing_keeps_disk_selection_available():
+    step = _step(installed=(), runtime_installed=lambda: False)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        assert step.query_one("#setup-speech-use-from-disk", Button)
+        assert step.query_one("#setup-speech-install", Button)
+
+
+@pytest.mark.asyncio
+async def test_busy_external_setup_has_keyboard_cancel_with_path_private_copy():
+    step = _step()
+    worker = MagicMock(is_finished=False)
+    step._external_selection_worker = worker
+    step._external_selection_token = (1, id(step))
+    step._external_busy = True
+    step._external_status = "Verifying model files…"
+    app = _StepHost(step)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        cancel = step.query_one("#setup-speech-cancel-external", Button)
+        assert cancel.region.width > 0 and cancel.region.height > 0
+        assert cancel.region.right <= 80 and cancel.region.bottom <= 24
+        cancel.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert step._external_busy is False
+        assert step._external_status == (
+            "External setup cancelled. The prior source is unchanged."
+        )
+        worker.cancel.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_commit_pending_physically_blocks_every_source_control(monkeypatch):
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={"transcription": {"parakeet_external_sources": {}}}
+    )
+    source_service = MagicMock()
+    source_service.prepare_config_commit.return_value = source_commit
+    owners = {"setup-speech-pending-controls"}
+    source_service.release_scope.side_effect = owners.discard
+    write_started = asyncio.Event()
+    allow_write = asyncio.Event()
+
+    async def delayed_commit(values, *, after_write=None):
+        write_started.set()
+        await allow_write.wait()
+        if after_write is not None:
+            after_write()
+        return True
+
+    wizard = _wizard_with_source(source_service, commit_config=delayed_commit)
+    step = _step(wizard=wizard)
+    app = _StepHost(step)
+    preflight = MagicMock()
+    activate = MagicMock()
+    step._preflight_install = preflight
+    step._activate_model = activate
+    picker = MagicMock()
+    monkeypatch.setattr(app, "push_screen", picker)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause(0.2)
+        step._loading = False
+        step._loaded = True
+        step._installed_item = None
+        token = step._next_external_token()
+        scope_id = step._external_scope_ids[token]
+        source_service.owners = owners
+        owners.add(scope_id)
+        worker = MagicMock(is_finished=True)
+        step._external_selection_worker = worker
+        step._pending_external_selection = prepared
+        scope_snapshot = dict(step._external_scope_ids)
+
+        task = asyncio.create_task(step.commit())
+        await asyncio.wait_for(write_started.wait(), timeout=2)
+        try:
+            await pilot.pause()
+            assert step._external_commit_pending is True
+            disk = step.query_one("#setup-speech-use-from-disk", Button)
+            install = step.query_one("#setup-speech-install", Button)
+            language = step.query_one("#setup-speech-language-fr", RadioButton)
+            precision = step.query_one("#setup-speech-precision-int8", RadioButton)
+            assert all(
+                control.disabled for control in (disk, install, language, precision)
+            )
+
+            for control in (disk, install, language, precision):
+                control.disabled = False
+                control.focus()
+                await pilot.press(
+                    "space" if isinstance(control, RadioButton) else "enter"
+                )
+                await pilot.pause()
+
+            step._installed_item = _installed_item(active=False)
+            step.refresh(recompose=True)
+            await pilot.pause()
+            activation_controls = step.query_one(ModelActivationControls)
+            activation = activation_controls.query_one(".model-activate", Button)
+            assert activation.disabled
+            activation_controls.pending = False
+            activation.disabled = False
+            activation.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert picker.call_count == 0
+            preflight.assert_not_called()
+            activate.assert_not_called()
+            source_service.prefer_managed.assert_not_called()
+            assert step._external_selection_token == token
+            assert step._external_scope_ids == scope_snapshot
+            assert step._external_selection_worker is worker
+            assert scope_id in owners
+            source_service.accept_committed.assert_not_called()
+        finally:
+            allow_write.set()
+            result = await task
+
+        ok, error = result
+        await pilot.pause()
+        assert ok, error
+        assert step._external_commit_pending is False
+        assert not step.query_one("#setup-speech-use-from-disk", Button).disabled
+        assert not step.query_one("#setup-speech-language-en", RadioButton).disabled
+        restored = step.query_one(ModelActivationControls)
+        assert not restored.query_one(".model-activate", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_slow_external_prepare_fences_every_source_control(monkeypatch):
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={"transcription": {"parakeet_external_sources": {}}}
+    )
+    prepare_started = threading.Event()
+    allow_prepare = threading.Event()
+    source_service = MagicMock()
+
+    def delayed_prepare(selection):
+        prepare_started.set()
+        allow_prepare.wait(timeout=2)
+        return source_commit
+
+    source_service.prepare_config_commit.side_effect = delayed_prepare
+    owners = set()
+    source_service.release_scope.side_effect = owners.discard
+    step = _step(wizard=_wizard_with_source(source_service))
+    app = _StepHost(step)
+    preflight = MagicMock()
+    activate = MagicMock()
+    step._preflight_install = preflight
+    step._activate_model = activate
+    picker = MagicMock()
+    monkeypatch.setattr(app, "push_screen", picker)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause(0.2)
+        step._loading = False
+        step._loaded = True
+        step._installed_item = None
+        token = step._next_external_token()
+        scope_id = step._external_scope_ids[token]
+        owners.add(scope_id)
+        worker = MagicMock(is_finished=True)
+        step._external_selection_worker = worker
+        step._pending_external_selection = prepared
+        scope_snapshot = dict(step._external_scope_ids)
+
+        task = asyncio.create_task(step.commit())
+        for _ in range(100):
+            if prepare_started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert prepare_started.is_set()
+        try:
+            await pilot.pause()
+            assert step._external_commit_pending is True
+            disk = step.query_one("#setup-speech-use-from-disk", Button)
+            install = step.query_one("#setup-speech-install", Button)
+            language = step.query_one("#setup-speech-language-fr", RadioButton)
+            precision = step.query_one("#setup-speech-precision-f32", RadioButton)
+            controls = (disk, install, language, precision)
+            assert all(control.disabled for control in controls)
+
+            for control in controls:
+                control.disabled = False
+                control.focus()
+                await pilot.press(
+                    "space" if isinstance(control, RadioButton) else "enter"
+                )
+                await pilot.pause()
+
+            step._installed_item = _installed_item(active=False)
+            step.refresh(recompose=True)
+            await pilot.pause()
+            activation_controls = step.query_one(ModelActivationControls)
+            activation = activation_controls.query_one(".model-activate", Button)
+            assert activation.disabled
+            activation_controls.pending = False
+            activation.disabled = False
+            activation.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert picker.call_count == 0
+            preflight.assert_not_called()
+            activate.assert_not_called()
+            source_service.prefer_managed.assert_not_called()
+            source_service.accept_committed.assert_not_called()
+            assert step._external_selection_token == token
+            assert step._external_scope_ids == scope_snapshot
+            assert step._external_selection_worker is worker
+            assert scope_id in owners
+        finally:
+            allow_prepare.set()
+            result = await task
+
+        ok, error = result
+        assert ok, error
+        assert step._external_commit_pending is False
+
+
+@pytest.mark.asyncio
+async def test_vad_provision_cancellation_reaches_underlying_coroutine(
+    monkeypatch,
+    tmp_path,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    started = threading.Event()
+    cancelled = threading.Event()
+    release = threading.Event()
+    terminal_results = []
+
+    async def gated_provision(report, *, progress=None):
+        started.set()
+        try:
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(wizard_module, "run_parakeet_vad_provision", gated_provision)
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    step = _step(wizard=_wizard_with_source(_OwnerTrackingSource()))
+    step._apply_external_vad_provision_result = lambda *args: terminal_results.append(
+        args
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        token = step._next_external_token()
+        worker = step._provision_external_vad(
+            token,
+            prepared,
+            _vad_report(destination=tmp_path / "vad"),
+        )
+        step._external_selection_worker = worker
+        for _ in range(100):
+            if started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert started.is_set()
+        step._discard_external_selection()
+        try:
+            for _ in range(20):
+                if cancelled.is_set():
+                    break
+                await pilot.pause(0.01)
+            assert cancelled.is_set()
+        finally:
+            release.set()
+            await pilot.pause(0.05)
+
+    assert terminal_results == []
+    assert step._pending_external_selection is None
+
+
+def test_disk_action_opens_real_directory_picker_and_cancel_changes_nothing(
+    monkeypatch,
+):
+    fake_app = _patch_app(monkeypatch)
+    source_service = MagicMock()
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._verify_external_source = MagicMock()
+
+    step._use_external_pressed()
+
+    picker, callback = fake_app.push_screen.call_args.args
+    assert isinstance(picker, SelectDirectory)
+    callback(None)
+    step._verify_external_source.assert_not_called()
+    source_service.prepare_external.assert_not_called()
+    source_service.prepare_config_commit.assert_not_called()
+    source_service.accept_committed.assert_not_called()
+
+
+def test_stale_picker_cancel_does_not_discard_new_external_selection():
+    step = _step()
+    stale_token = (1, id(step))
+    current_token = (2, id(step))
+    pending = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    step._external_selection_token = current_token
+    step._pending_external_selection = pending
+    step._owns_external_token = lambda token: token == current_token
+
+    step._external_directory_selected(
+        stale_token,
+        ParakeetSourceKey.V2_INT8,
+        None,
+    )
+
+    assert step._external_selection_token == current_token
+    assert step._pending_external_selection is pending
+
+
+@pytest.mark.asyncio
+async def test_external_verification_worker_hashes_off_the_event_loop(tmp_path):
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_service = MagicMock()
+    worker_threads: list[int] = []
+
+    def prepare_external(*args, **kwargs):
+        worker_threads.append(threading.get_ident())
+        assert kwargs["cancelled"]() is False
+        return prepared
+
+    source_service.prepare_external.side_effect = prepare_external
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._apply_external_verification_result = MagicMock()
+    app = _StepHost(step)
+    event_loop_thread = threading.get_ident()
+    original_owns = step._owns_external_token
+
+    def loop_only_ownership(token):
+        assert threading.get_ident() == event_loop_thread
+        return original_owns(token)
+
+    step._owns_external_token = loop_only_ownership
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        token = step._next_external_token()
+        worker = step._verify_external_source(
+            token,
+            ParakeetSourceKey.V2_INT8,
+            tmp_path,
+            step._external_scope_ids[token],
+        )
+        await worker.wait()
+
+    assert worker_threads and worker_threads[0] != event_loop_thread
+    source_service.prepare_external.assert_called_once()
+
+
+def test_verifier_uses_scope_captured_on_loop_after_scope_map_changes(
+    monkeypatch,
+    tmp_path,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    _patch_app(monkeypatch)
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    owners = []
+    source_service = MagicMock()
+    source_service.prepare_external.side_effect = lambda *args, **kwargs: (
+        owners.append(kwargs["owner"]) or prepared
+    )
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._apply_external_verification_result = MagicMock()
+    token = (1, id(step))
+    captured_scope = "setup-speech-captured"
+    step._external_scope_ids[token] = "setup-speech-later-map-value"
+    monkeypatch.setattr(
+        wizard_module,
+        "get_current_worker",
+        lambda: SimpleNamespace(is_cancelled=False),
+    )
+
+    SpeechSetupStep._verify_external_source.__wrapped__(
+        step,
+        token,
+        ParakeetSourceKey.V2_INT8,
+        tmp_path,
+        captured_scope,
+    )
+
+    assert owners == [("scope", captured_scope)]
+
+
+def test_external_hash_progress_is_path_private(monkeypatch, tmp_path):
+    _patch_app(monkeypatch)
+    step = _step()
+    step.refresh = MagicMock()
+    token = (1, id(step))
+    step._external_selection_token = token
+    step._owns_external_token = lambda candidate: candidate == token
+
+    step._apply_external_hash_progress(token, 12, 100)
+
+    assert "12" in step._external_status
+    assert "100" in step._external_status
+    assert str(tmp_path) not in step._external_status
+
+
+def test_changed_external_source_uses_shared_path_private_error(
+    monkeypatch,
+    tmp_path,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    monkeypatch.setattr(
+        wizard_module,
+        "get_current_worker",
+        lambda: SimpleNamespace(is_cancelled=False),
+        raising=False,
+    )
+    source_service = MagicMock()
+    source_service.prepare_external.side_effect = ExternalParakeetVerificationError(
+        ExternalParakeetErrorCode.CHANGED
+    )
+    step = _step(wizard=_wizard_with_source(source_service))
+    step.notify = MagicMock()
+    step.refresh = MagicMock()
+    token = (1, id(step))
+    step._external_selection_token = token
+    step._external_scope_ids[token] = "setup-speech-scope"
+    step._owns_external_token = lambda candidate: candidate == token
+
+    SpeechSetupStep._verify_external_source.__wrapped__(
+        step,
+        token,
+        ParakeetSourceKey.V2_INT8,
+        tmp_path / "private-model-dir",
+        step._external_scope_ids[token],
+    )
+
+    assert step._external_status == (
+        "Model files changed during verification. "
+        "Wait for file changes to finish, then retry."
+    )
+    assert str(tmp_path) not in step._external_status
+    assert str(tmp_path) not in str(step.notify.call_args)
+    source_service.prepare_config_commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_external_worker_never_logs_or_describes_exception_path(tmp_path):
+    sentinel = str(tmp_path / "private-owner-model")
+    source_service = MagicMock()
+    source_service.prepare_external.side_effect = RuntimeError(sentinel)
+    step = _step(wizard=_wizard_with_source(source_service))
+    app = _StepHost(step)
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(str(message)))
+
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            token = step._next_external_token()
+            worker = step._verify_external_source(
+                token,
+                ParakeetSourceKey.V2_INT8,
+                Path(sentinel),
+                step._external_scope_ids[token],
+            )
+            await worker.wait()
+            await pilot.pause()
+
+            assert sentinel not in worker.description
+            assert sentinel not in step._external_status
+    finally:
+        logger.remove(sink)
+
+    assert sentinel not in "".join(messages)
+
+
+@pytest.mark.asyncio
+async def test_stale_verification_after_exact_selection_change_is_ignored():
+    source_service = MagicMock()
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._ensure_loaded = MagicMock()
+    language = sorted(
+        speech_language.code
+        for speech_language in __import__(
+            "tldw_chatbook.UI.Wizards.first_run_speech_step_state",
+            fromlist=["speech_language_options"],
+        ).speech_language_options(curated_model_ids=step._curated_model_ids())
+        if speech_language.code != "en"
+    )[0]
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        old_token = step._next_external_token()
+        step._external_status = "External model verified. Continue to save."
+        step._set_exact_selection(language, "f32")
+        assert step._owns_external_token(old_token) is False
+        assert step._external_status == ""
+        step._apply_external_verification_result(
+            old_token,
+            SimpleNamespace(key=ParakeetSourceKey.V2_INT8),
+            None,
+        )
+
+        assert step._pending_external_selection is None
+        source_service.prepare_config_commit.assert_not_called()
+
+
+def test_vad_only_consent_plan_never_contains_parakeet_root(monkeypatch, tmp_path):
+    fake_app = _patch_app(monkeypatch)
+    report = _vad_report(destination=tmp_path / "managed")
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    step = _step(wizard=_wizard_with_source(MagicMock()))
+    token = (1, id(step))
+    step._external_selection_token = token
+    step._external_scope_ids[token] = "setup-speech-scope"
+    step._owns_external_token = lambda candidate: candidate == token
+
+    step._apply_external_vad_preflight_result(token, prepared, report, None)
+
+    modal, callback = fake_app.push_screen.call_args.args
+    assert isinstance(modal, ModelInstallModal)
+    assert modal.report.root == parakeet_vad_reference()
+    assert {entry.ref for entry in modal.report.entries} == {parakeet_vad_reference()}
+    root_urls = {
+        parakeet_descriptor(key.model_id, key.precision).source_url
+        for key in ParakeetSourceKey
+    }
+    assert not root_urls.intersection(
+        entry.source_url for entry in modal.report.entries
+    )
+    assert callable(callback)
+
+
+def test_vad_cancel_leaves_prior_source_and_pending_selection_untouched(
+    monkeypatch,
+    tmp_path,
+):
+    _patch_app(monkeypatch)
+    prior_records = {ParakeetSourceKey.V2_INT8: object()}
+    source_service = _OwnerTrackingSource(prior_records)
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    step = _step(wizard=_wizard_with_source(source_service))
+    step.refresh = MagicMock()
+    report = _vad_report(destination=tmp_path / "managed")
+    token = (1, id(step))
+    step._external_selection_token = token
+    scope_id = "setup-speech-scope"
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
+    step._owns_external_token = lambda candidate: candidate == token
+
+    step._confirm_external_vad(False, token, prepared, report)
+
+    assert step._pending_external_selection is None
+    assert source_service.records() == prior_records
+    assert source_service.accepted == []
+    assert source_service.owners == set()
+    assert "prior source is unchanged" in step._external_status.lower()
+
+
+def test_vad_failure_leaves_prior_source_untouched(monkeypatch):
+    _patch_app(monkeypatch)
+    prior_records = {ParakeetSourceKey.V2_INT8: object()}
+    source_service = _OwnerTrackingSource(prior_records)
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    step = _step(wizard=_wizard_with_source(source_service))
+    step.notify = MagicMock()
+    step.refresh = MagicMock()
+    token = (1, id(step))
+    step._external_selection_token = token
+    scope_id = "setup-speech-scope"
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
+    step._owns_external_token = lambda candidate: candidate == token
+
+    step._apply_external_vad_provision_result(
+        token,
+        prepared,
+        "The managed VAD dependency could not be installed.",
+    )
+
+    assert step._pending_external_selection is None
+    assert source_service.records() == prior_records
+    assert source_service.accepted == []
+    assert source_service.owners == set()
+    assert step.notify.call_args.kwargs["severity"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_external_next_commits_defaults_and_source_once_then_accepts():
+    events: list[str] = []
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={
+            "transcription": {
+                "parakeet_external_sources": {
+                    "v2_int8": {
+                        "model_id": ParakeetSourceKey.V2_INT8.model_id,
+                        "precision": "int8",
+                        "directory": "/user-owned/parakeet-v2",
+                        "preferred_source": "external",
+                    }
+                }
+            }
+        }
+    )
+    source_service = MagicMock()
+    source_service.prepare_config_commit.side_effect = lambda value: (
+        events.append("prepare") or source_commit
+    )
+    source_service.accept_committed.side_effect = lambda value: events.append("accept")
+
+    async def commit_config(values, *, after_write=None):
+        events.append("write")
+        if after_write is not None:
+            after_write()
+        return True
+
+    wizard = _wizard_with_source(source_service)
+    wizard.commit_config = AsyncMock(side_effect=commit_config)
+    step = _step(wizard=wizard)
+    step._pending_external_selection = prepared
+
+    ok, error = await step.commit()
+
+    assert ok, error
+    assert events == ["prepare", "write", "accept"]
+    wizard.commit_config.assert_awaited_once()
+    assert callable(wizard.commit_config.call_args.kwargs["after_write"])
+    assert wizard.commit_config.call_args.args == (
+        {
+            "transcription": {
+                "default_provider": "parakeet-onnx",
+                "default_model": ParakeetSourceKey.V2_INT8.model_id,
+                "default_language": "en",
+                "default_precision": "int8",
+                "parakeet_external_sources": {
+                    "v2_int8": {
+                        "model_id": ParakeetSourceKey.V2_INT8.model_id,
+                        "precision": "int8",
+                        "directory": "/user-owned/parakeet-v2",
+                        "preferred_source": "external",
+                    }
+                },
+            }
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_external_write_failure_never_accepts_or_drops_pending_selection():
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={"transcription": {"parakeet_external_sources": {}}}
+    )
+    source_service = _OwnerTrackingSource()
+    source_service.prepared_commit = source_commit
+    persisted = {"transcription": {"default_provider": "remote-whisper"}}
+    app_instance = SimpleNamespace(
+        app_config=persisted,
+        _parakeet_source_service=source_service,
+        _ensure_parakeet_source_service=lambda: source_service,
+    )
+    wizard = _wizard(
+        app_instance=app_instance, commit_config=AsyncMock(return_value=False)
+    )
+    step = _step(wizard=wizard)
+    step._pending_external_selection = prepared
+    token = (1, id(step))
+    scope_id = "setup-speech-write"
+    step._external_selection_token = token
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
+
+    ok, error = await step.commit()
+
+    assert ok is False
+    assert error
+    assert persisted == {"transcription": {"default_provider": "remote-whisper"}}
+    assert source_service.accepted == []
+    assert source_service.owners == {scope_id}
+    assert step._pending_external_selection is prepared
+
+
+@pytest.mark.asyncio
+async def test_cancelled_external_commit_settles_write_and_accept_before_scope_release():
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={"transcription": {"parakeet_external_sources": {}}}
+    )
+    source_service = _OwnerTrackingSource()
+    source_service.prepared_commit = source_commit
+    persisted = {"transcription": {"default_provider": "remote-whisper"}}
+    write_started = threading.Event()
+    allow_write = threading.Event()
+    write_finished = threading.Event()
+
+    async def delayed_commit(values, *, after_write=None):
+        def write():
+            write_started.set()
+            allow_write.wait(timeout=2)
+            persisted.clear()
+            persisted.update(values)
+            if after_write is not None:
+                after_write()
+            write_finished.set()
+            return True
+
+        return await asyncio.get_running_loop().run_in_executor(None, write)
+
+    app_instance = SimpleNamespace(
+        app_config=persisted,
+        _parakeet_source_service=source_service,
+        _ensure_parakeet_source_service=lambda: source_service,
+    )
+    wizard = _wizard(app_instance=app_instance, commit_config=delayed_commit)
+    step = _step(wizard=wizard)
+    step._pending_external_selection = prepared
+    token = (1, id(step))
+    scope_id = "setup-speech-handoff"
+    step._external_selection_token = token
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
+
+    task = asyncio.create_task(step.commit())
+    for _ in range(100):
+        if write_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert write_started.is_set()
+    task.cancel()
+    step.on_unmount()
+    owner_retained_while_writing = scope_id in source_service.owners
+    allow_write.set()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    for _ in range(100):
+        if write_finished.is_set():
+            break
+        await asyncio.sleep(0.01)
+
+    assert write_finished.is_set()
+    assert owner_retained_while_writing
+    assert source_service.accepted == [source_commit]
+    assert source_service.owners == set()
+    assert persisted != {"transcription": {"default_provider": "remote-whisper"}}
+
+
+@pytest.mark.parametrize("retry_succeeds", [True, False])
+@pytest.mark.asyncio
+async def test_cancelled_durable_write_reconciles_or_retains_scope_after_accept_error(
+    monkeypatch,
+    tmp_path,
+    retry_succeeds,
+):
+    import tldw_chatbook.config as config_module
+
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={
+            "transcription": {
+                "parakeet_external_sources": {
+                    "v2_int8": {
+                        "model_id": ParakeetSourceKey.V2_INT8.model_id,
+                        "precision": "int8",
+                        "directory": "/user-owned/parakeet-v2",
+                        "preferred_source": "external",
+                    }
+                }
+            }
+        }
+    )
+    source_service = _OwnerTrackingSource()
+    source_service.prepared_commit = source_commit
+    accept_started = threading.Event()
+    allow_first_accept = threading.Event()
+    accept_attempts = 0
+    reconciled = False
+    sentinel = str(tmp_path / "private-source-root")
+
+    def accept_committed(commit):
+        nonlocal accept_attempts, reconciled
+        accept_attempts += 1
+        if accept_attempts == 1:
+            accept_started.set()
+            allow_first_accept.wait(timeout=2)
+            raise RuntimeError(sentinel)
+        if not retry_succeeds:
+            raise RuntimeError(sentinel)
+        reconciled = True
+
+    source_service.accept_committed = accept_committed
+    durable = {}
+
+    def save(values):
+        durable.update(values)
+        return True
+
+    monkeypatch.setattr(config_module, "save_settings_to_cli_config", save)
+    wizard = _wizard_with_real_commit(source_service)
+    prior_config = {"transcription": {"default_provider": "remote-whisper"}}
+    wizard.app_instance.app_config = prior_config
+    step = _step(wizard=wizard)
+    step._pending_external_selection = prepared
+    token = (1, id(step))
+    scope_id = "setup-speech-durable-recovery"
+    step._external_selection_token = token
+    step._external_scope_ids[token] = scope_id
+    source_service.owners.add(scope_id)
+
+    task = asyncio.create_task(step.commit())
+    for _ in range(100):
+        if accept_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert accept_started.is_set()
+    task.cancel()
+    step.on_unmount()
+    owner_retained_during_accept = scope_id in source_service.owners
+    allow_first_accept.set()
+
+    if retry_succeeds:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert reconciled is True
+        assert source_service.owners == set()
+    else:
+        ok, error = await task
+        assert ok is False
+        recovery = error.lower()
+        assert "saved" in recovery and "restart" in recovery and "retry" in recovery
+        assert sentinel not in error
+        assert step._external_status == error
+        assert source_service.owners == {scope_id}
+
+    assert owner_retained_during_accept
+    assert accept_attempts == 2
+    assert durable["transcription"]["default_provider"] == "parakeet-onnx"
+    assert prior_config["transcription"] == durable["transcription"]
+
+
+@pytest.mark.asyncio
+async def test_external_selection_persists_when_runtime_is_missing():
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    source_commit = SimpleNamespace(
+        section_values={
+            "transcription": {
+                "parakeet_external_sources": {
+                    "v2_int8": {
+                        "model_id": ParakeetSourceKey.V2_INT8.model_id,
+                        "precision": "int8",
+                        "directory": "/user-owned/parakeet-v2",
+                        "preferred_source": "external",
+                    }
+                }
+            }
+        }
+    )
+    source_service = MagicMock()
+    source_service.prepare_config_commit.return_value = source_commit
+    wizard = _wizard_with_source(source_service)
+
+    async def commit_config(values, *, after_write=None):
+        if after_write is not None:
+            after_write()
+        return True
+
+    wizard.commit_config.side_effect = commit_config
+    step = _step(wizard=wizard, runtime_installed=lambda: False)
+    step._pending_external_selection = prepared
+
+    ok, error = await step.commit()
+
+    assert ok, error
+    wizard.commit_config.assert_awaited_once()
+    source_service.accept_committed.assert_called_once_with(source_commit)
+    assert step._external_status == "Runtime required"
+
+
+def test_managed_install_prefers_managed_only_after_provision_succeeds(
+    monkeypatch,
+    tmp_path,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    events: list[str] = []
+    report = _report(destination=tmp_path / "managed")
+    source_service = MagicMock()
+    source_service.prefer_managed.side_effect = lambda key: events.append("prefer")
+
+    async def provision(*args, **kwargs):
+        events.append("provision")
+        return tmp_path / "managed" / "root"
+
+    monkeypatch.setattr(wizard_module, "run_parakeet_provision", provision)
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._pending_report = report
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._provision_install.__wrapped__(step)
+
+    assert events == ["provision", "prefer"]
+    source_service.prefer_managed.assert_called_once_with(ParakeetSourceKey.V2_INT8)
+
+
+def test_managed_activation_prefers_managed_only_after_activation_succeeds(monkeypatch):
+    events: list[str] = []
+    managed_service = _FakeService()
+    managed_service.activate = lambda reference: events.append("activate")
+    source_service = MagicMock()
+    source_service.prefer_managed.side_effect = lambda key: events.append("prefer")
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    step = SpeechSetupStep(
+        wizard=_wizard_with_source(source_service),
+        config=WizardStepConfig(id="speech", title="Speech", step_number=5),
+        service_factory=lambda: managed_service,
+        runtime_installed=lambda: True,
+    )
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._activate_model.__wrapped__(step)
+
+    assert events == ["activate", "prefer"]
+
+
+def test_managed_provision_failure_never_prefers_managed(monkeypatch, tmp_path):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    async def fail_provision(*args, **kwargs):
+        raise OSError("download failed")
+
+    monkeypatch.setattr(wizard_module, "run_parakeet_provision", fail_provision)
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    source_service = MagicMock()
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._pending_report = _report(destination=tmp_path / "managed")
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._provision_install.__wrapped__(step)
+
+    source_service.prefer_managed.assert_not_called()
+
+
+def test_managed_activation_failure_never_prefers_managed(monkeypatch):
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    managed_service = _FakeService()
+
+    def fail_activation(reference):
+        raise OSError("activation failed")
+
+    managed_service.activate = fail_activation
+    source_service = MagicMock()
+    step = SpeechSetupStep(
+        wizard=_wizard_with_source(source_service),
+        config=WizardStepConfig(id="speech", title="Speech", step_number=5),
+        service_factory=lambda: managed_service,
+        runtime_installed=lambda: True,
+    )
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._activate_model.__wrapped__(step)
+
+    source_service.prefer_managed.assert_not_called()
+
+
+def test_managed_install_preference_failure_reports_partial_success(
+    monkeypatch,
+    tmp_path,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    async def provision(*args, **kwargs):
+        return tmp_path / "managed" / "root"
+
+    monkeypatch.setattr(wizard_module, "run_parakeet_provision", provision)
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    source_service = MagicMock()
+    source_service.prefer_managed.side_effect = OSError("preference write failed")
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._pending_report = _report(destination=tmp_path / "managed")
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._provision_install.__wrapped__(step)
+
+    assert step._acted_this_run is True
+    message = str(step.notify.call_args.args[0]).lower()
+    assert "installed" in message and "preference" in message
+    assert "installation failed" not in message
+
+
+def test_managed_activation_preference_failure_reports_partial_success(monkeypatch):
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
+    managed_service = _FakeService()
+    source_service = MagicMock()
+    source_service.prefer_managed.side_effect = OSError("preference write failed")
+    step = SpeechSetupStep(
+        wizard=_wizard_with_source(source_service),
+        config=WizardStepConfig(id="speech", title="Speech", step_number=5),
+        service_factory=lambda: managed_service,
+        runtime_installed=lambda: True,
+    )
+    step._operation = "activate"
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._activate_model.__wrapped__(step)
+
+    assert step._acted_this_run is True
+    message = str(step.notify.call_args.args[0]).lower()
+    assert "activated" in message and "preference" in message
+    assert "activation failed" not in message

@@ -22,7 +22,7 @@ never drift from the service's actual parsing behavior), and the
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import yaml
 
@@ -43,6 +43,7 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "spawn_subagent",
         "find_tools",
         "load_tools",
+        "fewer-permission-prompts",
         "prompt",
         # PR #729's /prefill command (sync test flagged the gap).
         "prefill",
@@ -58,6 +59,20 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # The run_skill_script runtime tool (same drift-guard rationale as
         # skill_file/install_skill above).
         "run_skill_script",
+        # The fleet's send_to_agent runtime tool (supervisor-fleet PR 3b) --
+        # caught by the four-source guard TASK-13214 rebuilt, which is what
+        # it was rebuilt FOR: the previous shape short-circuited on the first
+        # failing subset, so each new name hid behind the last one.
+        "send_to_agent",
+        # The /research Console command (task-16481) -- the drift guard's
+        # third sighting (TASK-13214): it was MASKED behind the video-command
+        # gap until the guard learned to report all sources at once.
+        "research",
+        # The expand_document gated builtin (TASK-16174). Gated-OFF tools are
+        # invisible to the live catalog, so the guard now reads the gate
+        # TABLE (TASK-13214/F6) -- and every gateable tool is listed here
+        # regardless of gate state.
+        "expand_document",
         # The agent run-log search runtime tool must not be shadowed by an
         # installed skill with the same invocation name.
         "search_run_log",
@@ -65,6 +80,13 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # share the same reserved runtime namespace.
         "run_log_stats",
         "run_log_slice",
+        # The fleet tools (PR2a): the supervisor collects concurrent
+        # sub-agents with these, so a skill installed under either name
+        # would shadow the runtime tool the moment it is invoked by name.
+        # Same reserved-namespace rule as every other RUNTIME_TOOL_NAMES
+        # entry above.
+        "wait_agents",
+        "check_agents",
         # task-580: console commands from the /rewind and image-generation
         # features. These were added to the command registry without updating
         # this set, so the drift guard below failed and was carried as an
@@ -72,6 +94,12 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # signal-erosion the guard exists to prevent.
         "rewind",
         "generate-image",
+        # task-15210: and again, exactly as task-580 predicted -- the video
+        # commands (commits d6c2e9756 /generate-video, 72a2ff3c5
+        # /stream-video) were registered without updating this set, so the
+        # drift guard sat red until something ran the file whole.
+        "generate-video",
+        "stream-video",
         # The sandbox-rooted file tools. These are CONFIG-GATED (off by
         # default), so the drift guard -- which builds a BuiltinToolProvider
         # with default config -- cannot see them and would not have caught
@@ -95,6 +123,64 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "grep_files",
     )
 )
+
+SkillEditorMode = Literal["basic", "advanced"]
+
+
+def coerce_skill_editor_mode(value: Any) -> SkillEditorMode:
+    """Return a supported Skill editor mode, defaulting safely to Basic."""
+    return "advanced" if value == "advanced" else "basic"
+
+
+def skill_invocation_copy(user_invocable: bool, disable_model_invocation: bool) -> str:
+    """Describe the independently configured user and agent invocation paths."""
+    agent_invocable = not disable_model_invocation
+    if user_invocable and agent_invocable:
+        return "You and the agent can invoke this Skill."
+    if user_invocable:
+        return "Only you can invoke this Skill."
+    if agent_invocable:
+        return "Only the agent can invoke this Skill."
+    return "Reference only — neither you nor the agent can invoke this Skill."
+
+
+def skill_trust_requires_details(
+    trust_status: str,
+    trust_blocked: bool,
+    changed_files: tuple[str, ...],
+) -> bool:
+    """Return whether safety details must remain expanded in either editor mode."""
+    return trust_status != "trusted" or trust_blocked or bool(changed_files)
+
+
+def skill_allowed_tools_sequence(value: str) -> tuple[str, ...]:
+    """Parse the editor's captured tool list without sorting or deduplicating it."""
+    return tuple(_split_csv(value))
+
+
+def reconcile_skill_allowed_tools(
+    captured: tuple[str, ...],
+    *,
+    selected: tuple[str, ...],
+    catalog_order: tuple[str, ...],
+    picker_changed: bool,
+) -> tuple[str, ...]:
+    """Apply an explicit picker edit without rewriting untouched Skill content."""
+    if not picker_changed:
+        return captured
+
+    known = set(catalog_order)
+    selected_known = set(selected) & known
+    reconciled = [
+        name for name in captured if name not in known or name in selected_known
+    ]
+    captured_names = set(captured)
+    reconciled.extend(
+        name
+        for name in catalog_order
+        if name in selected_known and name not in captured_names
+    )
+    return tuple(reconciled)
 
 
 @dataclass(frozen=True)

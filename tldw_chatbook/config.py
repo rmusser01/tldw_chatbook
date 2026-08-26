@@ -21,12 +21,14 @@ import portalocker
 from typing import (
     Any,
     Collection,
+    Callable,
     Dict,
     List,
     Literal,
     Mapping,
     NamedTuple,
     Optional,
+    TYPE_CHECKING,
     Iterator,
 )
 
@@ -34,11 +36,15 @@ from typing import (
 # Third-Party Imports
 from loguru import logger
 
+
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Utils.adaptive_reader_state import (
+    normalize_adaptive_reader_preferences,
+)
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
@@ -56,6 +62,9 @@ from tldw_chatbook.Utils.private_paths import (
     verify_trusted_directory,
 )
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 #
 #######################################################################################################################
 #
@@ -251,7 +260,28 @@ DEFAULT_RAG_SEARCH_CONFIG = {
             # "parent_size_multiplier": 3,
             # "expand_context_on_retrieval": True,
             # "clean_pdf_artifacts": True,
-            # "reranking_strategy": "cross_encoder"
+            #
+            # There is NO "reranking_strategy" key here. One used to be
+            # listed, and it read nothing -- no code anywhere loaded it, so
+            # setting it selected exactly nothing (TASK-17600 F3). The
+            # strategy lives on a RAG PROFILE, as
+            # `reranking_config.strategy` in the profile's saved JSON under
+            # <user data dir>/rag_profiles/: `ProfileConfig` serialises the
+            # whole `RerankingConfig` and rebuilds it on load, so a saved or
+            # cloned profile keeps its strategy across restarts (pinned by
+            # Tests/RAG/test_config_profiles.py::
+            # test_a_saved_profile_round_trips_its_reranking_strategy). The
+            # Settings form edits that profile's provider/model/top-k but
+            # not its strategy.
+            #
+            # Reranking strategies: "pointwise" | "pairwise" | "listwise"
+            # (each bills an LLM provider per call) or "cross_encoder" (a
+            # local model, no provider/credential/network). "cross_encoder"
+            # is implemented and selectable but is NOT recommended: it is
+            # the only strategy that has been measured here (TASK-16965)
+            # and it came out net harmful on average [CAVEAT: that averaged row EXCLUDES `scoped` and `negative` (`UNAVERAGED_CATEGORIES`), and `scoped` is where this strategy WINS -- over all 53 ground-truthed queries hybrid REVERSES sign (MRR 0.731 -> 0.806, +0.075). TASK-16965 final review F1.] -- large gains where
+            # retrieval is weak, losses where it is already good. See
+            # Docs/superpowers/qa/2026-08-17-cross-encoder/report.md.
         },
     },
     "memory_management": {
@@ -414,54 +444,7 @@ DEFAULT_DIARIZATION_CONFIG = {
     "min_speaker_duration": 3.0,  # minimum total duration per speaker
 }
 
-
-def load_openai_mappings() -> Dict:
-    """Load OpenAI TTS mappings from packaged resources.
-
-    Prefer importlib.resources so this works when installed as a package.
-    Fallback to a file path inside the package directory if needed.
-    """
-    from importlib import resources as importlib_resources
-
-    package = "tldw_chatbook.Config_Files"
-    resource_name = "openai_tts_mappings.json"
-
-    # Try importlib.resources first (works in wheels and editable installs)
-    try:
-        mapping_path = importlib_resources.files(package).joinpath(resource_name)
-        logger.info(
-            f"Attempting to load OpenAI TTS mappings from resource: {mapping_path}"
-        )
-        with mapping_path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e_res:
-        logger.debug(
-            f"OpenAI TTS mappings unavailable via importlib.resources: {e_res}"
-        )
-
-    # Fallback: direct path within the installed package directory
-    try:
-        current_file_path = Path(__file__).resolve()
-        mapping_path_fs = current_file_path.parent / "Config_Files" / resource_name
-        logger.info(
-            f"Attempting to load OpenAI TTS mappings from filesystem: {mapping_path_fs}"
-        )
-        with open(mapping_path_fs, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e_fs:
-        logger.warning(
-            f"OpenAI TTS mappings unavailable; using built-in defaults. Reason: {e_fs}"
-        )
-        return {
-            "models": {"tts-1": "openai_official_tts-1"},
-            "voices": {"alloy": "alloy"},
-        }
-
-
-_openai_mappings = load_openai_mappings()
-
-# This hardcoded mapping can also be moved to TOML or be a fallback for the JSON loaded one
-openai_tts_mappings = {
+_BUILT_IN_OPENAI_TTS_MAPPINGS = {
     "models": {
         "tts-1": "openai_official_tts-1",
         "tts-1-hd": "openai_official_tts-1-hd",
@@ -480,6 +463,47 @@ openai_tts_mappings = {
         "k_adam": "am_v0adam",
     },
 }
+
+
+def _validate_openai_tts_mappings(payload: object) -> Dict[str, Dict[str, str]]:
+    """Return the bounded mapping schema or raise without payload details."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("OpenAI TTS mapping schema is invalid")
+    validated: Dict[str, Dict[str, str]] = {}
+    for section_name in ("models", "voices"):
+        section = payload.get(section_name)
+        if not isinstance(section, dict) or any(
+            type(key) is not str or type(value) is not str
+            for key, value in section.items()
+        ):
+            raise ValueError("OpenAI TTS mapping schema is invalid")
+        validated[section_name] = dict(section)
+    return validated
+
+
+def load_openai_mappings() -> Dict:
+    """Load OpenAI TTS mappings from packaged resources.
+
+    Load through importlib.resources so wheels and editable installs agree.
+    """
+    from importlib import resources as importlib_resources
+
+    package = "tldw_chatbook.Config_Files"
+    resource_name = "openai_tts_mappings.json"
+
+    try:
+        mapping_path = importlib_resources.files(package).joinpath(resource_name)
+        with mapping_path.open("r", encoding="utf-8") as f:
+            return _validate_openai_tts_mappings(json.load(f))
+    except Exception:
+        logger.info("OpenAI TTS mappings unavailable; using built-in defaults")
+        return copy.deepcopy(_BUILT_IN_OPENAI_TTS_MAPPINGS)
+
+
+_openai_mappings = load_openai_mappings()
+
+openai_tts_mappings = copy.deepcopy(_BUILT_IN_OPENAI_TTS_MAPPINGS)
 # Update openai_tts_mappings with values from _openai_mappings (JSON file takes precedence)
 if _openai_mappings:
     openai_tts_mappings["models"].update(_openai_mappings.get("models", {}))
@@ -670,9 +694,7 @@ def _get_typed_value(
         return default
 
 
-def _get_int_timeout_value(
-    data_dict: Dict, key: str, default: int
-) -> int:
+def _get_int_timeout_value(data_dict: Dict, key: str, default: int) -> int:
     """Get an integer timeout value, rejecting booleans, non-positive values, and malformed strings.
 
     Args:
@@ -709,6 +731,9 @@ def _get_int_timeout_value(
 DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 50
 MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 1
 MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 100000
+DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES = 32768
+MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES = 1
+MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES = 1024 * 1024
 
 # TASK-870: the single, user-adjustable cap on how much of an agent tool
 # result the Console *displays* -- replaces the scattered hardcoded caps
@@ -738,6 +763,82 @@ MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 100000
 DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 160
 MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 20
 MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 2000
+
+# TASK-18600: the Console agent's run budget, exposed in Settings ▸ Console
+# Behavior and resolved per run by `console_agent_bridge.console_run_budget()`.
+# These override `Agents.agent_models.RunBudget`'s own dataclass defaults
+# (8 steps / 240s / 30 turns / 0 tokens / 300s per tool call), which stay
+# deliberately conservative for any non-Console caller.
+#
+# WHICH LIMIT ACTUALLY STOPS A RUN: the token ceiling, not the turn cap.
+# `agent_service._make_call_model` re-sends the whole conversation every
+# turn (`bound_history_for_send` is a no-op unless `[agents]
+# run_log_evict_enabled` is on -- off by default, deliberately: see
+# `run_log_eviction.py`), and `ModelTurn.tokens` counts that whole re-sent
+# prompt. Spend is therefore QUADRATIC in turn count -- roughly
+# `delta * N^2 / 2` for `delta` tokens added per round -- so at a typical
+# 800-token round the 25M ceiling is reached around turn 250, and reaching
+# turn 2000 would require a ~12-token round. The turn and step caps below
+# are backstops that will essentially never bind; they are sized generously
+# so they never become the surprise limiter, and the token ceiling is the
+# real, intentional governor. Owner decision, 2026-08-18.
+#: Provider turns (STEP_MODEL steps) per user message.
+DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS = 2000
+MIN_CONSOLE_AGENT_MAX_MODEL_TURNS = 1
+#: Step backstop. A fence tool round costs 3 steps (STEP_MODEL +
+#: STEP_TOOL_CALL + STEP_TOOL_RESULT) and the wrap-up reply costs 1, so N
+#: turns need `3*(N-1)+1` steps -- 5998 at N=2000. 25000 clears that with
+#: room for native multi-call batches, which cost `1 + 2N` steps per turn.
+DEFAULT_CONSOLE_AGENT_MAX_STEPS = 25000
+MIN_CONSOLE_AGENT_MAX_STEPS = 1
+# Mirrored by agent_models.MAX_RUN_CONTROL_STEPS; pinned by Console budget tests
+# without importing Agents here (that would create a config import cycle).
+MAX_CONSOLE_AGENT_MAX_STEPS = 199_999
+#: Wall-clock ceiling for ONE agent run (one user message), in seconds.
+#: 86400 = 24h, so a genuinely long-running operation is not cut off. This
+#: is a backstop, not a target: Stop cancels at every step boundary and
+#: every 0.5s inside the tool-call wrapper, and a hung provider connection
+#: is bounded separately by the generation client's own 300s read timeout
+#: (`console_provider_gateway.GENERATION_READ_TIMEOUT_SECONDS`).
+DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS = 86400.0
+MIN_CONSOLE_AGENT_MAX_WALL_SECONDS = 1.0
+#: Cumulative prompt+completion spend ceiling for ONE run -- see the
+#: quadratic-spend note above for why this is the limit that actually
+#: fires. PER RUN, not per conversation: `run_agent_loop`'s `total_tokens`
+#: is a per-run local, and BOTH child-budget paths (`clamp_child_budget`
+#: for turn-scoped/inline children, `contain_child_budget` for threaded
+#: survivor candidates) pass this value to a sub-agent UNCHANGED rather
+#: than dividing it, so one message's real worst-case aggregate is
+#: ~(1 + max_subagents)x this number -- 3x at the shipped
+#: `RunBudget.max_subagents = 2`. Note the wall-clock ceiling below does
+#: NOT compose the same way: a threaded child's wall comes from
+#: `[agents] child_max_wall_seconds` (default 1800), independent of this
+#: run's own, so raising the wall here does not extend a child's.
+#: 0 = unlimited, which is genuinely dangerous here: the cycle detector
+#: keys on exact `(name, args)` repetition (`agent_runtime._detect_cycle`),
+#: so a loop with any varying argument escapes it entirely and this ceiling
+#: is the ONLY remaining runaway-spend backstop.
+DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS = 25_000_000
+MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS = 0
+#: Wall-clock ceiling for ONE tool call, in seconds. Raised from the engine
+#: default (300) because a 24h run budget is useless if a single long
+#: crawl, ingest, or build dies at five minutes. 0 = no ceiling: the Console
+#: resolver translates it to a finite-but-unfireable deadline
+#: (`console_agent_bridge.UNLIMITED_TOOL_CALL_DEADLINE_SECONDS`) rather than
+#: passing the engine's literal 0, which would bypass the timeout wrapper --
+#: the wrapper is also the only thing polling Stop (every 0.5s) while a
+#: tool runs, so a literal 0 would silently disable Stop for the duration
+#: of every unlimited tool call. Lowering the configured value below ~186s
+#: risks the wrapper reporting "timed out" for an MCP call that later
+#: really executes on its abandoned thread -- see
+#: `RunBudget.max_tool_call_seconds`.
+DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 3600.0
+MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 0.0
+
+# Ephemeral side chat (Console selection menu): the default prompt template
+# for the "More Details" action. ``{selection}`` is the only placeholder the
+# side-chat service substitutes (Task-3 renders it via replace, not format).
+DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE = "Give me more details about: {selection}"
 
 
 def coerce_bool_setting(value: Any, default: bool = True) -> bool:
@@ -773,8 +874,71 @@ def coerce_int_setting(
     """
     if isinstance(value, bool):
         return default
-    coerced = _get_typed_value({"value": value}, "value", default, int)
-    if isinstance(coerced, bool):
+    # TASK-18600: two inputs used to escape this function as exceptions
+    # rather than as the default, and both are reachable from a hand-edited
+    # config.toml -- which means both could abort `load_settings` (app
+    # startup), not merely mis-set one key.
+    #   * `None`: `_get_typed_value` returns None unchanged for a None
+    #     value, and the bounds comparison below then raised
+    #     `TypeError: '<' not supported between 'NoneType' and 'int'`.
+    #   * a non-finite float (`nan`/`inf`, both writable in TOML): `int()`
+    #     raises `OverflowError`, which `_get_typed_value` does not catch
+    #     (it catches ValueError/TypeError only).
+    # Neither is a value any caller can act on, so both resolve to the
+    # default like every other unusable input.
+    if value is None:
+        return default
+    if isinstance(value, float) and (
+        value != value or value in (float("inf"), float("-inf"))
+    ):
+        return default
+    try:
+        coerced = _get_typed_value({"value": value}, "value", default, int)
+    except OverflowError:
+        return default
+    if coerced is None or isinstance(coerced, bool):
+        return default
+    if minimum is not None and coerced < minimum:
+        return default
+    if maximum is not None and coerced > maximum:
+        return default
+    return coerced
+
+
+def coerce_float_setting(
+    value: Any,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Coerce float config/app setting values with optional bounds.
+
+    The float twin of ``coerce_int_setting``, added for the Console agent
+    run budget's two duration settings (wall-clock and per-tool-call
+    seconds), which are floats in ``RunBudget`` and must survive a TOML
+    value written as either ``86400`` or ``86400.0``.
+
+    Args:
+        value: Raw setting value to coerce.
+        default: Fallback value when coercion fails or bounds reject the value.
+        minimum: Optional inclusive lower bound.
+        maximum: Optional inclusive upper bound.
+
+    Returns:
+        Coerced float value, or the default when the value is invalid.
+        ``bool`` is rejected outright (``True`` is not a duration), and a
+        non-finite value (``nan``/``inf``) falls back to the default -- an
+        ``inf`` wall budget would make the run's wall-clock check
+        unfireable rather than merely generous.
+    """
+    if isinstance(value, bool):
+        return default
+    try:
+        coerced = float(value)
+    except (TypeError, ValueError):
+        return default
+    if coerced != coerced or coerced in (float("inf"), float("-inf")):
         return default
     if minimum is not None and coerced < minimum:
         return default
@@ -787,6 +951,30 @@ def coerce_int_setting(
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
 _SETTINGS_CACHE_SOURCE: Optional[Path] = None
 _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
+#: Serializes the miss->rebuild->store sequence (task-3503).
+#:
+#: `_SETTINGS_CACHE_LOCK` guards only the cache *cells*; it is released for
+#: the rebuild itself, so every thread arriving during a miss used to run
+#: the whole rebuild -- re-reading and re-parsing the TOML, re-merging
+#: defaults, re-ensuring directories. Measured at 32 bootstrap loads for 8
+#: threads on ONE invalidation.
+#:
+#: REENTRANT on purpose: the rebuild reaches helpers that read configuration
+#: again, so a plain Lock would deadlock the rebuilding thread against
+#: itself. RLock keeps same-thread reentry behaving exactly as before while
+#: admitting only one *thread* at a time.
+_SETTINGS_REBUILD_LOCK = None  # Will be initialized when needed
+
+
+def _settings_rebuild_lock():
+    """Return the process-wide reentrant settings rebuild lock."""
+
+    global _SETTINGS_REBUILD_LOCK
+    if _SETTINGS_REBUILD_LOCK is None:
+        import threading
+
+        _SETTINGS_REBUILD_LOCK = threading.RLock()
+    return _SETTINGS_REBUILD_LOCK
 
 
 def resolve_tldw_api_config(app_config) -> Dict:
@@ -862,6 +1050,106 @@ def resolve_provider_api_key(value: object) -> Optional[str]:
 def is_valid_provider_api_key(value: object) -> bool:
     """Return whether `value` is a usable provider API key."""
     return resolve_provider_api_key(value) is not None
+
+
+def normalize_provider_config_key(provider: object) -> str:
+    """Return the canonical lookup form used for provider config tables.
+
+    Args:
+        provider: Provider label or key to normalize.
+
+    Returns:
+        A stripped, lowercase provider key with spaces and hyphens replaced by
+        underscores.
+    """
+    normalized = str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return "zai" if normalized == "z.ai" else normalized
+
+
+class ProviderSettingsError(ValueError):
+    """Raised when a selected provider's config table is not a mapping."""
+
+
+def provider_settings_for_key(
+    api_settings: object,
+    provider_key: str,
+) -> Mapping[str, object]:
+    """Return provider settings without mutating the loaded configuration.
+
+    QwenCloud historically accepts normalized aliases with the exact table
+    taking precedence. Moonshot and Z.ai require one exact canonical table and
+    reject normalized duplicates. Other providers retain the existing
+    first-normalized-match behavior.
+
+    Args:
+        api_settings: Loaded ``api_settings`` value.
+        provider_key: Canonical provider key to resolve.
+
+    Returns:
+        The resolved provider settings, or an empty mapping when none exist.
+
+    Raises:
+        ProviderSettingsError: If an authoritative table is malformed or a
+            strict provider has ambiguous normalized tables.
+    """
+    if not isinstance(api_settings, Mapping):
+        return {}
+
+    if provider_key in {"moonshot", "zai"}:
+        canonical_settings = api_settings.get(provider_key)
+        aliases = tuple(
+            configured_provider
+            for configured_provider in api_settings
+            if configured_provider != provider_key
+            and normalize_provider_config_key(configured_provider) == provider_key
+        )
+        if provider_key in api_settings:
+            if not isinstance(canonical_settings, Mapping) or aliases:
+                raise ProviderSettingsError(
+                    f"api_settings.{provider_key} must be one unambiguous configuration table."
+                )
+            return canonical_settings
+        return {}
+
+    if provider_key == "qwencloud":
+        if provider_key in api_settings:
+            canonical_settings = api_settings[provider_key]
+            if not isinstance(canonical_settings, Mapping):
+                raise ProviderSettingsError(
+                    "api_settings.qwencloud must be a configuration table."
+                )
+            alias_settings: Mapping[str, object] = {}
+            for configured_provider, configured_value in api_settings.items():
+                configured_key = str(configured_provider)
+                if configured_key == provider_key:
+                    continue
+                if normalize_provider_config_key(configured_key) != provider_key:
+                    continue
+                if isinstance(configured_value, Mapping):
+                    alias_settings = configured_value
+                break
+            merged = dict(alias_settings)
+            merged.update(canonical_settings)
+            return merged
+
+        for configured_provider, configured_value in api_settings.items():
+            if normalize_provider_config_key(configured_provider) != provider_key:
+                continue
+            if not isinstance(configured_value, Mapping):
+                raise ProviderSettingsError(
+                    "api_settings.qwencloud must be a configuration table."
+                )
+            return configured_value
+        return {}
+
+    for configured_provider, configured_value in api_settings.items():
+        if normalize_provider_config_key(configured_provider) != provider_key:
+            continue
+        if isinstance(configured_value, Mapping):
+            return configured_value
+        return {}
+
+    return {}
 
 
 #: Providers whose legacy `[API] <provider>_api_key` TOML key and
@@ -1073,7 +1361,75 @@ def _normalize_legacy_provider_api_key(
     return None
 
 
-def load_settings(force_reload: bool = False) -> Dict:
+def load_settings(
+    force_reload: bool = False,
+    *,
+    reload_bootstrap: bool | None = None,
+) -> Dict:
+    """Return the merged application settings, rebuilding at most once.
+
+    Thin wrapper over :func:`_load_settings_uncached` that serializes the
+    cache-miss rebuild (task-3503). The cache-hit path is unchanged: one
+    short lock, no rebuild lock taken at all.
+
+    Args:
+        force_reload: Rebuild even on a cache hit.
+        reload_bootstrap: Whether the rebuild also force-reloads the CLI
+            bootstrap config from disk. ``None`` (default) follows
+            ``force_reload``, preserving the historical behavior. TASK-21124:
+            ``_publish_runtime_config_unlocked`` passes ``False`` because it
+            has already installed a fresh bootstrap cache under the write
+            lock -- re-reading and re-parsing the file it just wrote was one
+            of the write path's redundant TOML parses.
+
+    Returns:
+        The merged settings mapping.
+    """
+    global _SETTINGS_CACHE_LOCK
+
+    if _SETTINGS_CACHE_LOCK is None:
+        import threading
+
+        _SETTINGS_CACHE_LOCK = threading.Lock()
+
+    active_config_path = _get_effective_config_path()
+
+    def _cache_hit():
+        with _SETTINGS_CACHE_LOCK:
+            if (
+                _SETTINGS_CACHE is not None
+                and _SETTINGS_CACHE_SOURCE == active_config_path
+            ):
+                return _SETTINGS_CACHE
+        return None
+
+    if not force_reload:
+        cached = _cache_hit()
+        if cached is not None:
+            return cached
+
+    # Miss: serialize the rebuild. Whoever loses the race re-checks the cache
+    # and returns the winner's freshly built settings rather than repeating
+    # the entire rebuild.
+    with _settings_rebuild_lock():
+        if not force_reload:
+            cached = _cache_hit()
+            if cached is not None:
+                logger.debug(
+                    "load_settings: returning configuration rebuilt by another thread"
+                )
+                return cached
+        return _load_settings_uncached(
+            force_reload=force_reload,
+            reload_bootstrap=reload_bootstrap,
+        )
+
+
+def _load_settings_uncached(
+    force_reload: bool = False,
+    *,
+    reload_bootstrap: bool | None = None,
+) -> Dict:
     """
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.
     It first loads a base config (e.g., server-local), then attempts to load a user-specific
@@ -1081,6 +1437,9 @@ def load_settings(force_reload: bool = False) -> Dict:
 
     Args:
         force_reload: If True, bypasses the cache and reloads from disk.
+        reload_bootstrap: Whether the CLI bootstrap config is also
+            force-reloaded from disk; ``None`` follows ``force_reload``
+            (see :func:`load_settings`, TASK-21124).
 
     Returns:
         Dictionary containing all configuration settings.
@@ -1125,7 +1484,9 @@ def load_settings(force_reload: bool = False) -> Dict:
     # the packaged app (no installer/build step writes it, and pyproject.toml
     # only packages *.json/*.md from that directory) so merging it was always
     # a no-op; dropping the probe changes nothing observable.
-    bootstrap = _load_cli_config_bootstrap(force_reload=force_reload)
+    bootstrap = _load_cli_config_bootstrap(
+        force_reload=(force_reload if reload_bootstrap is None else reload_bootstrap)
+    )
     toml_config_data = copy.deepcopy(bootstrap.config)
     # Idempotent no-op when already decrypted (or encryption disabled) --
     # kept so a session password entered *after* the CLI cache above was
@@ -1173,10 +1534,18 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_providers_settings = get_toml_section("providers")
     final_general_settings_cli = get_toml_section("general")
     final_database_settings_cli = get_toml_section("database")
-    final_chat_defaults_cli = get_toml_section("chat_defaults")
+    final_model_catalog_settings_cli = get_toml_section("model_catalog")
+    final_chat_defaults_cli = copy.deepcopy(get_toml_section("chat_defaults"))
+    if not isinstance(final_chat_defaults_cli, dict):
+        final_chat_defaults_cli = {}
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
+    # (task 11, spec §9.1/AC 40) The [chunking] table -- the config tier of
+    # the ingest template resolution order (``[chunking] default_template``).
+    # Distinct from the legacy CamelCase "Chunking" server section above.
+    final_chunking_settings_cli = get_toml_section("chunking")
     final_image_generation_settings_cli = get_toml_section("image_generation")
+    final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
     # lives under [first_run] in the raw TOML and was never projected through
     # here -- every other section the app reads via app_config (chat_defaults,
@@ -1192,6 +1561,33 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_console_settings_cli["collapse_large_pastes"] = coerce_bool_setting(
         final_console_settings_cli.get("collapse_large_pastes", True),
         True,
+    )
+    final_console_settings_cli["stack_collapsed_rail_labels"] = coerce_bool_setting(
+        final_console_settings_cli.get("stack_collapsed_rail_labels", False),
+        False,
+    )
+    _rail_layout_scope = final_console_settings_cli.get("rail_layout_scope")
+    final_console_settings_cli["rail_layout_scope"] = (
+        _rail_layout_scope.strip().lower()
+        if isinstance(_rail_layout_scope, str)
+        and _rail_layout_scope.strip().lower() in {"global", "workspace"}
+        else "global"
+    )
+    # task-17652: status-row placement relative to the composer. Validation
+    # lives in UI/Console_Modules/status_row.resolve_status_chips_position;
+    # normalizing here keeps a typo from ever reaching compose order.
+    _status_chips_position = final_console_settings_cli.get("status_chips_position")
+    if not (
+        isinstance(_status_chips_position, str)
+        and _status_chips_position.strip().lower() in ("above", "below")
+    ):
+        _status_chips_position = "above"
+    else:
+        _status_chips_position = _status_chips_position.strip().lower()
+    final_console_settings_cli["status_chips_position"] = _status_chips_position
+    final_console_settings_cli["status_chips_collapsed"] = coerce_bool_setting(
+        final_console_settings_cli.get("status_chips_collapsed", False),
+        False,
     )
     final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
         final_console_settings_cli.get(
@@ -1212,14 +1608,87 @@ def load_settings(force_reload: bool = False) -> Dict:
         minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
         maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     )
-    final_console_settings_cli["local_tools_enabled"] = coerce_bool_setting(
-        final_console_settings_cli.get("local_tools_enabled", False),
-        False,
+    # TASK-18600: the Console agent run budget. Same coercion shape as the
+    # two settings above; the two duration keys go through the float twin.
+    # Floors only, no ceilings -- these are deliberately user-owned
+    # trade-offs (same call as `max_parallel_runs`), and an out-of-range or
+    # unparsable value falls back to the shipped default rather than
+    # silently clamping to a number the user never chose.
+    final_console_settings_cli["agent_max_model_turns"] = coerce_int_setting(
+        final_console_settings_cli.get(
+            "agent_max_model_turns",
+            DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+        minimum=MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
     )
+    final_console_settings_cli["agent_max_steps"] = coerce_int_setting(
+        final_console_settings_cli.get(
+            "agent_max_steps",
+            DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+        minimum=MIN_CONSOLE_AGENT_MAX_STEPS,
+        maximum=MAX_CONSOLE_AGENT_MAX_STEPS,
+    )
+    final_console_settings_cli["agent_max_wall_seconds"] = coerce_float_setting(
+        final_console_settings_cli.get(
+            "agent_max_wall_seconds",
+            DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
+        minimum=MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
+    )
+    final_console_settings_cli["agent_max_total_tokens"] = coerce_int_setting(
+        final_console_settings_cli.get(
+            "agent_max_total_tokens",
+            DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+        minimum=MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+    )
+    final_console_settings_cli["agent_max_tool_call_seconds"] = coerce_float_setting(
+        final_console_settings_cli.get(
+            "agent_max_tool_call_seconds",
+            DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        minimum=MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+    )
+    final_console_settings_cli["local_tools_enabled"] = coerce_bool_setting(
+        final_console_settings_cli.get("local_tools_enabled", True),
+        True,
+    )
+    for key in (
+        "project_instructions_startup_max_bytes",
+        "project_instructions_nested_max_bytes",
+    ):
+        final_console_settings_cli[key] = coerce_int_setting(
+            final_console_settings_cli.get(
+                key, DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES
+            ),
+            DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+            minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+            maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+        )
     workspace_root = final_console_settings_cli.get("workspace_root", "")
     if not isinstance(workspace_root, str):
         workspace_root = ""
     final_console_settings_cli["workspace_root"] = workspace_root.strip()
+    # Ephemeral side chat (selection menu): strings need presence-validation
+    # only -- non-strings fall back, mirroring workspace_root above.
+    sidechat_model = final_console_settings_cli.get("sidechat_model", "")
+    if not isinstance(sidechat_model, str):
+        sidechat_model = ""
+    final_console_settings_cli["sidechat_model"] = sidechat_model.strip()
+    sidechat_prompt_template = final_console_settings_cli.get(
+        "sidechat_prompt_template", DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
+    )
+    if not isinstance(sidechat_prompt_template, str):
+        sidechat_prompt_template = DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
+    final_console_settings_cli["sidechat_prompt_template"] = (
+        sidechat_prompt_template.strip()
+    )
     background_effects = final_console_settings_cli.get("background_effects")
     if not isinstance(background_effects, dict):
         background_effects = {}
@@ -1331,6 +1800,73 @@ def load_settings(force_reload: bool = False) -> Dict:
             f"Darwin platform-preferred STT provider resolved to: {default_stt_provider}"
         )
 
+    # TASK-22223: `normalize_adaptive_reader_preferences` comes from the
+    # stdlib-only leaf `Utils/adaptive_reader_state.py` (module-top import).
+    # This function runs at config-module import (`load_settings()` at module
+    # scope), so NOTHING here may import a feature package -- a previous
+    # `Library.library_adaptive_reader_state` import claimed to be lazy but
+    # executed the whole Library `__init__` service stack on every config
+    # import and closed a live cycle through `runtime_policy.bootstrap`.
+    # Guarded by `Tests/Packaging/test_config_import_closure.py`; share logic
+    # with features through config-safe leaf modules only.
+    legacy_media_reader = (
+        library_section.get("media_reader", {})
+        if isinstance(library_section.get("media_reader"), Mapping)
+        else {}
+    )
+    raw_reader = (
+        library_section.get("reader", {})
+        if isinstance(library_section.get("reader"), Mapping)
+        else {}
+    )
+    shared_raw = {
+        key: os.getenv(
+            f"TLDW_LIBRARY_READER_{key.upper()}",
+            raw_reader.get(key, legacy_media_reader.get(key)),
+        )
+        for key in ("library_open", "custom_widths_enabled", "library_width")
+    }
+    shared_preferences = normalize_adaptive_reader_preferences(shared_raw)
+    shared_width = normalize_adaptive_reader_preferences(
+        {**shared_raw, "custom_widths_enabled": True}
+    ).library_width
+    normalized_reader = {
+        **copy.deepcopy(raw_reader),
+        "library_open": shared_preferences.library_open,
+        "custom_widths_enabled": shared_preferences.custom_widths_enabled,
+        "library_width": shared_width,
+    }
+    normalized_destination_readers: dict[str, dict[str, Any]] = {}
+    for section_name in (
+        "media_reader",
+        "conversations_reader",
+        "notes_reader",
+        "prompts_reader",
+        "skills_reader",
+    ):
+        raw_destination = (
+            library_section.get(section_name, {})
+            if isinstance(library_section.get(section_name), Mapping)
+            else {}
+        )
+        destination_preferences = normalize_adaptive_reader_preferences(
+            {
+                "custom_widths_enabled": True,
+                "items_open": os.getenv(
+                    f"TLDW_LIBRARY_{section_name.upper()}_ITEMS_OPEN",
+                    raw_destination.get("items_open"),
+                ),
+                "items_width": os.getenv(
+                    f"TLDW_LIBRARY_{section_name.upper()}_ITEMS_WIDTH",
+                    raw_destination.get("items_width"),
+                ),
+            }
+        )
+        normalized_destination_readers[section_name] = {
+            **copy.deepcopy(raw_destination),
+            "items_open": destination_preferences.items_open,
+            "items_width": destination_preferences.items_width,
+        }
     config_dict = {
         # General App
         "APP_MODE_STR": single_user_mode_str,
@@ -1345,13 +1881,17 @@ def load_settings(force_reload: bool = False) -> Dict:
         "database": final_database_settings_cli,  # For TUI DB paths
         "api_settings": final_api_settings,  # CRUCIAL for local API calls
         "providers": final_providers_settings,  # For UI dropdowns
+        "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings
+        "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
+        "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
+        "persona_buddy": copy.deepcopy(toml_config_data.get("persona_buddy", {})),
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -2311,14 +2851,23 @@ def load_settings(force_reload: bool = False) -> Dict:
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
         "acp": get_toml_section("acp"),
         "library": {
+            **copy.deepcopy(library_section),
             "ingest_directory_scan_limit": coerce_int_setting(
                 library_section.get("ingest_directory_scan_limit", 1000),
                 1000,
                 minimum=1,
             ),
+            # (TASK-19556) Opt-in, OFF by default: see the [library] block in
+            # the default TOML below for why a link check is not free.
+            "ingest_url_preflight_probe": coerce_bool_setting(
+                library_section.get("ingest_url_preflight_probe", False),
+                False,
+            ),
             "ingest_options": library_section.get("ingest_options", {})
             if isinstance(library_section.get("ingest_options"), dict)
             else {},
+            "reader": normalized_reader,
+            **normalized_destination_readers,
         },
         "COMPREHENSIVE_CONFIG_RAW": toml_config_data,  # Store the raw TOML data if needed
         "OPENAI_API_KEY": openai_api_key,  # Top-level convenience access
@@ -2576,16 +3125,73 @@ CONFIG_TOML_CONTENT = """
 # Located at: ~/.config/tldw_cli/config.toml
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
+focus_mode = false  # Start the Console chrome-free (no nav bar / workbench header; one-line status bar kept)
 default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "textual-light", or any theme name from themes.py)
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
+# How long shutdown may take (Textual unmount + interpreter teardown) before a
+# hard exit is forced. Clamped to 1-300 seconds. A quiet exit measures ~0.6s,
+# so this deadline is never reached by a normal quit.
+# NOTE: it is enforced against healthy work too. A background job still
+# running when you quit -- media ingest, notes/character export, library
+# export, an embedding batch -- runs on a thread that cannot be interrupted.
+# If it is still going 120 seconds after you quit, the process is killed and
+# that job's database write is abandoned (not rolled back to a clean earlier
+# state -- simply lost). Raise this if you routinely quit while long jobs are
+# running; lower it only if you would rather lose such a write than wait.
+shutdown_grace_seconds = 120.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
+stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
+rail_layout_scope = "global"  # Share Console rail disclosure across workspaces; use "workspace" for per-workspace layouts
+assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
-# local_tools_enabled = false   # workspace-local agent tools (fs_*); approvals via MCP permission store
-# workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
+local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
+# Root-source byte limit; allowed range is 1-1048576 (1 MiB).
+project_instructions_startup_max_bytes = 32768
+# Cumulative nested-source byte limit per dispatch; allowed range is 1-1048576 (1 MiB).
+project_instructions_nested_max_bytes = 32768
+# Conversation-memory defaults (ADR-052). Model capacity remains capability data,
+# not a persisted policy value.
+conversation_budget_mode = "automatic"  # automatic, custom
+# conversation_budget_tokens = 32000     # required only when mode = custom
+compaction_mode = "ask"                  # ask, automatic, off
+compaction_representation = "text_summary"  # text_summary, visual_transcript, hybrid
+compaction_trigger_ratio = 0.80
+compaction_target_ratio = 0.55
+compaction_summary_max_tokens = 1024
+compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
+compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
+# Confinement root for the fs_*/git_* agent tools (ADR-032). Empty = the app's
+# cwd at startup, so the boundary MOVES with where you launch the app: start it
+# from your home directory and every personal file under it is inside the
+# agent's reach. Credential, gate-state and app-state paths (~/.ssh, ~/.aws,
+# this file, mcp_permissions.json, the app's databases) are refused regardless
+# of this setting -- see Utils/sensitive_paths.py, enforced for these tools in
+# Tools/local_tool_impls.py's resolve_workspace_path (TASK-19551) -- but that
+# denylist is a guardrail, not a substitute for pointing this at the one
+# project directory you actually want an agent working in.
+# workspace_root = ""
+
+# Agent run budget (Settings > Console Behavior > Agent run budget).
+# Applies to ONE run = one user message; sub-agents inherit turns/steps/tokens
+# unchanged (their wall comes from [agents] child_max_wall_seconds instead).
+# agent_max_total_tokens is the limit that actually stops a long run: the whole
+# conversation is re-sent every turn, so spend grows quadratically and 25M is
+# typically reached around turn 250. The turn and step caps are backstops.
+agent_max_model_turns = 2000        # Provider turns (tool-calling rounds) per message
+agent_max_steps = 25000             # Step backstop; a fence tool round costs 3 steps
+agent_max_wall_seconds = 86400.0    # 24h ceiling on one run; Stop always works
+agent_max_total_tokens = 25000000   # Per-run prompt+completion spend ceiling; 0 = unlimited
+agent_max_tool_call_seconds = 3600.0  # Ceiling on ONE tool call; 0 = unlimited
+# Ephemeral side chat (selection menu) — empty model = session model
+sidechat_model = ""  # e.g. "openai/gpt-5-mini"; empty = follow the current session's model
+sidechat_prompt_template = "Give me more details about: {selection}"  # {selection} = the quoted text
+# Conversation Inspector: capture each provider exchange (request/response)
+# locally per turn. Local-only; never synced. Set false to disable.
+exchange_capture = true
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.
@@ -2594,12 +3200,16 @@ scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
 
+[skills]
+# project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
+
 [appearance]
 density = "normal"  # compact, normal, or comfortable default control density
 animations_enabled = true  # Enable optional UI animations where supported
 smooth_scrolling = true  # Enable smooth scrolling where supported
 reduce_motion = false  # Render animations as static frames (splash screen, Console setup backdrop)
 ascii_glyphs = false  # Substitute ASCII status markers for unicode glyphs (narrow-font terminals)
+console_transcript_style = "role_accents"  # neutral, role_accents, or immersive_rp
 
 [acp.runtime]
 # ACP owns runtime launch/setup. Leave command empty to keep ACP honestly blocked.
@@ -2619,11 +3229,59 @@ auth_token = "default-secret-key-for-single-user"
 [library]
 # Maximum files scanned when analysing a directory for Library ingestion.
 ingest_directory_scan_limit = 1000
+# Check a staged ingest URL by fetching its headers before the import runs.
+# OFF by default (TASK-19556). A link check is not free: it contacts the host
+# before you have asked for anything to be imported, and it used to run from
+# the ingest field's typing debounce, which turned a pasted link into a probe
+# of whatever the address pointed at -- including hosts on your own network.
+# With this on, the check runs only from the deliberate triggers (leaving the
+# field, pressing Enter, Browse..., the retry button), never while you type;
+# it is routed through the [web_security] egress policy, follows no
+# redirects, and reports one identical "could not be checked" note for every
+# address the policy declines. A link that cannot actually be fetched is
+# still reported by the import job itself, with a real reason.
+ingest_url_preflight_probe = false
 # Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
 # ingest_parse_workers = 3
 # Max concurrent heavy (audio/video transcription) parses; document parses fan
 # out past this cap to fill the remaining pool workers. Default: 1.
 # ingest_heavy_lane_max_workers = 1
+
+[library.reader]
+# Shared Library-pane visibility and width are written here by Settings and
+# Library pane toggles. Older configs may omit these keys; each missing key
+# independently falls back to its legacy value under [library.media_reader].
+# Environment overrides use TLDW_LIBRARY_READER_<KEY>.
+
+[library.media_reader]
+# Destination Items-pane preferences. The three shared keys below remain as
+# read-only compatibility fallbacks for older config files.
+# Items environment overrides use TLDW_LIBRARY_MEDIA_READER_<KEY>.
+library_open = true
+items_open = true
+custom_widths_enabled = false
+library_width = 28
+items_width = 40
+
+[library.conversations_reader]
+# Environment overrides use TLDW_LIBRARY_CONVERSATIONS_READER_<KEY>.
+items_open = true
+items_width = 40
+
+[library.notes_reader]
+# Environment overrides use TLDW_LIBRARY_NOTES_READER_<KEY>.
+items_open = true
+items_width = 40
+
+[library.prompts_reader]
+# Environment overrides use TLDW_LIBRARY_PROMPTS_READER_<KEY>.
+items_open = true
+items_width = 40
+
+[library.skills_reader]
+# Environment overrides use TLDW_LIBRARY_SKILLS_READER_<KEY>.
+items_open = true
+items_width = 40
 
 # Per-type ingestion options are persisted here by the Library ingest canvas.
 [library.ingest_options]
@@ -2642,6 +3300,36 @@ ingest_directory_scan_limit = 1000
 # caller-supplied native Anthropic tool dicts already carrying cache_control
 # still pass through verbatim.
 anthropic_enabled = true
+
+[agents]
+# Sub-agent fleet knobs. Every key here is COMMENTED OUT on purpose: the
+# authoritative defaults live in `Agents/agent_service.py`
+# (DEFAULT_MAX_LIVE_SUBAGENTS / DEFAULT_CHILD_MAX_WALL_SECONDS /
+# DEFAULT_SUBAGENTS_OUTLIVE_TURN / DEFAULT_AUTOWAKE_ENABLED), and shipping a live copy here would give
+# the same value two homes that can silently drift apart. Uncomment a line
+# to override. See Docs/User_Guide/console/agent-runs-and-tools.md.
+#
+# How many sub-agents of ONE conversation may run at once, counting any
+# still working from an earlier message. 1 disables the fleet (sub-agents
+# run inline, one at a time). The cap is per conversation AND per running
+# app -- N conversations can hold N * this between them.
+# max_live_subagents = 3
+#
+# Whether a sub-agent may keep working after the reply that spawned it has
+# finished. false settles every sub-agent at the end of its own turn.
+# subagents_outlive_turn = true
+#
+# How long ONE background sub-agent may keep working, in seconds. Checked
+# between the child's own steps, so it does not interrupt a provider call
+# already in flight.
+# child_max_wall_seconds = 1800.0
+#
+# Whether a background sub-agent finishing after its turn WAKES its
+# supervisor so it can act on the result (an injected, clearly machine-
+# marked notice -- never user input, never approval). false still records
+# every completion (toast, badge, durable mark); the wake turn just never
+# fires.
+# autowake_enabled = true
 
 [splash_screen]
 # Splash screen configuration for startup animations
@@ -2733,6 +3421,26 @@ sync_retry_max_attempts = 10
 sync_retry_max_delay_seconds = 300
 sync_retry_jitter = true
 scheduler_poll_interval_seconds = 30
+# A dispatch more than this many seconds after its scheduled time counts as
+# late and is recorded on the task (missed_at/missed_count, task-18937).
+# Default is 2x the poll interval: an idle scheduler dispatches within one
+# poll. Beyond 2x has several possible causes and the row cannot tell them
+# apart (task-19562): the scheduler was not running at the scheduled time
+# (app closed), the machine slept or the loop was starved while the app
+# stayed open, or the scheduler was busy -- tick awaits every due handler
+# serially, so a slow handler holds the loop and pushes the NEXT poll past
+# the grace. The loop logs which it was and counts it as
+# scheduler_dispatch_late with a cause label (away / stalled / busy). A
+# task created mid-session reloads the queue immediately, so that case does
+# not false-positive here.
+missed_fire_grace_seconds = 60
+# Handler execution timeout (task-18939): a scheduled-task handler still
+# running after this many seconds is cancelled and its dispatch records
+# "timed_out" -- the schedule advances, so a wedged handler (e.g. a hung
+# watchlist URL check) can never wedge the whole scheduler. 0 or negative
+# disables the bound; a reminder's own timeout_seconds column overrides
+# this per task (same semantics: <=0 disables for that task).
+handler_timeout_seconds = 300
 reminder_catchup_hours = 24
 # Feature flags for the watchlist-to-unified-scheduler migration (ADR-019).
 # Both were staged for a shadow-mode dual-run against the legacy SubscriptionScheduler.
@@ -2788,9 +3496,10 @@ Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatil
 Google = ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
 HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
-Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
+Moonshot = ["kimi-k3", "kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
-ZAI = ["glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
+QwenCloud = ["qwen3.8-max"]
+ZAI = ["glm-5.2", "glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -2813,6 +3522,9 @@ local_mlx_lm = ["None"]
 [model_catalog]
 # Automatic model-list refresh for cloud providers (ADR-020).
 auto_refresh_enabled = true
+# The startup check is confirm-first: nothing is contacted online until the
+# user answers the one-time consent dialog (which sets this to true).
+refresh_consent_recorded = false
 stale_after_hours = 24 # 0 = refetch every launch
 auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]
 write_to_config = [] # exact [providers] keys whose new models append to this file
@@ -2939,7 +3651,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.moonshot]
     api_key_env_var = "MOONSHOT_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "kimi-latest"  # Latest Kimi model, or use moonshot-v1-auto for auto selection
+    model = "kimi-k3"
     temperature = 0.7
     top_p = 0.95 # Moonshot uses top_p (OpenAI compatible)
     max_tokens = 4096
@@ -2948,12 +3660,22 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     timeout = 90
     retries = 3
     retry_delay = 1.0
-    streaming = false
+    streaming = true
+
+    [api_settings.qwencloud]
+    api_mode = "responses"
+    api_key_env_var = "DASHSCOPE_API_KEY"
+    api_base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    model = "qwen3.8-max"
+    timeout = 120
+    retries = 3
+    retry_delay = 1
+    streaming = true
 
     [api_settings.zai] # Matches key in [providers]
     api_key_env_var = "ZAI_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "glm-4.5"
+    model = "glm-5.2"
     temperature = 0.7
     top_p = 0.95
     max_tokens = 4096
@@ -2961,7 +3683,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     timeout = 90
     retries = 3
     retry_delay = 5
-    streaming = false
+    streaming = true
 
     # --- Local Providers ---
     # Local providers default to streaming = true so slow generations render
@@ -3220,6 +3942,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
 
 [chat_defaults]
 # Default settings specifically for the 'Chat' tab
+user_display_name = "User"
 provider = "OpenAI"
 model = "gpt-5.6-terra"
 system_prompt = "You are a helpful AI assistant."
@@ -3237,6 +3960,21 @@ strip_thinking_tags = true
 # (pruning is view-only). Set prune_high_watermark <= 0 to disable pruning.
 prune_high_watermark = 20000
 prune_low_watermark = 12000
+
+# Console transcript load window: opening or switching to a conversation
+# mounts only a tail of it, and scrolling to the top of that tail prepends
+# more. Both values are FLOORS in terminal rows -- the effective budget is the
+# larger of the floor and the mounted viewport (6x for the initial window, 4x
+# per scrollback step). Set transcript_window_lines <= 0 to mount the whole
+# history at load, as before. With windowing on and sane watermarks the
+# window is two-sided (TASK-15777): sustained scroll-back keeps loading older
+# history while trimming the newest end back out of the view (never a
+# selected message, which pauses the sliding while pinned at that end), so
+# the session stays reachable by scrolling at a bounded mounted size, and a
+# jump to a far-away message mounts a fresh window around it instead of
+# everything between it and the tail.
+transcript_window_lines = 144
+transcript_scrollback_lines = 96
 
 # Render assistant replies as full markdown (code blocks, tables, lists,
 # links) in the Console transcript. Set false to restore the lightweight
@@ -3271,6 +4009,14 @@ default = "pixels"
 # the exact host is listed in allowed_hosts.
 enabled = true
 allowed_hosts = []
+# Default (connect, read) timeout applied by `Utils/egress.py`'s
+# `create_default_session()` to any request through that session which does
+# not pass its own `timeout=` (task-19830). Per-provider `api_timeout`
+# settings under [api_settings.<provider>] still take precedence wherever
+# they're read explicitly -- these are only the floor for call sites that
+# don't set one.
+# request_connect_timeout_seconds = 10
+# request_read_timeout_seconds = 30
 
 [image_generation]
 # Backend-specific fields (model, base_url, timeout_seconds, api_key, ...) go
@@ -3319,6 +4065,21 @@ default_model = ""
 timeout_seconds = 120
 allowed_extra_params = []
 # swarm_token: secret, resolved via env/keyring precedence, not stored plaintext here
+
+# ComfyUI H3 image editing is explicit opt-in: add "comfyui" to
+# enabled_backends above after reviewing this server boundary. Saving a base_url
+# in F9 Settings consents to sending the source image and instruction to that
+# exact origin. ComfyUI retains uploaded inputs and saved outputs according to
+# the server operator's policy.
+# [image_generation.comfyui]
+# base_url = "http://127.0.0.1:8188"
+# request_timeout_seconds = 30
+# connect_timeout_seconds = 5
+# poll_interval_seconds = 1
+# total_deadline_seconds = 1800
+# default_seed = -1                # omit to use packaged workflow
+# default_steps = 28               # omit to use packaged workflow
+# default_sampler = "euler"        # omit to use packaged workflow
 
 [image_generation.openrouter]
 base_url = "https://openrouter.ai/api/v1"
@@ -3393,7 +4154,7 @@ api_key = "<API_KEY_HERE>"
 [character_defaults]
 # Default settings specifically for the 'Character' tab
 provider = "Anthropic"
-model = "claude-3-haiku-20240307" # Make sure this exists in [providers.Anthropic]
+model = "claude-haiku-4-5" # Make sure this exists in [providers.Anthropic]
 system_prompt = "You are roleplaying as a witty pirate captain."
 temperature = 0.8
 top_p = 0.9
@@ -3420,21 +4181,16 @@ show_analysis_button = true
 
 [llm_management]
 # LLM Management settings
-model_download_dir = "~/Downloads/tldw_models"  # Directory for downloaded models
-max_concurrent_downloads = 2  # Maximum concurrent model downloads
-auto_verify_downloads = true  # Verify downloaded files
-cleanup_partial_downloads = true  # Remove incomplete downloads on failure
-# HuggingFace settings
-huggingface_cache_ttl = 3600  # Cache model listings for 1 hour
-default_quantization_filter = ""  # e.g., "Q4_K_M,Q5_K_M,Q8_0"
+model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for Installed models
 
 [notes]
-# Default settings for the Notes tab
-sync_directory = "~/Documents/Notes"  # Default directory for notes synchronization
-auto_sync_enabled = false            # Enable automatic sync on startup
-sync_on_close = false               # Sync when closing the app
-conflict_resolution = "newer_wins"   # Default conflict resolution: newer_wins, ask, disk_wins, db_wins
-sync_direction = "bidirectional"     # Default sync direction: bidirectional, disk_to_db, db_to_disk
+# Device-private lasting-sync settings. Legacy sync keys are intentionally not
+# emitted for fresh profiles; already-present keys remain migration input only.
+recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capacity (256 MiB)
+# Lasting-sync change watcher: base poll interval, and the cap it backs off to
+# while roots are quiet (backed-off sleeps are jittered by up to +/-50%).
+sync_watcher_interval_seconds = 1.0
+sync_watcher_max_interval_seconds = 10.0
 
 # Auto-save settings
 auto_save_enabled = true             # Enable auto-save feature
@@ -3672,6 +4428,18 @@ vector_top_k = 10
 web_vector_top_k = 10
 llm_context_document_limit = 10
 
+# ==========================================================
+# Chunking Template Configuration
+# ==========================================================
+[chunking]
+# Default chunking template for imports that did not pick one in the
+# Library ingest form. Empty (the default) means plain chunk options
+# (method/size/overlap) -- exactly today's behavior. The name must match
+# a live template row in the media DB (RAG Admin: chunking templates);
+# an unresolvable name fails the import with a named error rather than
+# silently falling back to different chunking.
+default_template = ""
+
 
 # --- Model Capabilities Configuration ---
 [model_capabilities]
@@ -3757,11 +4525,37 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # search_provider_default = "google"
 # relevance_analysis_llm = "openai"
 # final_answer_llm = "openai"
-# search_enable_subquery = false
+# search_enable_subquery = false   # generate sub-questions from the query and
+#   search those too. Costs one LLM call plus up to search_default_max_queries-1
+#   extra searches, each carrying its own per-result relevance calls. Qodo
+#   (PR 1772): with BOTH lanes active each generated facet costs TWO provider
+#   calls, not one -- a web search and an academic-provider search -- so the
+#   worst case is 2 x (search_default_max_queries - 1) extra calls per round,
+#   plus the per-result relevance and summarization calls each returned source
+#   then needs. Since task-17372 the facets ALSO drive academic-provider
+#   searches, so enabling this changes both what evidence is retrieved and how
+#   it is judged
+#   (the facets reach the relevance prompt either way). Before that fix it
+#   changed only the judging, which is why the recorded gate measurement for
+#   fan-out says nothing about retrieval -- see
+#   Docs/Development/research-report-eval-baseline.md.
 # search_default_max_queries = 5
 # search_result_max = 10
-# relevance_llm_timeout_s = 30
+# relevance_llm_timeout_s = 30   # per relevance/summarization LLM call. Measured
+#   (task-17370): per-result summarization against a local 27B took 42-131s, so
+#   30 guarantees the fallback-to-source-text path on local models. Raise it if
+#   you want summarized evidence rather than raw page text.
 # relevance_scrape_timeout_s = 30
+# research_max_iterations = 2   # rounds a local research RUN performs when it
+#   does not set its own limit: round 1 researches the question, later rounds
+#   research the gaps the previous synthesis left open (task-16324). 2 is the
+#   shipped default because a second round measurably improved evidence --
+#   resolved citation markers 24 -> 39, citation density 0.77 -> 0.95
+#   (task-17370). It costs one extra search per gap, each with its own
+#   per-result relevance and summarization calls, plus another synthesis and gap
+#   analysis per round: the measured arm went from 3 to 12 search calls across
+#   three questions and roughly tripled wall-clock. Set to 1 for single-pass
+#   runs; a run's own limits always override this.
 # deep_search_timeout_s = 240   # the agent runtime automatically allots this tool its own per-call timeout of this value plus ~50s slack (wait_for grace + thread-join + scheduling jitter), via LocalToolProvider.timeout_for -- independent of max_tool_call_seconds, any value here is safe
 
 [webfetch]
@@ -3879,6 +4673,10 @@ compute_type = "int8"
 # parakeet-onnx never downloads model files implicitly.
 parakeet_onnx_model_dir = ""
 
+# Exact v2/v3 × INT8/F32 external-source records. External files remain
+# user-owned and are never copied or managed implicitly.
+parakeet_external_sources = {}
+
 # Voice Activity Detection
 use_vad_by_default = false
 
@@ -3989,8 +4787,9 @@ expose_prompts = true  # Expose prompt templates
 require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
+# approval_timeout_seconds = 0  # Console approval-card auto-deny ceiling: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
 
-# expose_local_tools = false   # expose workspace-local agent tools (fs_*/git_*/web_*) to external MCP clients; permission-gated, writes effectively denied until granted
+# expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
 
 # Tool-specific settings
 [mcp.tools]
@@ -4158,6 +4957,56 @@ except tomllib.TOMLDecodeError as e:
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
+_FIRST_PROFILE_CREATED_THIS_SESSION = False
+
+
+def first_profile_created_this_session() -> bool:
+    """Return whether this process created the active profile config.
+
+    Returns:
+        ``True`` when this process created the active profile configuration;
+        otherwise ``False``.
+    """
+    return _FIRST_PROFILE_CREATED_THIS_SESSION
+
+
+class ConfigLoadFailure(NamedTuple):
+    """The most recent config parse failure -- TASK-13157.
+
+    ``_load_cli_config_bootstrap_unlocked`` already logs a TOMLDecodeError
+    via loguru, but both of its callers (``load_cli_config_and_ensure_
+    existence`` and ``load_settings``) discard the ``_ConfigBootstrapResult.
+    succeeded`` flag and hand back bare in-memory defaults with no signal a
+    caller can act on. A live-verification incident found this produces a
+    silent, user-invisible fallback to the ``default_user`` profile -- the
+    loaded config simply has no ``[general] users_name`` because the file
+    that would have carried it never parsed. This module-level record is the
+    "user-visible path" half of the fix: ``app.py`` reads it once at boot
+    (mirroring the existing ``_instance_lock_status``/``_maybe_warn_second_
+    instance`` pattern) and surfaces a persistent notification naming the
+    file and the parse error, instead of leaving the degradation invisible.
+    """
+
+    path: Path
+    message: str
+
+
+#: Set inside the TOMLDecodeError branch below, cleared on the next
+#: successful bootstrap. See ``ConfigLoadFailure`` and ``get_config_load_
+#: failure()``.
+_LAST_CONFIG_LOAD_FAILURE: Optional[ConfigLoadFailure] = None
+
+
+def get_config_load_failure() -> Optional[ConfigLoadFailure]:
+    """Return the most recent CLI config TOML parse failure, if any.
+
+    ``None`` means the last bootstrap attempt (or no attempt yet) did not
+    hit a TOML parse error -- it says nothing about OTHER bootstrap failure
+    modes (permission/posture errors, decryption failures), which already
+    have their own handling and are out of scope for this signal.
+    """
+
+    return _LAST_CONFIG_LOAD_FAILURE
 
 
 class _ConfigBootstrapResult(NamedTuple):
@@ -4168,7 +5017,8 @@ class _ConfigBootstrapResult(NamedTuple):
 def _load_cli_config_bootstrap_unlocked(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
-    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
+    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
+    global _FIRST_PROFILE_CREATED_THIS_SESSION
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -4216,6 +5066,7 @@ def _load_cli_config_bootstrap_unlocked(
         _report_config_path_posture(created)
         logger.info(f"Created default CLI config file at {config_path}")
         loaded_config["_first_run"] = True
+        _FIRST_PROFILE_CREATED_THIS_SESSION = True
         bootstrap_succeeded = True
     except PrivatePathError as exc:
         if application_directory is not None and exc.result.reason == "missing_parent":
@@ -4230,6 +5081,7 @@ def _load_cli_config_bootstrap_unlocked(
             _report_config_path_posture(created)
             logger.info(f"Created default CLI config file at {config_path}")
             loaded_config["_first_run"] = True
+            _FIRST_PROFILE_CREATED_THIS_SESSION = True
             bootstrap_succeeded = True
         else:
             raise
@@ -4237,6 +5089,14 @@ def _load_cli_config_bootstrap_unlocked(
         logger.opt(exception=True).error(
             f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load."
         )
+        # TASK-13157: this except branch is the exact point a real user's
+        # config parse failure previously vanished -- logged here, then
+        # thrown away by every caller (`load_cli_config_and_ensure_
+        # existence`/`load_settings` both return only `.config`, never
+        # `.succeeded`). Recording it lets `app.py` surface a loud,
+        # user-visible notification instead of a silent `default_user`
+        # fallback (see `ConfigLoadFailure`/`get_config_load_failure`).
+        _LAST_CONFIG_LOAD_FAILURE = ConfigLoadFailure(path=config_path, message=str(e))
     except Exception as e:
         logger.opt(exception=True).error(
             f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
@@ -4245,6 +5105,9 @@ def _load_cli_config_bootstrap_unlocked(
     if bootstrap_succeeded:
         _CONFIG_CACHE = loaded_config
         _CONFIG_CACHE_SOURCE = config_path
+        # A later successful load (e.g. the user or the app repaired the
+        # file) retires any previously recorded parse failure.
+        _LAST_CONFIG_LOAD_FAILURE = None
     # Log the keys of the configuration being returned to verify its structure
     logger.debug(
         f"load_cli_config_and_ensure_existence returning config with top-level keys: {list(loaded_config.keys())}"
@@ -4302,9 +5165,13 @@ def _maybe_encrypt_setting_value(
         encrypted_value = enc_module.encrypt_value(value, password)
         logger.info(f"Encrypted {key} in config section")
         return encrypted_value
-    except Exception as e:
-        logger.error(f"Failed to encrypt value: {e}")
-        return value
+    except Exception as error:
+        logger.error(
+            "Failed to encrypt config value (key={}, exception_category={}).",
+            key,
+            type(error).__name__,
+        )
+        raise
 
 
 def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[str, Any]:
@@ -4380,14 +5247,80 @@ def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
 def _config_write_lock(config_path: Path) -> Iterator[None]:
     """Serialize one config write transaction within and across processes."""
 
-    with _config_file_lock(), _config_interprocess_lock(config_path):
+    with (
+        _settings_rebuild_lock(),
+        _config_file_lock(),
+        _config_interprocess_lock(config_path),
+    ):
         yield
 
 
 def _load_cli_config_bootstrap(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
-    """Load or create the config while serializing the file/cache lifecycle."""
+    """Load or create the config while serializing the file/cache lifecycle.
+
+    TASK-21124 -- LOCK-FREE FAST PATH. `get_cli_setting` has ~398 call
+    sites, many on the Textual event loop, and every one funnels through
+    here; taking `_config_file_lock()` before the cache check meant one
+    config write (which holds that lock through two fsyncs and its TOML
+    parses) stalled every loop-side read for the whole write. A warm cache
+    hit now returns without touching the lock.
+
+    Why the unlocked reads below are safe (CPython, GIL builds -- the only
+    builds this app supports):
+
+    * Each global read (`_CONFIG_GENERATION`, `_CONFIG_CACHE`,
+      `_CONFIG_CACHE_SOURCE`) is a single atomic reference load; a reader
+      can never see a partially-assigned cell.
+    * Every publication installs a BRAND-NEW dict object (built via
+      `copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)` + `deep_merge_dicts`, both
+      of which construct fresh objects) -- a previously published dict is
+      never re-installed. Therefore the `_CONFIG_CACHE is cached_config`
+      re-check proves no install happened between the two cache reads, so
+      the (cache, source) pair read here belongs to one single install and
+      cannot be torn across two different installs.
+    * Writers store in the order: cache=None, source=None, <build>,
+      cache=new, source=path, all under `_config_file_lock`. In
+      `_load_cli_config_bootstrap_unlocked` and
+      `_invalidate_config_caches` the pre-clear is explicit; for
+      `_install_bootstrap_cache_from_raw` the coupling is IMPLICIT -- it
+      does no pre-clear itself, and the invariant holds only because
+      every `raw_config` it receives comes from
+      `_write_raw_cli_config_unlocked`, whose `_invalidate_config_caches()`
+      call performed the cache=None/source=None stores moments earlier
+      under the same lock. Combined with the identity re-check, a hit
+      therefore returns the config that IS the currently installed cache
+      for the caller's path.
+    * The `_CONFIG_GENERATION` sandwich (read, ..., re-read) is the
+      double-check the task's AC names, but it is NOT what makes the read
+      sound -- the identity re-check above carries the soundness on its
+      own (review of TASK-21124 proved by mutation that reordering the
+      publish-time bump relative to the cache install leaves every
+      guarantee intact). The generation term adds conservatism only: when
+      a publication lands between the two generation reads, the reader
+      declines the hit and re-validates through the locked path instead.
+    * A write's invalidate window (cache=None between file replace and
+      republish) makes readers MISS and serialize through the lock below,
+      which is the pre-existing behavior for every miss.
+
+    The fast path deliberately returns the SAME shared mutable dict the
+    locked cache-hit path has always returned (no defensive copy) -- the
+    copy semantics of `load_cli_config_and_ensure_existence` are unchanged.
+    """
+
+    if not force_reload:
+        config_path = _get_effective_config_path()
+        generation_before = _CONFIG_GENERATION
+        cached_config = _CONFIG_CACHE
+        cached_source = _CONFIG_CACHE_SOURCE
+        if (
+            cached_config is not None
+            and cached_source == config_path
+            and _CONFIG_CACHE is cached_config
+            and _CONFIG_GENERATION == generation_before
+        ):
+            return _ConfigBootstrapResult(cached_config, True)
 
     with _config_file_lock():
         return _load_cli_config_bootstrap_unlocked(force_reload=force_reload)
@@ -4438,29 +5371,159 @@ def _invalidate_config_caches() -> None:
     _SETTINGS_CACHE_SOURCE = None
 
 
+class ConfigSerializationError(ValueError):
+    """A config rewrite would have committed unparseable TOML -- TASK-13157.
+
+    ``ValueError`` on purpose: ``replace_cli_config_serialized`` already uses
+    a plain ``ValueError`` as its "config write rejected" signal (see
+    ``_enforce_existing_encryption``), and ``persist_cli_config_for_
+    shutdown`` already catches ``ValueError`` in its failure tuple -- making
+    this a subclass means every existing call site's exception handling
+    covers it without modification.
+    """
+
+
 def _write_raw_cli_config_unlocked(
     config_path: Path,
     config_data: Mapping[str, Any],
-) -> None:
-    """Atomically write a private on-disk config while the lock is held."""
+) -> Dict[str, Any]:
+    """Atomically write a private on-disk config while the lock is held.
+
+    Returns:
+        The verify parse-back of the exact serialized text committed to
+        disk -- byte-for-byte what the next read of the file will produce.
+        TASK-21124: callers hand this to
+        ``_publish_runtime_config_unlocked(raw_config=...)`` so the publish
+        step reuses this parse instead of re-reading and re-parsing the
+        file it just wrote (twice: once for the bootstrap cache, once again
+        inside ``load_settings(force_reload=True)``). The TASK-13157 guard
+        below is therefore not a redundant extra parse anymore -- it IS the
+        single serialization-side parse, and publishing its output is
+        strictly more faithful than publishing the input mapping (it is
+        the post-round-trip view the next boot would see).
+
+    TASK-13157: every config-rewrite pass (settings-screen edits, the
+    first-run wizard, and -- notably -- the full default+user re-merge every
+    process shutdown persists via ``persist_cli_config_for_shutdown``) ends
+    up here. The in-memory ``config_data`` is always a plain ``dict`` with
+    inherently unique keys, so it cannot itself carry a duplicate key -- but
+    ``toml.dumps`` (the third-party encoder) and ``tomllib`` (the stdlib
+    reader the NEXT boot uses) are two independent implementations with no
+    guaranteed round-trip contract between them. Before this fix, nothing
+    verified the encoder's own output was still valid TOML before it was
+    committed to disk; a bad serialization would sit there until the next
+    boot's read failed, at which point the failure was ALSO silent (see
+    ``ConfigLoadFailure``). Parsing the freshly serialized text back through
+    the exact reader used on the next boot, before the atomic write, makes
+    it categorically impossible for this function to leave behind a file its
+    own next read cannot parse. That is the full extent of the guarantee:
+    this guard proves PARSEABILITY, not fidelity -- it never compares the
+    parsed-back value against ``config_data``, so an encoder-level mangling
+    that still happens to produce valid TOML sails through unnoticed
+    (measured: ``toml.dumps`` silently drops control characters such as
+    ``\\x00``/``\\x1b`` from string values, and the mangled output still
+    parses back cleanly). The write is NOT idempotent by construction and
+    can change the on-disk result relative to what was requested; what is
+    guaranteed is narrower -- it can never regress a config this function
+    can write at all into a file the next read cannot parse.
+    """
 
     application_directory = _prepare_config_parent(config_path)
+    serialized = toml.dumps(dict(config_data))
+    try:
+        parsed_back = tomllib.loads(serialized)
+    except tomllib.TOMLDecodeError as exc:
+        logger.error(
+            "Refusing to write CLI config: serialized TOML failed to parse back "
+            "(error_type={})",
+            type(exc).__name__,
+        )
+        raise ConfigSerializationError(
+            f"Refusing to write {config_path}: the serialized configuration "
+            f"does not parse back as valid TOML ({exc})"
+        ) from exc
     result = atomic_private_write_text(
         config_path,
-        toml.dumps(dict(config_data)),
+        serialized,
         application_owned_directory=application_directory,
     )
     _report_config_path_posture(result)
     _invalidate_config_caches()
+    return parsed_back
 
 
-def _publish_runtime_config_unlocked() -> Dict[str, Any]:
-    """Reload caches and publish one complete in-process config generation."""
+def _install_bootstrap_cache_from_raw(
+    raw_config: Mapping[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Install the bootstrap cache from an already-parsed raw config mapping.
+
+    TASK-21124: replicates exactly the success tail of
+    `_load_cli_config_bootstrap_unlocked` (merge the programmatic defaults,
+    decrypt strictly, publish cache + source, retire any recorded parse
+    failure) without re-reading or re-parsing the file. Used by
+    `_publish_runtime_config_unlocked` with the verify parse-back a write
+    just produced. Must be called with `_config_file_lock` held.
+
+    Returns:
+        The installed merged+decrypted config, or ``None`` when strict
+        decryption failed -- the caller then falls back to the full locked
+        reload, which reproduces the historical failure handling
+        (cache left empty, in-memory defaults returned).
+    """
+
+    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
+
+    config_path = _get_effective_config_path()
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(raw_config))
+    decryption = _decrypt_config_section_with_status(merged, strict=True)
+    if not decryption.succeeded:
+        return None
+    loaded_config = decryption.config
+    # Same store order as `_load_cli_config_bootstrap_unlocked` (cache, then
+    # source); the fast path's identity re-check makes either order safe --
+    # see `_load_cli_config_bootstrap`. NOTE an implicit coupling: this
+    # function performs no cache=None/source=None pre-clear of its own; the
+    # documented writer store order holds only because every caller's
+    # `raw_config` comes from `_write_raw_cli_config_unlocked`, whose
+    # `_invalidate_config_caches()` did that pre-clear moments earlier under
+    # the same lock. A new caller sourcing `raw_config` elsewhere must
+    # preserve that ordering.
+    _CONFIG_CACHE = loaded_config
+    _CONFIG_CACHE_SOURCE = config_path
+    _LAST_CONFIG_LOAD_FAILURE = None
+    return loaded_config
+
+
+def _publish_runtime_config_unlocked(
+    raw_config: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Reload caches and publish one complete in-process config generation.
+
+    Args:
+        raw_config: Optional already-parsed raw on-disk mapping (the verify
+            parse-back returned by `_write_raw_cli_config_unlocked`). When
+            given and installable, the bootstrap cache is rebuilt from it
+            without re-reading the file, and the settings rebuild reuses
+            that just-primed cache (`reload_bootstrap=False`) -- TASK-21124
+            takes one write from four TOML parses to two (the inherent
+            read-modify-write read plus the TASK-13157 verify parse).
+
+    The `_CONFIG_GENERATION` bump is kept last for consistency, but the
+    ordering is not load-bearing: the fast path's soundness rests on its
+    cache-identity re-check, and the generation sandwich only adds
+    conservatism (see `_load_cli_config_bootstrap` -- the TASK-21124
+    review proved a bump-first mutant equivalent). Callers hold the write
+    lock.
+    """
 
     global settings, _CONFIG_GENERATION
 
-    loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
-    settings = load_settings(force_reload=True)
+    loaded: Optional[Dict[str, Any]] = None
+    if raw_config is not None:
+        loaded = _install_bootstrap_cache_from_raw(raw_config)
+    if loaded is None:
+        loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
+    settings = load_settings(force_reload=True, reload_bootstrap=False)
     _CONFIG_GENERATION += 1
     return loaded
 
@@ -4472,18 +5535,79 @@ class RuntimeConfigSnapshot(NamedTuple):
     values: Dict[str, Any]
 
 
+class AtomicConfigSnapshot(NamedTuple):
+    """A locked authoritative config view paired with its published generation."""
+
+    generation: int
+    values: Dict[str, Any]
+
+
+def _atomic_config_values_from_raw(
+    config_data: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Merge and decrypt the exact raw mapping already read under the write lock."""
+
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(config_data))
+    decryption = _decrypt_config_section_with_status(merged, strict=True)
+    if not decryption.succeeded:
+        raise ValueError("Authoritative configuration could not be decrypted")
+    return decryption.config
+
+
+def get_atomic_config_snapshot() -> AtomicConfigSnapshot:
+    """Read the authoritative config through the same lock used by mutations."""
+
+    config_path = _get_effective_config_path()
+    with _config_write_lock(config_path):
+        raw = _read_raw_cli_config_unlocked(config_path)
+        return AtomicConfigSnapshot(
+            generation=_CONFIG_GENERATION,
+            values=_atomic_config_values_from_raw(raw),
+        )
+
+
 def get_runtime_config_snapshot(
     *,
     force_reload: bool = False,
 ) -> RuntimeConfigSnapshot:
     """Return a defensive current runtime config view."""
 
-    with _config_file_lock():
+    with _settings_rebuild_lock(), _config_file_lock():
         values = load_settings(force_reload=force_reload)
         return RuntimeConfigSnapshot(
             generation=_CONFIG_GENERATION,
             values=copy.deepcopy(values),
         )
+
+
+def run_if_runtime_config_generation_current(
+    expected_generation: int,
+    action: Callable[[], bool],
+) -> bool:
+    """Linearize a nonblocking action against runtime config publication.
+
+    Lock order is always ``config -> action-owned lock``. The supplied action
+    must be process-local and nonblocking; first-chat handoff acknowledgement
+    uses this to acquire only the pending-handoff lock. Pending handoff stage,
+    claim, and release paths never acquire the config lock, so there is no
+    reverse ``handoff -> config`` edge.
+
+    Args:
+        expected_generation: Runtime generation the caller validated.
+        action: Nonblocking action to execute while publication is fenced.
+
+    Returns:
+        ``True`` only when the generation matched and the action succeeded.
+    """
+
+    if type(expected_generation) is not int or expected_generation < 0:
+        raise ValueError("Expected config generation must be nonnegative")
+    if not callable(action):
+        raise TypeError("Config generation action must be callable")
+    with _config_file_lock():
+        if _CONFIG_GENERATION != expected_generation:
+            return False
+        return action() is True
 
 
 def _encryption_enabled(config_data: Mapping[str, Any]) -> bool:
@@ -4608,8 +5732,8 @@ def replace_cli_config_serialized(
                 current_serialized,
                 config_path=config_path,
             )
-        _write_raw_cli_config_unlocked(config_path, persisted)
-        return _publish_runtime_config_unlocked(), backup_path
+        raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
+        return _publish_runtime_config_unlocked(raw_config=raw_written), backup_path
 
 
 def persist_cli_config_for_shutdown() -> bool:
@@ -4627,8 +5751,8 @@ def persist_cli_config_for_shutdown() -> bool:
                 return False
             current = bootstrap.config
             persisted = _config_data_for_persistence(current)
-            _write_raw_cli_config_unlocked(config_path, persisted)
-            _publish_runtime_config_unlocked()
+            raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
+            _publish_runtime_config_unlocked(raw_config=raw_written)
         return True
     except (OSError, TypeError, ValueError, toml.TomlDecodeError) as exc:
         logger.warning(
@@ -4689,8 +5813,8 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
         replacement = _preserve_revision_owned_sections(current, config_data)
         _enforce_existing_encryption(current, replacement)
         persisted = _config_data_for_persistence(replacement)
-        _write_raw_cli_config_unlocked(config_path, persisted)
-        return _publish_runtime_config_unlocked()
+        raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
+        return _publish_runtime_config_unlocked(raw_config=raw_written)
 
 
 def export_cli_config_snapshot(
@@ -4725,6 +5849,7 @@ class ConfigMutationResult:
     caches_reloaded: bool
     failure_phase: Literal["before_replace", "cache_reload"] | None
     conflict: bool = False
+    conflict_reason: Literal["identity_changed"] | None = None
 
     @property
     def fully_applied(self) -> bool:
@@ -4857,7 +5982,7 @@ def replace_revisioned_settings_section_to_cli_config(
         config_data[section] = replacement
         try:
             persisted = _config_data_for_persistence(config_data)
-            _write_raw_cli_config_unlocked(config_path, persisted)
+            raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
         except Exception as error:
             logger.error(
                 "Revisioned configuration replacement failed "
@@ -4868,7 +5993,7 @@ def replace_revisioned_settings_section_to_cli_config(
             return ConfigMutationResult(False, False, "before_replace")
 
         try:
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
         except Exception as error:
             logger.error(
                 "Revisioned configuration replacement failed "
@@ -4955,11 +6080,19 @@ def apply_settings_mutation_to_cli_config(
     section_values: Mapping[str, Mapping[Any, Any]],
     *,
     delete_keys: Mapping[str, Collection[str]] | None = None,
+    mutation_precondition: Callable[[], bool] | None = None,
+    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool] | None = None,
 ) -> ConfigMutationResult:
     """Atomically apply exact config sets/deletes, then refresh caches."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     requested_deletes = {} if delete_keys is None else delete_keys
     try:
+        if mutation_precondition is not None and not callable(mutation_precondition):
+            raise TypeError("Configuration mutation precondition must be callable")
+        if locked_snapshot_precondition is not None and not callable(
+            locked_snapshot_precondition
+        ):
+            raise TypeError("Locked configuration precondition must be callable")
         config_path = _get_effective_config_path()
     except Exception as error:
         logger.error(
@@ -5011,22 +6144,73 @@ def apply_settings_mutation_to_cli_config(
             )
             return ConfigMutationResult(False, False, "before_replace")
 
-        deleted_any = _delete_config_keys(config_data, requested_deletes)
-        for section, values in section_values.items():
-            if not values:
-                continue
-            current_level = _target_config_section(config_data, section)
-            for key, value in values.items():
-                current_level[key] = _maybe_encrypt_setting_value(
-                    config_data, key, value
+        if mutation_precondition is not None:
+            try:
+                is_current = mutation_precondition()
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=precondition, error_type={}).",
+                    type(error).__name__,
                 )
+                return ConfigMutationResult(False, False, "before_replace")
+            if is_current is not True:
+                return ConfigMutationResult(
+                    False,
+                    False,
+                    None,
+                    conflict=True,
+                    conflict_reason="identity_changed",
+                )
+
+        if locked_snapshot_precondition is not None:
+            try:
+                locked_snapshot = AtomicConfigSnapshot(
+                    generation=_CONFIG_GENERATION,
+                    values=_atomic_config_values_from_raw(config_data),
+                )
+                is_current = locked_snapshot_precondition(locked_snapshot)
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=locked_precondition, error_type={}).",
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(False, False, "before_replace")
+            if is_current is not True:
+                return ConfigMutationResult(
+                    False,
+                    False,
+                    None,
+                    conflict=True,
+                    conflict_reason="identity_changed",
+                )
+
+        try:
+            deleted_any = _delete_config_keys(config_data, requested_deletes)
+            for section, values in section_values.items():
+                if not values:
+                    continue
+                current_level = _target_config_section(config_data, section)
+                for key, value in values.items():
+                    current_level[key] = _maybe_encrypt_setting_value(
+                        config_data, key, value
+                    )
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=before_replace, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
         set_any = any(bool(values) for values in section_values.values())
         if not set_any and not deleted_any:
             return ConfigMutationResult(False, False, None)
 
         try:
             persisted = _config_data_for_persistence(config_data)
-            _write_raw_cli_config_unlocked(
+            raw_written = _write_raw_cli_config_unlocked(
                 config_path,
                 persisted,
             )
@@ -5043,7 +6227,7 @@ def apply_settings_mutation_to_cli_config(
         logger.success(f"Successfully replaced settings file at {config_path}")
 
         try:
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
         except Exception as error:
             logger.error(
                 "Configuration mutation failed "
@@ -5067,6 +6251,8 @@ def save_settings_to_cli_config(
         section_values,
         delete_keys=delete_keys,
     )
+    if result.conflict:
+        return False
     if result.failure_phase is None and not result.file_replaced:
         return True
     return result.fully_applied
@@ -5255,6 +6441,40 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
     return default
 
 
+def get_chat_defaults_user_display_name(default: str = "User") -> str:
+    """Return the validated global human-facing Console chat name.
+
+    Args:
+        default: Fallback used when ``chat_defaults.user_display_name`` is
+            absent.
+
+    Returns:
+        The configured validated name, or the neutral ``"User"`` fallback
+        when the configured/default value is invalid.
+    """
+    # Import lazily because ``tldw_chatbook.Chat.__init__`` reaches runtime
+    # policy modules that import this configuration module during startup.
+    from tldw_chatbook.Chat.console_roleplay_identity import (
+        ChatDisplayNameError,
+        normalize_chat_display_name,
+    )
+
+    config = load_cli_config_and_ensure_existence()
+    chat_defaults = config.get("chat_defaults")
+    raw_value = (
+        chat_defaults.get("user_display_name", default)
+        if isinstance(chat_defaults, dict)
+        else default
+    )
+    try:
+        return normalize_chat_display_name(raw_value, blank_means_none=False) or "User"
+    except ChatDisplayNameError:
+        logger.warning(
+            "Invalid chat display name in [chat_defaults]; using the neutral default."
+        )
+        return "User"
+
+
 def get_rag_citation_canonical_writes_enabled() -> bool:
     """Return the typed, fail-closed canonical citation write switch.
 
@@ -5385,7 +6605,7 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
 
 def _normalize_provider_lookup_key(provider: Any) -> str:
     """Return the canonical lookup form used for provider key comparisons."""
-    return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return normalize_provider_config_key(provider)
 
 
 def resolve_provider_name(
@@ -5465,9 +6685,9 @@ def enable_config_encryption(password: str) -> bool:
         with _config_write_lock(config_path):
             config_data = _read_raw_cli_config_unlocked(config_path)
             encrypted_config = encrypt_api_keys_in_config(config_data, password)
-            _write_raw_cli_config_unlocked(config_path, encrypted_config)
+            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
             set_encryption_password(password)
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
 
         logger.success("Config encryption enabled successfully")
         return True
@@ -5505,9 +6725,9 @@ def disable_config_encryption(password: str) -> bool:
             set_encryption_password(password)
             decrypted_config = decrypt_config_section(config_data)
             decrypted_config.pop("encryption", None)
-            _write_raw_cli_config_unlocked(config_path, decrypted_config)
+            raw_written = _write_raw_cli_config_unlocked(config_path, decrypted_config)
             clear_encryption_password()
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
 
         logger.success("Config encryption disabled successfully")
         return True
@@ -5552,9 +6772,9 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
                 decrypted_config,
                 new_password,
             )
-            _write_raw_cli_config_unlocked(config_path, encrypted_config)
+            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
             set_encryption_password(new_password)
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
 
         logger.success("Encryption password changed successfully")
         return True
@@ -5771,6 +6991,133 @@ def get_tts_profiles_db_path() -> Path:
     return get_user_data_dir() / "tldw_chatbook_tts_profiles.db"
 
 
+def get_notes_sync_state_db_path() -> Path:
+    """Return the device-private Notes import/sync state database path.
+
+    Returns:
+        The profile-local path for Notes import receipts and sync state.
+    """
+
+    return get_user_data_dir() / "tldw_chatbook_notes_sync_state.db"
+
+
+NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT = 256 * 1024 * 1024
+_NOTES_SYNC_RECOVERY_CAPACITY_ENV = "TLDW_NOTES_SYNC_RECOVERY_CAPACITY_BYTES"
+
+
+def get_notes_sync_recovery_capacity_bytes(
+    config_data: Mapping[str, Any] | None = None,
+) -> int:
+    """Return the one bounded device-private sync recovery capacity."""
+
+    selected = (
+        load_cli_config_and_ensure_existence() if config_data is None else config_data
+    )
+    env_value = os.getenv(_NOTES_SYNC_RECOVERY_CAPACITY_ENV)
+    notes = selected.get("notes")
+    capacity: object
+    if env_value is not None:
+        try:
+            capacity = int(env_value)
+        except ValueError:
+            raise ValueError(
+                "notes.recovery_capacity_bytes must be a positive integer."
+            ) from None
+    elif isinstance(notes, Mapping):
+        capacity = notes.get(
+            "recovery_capacity_bytes",
+            NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT,
+        )
+    else:
+        capacity = NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT
+    if type(capacity) is not int or not 1 <= capacity <= 2**63 - 1:
+        raise ValueError("notes.recovery_capacity_bytes must be a positive integer.")
+    return capacity
+
+
+NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT = 1.0
+NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 10.0
+_NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS = 3600.0
+
+
+def get_notes_sync_watcher_intervals(
+    config_data: Mapping[str, Any] | None = None,
+) -> tuple[float, float]:
+    """Return the notes-sync watcher's (base, max) polling intervals.
+
+    TASK-21112: the lasting-sync watcher polls at the base interval and backs
+    off toward the max while roots are quiet. Read from
+    ``[notes] sync_watcher_interval_seconds`` (default 1.0) and
+    ``[notes] sync_watcher_max_interval_seconds`` (default 10.0; backed-off
+    sleeps are jittered by up to +/-50 percent around it).
+
+    Args:
+        config_data: Optional pre-loaded settings mapping; loads the CLI
+            config when omitted.
+
+    Returns:
+        A ``(interval_seconds, max_interval_seconds)`` pair.
+
+    Raises:
+        ValueError: If either configured value is not a positive number in
+            range, or the max is below the base interval.
+    """
+
+    selected = (
+        load_cli_config_and_ensure_existence() if config_data is None else config_data
+    )
+    notes = selected.get("notes") if isinstance(selected, Mapping) else None
+    base: object = NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT
+    peak: object = NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT
+    if isinstance(notes, Mapping):
+        base = notes.get("sync_watcher_interval_seconds", base)
+        peak = notes.get("sync_watcher_max_interval_seconds", peak)
+    for label, value in (
+        ("notes.sync_watcher_interval_seconds", base),
+        ("notes.sync_watcher_max_interval_seconds", peak),
+    ):
+        if (
+            type(value) not in (int, float)
+            or not 0.05 <= value <= _NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS
+        ):
+            raise ValueError(f"{label} must be a number between 0.05 and 3600 seconds.")
+    if peak < base:
+        raise ValueError(
+            "notes.sync_watcher_max_interval_seconds must be at least "
+            "notes.sync_watcher_interval_seconds."
+        )
+    return float(base), float(peak)
+
+
+def load_console_library_migration_seed(
+    app_config: Mapping[str, Any] | None = None,
+) -> "ConsoleLibraryMigrationSeed":
+    """Return the sanitized pre-upgrade automatic-retrieval migration seed.
+
+    Args:
+        app_config: Optional already-loaded application configuration.
+
+    Returns:
+        The strict typed seed required by a legacy database migration.
+    """
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+
+    selected = (
+        load_cli_config_and_ensure_existence() if app_config is None else app_config
+    )
+    chat_defaults = (
+        selected.get("chat_defaults") if isinstance(selected, Mapping) else None
+    )
+    raw_value = (
+        chat_defaults.get("rag_auto_retrieve_on_send", False)
+        if isinstance(chat_defaults, Mapping)
+        else False
+    )
+    return ConsoleLibraryMigrationSeed(
+        auto_retrieve_on_send=raw_value if type(raw_value) is bool else False
+    )
+
+
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """Get the resolved path for the Prompts database.
 
@@ -5951,6 +7298,24 @@ prompts_db: Optional[PromptsDatabase] = None
 media_db: Optional[MediaDatabase] = None
 
 
+def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
+    """Seed restart-safe bundled profile content after database initialization.
+
+    Args:
+        db: Initialized profile-local character database.
+
+    Returns:
+        The same database instance after best-effort built-in seeding.
+    """
+    try:
+        from tldw_chatbook.Character_Chat.visual_identity import ensure_builtin_samira
+
+        ensure_builtin_samira(db)
+    except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
+        logger.warning("builtin_profile_seed_failed category={}", type(exc).__name__)
+    return db
+
+
 # --- Database Initialization Function (remains largely the same) ---
 def initialize_all_databases():
     global chachanotes_db, prompts_db, media_db
@@ -5961,8 +7326,11 @@ def initialize_all_databases():
     logger.info(f"Attempting to initialize ChaChaNotes_DB at: {chachanotes_path}")
     try:
         chachanotes_db = CharactersRAGDB(
-            db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID
+            db_path=chachanotes_path,
+            client_id=CLI_APP_CLIENT_ID,
+            console_library_migration_seed=load_console_library_migration_seed(),
         )
+        seed_builtin_content(chachanotes_db)
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
     except Exception as e:
         logger.opt(exception=True).error(
@@ -6012,7 +7380,9 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
                 db_path=chachanotes_path,
                 client_id=CLI_APP_CLIENT_ID,
                 check_integrity_on_startup=check_integrity,
+                console_library_migration_seed=load_console_library_migration_seed(),
             )
+            seed_builtin_content(chachanotes_db)
             logger.success(
                 f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}"
             )
@@ -6092,6 +7462,7 @@ _cloud_provider_keys = [
     "MistralAI",
     "Moonshot",
     "OpenRouter",
+    "QwenCloud",
     "ZAI",
 ]  # Example list
 

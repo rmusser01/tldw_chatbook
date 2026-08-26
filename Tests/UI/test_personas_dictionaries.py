@@ -6,6 +6,10 @@ from typing import Any
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
 
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
@@ -684,7 +688,7 @@ def stub_characters(monkeypatch):
     patch_character_paging(monkeypatch)
 
 
-class PersonasTestApp(App):
+class PersonasTestApp(ConsolidatedCSSApp):
     """Same harness as test_personas_workbench.py (delegating App)."""
 
     def __init__(self, mock_app_instance):
@@ -882,7 +886,7 @@ class TestDictionariesList:
             assert "No dictionaries yet" in str(empty.renderable)
 
 
-class DetailHarnessApp(App):
+class DetailHarnessApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.messages = []
@@ -2192,6 +2196,41 @@ class TestDictionaryStatsTab:
             assert "disabled: 1" in body
             assert "Priority: 0..5" in body
             assert "tokens" in body  # approximate token total line
+
+    async def test_selection_loads_the_record_once_and_derives_stats(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        """task-15469: selecting a dictionary used to load the SAME row twice
+        (once for the detail, once inside `get_statistics`). The stats payload
+        is now derived from the record already in hand, so a selection is one
+        record load and no statistics call -- while the Stats tab still renders
+        the same numbers."""
+        loads: list[int] = []
+        statistics_calls: list[int] = []
+        original_get = fake_dict_service.get_dictionary
+        original_stats = fake_dict_service.get_statistics
+
+        async def _counted_get(dictionary_id: int, mode: str = "local"):
+            loads.append(int(dictionary_id))
+            return await original_get(dictionary_id, mode=mode)
+
+        async def _counted_stats(dictionary_id: int, mode: str = "local"):
+            statistics_calls.append(int(dictionary_id))
+            return await original_stats(dictionary_id, mode=mode)
+
+        fake_dict_service.get_dictionary = _counted_get
+        fake_dict_service.get_statistics = _counted_stats
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            body = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+
+        assert loads == [1]
+        assert statistics_calls == []
+        assert "Entries: 2" in body
+        assert "Dictionary enabled: yes" in body
 
     async def test_stats_refreshed_after_settings_save(
         self, mock_app_instance, stub_characters, fake_dict_service

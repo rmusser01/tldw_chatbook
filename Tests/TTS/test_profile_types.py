@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import pickle
 from collections.abc import Mapping
@@ -19,6 +20,7 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileValidationError,
 )
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReferenceSummary
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -30,8 +32,10 @@ from tldw_chatbook.TTS.profile_types import (
     TTSGenerationProfile,
     TTSProfileDraft,
     TTSProfilePage,
+    TTSProfileVerificationEvidence,
     _freeze_options,
     canonical_json_options,
+    profile_options_fingerprint,
 )
 
 
@@ -68,6 +72,27 @@ def _profile(**overrides: object) -> TTSGenerationProfile:
     }
     values.update(overrides)
     return TTSGenerationProfile(**values)  # type: ignore[arg-type]
+
+
+def test_profile_may_carry_only_a_metadata_reference_summary() -> None:
+    now = datetime(2026, 7, 26, tzinfo=UTC)
+    summary = TTSCloneReferenceSummary(
+        reference_id=uuid4(),
+        byte_length=48_044,
+        duration_ms=1_000,
+        sample_rate_hz=24_000,
+        channels=1,
+        sample_encoding="pcm_s16le",
+        created_at=now,
+        updated_at=now,
+    )
+
+    profile = _profile(reference=summary)
+
+    assert profile.reference is summary
+    assert "wav_bytes" not in repr(profile)
+    assert "reference_text" not in repr(profile)
+    assert "sha256" not in repr(profile)
 
 
 def test_profile_name_uses_nfkc_casefold_uniqueness() -> None:
@@ -376,6 +401,78 @@ def test_options_are_canonical_json_and_are_defensively_frozen() -> None:
         frozen_options["a"] = False  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         draft.speed = 2.0
+
+
+def test_profile_options_fingerprint_uses_canonical_bounded_json() -> None:
+    first = profile_options_fingerprint({"z": [1, {"name": "Cafe"}], "a": True})
+    second = profile_options_fingerprint({"a": True, "z": [1, {"name": "Cafe"}]})
+
+    assert first == second
+    assert first == (
+        "sha256:"
+        + hashlib.sha256(b'{"a":true,"z":[1,{"name":"Cafe"}]}').hexdigest()
+    )
+    assert len(first) == 71
+    with pytest.raises(ProfileValidationError, match="options"):
+        profile_options_fingerprint({"secret": "x" * (16 * 1024)})
+
+
+def test_profile_verification_evidence_is_frozen_slotted_and_bounded() -> None:
+    evidence = TTSProfileVerificationEvidence(
+        profile_id=UUID("11111111-1111-4111-8111-111111111111"),
+        profile_revision=2,
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+        speed=1.0,
+        options_fingerprint=profile_options_fingerprint({}),
+        provider_configuration_revision=41,
+    )
+
+    assert not hasattr(evidence, "__dict__")
+    assert evidence.provider_configuration_revision == 41
+    with pytest.raises(FrozenInstanceError):
+        evidence.speed = 2.0  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "code"),
+    (
+        ({"profile_revision": 0}, "revision"),
+        ({"profile_revision": True}, "revision"),
+        ({"provider_id": "OpenAI"}, "provider_id"),
+        ({"model_id": "x" * 257}, "model_id"),
+        ({"voice_id": None}, "voice_id"),
+        ({"response_format": "ogg"}, "response_format"),
+        ({"speed": math.inf}, "speed"),
+        ({"options_fingerprint": "sha256:" + "A" * 64}, "options"),
+        ({"options_fingerprint": "sha256:" + "0" * 65}, "options"),
+        ({"provider_configuration_revision": -1}, "configuration_revision"),
+        ({"provider_configuration_revision": True}, "configuration_revision"),
+    ),
+)
+def test_profile_verification_evidence_rejects_invalid_identity(
+    overrides: dict[str, object],
+    code: str,
+) -> None:
+    values: dict[str, object] = {
+        "profile_id": UUID("11111111-1111-4111-8111-111111111111"),
+        "profile_revision": 2,
+        "provider_id": "openai",
+        "model_id": "tts-1",
+        "voice_id": "alloy",
+        "response_format": "mp3",
+        "speed": 1.0,
+        "options_fingerprint": "sha256:" + "0" * 64,
+        "provider_configuration_revision": 41,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ProfileValidationError) as caught:
+        TTSProfileVerificationEvidence(**values)  # type: ignore[arg-type]
+
+    assert caught.value.code == code
 
 
 @pytest.mark.parametrize(

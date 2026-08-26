@@ -307,9 +307,6 @@ class ConfigProfileManager:
         hybrid_enhanced_rag.search.default_search_mode = "hybrid"
         hybrid_enhanced_rag.search.default_top_k = 10
         hybrid_enhanced_rag.search.include_citations = True
-        hybrid_enhanced_rag.search.include_parent_docs = True
-        hybrid_enhanced_rag.search.parent_size_threshold = 5000
-        hybrid_enhanced_rag.search.parent_inclusion_strategy = "size_based"
 
         self._profiles["hybrid_enhanced"] = ProfileConfig(
             id="hybrid_enhanced",
@@ -344,13 +341,38 @@ class ConfigProfileManager:
         hybrid_full_rag.search.default_search_mode = "hybrid"
         hybrid_full_rag.search.default_top_k = 20
         hybrid_full_rag.search.include_citations = True
-        hybrid_full_rag.search.include_parent_docs = True
-        hybrid_full_rag.search.parent_size_threshold = 8000
-        hybrid_full_rag.search.parent_inclusion_strategy = "size_based"
         hybrid_full_rag.search.max_context_size = 32000
 
+        # "pointwise" here is a PERMANENT, MEASURED choice -- not the
+        # stopgap it used to be. History: this profile once requested
+        # "cross_encoder", which was not implemented and raised ValueError
+        # the moment its reranker tried to construct (task-3170 P0), so it
+        # was swapped for "pointwise" as the nearest available per-result
+        # scorer. TASK-16965 then IMPLEMENTED "cross_encoder" (a local
+        # sentence-transformers model, no provider/credential/network) and
+        # MEASURED it on the gated eval instrument against a rule fixed
+        # before the run. Verdict: net HARMFUL on the averaged row
+    # F1 CAVEAT (final review): that averaged row EXCLUDES `scoped` and
+    # `negative` (UNAVERAGED_CATEGORIES) -- and `scoped` is precisely where
+    # this strategy WINS. Averaged over all 53 ground-truthed queries,
+    # hybrid REVERSES sign: MRR 0.731 -> 0.806 (+0.075). The verdict stands
+    # on the pre-registered rule; the headline is narrower than it sounds.
+        # (semantic MRR 0.808 -> 0.762, hybrid 0.812 -> 0.787 at k=10),
+        # and strongly BIMODAL -- large gains where retrieval is weak
+        # (hybrid `scoped` MRR 0.163 -> 0.929) paid for by demoting
+        # already-rank-1 answers in categories that were saturated
+        # (`paraphrase`/`vocabulary_mismatch` MRR 1.000 -> 0.87-0.94).
+        # Two facts, kept adjacent: the pre-registered rule said RETIRE the
+        # name, and the owner ruled otherwise on 2026-08-17 -- "keep the
+        # code, retire the promise" -- because this is the only reranking
+        # path the gated instrument can measure at all. So the strategy
+        # stays selectable but is recommended nowhere, and this profile
+        # keeps "pointwise" by measurement rather than by accident:
+        # switching Hybrid Full to "cross_encoder" is exactly what the
+        # measurement forbids. Full numbers:
+        # Docs/superpowers/qa/2026-08-17-cross-encoder/report.md
         hybrid_full_rerank = RerankingConfig(
-            strategy="cross_encoder", top_k_to_rerank=15, include_reasoning=False
+            strategy="pointwise", top_k_to_rerank=15, include_reasoning=False
         )
 
         self._profiles["hybrid_full"] = ProfileConfig(
@@ -400,12 +422,18 @@ class ConfigProfileManager:
         accurate_rag.search.include_citations = True
         accurate_rag.search.score_threshold = 0.7
 
+        # include_reasoning stays OFF (TASK-17065 AC#11). The flag appends a
+        # free-form "reasoning" string to the JSON body the parser needs,
+        # under RerankingConfig.max_tokens=100 -- and a truncated body is a
+        # JSONDecodeError, i.e. a row that was billed and left scored=False.
+        # It buys nothing: RerankingResult.reasoning is read nowhere outside
+        # reranker.py (_apply_scores copies only rerank_score onto the row).
         accurate_rerank = RerankingConfig(
             model_provider="openai",
             model_name="gpt-3.5-turbo",
             strategy="pointwise",
             top_k_to_rerank=15,
-            include_reasoning=True,
+            include_reasoning=False,
         )
 
         self._profiles["high_accuracy"] = ProfileConfig(
@@ -514,12 +542,13 @@ class ConfigProfileManager:
         research_rag.chunking.preserve_structure = True
         research_rag.search.include_citations = True
         research_rag.search.default_top_k = 15
-        research_rag.search.include_parent_docs = True
-        research_rag.search.parent_size_threshold = 10000  # Larger for research papers
-        research_rag.search.parent_inclusion_strategy = "size_based"
 
+        # include_reasoning OFF for the same reason as high_accuracy above,
+        # and more sharply here: listwise already spends ~40 of its 100
+        # tokens on the ranking array, and its one call covers the whole
+        # batch -- a truncated body fails the ENTIRE rerank, billed.
         research_rerank = RerankingConfig(
-            strategy="listwise", top_k_to_rerank=10, include_reasoning=True
+            strategy="listwise", top_k_to_rerank=10, include_reasoning=False
         )
 
         self._profiles["research_papers"] = ProfileConfig(

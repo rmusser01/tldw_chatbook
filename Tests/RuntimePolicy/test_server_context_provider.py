@@ -2718,3 +2718,97 @@ def test_runtime_state_remains_authoritative_and_unmutated_during_context_resolu
     assert context.base_url == "https://server.example.com/api"
     assert runtime_context.state == original_state
     assert runtime_store.saved_states == []
+
+
+def test_store_static_server_credential_writes_first_purpose_and_clears_signout(
+    tmp_path,
+):
+    store = InMemoryServerCredentialStore()
+    provider = _provider(
+        tmp_path,
+        credential_store=store,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+    provider.clear_server_credentials("https://server.example.com/api")
+
+    purpose = provider.store_static_server_credential(
+        "https://server.example.com/api", "re-entered-token"
+    )
+
+    assert purpose == SERVER_CREDENTIAL_BEARER_TOKEN
+    assert (
+        store.get_secret(
+            "https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN
+        )
+        == "re-entered-token"
+    )
+
+
+def test_re_entered_token_resolves_after_signout_without_legacy_config(tmp_path):
+    store = InMemoryServerCredentialStore()
+    provider = _provider(
+        tmp_path,
+        credential_store=store,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+    server_id = "https://server.example.com/api"
+    provider.clear_server_credentials(server_id)
+
+    provider.store_static_server_credential(server_id, "fresh-token")
+
+    context = provider.get_active_context()
+    assert context.auth_token == "fresh-token"
+    assert context.credential_source == (
+        f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    )
+
+
+def test_store_static_server_credential_raises_for_unavailable_store(tmp_path):
+    provider = _provider(
+        tmp_path,
+        credential_store=UnavailableServerCredentialStore("no secure store"),
+    )
+
+    with pytest.raises(CredentialStoreUnavailable):
+        provider.store_static_server_credential(
+            "https://server.example.com/api", "token"
+        )
+
+
+def test_store_static_server_credential_rejects_empty_arguments(tmp_path):
+    provider = _provider(tmp_path)
+
+    with pytest.raises(ValueError):
+        provider.store_static_server_credential("", "token")
+    with pytest.raises(ValueError):
+        provider.store_static_server_credential("https://server.example.com/api", "  ")

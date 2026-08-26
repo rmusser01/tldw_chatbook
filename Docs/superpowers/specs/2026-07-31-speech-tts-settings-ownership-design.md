@@ -41,7 +41,7 @@ The product will establish four explicit owners:
 
 | Owner | Owns | Does not own |
 | --- | --- | --- |
-| **Settings → Speech & TTS** | Application-wide defaults, credentials, endpoints, local initialization resources, external audio.cpp configuration, and provider safety limits | Live network checks, catalog refresh, generation, playback, character assignment |
+| **Settings → Speech & TTS** | Application-wide defaults, credentials, endpoints, local initialization resources, audio.cpp External/Managed configuration, and provider safety limits | Live network checks, catalog refresh, generation, playback, process lifecycle operations, runtime diagnostics, character assignment |
 | **Lab → Speech → Studio TTS Preferences** | Persisted, provider-scoped Studio overrides and the current Studio generation draft | Global defaults, credentials, runtime-global initialization, implicit character assignment |
 | **Character TTS profiles** | Exact character-specific provider/model/voice/tuning selections and assignment | Global or Studio mutation |
 | **TTS runtime / Lab operations** | Readiness checks, catalog and voice discovery, refresh, synthesis progress, playback, and runtime diagnostics | Durable configuration ownership |
@@ -58,9 +58,12 @@ Character profiles remain separately stored and win over global defaults for
 roleplay. A character/profile preview loaded into Studio does not change Studio
 preferences until the user explicitly adopts and saves it.
 
-Managed audio.cpp binary or `server.json` launching and supervision is
-deferred. This program configures and uses an independently running external
-audio.cpp server only.
+The managed-lifecycle amendment adds an optional app-owned audio.cpp process
+using a user-provided prebuilt binary and existing `server.json`. External mode
+remains the default and continues to connect to a user-owned server. Settings
+owns passive configuration and validation; deliberate launch, test, restart,
+shutdown, catalog, diagnostics, and generation actions belong to Speech Lab or
+the speech call sites described by the amendment.
 
 ## Background and current-state audit
 
@@ -452,10 +455,17 @@ saved behavior; only their ownership and placement change.
 
 ### CFG-004 — audio.cpp setup
 
-The audio.cpp provider form identifies the mode as **External server** and
-shows the server URL as the primary field. It states that Chatbook connects to
-a server the user starts and owns. It includes all external adapter timeouts
-and bounds from the inventory and excludes every managed-process concept.
+The audio.cpp provider form defaults to **External server** and shows the
+server URL as that mode's primary field. It states that Chatbook connects to a
+server the user starts and owns and includes all external adapter timeouts and
+bounds from the inventory.
+
+TASK-3795 amends the original External-only scope under the approved managed
+lifecycle design. The same form now offers **Managed local server** with a
+user-provided prebuilt binary, existing `server.json`, and bounded lifecycle
+settings. Only the selected mode's primary fields are shown. Settings still
+excludes process status, lifecycle actions, and diagnostics; those belong to
+Speech Lab, and every Settings interaction remains passive.
 
 The privacy notice says that generation sends the submitted text to the
 configured server. It does not imply that loopback is guaranteed because the
@@ -1033,8 +1043,8 @@ The program is complete only when all of the following are true:
 - [ ] **CFG-001 through CFG-011:** Global defaults and the selected provider
   can be edited with local validation, explicit credential intent, truthful
   save/reconfiguration outcomes, and no exact-selection substitution.
-- [ ] **CFG-004:** audio.cpp exposes the complete accepted external adapter
-  configuration and no managed-mode field or action.
+- [ ] **CFG-004:** audio.cpp exposes the complete accepted configuration for
+  the selected External or Managed mode and no process lifecycle action.
 - [ ] **CAT-001:** Mounting, searching, editing, saving, reverting, and restoring
   Settings cause no network request.
 - [ ] **CAT-002 through CAT-006:** Cached exact choices, missing values,
@@ -1087,8 +1097,8 @@ Required automated coverage includes:
    and screen-dismiss paths.
 8. **No hidden network:** instrumented service asserts zero provider calls on
    mount/search/edit/save/revert/default restoration.
-9. **audio.cpp field completeness:** every external adapter setting round-trips
-   with bounds validation; no managed setting is accepted or rendered.
+9. **audio.cpp field completeness:** every selected-mode External or Managed
+   setting round-trips with bounds validation; no process action is rendered.
 10. **Catalog integrity:** fresh/stale/missing/unverified states, model-scoped
     voices, configuration/catalog revisions, and stale async-result rejection.
 11. **Reconfiguration:** only changed provider-global adapter inputs trigger a
@@ -1312,7 +1322,7 @@ Before task creation, the decomposition agent must:
 | Character preview could be mistaken for persistence | CFG-025, STATE-002 | Preview tests; UAT-06/UAT-07 |
 | Credential placeholders could become persisted values | CFG-008, SEC-001, SEC-002 | Credential mutation tests; UAT-08 |
 | External synthesis privacy is implicit | CFG-004, SEC-003, SEC-004, SEC-005 | Redaction tests and synthetic live UAT |
-| Managed audio.cpp could leak into this program | CFG-004, non-goals, release gates | Field completeness/rejection tests; UAT-01 |
+| Managed process actions could leak into Settings | CFG-004, managed-lifecycle amendment, release gates | Field completeness/passivity tests; UAT-01 |
 | Legacy providers could regress during field movement | OWN-005, CFG-003, MIG-003 | Legacy fixtures; UAT-09 |
 
 ## Handoff contract
@@ -1328,5 +1338,5 @@ the latest code, but must return for product approval before changing:
 - credential mutation boundaries;
 - no-hidden-network behavior;
 - exact-choice fail-closed behavior;
-- the external-only audio.cpp boundary; or
+- the managed audio.cpp ownership and Settings-versus-Lab action boundary; or
 - the release requirement for audible manual UAT.

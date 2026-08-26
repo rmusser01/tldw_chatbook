@@ -8,9 +8,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
-class ConsoleSaveAsModal(ModalScreen[str | None]):
+class ConsoleSaveAsModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """List available and unavailable Save as destinations for a selected message."""
 
     DEFAULT_CSS = """
@@ -39,7 +40,8 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Close")]
+    SAFE_MODAL_CONTENT = "#console-save-as-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
 
     def __init__(
         self,
@@ -104,13 +106,10 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
                 )
             yield Button("Close", id="console-save-as-close")
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "console-save-as-close":
             event.stop()
-            self.dismiss(None)
+            await self.request_safe_cancel(source="button")
             return
         for destination in self.destinations:
             if destination.available and event.button.id == _destination_id(

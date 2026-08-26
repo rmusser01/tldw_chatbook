@@ -7,16 +7,20 @@ import contextlib
 import json
 import math
 import threading
+import uuid
 import weakref
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextvars import copy_context
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from types import GeneratorType, MappingProxyType
 from typing import Any, AsyncIterator, Callable, Literal, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 from loguru import logger
+from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
@@ -26,19 +30,57 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
+from tldw_chatbook.Chat.console_exchange_capture import (
+    ExchangeCapture,
+    build_request_capture,
+    stub_binary_strings,
+)
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
     generic_endpoint_differs,
+    normalize_generic_endpoint_for_compare,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
 )
+from tldw_chatbook.Chat.console_prepared_request import (
+    CONTINUATION_OWNER_KEY,
+    PreparedConsoleRequest,
+    PreparedProviderRequest,
+    WireStyle,
+    build_console_request,
+    prepare_provider_request,
+    resolve_request_capacity,
+    thaw_json,
+)
+from tldw_chatbook.Chat.console_history_budget import (
+    DEFAULT_PER_IMAGE_TOKENS,
+    ProviderContinuationSidecar,
+    is_deleted_history_value,
+    provider_continuation_owner_groups,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+    validate_continuation_restore,
+)
 from tldw_chatbook.Chat.console_provider_support import (
+    build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
-from tldw_chatbook.Chat.provider_readiness import (
-    get_provider_readiness,
-    provider_config_key,
+from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkFilter
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.LLM_Calls.qwencloud import (
+    normalize_qwencloud_api_mode,
+    normalize_qwencloud_base_url,
 )
+from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -65,8 +107,27 @@ UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response 
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
+_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
+    {"custom-openai-api", "custom-openai-api-2"}
+)
 MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
+PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
+"""Maximum model-ID context included in user-visible provider error copy."""
+_CONTINUATION_PROTOCOLS = frozenset({"chat_completions", "responses"})
+
+
+def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
+    """Resolve ADR-064's pinned DeepSeek mode without changing legacy default."""
+    candidate = provider_settings.get("api_mode", "chat_completions")
+    if not isinstance(candidate, str):
+        raise ChatConfigurationError("DeepSeek API mode must be a string.")
+    normalized = candidate.strip().lower()
+    if normalized not in _CONTINUATION_PROTOCOLS:
+        raise ChatConfigurationError(
+            "DeepSeek API mode must be 'responses' or 'chat_completions'."
+        )
+    return normalized
 
 
 @dataclass(slots=True)
@@ -81,6 +142,10 @@ class ConsoleProviderStreamSignals:
     _synthetic_fallback: threading.Event = field(
         default_factory=threading.Event,
         init=False,
+        repr=False,
+    )
+    model_retry_callback: Callable[[], None] | None = field(
+        default=None,
         repr=False,
     )
     # Usage for the provider call currently in flight. Key-merged, because a
@@ -98,6 +163,11 @@ class ConsoleProviderStreamSignals:
         default_factory=list,
         repr=False,
     )
+    _active_usage_payloads: dict[object, dict[str, Any]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     _usage_lock: threading.Lock = field(
         default_factory=threading.Lock,
         init=False,
@@ -112,6 +182,16 @@ class ConsoleProviderStreamSignals:
     def mark_synthetic_fallback(self) -> None:
         """Record that locally synthesized fallback copy was emitted."""
         self._synthetic_fallback.set()
+
+    def mark_model_retry(self) -> None:
+        """Report an observed provider retry without coupling to its owner."""
+        callback = self.model_retry_callback
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            logger.warning("model_retry_callback_failed")
 
     def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
         """Merge a usage payload into the IN-FLIGHT provider call's payload."""
@@ -145,7 +225,262 @@ class ConsoleProviderStreamSignals:
             payloads = [dict(payload) for payload in self.completed_usage_payloads]
             if self.usage_payload is not None:
                 payloads.append(dict(self.usage_payload))
+            payloads.extend(
+                dict(payload) for payload in self._active_usage_payloads.values()
+            )
             return payloads
+
+    def new_usage_call(self) -> "ConsoleProviderCallSignals":
+        """Create an isolated usage recorder for one provider call.
+
+        Returns:
+            A call-scoped signal view publishing into this aggregate.
+        """
+        return ConsoleProviderCallSignals(self)
+
+    def _record_scoped_usage_call(
+        self,
+        token: object,
+        payload: Mapping[str, Any],
+    ) -> None:
+        with self._usage_lock:
+            self._active_usage_payloads[token] = dict(payload)
+
+    def _complete_scoped_usage_call(
+        self,
+        token: object,
+        payload: Mapping[str, Any],
+    ) -> None:
+        with self._usage_lock:
+            self._active_usage_payloads.pop(token, None)
+            self.completed_usage_payloads.append(dict(payload))
+
+    run_tag: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # Fail-safe default: OFF. A bare `ConsoleProviderStreamSignals()` (every
+    # construction site that does not explicitly opt in -- visual
+    # evaluation, the agent-bridge fallback) must never capture. Only
+    # `_new_run_stream_signals()` (console_chat_controller.py) opts in,
+    # reading the actual `[console] exchange_capture` config gate (review
+    # finding I1: the two bare-construction sites used to inherit `True`
+    # and capture unconditionally, for output nobody ever reads).
+    exchange_capture_enabled: bool = False
+    completed_exchanges: list["ExchangeCapture"] = field(default_factory=list, repr=False)
+    _active_exchanges: dict[object, dict[str, Any]] = field(
+        default_factory=dict, init=False, repr=False)
+    _exchange_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False)
+
+    def _begin_scoped_exchange(self, token: object, flight: dict[str, Any]) -> None:
+        with self._exchange_lock:
+            self._active_exchanges[token] = flight
+
+    def _mutate_scoped_exchange(self, token: object, key: str, items: list) -> None:
+        """Never raises (review finding M4): capture is diagnostic tooling
+        layered over the real send path -- the gateway's own call sites
+        (record_exchange_content/record_exchange_tool_calls) are NOT all
+        wrapped in their own try/except, and three of them sit inside
+        ``_stream_generic_chat``'s worker ``try``, whose ``except
+        BaseException`` would otherwise convert a capture-bookkeeping bug
+        into a fabricated provider error, turning a good turn into a failed
+        one. No exception text/traceback logged -- ``items`` can hold raw
+        captured request/response content."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.get(token)
+                if flight is not None:
+                    flight[key].extend(items)
+        except Exception as exc:
+            logger.warning(f"exchange_capture_mutate_failed: {type(exc).__name__}")
+
+    def _mark_scoped_exchange_synthetic(self, token: object) -> None:
+        """Stamp one call's in-flight record as carrying locally
+        synthesized fallback UI copy, not provider output (review finding
+        M3). Never raises -- same M4 contract as ``_mutate_scoped_
+        exchange``."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.get(token)
+                if flight is not None:
+                    flight["synthetic_fallback"] = True
+        except Exception as exc:
+            logger.warning(f"exchange_capture_mark_synthetic_failed: {type(exc).__name__}")
+
+    def _complete_scoped_exchange(
+        self, token: object, status: str,
+        usage_payload: dict[str, Any] | None,
+    ) -> None:
+        """Never raises (review finding M4) -- same "never break send"
+        contract as ``_mutate_scoped_exchange``: this is the ``close_
+        exchange`` call site's own implementation, called at both a
+        `finally` (stream_chat) and inside ``_stream_generic_chat``'s
+        worker `try`/`except` (twice), where an uncaught raise here would
+        either mask the real cleanup or itself be relabeled a provider
+        error. No exception text/traceback logged -- ``flight`` holds raw
+        captured request/response content."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.pop(token, None)
+                if flight is None:
+                    return
+                self.completed_exchanges.append(_flight_capture(
+                    self.run_tag, len(self.completed_exchanges), flight,
+                    status, usage_payload))
+        except Exception as exc:
+            logger.warning(f"exchange_capture_complete_failed: {type(exc).__name__}")
+
+    def exchange_captures(self) -> list["ExchangeCapture"]:
+        """Completed calls + in-flight tails (as "stopped") — tails cover
+        aborted streams whose generator never reached its own close-out,
+        mirroring usage_payloads()."""
+        with self._exchange_lock:
+            captures = list(self.completed_exchanges)
+            for flight in self._active_exchanges.values():
+                captures.append(_flight_capture(
+                    self.run_tag, len(captures), flight, "stopped", None))
+            return captures
+
+
+@dataclass(slots=True)
+class ConsoleProviderCallSignals:
+    """Call-scoped signal view that publishes usage to one aggregate."""
+
+    _aggregate: ConsoleProviderStreamSignals = field(repr=False)
+    _token: object = field(default_factory=object, init=False, repr=False)
+    _usage_payload: dict[str, Any] | None = field(default=None, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
+    _usage_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+    )
+    # Review finding M3: set by mark_synthetic_fallback(), consumed by the
+    # very next record_exchange_content() call in the generic stream loop --
+    # NOT the aggregate's own sticky Event (that one never resets, and is
+    # shared across every call this signals object ever makes; this one is
+    # per-call and self-clearing, so only the ONE chunk actually generated
+    # as fallback UI copy gets labeled, never a later real answer).
+    _synthetic_pending: bool = field(default=False, init=False, repr=False)
+
+    @property
+    def synthetic_fallback_emitted(self) -> bool:
+        """Return whether the aggregate emitted synthetic fallback usage."""
+        return self._aggregate.synthetic_fallback_emitted
+
+    @property
+    def exchange_capture_enabled(self) -> bool:
+        """Return whether the aggregate has exchange capture enabled.
+
+        Callers check this BEFORE doing any capture-building work (allowlist
+        filtering, ``json.dumps``, ``stub_binary_strings``'s recursive
+        walk) -- ``begin_exchange`` below also checks it, but only after
+        that work is already done, so it cannot save the cost on its own
+        (review finding I1).
+        """
+        return self._aggregate.exchange_capture_enabled
+
+    def mark_synthetic_fallback(self) -> None:
+        """Mark synthetic fallback usage on the aggregate signal, and flag
+        this call's NEXT recorded content chunk as synthetic (review
+        finding M3 -- consumed once by ``take_synthetic_pending()``)."""
+        self._synthetic_pending = True
+        self._aggregate.mark_synthetic_fallback()
+
+    def take_synthetic_pending(self) -> bool:
+        """Consume (and clear) whether ``mark_synthetic_fallback()`` fired
+        for the chunk about to be recorded. Self-clearing so only the one
+        chunk actually generated as fallback UI copy is ever labeled."""
+        pending = self._synthetic_pending
+        self._synthetic_pending = False
+        return pending
+
+    def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
+        """Merge a provider usage payload into this call's snapshot.
+
+        Args:
+            payload: Provider usage fields observed for this call.
+        """
+        with self._usage_lock:
+            if self._closed:
+                return
+            merged = dict(self._usage_payload or {})
+            merged.update(payload)
+            self._usage_payload = merged
+            self._aggregate._record_scoped_usage_call(self._token, merged)
+
+    def close_usage_call(self) -> None:
+        """Publish this call's final usage snapshot exactly once."""
+        with self._usage_lock:
+            if self._closed:
+                return
+            self._closed = True
+            payload = (
+                dict(self._usage_payload) if self._usage_payload is not None else None
+            )
+        if payload is not None:
+            self._aggregate._complete_scoped_usage_call(self._token, payload)
+
+    def usage_snapshot(self) -> dict[str, Any] | None:
+        """Return a defensive copy of this call's current usage.
+
+        Returns:
+            The merged usage payload, or ``None`` before usage is observed.
+        """
+        with self._usage_lock:
+            return (
+                dict(self._usage_payload) if self._usage_payload is not None else None
+            )
+
+    def begin_exchange(self, *, provider: str, model: str, endpoint: str | None,
+                       request: dict, omitted_keys: tuple[str, ...]) -> None:
+        """Open this call's capture. ONE stream_chat invocation == one
+        exchange; close_exchange in stream_chat's finally is the close site.
+
+        ``request`` must be a freshly built, allowlisted dict -- i.e.
+        ``build_request_capture``'s output -- never raw ``chat_api_call``
+        kwargs, which would alias live state and re-admit credentials.
+        """
+        if not self._aggregate.exchange_capture_enabled:
+            return
+        self._aggregate._begin_scoped_exchange(self._token, {
+            "provider": provider, "model": model, "endpoint": endpoint,
+            "request": request, "omitted_keys": omitted_keys,
+            "content": [], "tool_calls": [], "synthetic_fallback": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def record_exchange_content(self, text: str, *, synthetic: bool = False) -> None:
+        """Append one content chunk to this call's in-flight capture.
+
+        Args:
+            synthetic: True when ``text`` is locally synthesized fallback
+                UI copy (``NO_PROVIDER_CONTENT_COPY``/``UNSUPPORTED_
+                PROVIDER_RESPONSE_COPY``), never actual provider output --
+                stamped into the capture's response so the Exchange tab can
+                label it instead of presenting UI copy as a model answer
+                (review finding M3).
+        """
+        if text:
+            self._aggregate._mutate_scoped_exchange(self._token, "content", [text])
+            if synthetic:
+                self._aggregate._mark_scoped_exchange_synthetic(self._token)
+
+    def record_exchange_tool_calls(self, calls: "Sequence[Mapping[str, Any]]") -> None:
+        # Review finding M9: `dict(c)` is a SHALLOW copy -- the nested
+        # `function` dict (and any other nested mapping/list) stays aliased
+        # to the live object the caller passed in until this flush reaches
+        # `close_exchange`/`_flight_capture`, seconds later on a real turn.
+        # `deepcopy` closes that window permanently.
+        self._aggregate._mutate_scoped_exchange(
+            self._token, "tool_calls", [deepcopy(dict(c)) for c in calls])
+
+    def close_exchange(self, status: str = "complete") -> None:
+        """Publish this call's capture exactly once (token pop = move
+        semantics; a second close finds nothing)."""
+        self._aggregate._complete_scoped_exchange(
+            self._token, status, self.usage_snapshot())
+
+
+_ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
 
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
@@ -173,6 +508,54 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     status_code = getattr(exc, "status_code", None)
     status_copy = f" Status: {status_code}." if isinstance(status_code, int) else ""
     return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
+
+
+def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
+                    status: str, usage_payload: dict[str, Any] | None) -> ExchangeCapture:
+    """Build the immutable capture for one call's in-flight record.
+
+    Normalizes THIS call's usage payload on its own (never a cross-call
+    merge — the same disjoint-buckets rule the aggregate documents).
+    """
+    usage_json = None
+    if usage_payload:
+        try:
+            usage = ProviderUsage.from_provider_payload(
+                usage_payload, provider=flight["provider"], model=flight["model"])
+            usage_json = usage.to_json() if usage is not None else None
+        except Exception:
+            usage_json = None
+    return ExchangeCapture(
+        run_tag=run_tag, seq=seq, created_at=flight["created_at"],
+        provider=flight["provider"], model=flight["model"],
+        endpoint=flight["endpoint"], request=flight["request"],
+        response={"content": "".join(flight["content"]),
+                  "tool_calls": list(flight["tool_calls"]),
+                  "synthetic_fallback": bool(flight.get("synthetic_fallback", False))},
+        status=status, usage_json=usage_json,
+        omitted_keys=flight["omitted_keys"],
+    )
+
+
+def _provider_error_copy_with_model_recovery(
+    copy: str,
+    *,
+    model: str | None,
+    status_code: int | None,
+) -> str:
+    """Add safe model-specific recovery to provider bad-request copy."""
+    if status_code != 400:
+        return copy
+    model_id = "".join(
+        character for character in str(model or "").strip() if character.isprintable()
+    )[:PROVIDER_ERROR_MODEL_ID_MAX_CHARS]
+    if not model_id:
+        return copy
+    return (
+        f"{copy} Selected model: {escape_markup(model_id)}. "
+        "The provider rejected this request. Confirm the model is still "
+        "available, or choose another model from the model picker."
+    )
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -245,6 +628,8 @@ class LlamaCppProviderConfig:
     base_url: str = DEFAULT_LLAMACPP_BASE_URL
     explicit_model: str | None = None
     configured_model: str | None = None
+    api_key: str | None = field(default=None, repr=False)
+    api_key_source: str | None = None
     temperature: float | None = None
     top_p: float | None = None
     min_p: float | None = None
@@ -285,6 +670,7 @@ class ConsoleProviderResolution:
             breakpoint. Set only for Anthropic resolutions (and only when
             ``[caching] anthropic_enabled`` is on); ``None`` everywhere else,
             which drops the kwarg entirely in ``_chat_api_kwargs``.
+        api_mode: Pinned QwenCloud or DeepSeek wire mode; ``None`` elsewhere.
     """
 
     provider: str
@@ -311,6 +697,12 @@ class ConsoleProviderResolution:
     thinking_budget_tokens: int | None = None
     streaming: bool = True
     prompt_caching: bool | None = None
+    api_mode: str | None = None
+    continuation_protocol: str | None = None
+    request_timeout: float | None = None
+    request_retries: int | None = None
+    request_retry_delay: float | None = None
+    resolved_destination: ConsoleResolvedDestination | None = None
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -330,7 +722,9 @@ def _freeze_auxiliary_value(value: Any) -> Any:
         if not math.isfinite(value):
             raise ValueError("Auxiliary numeric values must be finite.")
         return value
-    raise TypeError("Auxiliary values must be JSON-safe scalars, mappings, or sequences.")
+    raise TypeError(
+        "Auxiliary values must be JSON-safe scalars, mappings, or sequences."
+    )
 
 
 def _thaw_auxiliary_value(value: Any) -> Any:
@@ -413,6 +807,7 @@ class AuxiliaryCompletionResult:
     provider: str
     model: str
     text: str = field(repr=False)
+    usage: ProviderUsage | None = None
 
 
 @dataclass(frozen=True)
@@ -439,8 +834,23 @@ class _QueueItem:
         return cls("done")
 
     @classmethod
-    def native_tool_calls(cls, calls: tuple) -> "_QueueItem":
-        return cls("tool_calls", payload=calls)
+    def native_tool_calls(
+        cls,
+        calls: tuple[dict, ...],
+        metadata: ProviderTurnMetadata | None = None,
+    ) -> "_QueueItem":
+        return cls("tool_calls", payload=ProviderToolCalls(calls, metadata=metadata))
+
+
+@dataclass(frozen=True)
+class ProviderTurnMetadata:
+    """Typed terminal state for one completed provider call."""
+
+    finish_reason: str
+    provider_continuation: ProviderContinuationCheckpoint | None = field(
+        default=None, repr=False
+    )
+    usage: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -451,6 +861,29 @@ class ProviderToolCalls:
     streaming fragments already merged."""
 
     tool_calls: tuple[dict, ...]
+    metadata: ProviderTurnMetadata | None = field(default=None, repr=False)
+
+
+def _provider_turn_metadata(response: Any) -> ProviderTurnMetadata | None:
+    """Read one provider-local terminal turn after clean exhaustion."""
+
+    try:
+        turn = response.terminal_turn
+    except AttributeError:
+        return None
+    if not isinstance(turn, HostedChatTurn):
+        raise ChatProviderError("Provider terminal metadata is malformed.")
+    candidate = getattr(response, "provider_continuation", None)
+    if candidate is not None and not isinstance(
+        candidate, ProviderContinuationCheckpoint
+    ):
+        raise ChatProviderError("Provider continuation metadata is malformed.")
+    usage = deepcopy(turn.usage) if isinstance(turn.usage, Mapping) else None
+    return ProviderTurnMetadata(
+        finish_reason=turn.finish_reason,
+        provider_continuation=candidate,
+        usage=usage,
+    )
 
 
 _PRESERVED_FRAGMENT_EXTRAS = frozenset(
@@ -566,17 +999,64 @@ def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
     three shapes ``chat_api_call`` returns: a full mapping (non-streaming),
     an iterator of mappings, or an iterator of SSE strings."""
     if isinstance(response, Mapping):
-        accumulator.feed_payload(response)
+        try:
+            accumulator.feed_payload(response)
+        except BaseException:
+            close = getattr(response, "close", None)
+            if callable(close):
+                with contextlib.suppress(BaseException):
+                    close()
+            raise
         return response
     if not _is_iterable_response(response):
         return response
 
-    def generator():
-        for item in response:
-            accumulator.feed_payload(_decode_stream_item(item))
-            yield item
+    class _ToolCallTee(Iterator[Any]):
+        def __init__(self) -> None:
+            self._close_lock = threading.Lock()
+            self._closed = False
 
-    return generator()
+        def __next__(self) -> Any:
+            if self._is_closed():
+                raise StopIteration
+            try:
+                item = next(response)
+            except BaseException:
+                self.close()
+                raise
+            if self._is_closed():
+                raise StopIteration
+            try:
+                payload = _decode_stream_item(item)
+            except BaseException:
+                self.close()
+                raise
+            if self._is_closed():
+                raise StopIteration
+            try:
+                accumulator.feed_payload(payload)
+            except BaseException:
+                self.close()
+                raise
+            if self._is_closed():
+                raise StopIteration
+            return item
+
+        def _is_closed(self) -> bool:
+            with self._close_lock:
+                return self._closed
+
+        def close(self) -> None:
+            with self._close_lock:
+                if self._closed:
+                    return
+                self._closed = True
+            close = getattr(response, "close", None)
+            if callable(close):
+                with contextlib.suppress(BaseException):
+                    close()
+
+    return _ToolCallTee()
 
 
 def build_llamacpp_chat_payload(
@@ -592,6 +1072,8 @@ def build_llamacpp_chat_payload(
     seed: int | None = None,
     presence_penalty: float | None = None,
     frequency_penalty: float | None = None,
+    reasoning_effort: str | None = None,
+    thinking_budget_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI-compatible llama.cpp chat completion payload.
 
@@ -607,6 +1089,11 @@ def build_llamacpp_chat_payload(
         seed: Optional deterministic generation seed.
         presence_penalty: Optional presence penalty value.
         frequency_penalty: Optional frequency penalty value.
+        reasoning_effort: Optional thinking level forwarded as llama.cpp
+            ``chat_template_kwargs.reasoning_effort`` (``none`` additionally
+            sets ``enable_thinking`` false).
+        thinking_budget_tokens: Optional thinking token budget sent as the
+            top-level ``reasoning_budget_tokens`` field.
 
     Returns:
         Request payload for the llama.cpp chat completions endpoint.
@@ -624,11 +1111,22 @@ def build_llamacpp_chat_payload(
     incoherent with a thinking-first template regardless. Prefilled
     requests therefore disable thinking mode via ``chat_template_kwargs``,
     which templates that lack the kwarg -- and older servers that drop
-    unknown fields -- simply ignore.
+    unknown fields -- simply ignore. When both a prefill and explicit
+    thinking controls are present the precedence is
+    ``prefill > none > effort``: the prefill's ``enable_thinking: False``
+    always wins over the requested effort level, and an effort of ``none``
+    itself disables thinking.
     """
     payload: dict[str, Any] = {
         "model": model,
-        "messages": list(messages),
+        "messages": [
+            {
+                key: value
+                for key, value in message.items()
+                if key != EPHEMERAL_ORIGIN_KEY
+            }
+            for message in messages
+        ],
         "stream": stream,
     }
     if temperature is not None:
@@ -647,8 +1145,15 @@ def build_llamacpp_chat_payload(
         payload["presence_penalty"] = presence_penalty
     if frequency_penalty is not None:
         payload["frequency_penalty"] = frequency_penalty
+    payload.update(
+        build_local_thinking_payload_fields(
+            "llama_cpp", reasoning_effort, thinking_budget_tokens
+        )
+    )
     if messages and messages[-1].get("role") == "assistant":
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+        template_kwargs = dict(payload.get("chat_template_kwargs") or {})
+        template_kwargs["enable_thinking"] = False
+        payload["chat_template_kwargs"] = template_kwargs
     return payload
 
 
@@ -723,9 +1228,7 @@ class ConsoleProviderGateway:
         # loop; pruned proactively in `_prune_closed_loops` so a long-running
         # process that bridges many short-lived per-turn loops over time
         # doesn't accumulate dead entries waiting on GC alone.
-        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = (
-            weakref.WeakKeyDictionary()
-        )
+        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
@@ -736,15 +1239,25 @@ class ConsoleProviderGateway:
 
         The client bound to the caller's current running loop (if any) is
         closed directly -- safe, since we are already running on that loop.
-        Every other cached per-loop client -- e.g. one built earlier by the
-        app's long-lived loop, still alive while a shorter-lived per-turn
-        loop is the one calling ``aclose()`` -- is closed best-effort via
-        ``_schedule_stale_client_close`` on its own loop; this never awaits,
-        and never closes, a client bound to a loop it is not currently
-        running on.
+        Every other cached per-loop client whose loop is IDLE -- e.g. one
+        built earlier by the app's long-lived loop, still alive while a
+        shorter-lived per-turn loop is the one calling ``aclose()`` -- is
+        closed best-effort via ``_schedule_stale_client_close`` on its own
+        loop; this never awaits, and never closes, a client bound to a loop
+        it is not currently running on.
+
+        PR3a-1 Task 6b (audit F5): a cached loop that is still RUNNING is
+        skipped and its entry RETAINED. Such a loop is somebody's live
+        transport -- since PR3a-1 Task 1, typically a fleet child's
+        ``_ModelCallLifeline``, which outlives the turn that spawned it --
+        and scheduling ``client.aclose()`` onto it closes the connection
+        pool that child is actively issuing requests through. Each is
+        closed by its own owner's teardown instead; see the inline comment
+        at the sweep for the full argument.
 
         Returns:
-            ``None``. Injected HTTP clients are left open for their owner.
+            ``None``. Injected HTTP clients are left open for their owner,
+            and so are clients belonging to loops still running.
         """
         if not self._owns_http_client:
             return
@@ -772,12 +1285,41 @@ class ConsoleProviderGateway:
                     # re-treated as "unclaimed" by this branch.
                     current_client = self.http_client
                     self._client_ever_claimed = True
-            others = [
-                (other_loop, other_client)
-                for other_loop, other_client in self._loop_clients.items()
-                if other_client is not current_client
-            ]
+            others: list[
+                tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]
+            ] = []
+            still_live: list[
+                tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]
+            ] = []
+            for other_loop, other_client in self._loop_clients.items():
+                if other_client is current_client:
+                    continue
+                # PR3a-1 Task 6b (audit F5): a RUNNING loop is somebody's
+                # live transport, not a leftover. `_prune_closed_loops`
+                # above already dropped the finished per-turn loops, and
+                # the remaining ones that are still spinning `run_forever`
+                # are fleet children's `_ModelCallLifeline`s -- which now
+                # outlive the turn that spawned them (PR3a-1 Task 1), so
+                # scheduling `client.aclose()` onto such a loop closes the
+                # pool a child is actively issuing requests through.
+                # Reproduced by execution in `Tests/Chat/test_console_
+                # provider_gateway.py::test_aclose_does_not_close_a_still_
+                # running_childs_client`.
+                if other_loop.is_running():
+                    still_live.append((other_loop, other_client))
+                    continue
+                others.append((other_loop, other_client))
             self._loop_clients.clear()
+            # Retained, not merely spared: the child's next
+            # `_active_http_client()` must find the SAME pool rather than
+            # build a fresh one per call for the rest of its life.
+            # Each is closed by its own owner's teardown -- a
+            # `_ModelCallLifeline` closes its loop when the child ends, at
+            # which point `_prune_closed_loops` drops the entry and the
+            # client's own finalizer releases the sockets (the same
+            # reasoning that method's docstring already relies on).
+            for live_loop, live_client in still_live:
+                self._loop_clients[live_loop] = live_client
             self._client_loop = None
 
         for other_loop, other_client in others:
@@ -785,6 +1327,159 @@ class ConsoleProviderGateway:
 
         if current_client is not None:
             await current_client.aclose()
+
+    def prepare_chat_request(
+        self,
+        resolution: ConsoleProviderResolution,
+        messages: list[Mapping[str, Any]] | PreparedConsoleRequest,
+        *,
+        tools: list[Mapping[str, Any]] | None = None,
+        context_window_override_tokens: int | None = None,
+        apply_safety_window: bool = True,
+        response_format: Mapping[str, Any] | None = None,
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_owner_key: str | None = None,
+    ) -> PreparedProviderRequest:
+        """Prepare the one immutable payload later consumed by dispatch.
+
+        Model capability facts are read once here.  Unknown models remain
+        explicitly unverified; an optional user override is enforced as a
+        bound but never labeled as provider-verified.
+        """
+
+        if isinstance(messages, PreparedConsoleRequest) and tools is not None:
+            raise ValueError("tools are already owned by PreparedConsoleRequest")
+        sidecar = tuple(continuation_sidecar)
+        if sidecar and (continuation_target is None or not continuation_owner_key):
+            raise ValueError(
+                "continuation target and owner key are required for private history"
+            )
+        if continuation_target is not None and (
+            continuation_target.provider,
+            continuation_target.model,
+            normalize_generic_endpoint_for_compare(
+                continuation_target.api_base_url
+            ),
+        ) != (
+            provider_config_key(resolution.provider),
+            resolution.model or "",
+            normalize_generic_endpoint_for_compare(resolution.base_url),
+        ):
+            raise ContinuationConflictError(
+                "Continuation restore target mismatch."
+            ) from None
+        if (
+            continuation_target is not None
+            and resolution.continuation_protocol is not None
+            and continuation_target.protocol != resolution.continuation_protocol
+        ):
+            raise ContinuationConflictError(
+                "Continuation restore target mismatch."
+            ) from None
+        if isinstance(messages, PreparedConsoleRequest):
+            continuation_groups = (
+                tuple(
+                    group
+                    for unit in messages.compactable
+                    for group in unit.continuation_groups
+                )
+                + messages.active_continuation_groups
+            )
+            if continuation_groups and continuation_target is None:
+                raise ValueError(
+                    "continuation_target is required for provider continuation history"
+                )
+            if continuation_target is not None:
+                for group in continuation_groups:
+                    validate_continuation_restore(group.checkpoint, continuation_target)
+            semantic = messages
+        elif not sidecar:
+            if any("provider_continuation" in message for message in messages):
+                raise ValueError(
+                    "continuation_target is required for provider continuation history"
+                )
+            semantic = build_console_request(messages, tools=tools or ())
+        else:
+            assert continuation_target is not None
+            assert continuation_owner_key is not None
+            selected_owner_ids = {
+                message.get(continuation_owner_key)
+                for message in messages
+                if not is_deleted_history_value(message.get("deleted"))
+                and type(message.get(continuation_owner_key)) is str
+            }
+            selected_sidecar = tuple(
+                item for item in sidecar if item.owner_message_id in selected_owner_ids
+            )
+            continuation_groups = provider_continuation_owner_groups(
+                selected_sidecar, target=continuation_target
+            )
+            owner_ids = {group.owner_message_id for group in continuation_groups}
+            visible_messages: list[dict[str, Any]] = []
+            for message in messages:
+                if is_deleted_history_value(message.get("deleted")):
+                    continue
+                row = dict(message)
+                owner_id = row.pop(continuation_owner_key, None)
+                row.pop("provider_continuation", None)
+                row.pop("deleted", None)
+                if type(owner_id) is str and owner_id in owner_ids:
+                    row[CONTINUATION_OWNER_KEY] = owner_id
+                visible_messages.append(row)
+            semantic = build_console_request(
+                visible_messages,
+                tools=tools or (),
+                continuation_groups=continuation_groups,
+            )
+
+        capabilities: Mapping[str, Any] = {}
+        try:
+            from tldw_chatbook.model_capabilities import get_model_capabilities
+
+            capabilities = get_model_capabilities().get_model_capabilities(
+                resolution.provider,
+                resolution.model or "",
+            )
+        except Exception:
+            logger.debug("console_request_capability_lookup_failed")
+
+        def positive_cap(*names: str) -> int | None:
+            for name in names:
+                value = capabilities.get(name)
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                    return value
+            return None
+
+        capacity = resolve_request_capacity(
+            context_window_tokens=positive_cap("context_window"),
+            provider_input_cap_tokens=positive_cap(
+                "max_input_tokens", "input_token_limit", "provider_input_cap"
+            ),
+            provider_output_cap_tokens=positive_cap(
+                "max_output_tokens", "output_token_limit", "provider_output_cap"
+            ),
+            requested_response_tokens=resolution.max_tokens,
+            context_window_override_tokens=context_window_override_tokens,
+        )
+        wire_style: WireStyle = (
+            "distinct_roles"
+            if resolution.provider in {"llama_cpp", "local_llamacpp"}
+            else "single_preamble"
+        )
+        return prepare_provider_request(
+            semantic,
+            wire_style=wire_style,
+            model=resolution.model or "",
+            provider=resolution.provider,
+            capacity=capacity,
+            per_image_tokens=(
+                positive_cap("image_input_tokens", "image_tokens", "per_image_tokens")
+                or DEFAULT_PER_IMAGE_TOKENS
+            ),
+            apply_safety_window=apply_safety_window,
+            response_format=response_format,
+        )
 
     @staticmethod
     def _new_owned_http_client() -> httpx.AsyncClient:
@@ -952,7 +1647,7 @@ class ConsoleProviderGateway:
             )
 
         if model is not None:
-            if await self._is_reachable(base_url):
+            if await self._is_reachable(base_url, api_key=config.api_key):
                 return ConsoleProviderResolution(
                     provider="llama_cpp",
                     base_url=base_url,
@@ -976,6 +1671,7 @@ class ConsoleProviderGateway:
         try:
             response = await self._active_http_client().get(
                 f"{base_url.rstrip('/')}/v1/models",
+                headers=self._authorization_headers(config.api_key),
                 timeout=PROBE_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError:
@@ -1015,6 +1711,16 @@ class ConsoleProviderGateway:
     async def resolve_for_send(
         self, selection: ConsoleProviderSelection
     ) -> ConsoleProviderResolution:
+        """Resolve readiness and attach the credential-free destination."""
+        resolution = await self._resolve_for_send_unclassified(selection)
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
+        )
+
+    async def _resolve_for_send_unclassified(
+        self, selection: ConsoleProviderSelection
+    ) -> ConsoleProviderResolution:
         """Resolve the provider selected by Console before sending.
 
         Args:
@@ -1033,11 +1739,28 @@ class ConsoleProviderGateway:
 
         identity = resolve_console_provider_identity(selection.provider)
         if identity.uses_direct_llama_path:
+            app_config = self._config_provider() or {}
+            readiness = get_provider_readiness(
+                identity.readiness_key,
+                app_config,
+                environ=self._environ,
+            )
+            if not readiness.ready:
+                return self._blocked_resolution(
+                    selection,
+                    provider=identity.execution_key,
+                    visible_copy=readiness.user_message,
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                    api_key_source=readiness.api_key_source,
+                )
             resolved = await self.resolve_llamacpp(
                 LlamaCppProviderConfig(
                     base_url=selection.base_url or DEFAULT_LLAMACPP_BASE_URL,
                     explicit_model=selection.explicit_model,
                     configured_model=selection.configured_model,
+                    api_key=readiness.api_key,
+                    api_key_source=readiness.api_key_source,
                     temperature=selection.temperature,
                     top_p=selection.top_p,
                     min_p=selection.min_p,
@@ -1074,7 +1797,19 @@ class ConsoleProviderGateway:
             )
 
         app_config = self._config_provider() or {}
-        provider_settings = _provider_settings(app_config, identity.readiness_key)
+        try:
+            provider_settings = _provider_settings(app_config, identity.readiness_key)
+        except ProviderSettingsError:
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy=(
+                    "QwenCloud blocked: provider settings must be a configuration "
+                    "table under api_settings.qwencloud."
+                ),
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+            )
         model = _first_string(
             selection.explicit_model,
             selection.configured_model,
@@ -1091,9 +1826,113 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        if provider_uses_endpoint(
-            identity.readiness_key, provider_settings
-        ) and generic_endpoint_differs(selection.base_url, provider_settings):
+        api_mode: str | None = None
+        qwencloud_configured_base_url: str | None = None
+        effective_base_url: str | None
+        if identity.execution_key == "qwencloud":
+            try:
+                api_mode = normalize_qwencloud_api_mode(
+                    None,
+                    provider_settings=provider_settings,
+                )
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        "QwenCloud blocked: invalid API mode setting. Choose "
+                        "'responses' or 'chat_completions' in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
+
+            configured_base_url: str | None = None
+            if "api_base_url" in provider_settings:
+                raw_configured_base_url = provider_settings["api_base_url"]
+                if not isinstance(raw_configured_base_url, str) or not (
+                    raw_configured_base_url.strip()
+                ):
+                    return self._blocked_resolution(
+                        selection,
+                        provider=selection.provider,
+                        model=model,
+                        visible_copy=(
+                            "QwenCloud blocked: invalid API base URL setting. Enter "
+                            "an absolute HTTP(S) compatible-mode base URL in Settings."
+                        ),
+                        readiness_key=identity.readiness_key,
+                        execution_key=identity.execution_key,
+                    )
+                configured_base_url = raw_configured_base_url
+
+            try:
+                qwencloud_configured_base_url = normalize_qwencloud_base_url(
+                    configured_base_url
+                )
+                selected_base_url = selection.base_url
+                if selected_base_url is None or (
+                    isinstance(selected_base_url, str) and not selected_base_url.strip()
+                ):
+                    effective_base_url = qwencloud_configured_base_url
+                else:
+                    effective_base_url = normalize_qwencloud_base_url(selected_base_url)
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        "QwenCloud blocked: invalid API base URL setting. Enter an "
+                        "absolute HTTP(S) compatible-mode base URL in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
+
+        elif identity.execution_key == "deepseek":
+            try:
+                api_mode = _normalize_deepseek_api_mode(provider_settings)
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        "DeepSeek blocked: invalid API mode setting. Choose "
+                        "'responses' or 'chat_completions' in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
+
+            effective_base_url = effective_provider_endpoint(
+                identity.readiness_key,
+                selection.base_url,
+                provider_settings,
+            )
+        else:
+            effective_base_url = effective_provider_endpoint(
+                identity.readiness_key,
+                selection.base_url,
+                provider_settings,
+            )
+
+        if identity.execution_key == "qwencloud":
+            endpoint_differs = (
+                qwencloud_configured_base_url is None
+                or effective_base_url != qwencloud_configured_base_url
+            )
+        else:
+            endpoint_differs = generic_endpoint_differs(
+                selection.base_url, provider_settings
+            )
+
+        if (
+            provider_uses_endpoint(identity.readiness_key, provider_settings)
+            and endpoint_differs
+        ):
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
@@ -1141,15 +1980,42 @@ class ConsoleProviderGateway:
             prompt_caching = bool(
                 _caching_config_value(app_config).get("anthropic_enabled", True)
             )
+        continuation_protocol = (
+            "chat_completions"
+            if identity.execution_key in {"moonshot", "zai"}
+            else api_mode
+            if identity.execution_key == "deepseek"
+            else None
+        )
+        request_timeout: float | None = None
+        request_retries: int | None = None
+        request_retry_delay: float | None = None
+        if identity.execution_key in {"moonshot", "zai"}:
+            try:
+                (
+                    request_timeout,
+                    request_retries,
+                    request_retry_delay,
+                ) = _hosted_transport_policy(
+                    provider_settings,
+                    provider=identity.execution_key,
+                )
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        f"{selection.provider} blocked: invalid timeout or retry "
+                        "settings. Correct the provider transport policy in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
 
         return ConsoleProviderResolution(
             provider=selection.provider,
-            base_url=effective_provider_endpoint(
-                identity.readiness_key,
-                selection.base_url,
-                provider_settings,
-            )
-            or "",
+            base_url=effective_base_url or "",
             model=model,
             ready=True,
             readiness_key=identity.readiness_key,
@@ -1157,6 +2023,11 @@ class ConsoleProviderGateway:
             api_key=readiness.api_key,
             api_key_source=readiness.api_key_source,
             prompt_caching=prompt_caching,
+            api_mode=api_mode,
+            continuation_protocol=continuation_protocol,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+            request_retry_delay=request_retry_delay,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,
@@ -1184,6 +2055,11 @@ class ConsoleProviderGateway:
         min_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget_tokens: int | None = None,
+        api_key: str | None = None,
+        on_fallback_retry_started: "Callable[[], None] | None" = None,
+        on_fallback_retry: "Callable[[dict[str, Any], str], None] | None" = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
 
@@ -1196,6 +2072,10 @@ class ConsoleProviderGateway:
             min_p: Optional min-p sampling value.
             top_k: Optional top-k sampling value.
             max_tokens: Optional response token limit.
+            reasoning_effort: Optional thinking level forwarded as
+                ``chat_template_kwargs.reasoning_effort``.
+            thinking_budget_tokens: Optional thinking token budget sent as
+                the top-level ``reasoning_budget_tokens`` field.
 
         Yields:
             Assistant-visible content chunks.
@@ -1213,29 +2093,51 @@ class ConsoleProviderGateway:
             min_p=min_p,
             top_k=top_k,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
         )
+        think_filter = StartAnchoredThinkFilter()
         emitted_content = False
+        received_content = False
         stream_error: httpx.HTTPError | None = None
         try:
             async with self._active_http_client().stream(
                 "POST",
                 f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
                 json=payload,
+                headers=self._authorization_headers(api_key),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     chunk = self._content_from_sse_line(line)
                     if chunk:
-                        emitted_content = True
-                        yield chunk
+                        received_content = True
+                        visible = think_filter.feed(chunk)
+                        if visible:
+                            emitted_content = True
+                            yield visible
         except httpx.HTTPError as exc:
             if emitted_content:
                 raise
             stream_error = exc
 
         if emitted_content:
+            # flush() contractually returns "" (unterminated start-anchored
+            # think tails are dropped), so there is no tail to yield.
+            return
+        if received_content:
+            # Think-only reply: the filter removed every chunk, so a
+            # non-streaming retry would return the same text — skip it and
+            # surface any stream error that followed the content instead.
+            if stream_error is not None:
+                raise stream_error
             return
 
+        if on_fallback_retry_started is not None:
+            try:
+                on_fallback_retry_started()
+            except Exception:
+                logger.warning("model_retry_capture_failed")
         fallback = await self.complete_llamacpp_chat(
             base_url=normalized_base_url,
             model=model,
@@ -1245,7 +2147,42 @@ class ConsoleProviderGateway:
             min_p=min_p,
             top_k=top_k,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
+            api_key=api_key,
         )
+        # task-19324: this retry is a SECOND HTTP request to the server. It
+        # is made below the Console capture seam (which wraps stream_chat's
+        # one call), so without this hook a turn that really made two calls
+        # showed only one in the Inspector -- understating what was sent, on
+        # exactly the degraded turn a user opens the Inspector to inspect.
+        if on_fallback_retry is not None:
+            try:
+                on_fallback_retry(
+                    build_llamacpp_chat_payload(
+                        model=model,
+                        messages=messages,
+                        stream=False,
+                        temperature=temperature,
+                        top_p=top_p,
+                        min_p=min_p,
+                        top_k=top_k,
+                        max_tokens=max_tokens,
+                        reasoning_effort=reasoning_effort,
+                        thinking_budget_tokens=thinking_budget_tokens,
+                    ),
+                    fallback or "",
+                )
+            except Exception as exc:
+                # Capture must never break a send (task-18300 contract) -- but
+                # a constant message made the degraded path this exists to
+                # EXPLAIN undiagnosable (Qodo #6). The type name is enough to
+                # act on and, unlike a traceback, cannot carry payload from
+                # the frame's locals.
+                logger.warning(
+                    "exchange_capture_fallback_failed: "
+                    f"{type(exc).__name__}"
+                )
         if fallback:
             yield fallback
             return
@@ -1266,7 +2203,10 @@ class ConsoleProviderGateway:
         seed: int | None = None,
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget_tokens: int | None = None,
         strict_response: bool = False,
+        api_key: str | None = None,
     ) -> str:
         """Request a non-streaming OpenAI-compatible chat completion.
 
@@ -1282,6 +2222,10 @@ class ConsoleProviderGateway:
             seed: Optional deterministic generation seed.
             presence_penalty: Optional presence penalty value.
             frequency_penalty: Optional frequency penalty value.
+            reasoning_effort: Optional thinking level forwarded as
+                ``chat_template_kwargs.reasoning_effort``.
+            thinking_budget_tokens: Optional thinking token budget sent as
+                the top-level ``reasoning_budget_tokens`` field.
             strict_response: Raise when the provider response has no supported
                 assistant-content shape instead of treating it as empty.
 
@@ -1305,6 +2249,8 @@ class ConsoleProviderGateway:
             seed=seed,
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
+            reasoning_effort=reasoning_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
         )
         client = self._active_http_client()
         response = (
@@ -1312,9 +2258,14 @@ class ConsoleProviderGateway:
                 client,
                 request_url,
                 json_payload=payload,
+                headers=self._authorization_headers(api_key),
             )
             if is_sensitive_llm_request()
-            else await client.post(request_url, json=payload)
+            else await client.post(
+                request_url,
+                json=payload,
+                headers=self._authorization_headers(api_key),
+            )
         )
         response.raise_for_status()
         content = self._content_from_completion_response(response)
@@ -1323,7 +2274,8 @@ class ConsoleProviderGateway:
                 "Provider returned an unsupported auxiliary response.",
                 provider="llama_cpp",
             )
-        return content or ""
+        think_filter = StartAnchoredThinkFilter()
+        return think_filter.feed(content or "") + think_filter.flush()
 
     @staticmethod
     async def _post_without_high_level_http_log(
@@ -1331,10 +2283,11 @@ class ConsoleProviderGateway:
         url: str,
         *,
         json_payload: Mapping[str, Any],
+        headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
         """POST through this client's transport without HTTPX's URL-bearing INFO log."""
 
-        request = client.build_request("POST", url, json=json_payload)
+        request = client.build_request("POST", url, json=json_payload, headers=headers)
         transport = client._transport_for_url(request.url)
         response = await transport.handle_async_request(request)
         response.request = request
@@ -1371,11 +2324,11 @@ class ConsoleProviderGateway:
         try:
             with sensitive_llm_request():
                 if resolution.provider in {"llama_cpp", "local_llamacpp"}:
-                    # llama.cpp's OpenAI-compatible chat endpoint accepts these
-                    # standard samplers and penalties. Provider-specific
-                    # reasoning/thinking/verbosity controls and response_format
-                    # are deliberately omitted because this direct endpoint does
-                    # not define them consistently.
+                    # Thinking controls follow ADR-066: level via
+                    # chat_template_kwargs, budget via top-level
+                    # reasoning_budget_tokens. Auxiliary requests inherit session
+                    # thinking settings (documented parity with cloud
+                    # providers).
                     text = await self.complete_llamacpp_chat(
                         base_url=resolution.base_url,
                         model=model,
@@ -1388,7 +2341,10 @@ class ConsoleProviderGateway:
                         seed=resolution.seed,
                         presence_penalty=resolution.presence_penalty,
                         frequency_penalty=resolution.frequency_penalty,
+                        reasoning_effort=resolution.reasoning_effort,
+                        thinking_budget_tokens=resolution.thinking_budget_tokens,
                         strict_response=True,
+                        api_key=resolution.api_key,
                     )
                 else:
                     kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
@@ -1408,15 +2364,27 @@ class ConsoleProviderGateway:
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
 
+        usage: ProviderUsage | None = None
         if response is not _UNSUPPORTED_RESPONSE:
             text = self._auxiliary_response_text(response)
+            if isinstance(response, Mapping):
+                usage = ProviderUsage.from_provider_payload(
+                    response.get("usage"),
+                    provider=provider,
+                    model=model,
+                )
 
         if not isinstance(text, str):
             raise ChatProviderError(
                 "Provider returned an unsupported auxiliary response.",
                 provider=provider,
             )
-        return AuxiliaryCompletionResult(provider=provider, model=model, text=text)
+        return AuxiliaryCompletionResult(
+            provider=provider,
+            model=model,
+            text=text,
+            usage=usage,
+        )
 
     def _complete_sensitive_sync(self, kwargs: Mapping[str, Any]) -> Any:
         """Invoke the final synchronous adapter under the sensitive policy."""
@@ -1494,20 +2462,29 @@ class ConsoleProviderGateway:
                 else None
             ),
         }
+        if resolution.execution_key == "qwencloud":
+            kwargs["api_mode"] = resolution.api_mode
+            kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+            kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
 
     async def stream_chat(
         self,
         resolution: ConsoleProviderResolution,
-        messages: list[Mapping[str, Any]],
+        messages: list[Mapping[str, Any]]
+        | PreparedConsoleRequest
+        | PreparedProviderRequest,
         tools: list | None = None,
-        signals: ConsoleProviderStreamSignals | None = None,
+        signals: _ProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Dispatch streaming for a resolved Console provider.
 
         Args:
             resolution: Provider resolution produced by ``resolve_for_send``.
-            messages: OpenAI-compatible chat messages.
+            messages: Raw OpenAI-compatible messages, a semantic request, or
+                the already serialized provider request. Raw/semantic inputs
+                are prepared exactly once before accounting and dispatch.
             tools: Optional OpenAI-shape tool definitions. When omitted,
                 behavior is byte-identical to a plain Console send. When
                 provided, yields str chunks as before; if the provider
@@ -1525,57 +2502,249 @@ class ConsoleProviderGateway:
         # so the in-flight usage payload is closed out here, at the only
         # seam that knows where a call ends -- never in the consumer, which
         # cannot see the boundary at all.
+        call_signals = (
+            signals
+            if isinstance(signals, ConsoleProviderCallSignals)
+            else signals.new_usage_call()
+            if signals is not None
+            else None
+        )
+        # Tracks whether the generator drained a provider call normally, vs.
+        # being torn down early (consumer Stop/cancel -> GeneratorExit /
+        # CancelledError thrown into a suspended `yield`). Read only in the
+        # `finally` below to pick the exchange's terminal status -- an
+        # in-flight worker error already closed its own exchange as "error"
+        # before enqueueing (token-pop move semantics make the second close
+        # here a no-op), so this flag only decides "complete" vs "stopped".
+        completed = False
         try:
             if not resolution.ready or not resolution.model:
                 return
+            prepared = (
+                messages
+                if isinstance(messages, PreparedProviderRequest)
+                else self.prepare_chat_request(resolution, messages, tools=tools)
+            )
+            if isinstance(messages, PreparedProviderRequest) and tools is not None:
+                raise ValueError("tools are already owned by PreparedProviderRequest")
+            if prepared.provider and prepared.provider != resolution.provider:
+                raise ValueError("Prepared request provider does not match resolution.")
+            if prepared.model and prepared.model != resolution.model:
+                raise ValueError("Prepared request model does not match resolution.")
+            if prepared.known_overflow:
+                ceiling = prepared.capacity.effective_input_ceiling_tokens
+                raise ChatBadRequestError(
+                    "Mandatory Console request material exceeds the effective "
+                    f"input ceiling ({prepared.accounting.total_input_tokens} > "
+                    f"{ceiling}). Compaction cannot remove this material.",
+                    provider=resolution.provider,
+                )
+            effective_resolution = replace(
+                resolution,
+                max_tokens=(
+                    prepared.capacity.effective_response_tokens
+                    if resolution.max_tokens is not None
+                    else None
+                ),
+            )
             if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+                wire_messages = [thaw_json(item) for item in prepared.messages]
+                # This branch builds its own HTTP body -- the one place
+                # capture IS the literal wire payload (spec Non-goals).
+                # `api_key` never enters `build_llamacpp_chat_payload`'s
+                # signature, so it structurally cannot leak into the
+                # captured request even though it rides `stream_llamacpp_
+                # chat`/`complete_llamacpp_chat`'s kwargs as auth headers.
+                if call_signals is not None and call_signals.exchange_capture_enabled:
+                    try:
+                        wire = build_llamacpp_chat_payload(
+                            model=resolution.model,
+                            messages=wire_messages,
+                            stream=resolution.streaming,
+                            temperature=resolution.temperature,
+                            top_p=resolution.top_p,
+                            min_p=resolution.min_p,
+                            top_k=resolution.top_k,
+                            max_tokens=effective_resolution.max_tokens,
+                            reasoning_effort=resolution.reasoning_effort,
+                            thinking_budget_tokens=resolution.thinking_budget_tokens,
+                        )
+                        capture_request, omitted = build_request_capture(
+                            {"model": resolution.model}
+                        )
+                        capture_request["wire_payload"] = stub_binary_strings(wire)
+                        call_signals.begin_exchange(
+                            provider=str(resolution.provider or ""),
+                            model=str(resolution.model or ""),
+                            endpoint=normalize_llamacpp_base_url(resolution.base_url),
+                            request=capture_request, omitted_keys=omitted,
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning("exchange_capture_begin_failed")
                 if not resolution.streaming:
-                    completion = await self.complete_llamacpp_chat(
+                    # M1: an HTTP failure here must close the exchange as
+                    # "error" -- left to the outer `finally` below, it would
+                    # see `completed` still False and close as "stopped"
+                    # (a real send failure misreported as a user-initiated
+                    # stop), unlike the generic path's own explicit
+                    # close_exchange(status="error") before it re-raises.
+                    try:
+                        completion = await self.complete_llamacpp_chat(
+                            base_url=resolution.base_url,
+                            model=resolution.model,
+                            messages=wire_messages,
+                            temperature=resolution.temperature,
+                            top_p=resolution.top_p,
+                            min_p=resolution.min_p,
+                            top_k=resolution.top_k,
+                            max_tokens=effective_resolution.max_tokens,
+                            reasoning_effort=resolution.reasoning_effort,
+                            thinking_budget_tokens=resolution.thinking_budget_tokens,
+                            api_key=resolution.api_key,
+                        )
+                    except Exception:
+                        if call_signals is not None:
+                            call_signals.close_exchange(status="error")
+                        raise
+                    if call_signals is not None:
+                        call_signals.record_exchange_content(completion)
+                    if completion:
+                        yield completion
+                    completed = True
+                    return
+                def _capture_llamacpp_fallback(
+                    wire_payload: dict[str, Any], text: str
+                ) -> None:
+                    """Give the stream->complete retry its own capture (task-19324).
+
+                    The retry is a second HTTP request issued *inside*
+                    ``stream_llamacpp_chat``, below the seam that captures
+                    ``stream_chat``'s own call. It gets a fresh call-scoped
+                    signals view off the aggregate so it lands as its own
+                    row rather than being folded into the streaming call it
+                    replaced. Needs the aggregate: a caller that handed us
+                    an already-scoped view has no second call to open.
+                    """
+                    if signals is None or isinstance(
+                        signals, ConsoleProviderCallSignals
+                    ):
+                        return
+                    retry_signals = signals.new_usage_call()
+                    capture_request, omitted = build_request_capture(
+                        {"model": resolution.model}
+                    )
+                    capture_request["wire_payload"] = stub_binary_strings(
+                        wire_payload
+                    )
+                    capture_request["retry_of"] = (
+                        "llama.cpp stream produced no content; "
+                        "retried non-streaming"
+                    )
+                    retry_signals.begin_exchange(
+                        provider=str(resolution.provider or ""),
+                        model=str(resolution.model or ""),
+                        endpoint=normalize_llamacpp_base_url(resolution.base_url),
+                        request=capture_request,
+                        omitted_keys=omitted,
+                    )
+                    if text:
+                        retry_signals.record_exchange_content(text)
+                    retry_signals.close_exchange(status="complete")
+                    # Qodo #4: `new_usage_call()` registers this call in the
+                    # aggregate's `_active_usage_payloads`; without the
+                    # matching close it stays there forever. Harmless while
+                    # the retry records no usage, but the moment one is added
+                    # the stuck entry is billed by `usage_payloads()`'s
+                    # in-flight tail. Closing here keeps the pairing local and
+                    # obvious instead of load-bearing on a future reader.
+                    retry_signals.close_usage_call()
+
+                try:
+                    async for chunk in self.stream_llamacpp_chat(
                         base_url=resolution.base_url,
                         model=resolution.model,
-                        messages=messages,
+                        messages=wire_messages,
                         temperature=resolution.temperature,
                         top_p=resolution.top_p,
                         min_p=resolution.min_p,
                         top_k=resolution.top_k,
-                        max_tokens=resolution.max_tokens,
-                    )
-                    if completion:
-                        yield completion
-                    return
-                async for chunk in self.stream_llamacpp_chat(
-                    base_url=resolution.base_url,
-                    model=resolution.model,
-                    messages=messages,
-                    temperature=resolution.temperature,
-                    top_p=resolution.top_p,
-                    min_p=resolution.min_p,
-                    top_k=resolution.top_k,
-                    max_tokens=resolution.max_tokens,
-                ):
-                    yield chunk
+                        max_tokens=effective_resolution.max_tokens,
+                        reasoning_effort=resolution.reasoning_effort,
+                        thinking_budget_tokens=resolution.thinking_budget_tokens,
+                        api_key=resolution.api_key,
+                        on_fallback_retry_started=(
+                            signals.mark_model_retry
+                            if isinstance(signals, ConsoleProviderStreamSignals)
+                            else None
+                        ),
+                        on_fallback_retry=_capture_llamacpp_fallback,
+                    ):
+                        if call_signals is not None:
+                            call_signals.record_exchange_content(chunk)
+                        yield chunk
+                except Exception:
+                    # Only real provider/HTTP failures land here -- a
+                    # consumer abort throws GeneratorExit/CancelledError
+                    # (BaseException, not Exception) into this suspended
+                    # `yield`, so it still falls through to the outer
+                    # `finally`'s "stopped" close, unchanged.
+                    if call_signals is not None:
+                        call_signals.close_exchange(status="error")
+                    raise
+                completed = True
                 return
             if resolution.execution_key:
                 async for chunk in self._stream_generic_chat(
-                    resolution, messages, tools=tools, signals=signals
+                    effective_resolution, prepared, signals=call_signals
                 ):
                     yield chunk
+                completed = True
                 return
         finally:
-            if signals is not None:
-                signals.close_usage_call()
+            if call_signals is not None:
+                call_signals.close_exchange(status="complete" if completed else "stopped")
+                call_signals.close_usage_call()
 
     async def _stream_generic_chat(
         self,
         resolution: ConsoleProviderResolution,
-        messages: list[Mapping[str, Any]],
-        tools: list | None = None,
-        signals: ConsoleProviderStreamSignals | None = None,
+        request: PreparedProviderRequest,
+        signals: _ProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         stop_event = threading.Event()
+        response_lock = threading.Lock()
+        retained_response: Any = None
+        close_requested = False
+        response_close_attempted = False
+
+        def retain_response(response: Any) -> bool:
+            nonlocal retained_response, response_close_attempted
+            close = None
+            with response_lock:
+                retained_response = response
+                iteration_permitted = not close_requested
+                if close_requested and not response_close_attempted:
+                    response_close_attempted = True
+                    close = getattr(retained_response, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
+            return iteration_permitted
+
+        def close_response() -> None:
+            nonlocal close_requested, response_close_attempted
+            with response_lock:
+                close_requested = True
+                if response_close_attempted or retained_response is None:
+                    return
+                response_close_attempted = True
+                close = getattr(retained_response, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
 
         def enqueue(item: _QueueItem) -> None:
             if stop_event.is_set():
@@ -1585,30 +2754,65 @@ class ConsoleProviderGateway:
 
         def worker() -> None:
             try:
-                kwargs = self._chat_api_kwargs(resolution, messages, tools=tools)
+                kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
+                if signals is not None and signals.exchange_capture_enabled:
+                    try:
+                        capture_request, omitted = build_request_capture(kwargs)
+                        signals.begin_exchange(
+                            provider=str(resolution.provider or ""),
+                            model=str(resolution.model or ""),
+                            endpoint=getattr(resolution, "base_url", None),
+                            request=capture_request, omitted_keys=omitted,
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning("exchange_capture_begin_failed")
                 response = self._chat_api_call(**kwargs)
-                accumulator = _ToolCallAccumulator() if tools else None
+                provider_response = response
+                accumulator = _ToolCallAccumulator() if request.tools else None
                 if accumulator is not None:
                     response = _tee_tool_calls(response, accumulator)
+                if not retain_response(response) or stop_event.is_set():
+                    return
                 emitted_content = False
                 # tools= runs: fallback UI copy must never leak into agent
                 # history, so it is suppressed at GENERATION (not filtered
                 # by string equality — review minor m4: a real answer that
                 # happens to equal the copy text now flows through).
-                for text in self.normalize_provider_response(
+                normalized_response = self.normalize_provider_response(
                     response,
                     suppress_fallback_copy=accumulator is not None,
                     signals=signals,
-                ):
-                    if stop_event.is_set():
+                )
+                while not stop_event.is_set():
+                    try:
+                        text = next(normalized_response)
+                    except StopIteration:
                         break
                     if text:
                         emitted_content = True
+                    if signals is not None and text:
+                        # M3: the fallback UI copy this loop can receive
+                        # from `normalize_provider_response` (NO_PROVIDER_
+                        # CONTENT_COPY / UNSUPPORTED_PROVIDER_RESPONSE_COPY)
+                        # is locally synthesized, never provider output --
+                        # take_synthetic_pending() reports whether THIS
+                        # specific chunk was one (set by mark_synthetic_
+                        # fallback() just before that generator's yield),
+                        # so the capture records it as such instead of
+                        # presenting UI copy as a model answer.
+                        signals.record_exchange_content(
+                            text, synthetic=signals.take_synthetic_pending()
+                        )
                     enqueue(_QueueItem.content(text))
+                if stop_event.is_set():
+                    return
                 if accumulator is not None:
                     calls = accumulator.calls()
-                    if calls:
-                        enqueue(_QueueItem.native_tool_calls(calls))
+                    if signals is not None and calls:
+                        signals.record_exchange_tool_calls(calls)
+                    metadata = _provider_turn_metadata(provider_response)
+                    if calls or metadata is not None:
+                        enqueue(_QueueItem.native_tool_calls(calls, metadata))
                     elif not emitted_content:
                         # PR #648 review Minor 1: the turn produced NEITHER
                         # visible content NOR tool-calls. On the fence path
@@ -1621,6 +2825,8 @@ class ConsoleProviderGateway:
                             "Provider returned no content and no tool calls.",
                             provider=resolution.provider,
                         )
+                        if signals is not None:
+                            signals.close_exchange(status="error")
                         enqueue(
                             _QueueItem.error(
                                 self._safe_error_copy(
@@ -1631,15 +2837,22 @@ class ConsoleProviderGateway:
                         )
             except BaseException as exc:
                 raw_status = getattr(exc, "status_code", None)
+                status_code = raw_status if isinstance(raw_status, int) else None
+                error_copy = _provider_error_copy_with_model_recovery(
+                    self._safe_error_copy(resolution.provider, exc),
+                    model=resolution.model,
+                    status_code=status_code,
+                )
+                if signals is not None:
+                    signals.close_exchange(status="error")
                 enqueue(
                     _QueueItem.error(
-                        self._safe_error_copy(resolution.provider, exc),
-                        status_code=raw_status
-                        if isinstance(raw_status, int)
-                        else None,
+                        error_copy,
+                        status_code=status_code,
                     )
                 )
             finally:
+                close_response()
                 enqueue(_QueueItem.done())
 
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
@@ -1663,12 +2876,13 @@ class ConsoleProviderGateway:
                         else 502,
                     )
                 if item.kind == "tool_calls":
-                    yield ProviderToolCalls(tuple(item.payload))
+                    yield cast(ProviderToolCalls, item.payload)
                     continue
                 if item.text:
                     yield item.text
         finally:
             stop_event.set()
+            close_response()
             if not worker_task.done():
                 worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
@@ -1678,7 +2892,7 @@ class ConsoleProviderGateway:
     def normalize_provider_response(
         response: Any,
         suppress_fallback_copy: bool = False,
-        signals: ConsoleProviderStreamSignals | None = None,
+        signals: _ProviderStreamSignals | None = None,
     ) -> Iterator[str]:
         """Yield safe assistant-visible chunks from generic provider output.
 
@@ -1744,6 +2958,73 @@ class ConsoleProviderGateway:
         return self._chat_api_call_fn(**kwargs)
 
     @staticmethod
+    def _chat_api_kwargs_from_prepared(
+        resolution: ConsoleProviderResolution,
+        request: PreparedProviderRequest,
+    ) -> dict[str, Any]:
+        """Build adapter kwargs without re-serializing the prepared payload."""
+
+        kwargs = {
+            "api_endpoint": resolution.execution_key,
+            "system_message": request.system_message,
+            "messages_payload": [thaw_json(item) for item in request.messages_payload],
+            "api_key": resolution.api_key,
+            "model": resolution.model,
+            "streaming": resolution.streaming,
+            "temp": resolution.temperature,
+            "topp": resolution.top_p,
+            "maxp": resolution.top_p,
+            "topk": resolution.top_k,
+            "minp": resolution.min_p,
+            "max_tokens": resolution.max_tokens,
+            "seed": resolution.seed,
+            "presence_penalty": resolution.presence_penalty,
+            "frequency_penalty": resolution.frequency_penalty,
+            "reasoning_effort": resolution.reasoning_effort,
+            "reasoning_summary": resolution.reasoning_summary,
+            "verbosity": resolution.verbosity,
+            "thinking_effort": resolution.thinking_effort,
+            "thinking_budget_tokens": resolution.thinking_budget_tokens,
+            "tools": thaw_json(request.tools) if request.tools else None,
+            "response_format": (
+                thaw_json(request.response_format)
+                if request.response_format is not None
+                else None
+            ),
+            "prompt_caching": resolution.prompt_caching,
+        }
+        if resolution.execution_key == "qwencloud":
+            kwargs["api_mode"] = resolution.api_mode
+            kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in {"moonshot", "zai"}:
+            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["request_timeout"] = resolution.request_timeout
+            kwargs["request_retries"] = resolution.request_retries
+            kwargs["request_retry_delay"] = resolution.request_retry_delay
+            if request.continuation_groups:
+                kwargs["provider_continuations"] = [
+                    group.checkpoint for group in request.continuation_groups
+                ]
+        elif resolution.execution_key in {
+            "anthropic",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "mistral",
+            "mistralai",
+        }:
+            kwargs["api_base_url"] = resolution.base_url or None
+            if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+                kwargs["api_key_resolved"] = True
+        elif (
+            resolution.execution_key == "openai" and request.response_format is not None
+        ):
+            # Evaluator-only structured-output requests pin the endpoint that
+            # was resolved and capability-checked. Ordinary Console sends have
+            # no response_format and retain their existing adapter behavior.
+            kwargs["api_base_url"] = resolution.base_url or None
+        return {key: value for key, value in kwargs.items() if value is not None}
+
+    @staticmethod
     def _chat_api_kwargs(
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
@@ -1801,22 +3082,23 @@ class ConsoleProviderGateway:
             # for byte what they were before prompt caching existed.
             "prompt_caching": resolution.prompt_caching,
         }
-        if resolution.execution_key == "anthropic":
-            # task-2114: `resolve_for_send` already resolves the effective
-            # endpoint (configured `[api_settings.anthropic].api_base_url`,
-            # or the built-in default when unset -- see
-            # `effective_provider_endpoint`) into `resolution.base_url`, but
-            # this dict never forwarded it, so a configured proxy/relay was
-            # silently a no-op on the main Console send: only the
-            # auxiliary/one-shot path's `_auxiliary_chat_api_kwargs` passed
-            # `api_base_url` through. Scoped to Anthropic only, matching
-            # this task's fix -- other adapters sharing the same gap are
-            # tracked separately (see the task's Implementation Notes).
-            # When unset, `resolution.base_url` is already the SAME
-            # built-in default `chat_with_anthropic` would fall back to on
-            # its own, so this is a byte-identical no-op for the common
-            # case, never a behavior change.
+        if resolution.execution_key == "qwencloud":
+            kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in {
+            "anthropic",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "mistral",
+            "mistralai",
+        }:
+            # These adapters otherwise consult process-global config after
+            # Console has resolved a provider-scoped endpoint and credential.
+            # Pinning the resolved base keeps that pair intact, including the
+            # custom aliases and distinct mistral config owners.
+            kwargs["api_base_url"] = resolution.base_url or None
+            if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+                kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod
@@ -1834,6 +3116,8 @@ class ConsoleProviderGateway:
     @staticmethod
     def _resolution_settings(config: LlamaCppProviderConfig) -> dict[str, Any]:
         return {
+            "api_key": config.api_key,
+            "api_key_source": config.api_key_source,
             "temperature": config.temperature,
             "top_p": config.top_p,
             "min_p": config.min_p,
@@ -1850,10 +3134,15 @@ class ConsoleProviderGateway:
             "streaming": config.streaming,
         }
 
-    async def _is_reachable(self, base_url: str) -> bool:
+    @staticmethod
+    def _authorization_headers(api_key: str | None) -> dict[str, str] | None:
+        return {"Authorization": f"Bearer {api_key}"} if api_key else None
+
+    async def _is_reachable(self, base_url: str, *, api_key: str | None = None) -> bool:
         try:
             await self._active_http_client().get(
                 f"{base_url.rstrip('/')}/health",
+                headers=self._authorization_headers(api_key),
                 timeout=PROBE_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError:
@@ -2004,7 +3293,7 @@ def _is_iterable_response(response: Any) -> bool:
 
 def _maybe_record_usage(
     payload: Mapping[str, Any],
-    signals: "ConsoleProviderStreamSignals | None",
+    signals: "_ProviderStreamSignals | None",
 ) -> None:
     if signals is None:
         return
@@ -2016,7 +3305,7 @@ def _maybe_record_usage(
 def _content_from_provider_item(
     item: Any,
     *,
-    signals: "ConsoleProviderStreamSignals | None" = None,
+    signals: "_ProviderStreamSignals | None" = None,
 ) -> str | object:
     if isinstance(item, str):
         if item.startswith("data:"):
@@ -2036,7 +3325,7 @@ def _content_from_provider_item(
 def _content_from_sse_data(
     line: str,
     *,
-    signals: "ConsoleProviderStreamSignals | None" = None,
+    signals: "_ProviderStreamSignals | None" = None,
 ) -> str | object:
     ConsoleProviderGateway._raise_for_sse_error(line)
     data = line.removeprefix("data:").strip()
@@ -2067,6 +3356,8 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
             text = first.get("text")
             if isinstance(text, str):
                 return text
+    elif choices == [] and isinstance(item.get("usage"), Mapping):
+        return _EMPTY_RESPONSE
 
     candidates = item.get("candidates")
     if isinstance(candidates, list) and candidates:
@@ -2104,10 +3395,32 @@ def _provider_settings(
     app_config: Mapping[str, object], provider_key: str
 ) -> Mapping[str, object]:
     api_settings = _mapping_value(app_config, "api_settings")
-    for configured_provider, configured_value in api_settings.items():
-        if provider_config_key(str(configured_provider)) == provider_key:
-            return configured_value if isinstance(configured_value, Mapping) else {}
-    return {}
+    return provider_settings_for_key(api_settings, provider_key)
+
+
+def _hosted_transport_policy(
+    settings: Mapping[str, object],
+    *,
+    provider: str,
+) -> tuple[float, int, float]:
+    delay_default = 1.0 if provider == "moonshot" else 5.0
+    timeout = settings.get("timeout", 90.0)
+    retries = settings.get("retries", 3)
+    retry_delay = settings.get("retry_delay", delay_default)
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(float(timeout))
+        or timeout <= 0
+        or type(retries) is not int
+        or retries < 0
+        or isinstance(retry_delay, bool)
+        or not isinstance(retry_delay, (int, float))
+        or not math.isfinite(float(retry_delay))
+        or retry_delay < 0
+    ):
+        raise ChatConfigurationError("Hosted provider transport policy is invalid.")
+    return float(timeout), retries, float(retry_delay)
 
 
 def _first_string(*values: object) -> str | None:

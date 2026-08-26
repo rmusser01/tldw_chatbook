@@ -11,10 +11,13 @@ def test_fresh_db_is_v28_with_context_summary_columns(tmp_path):
         version = conn.execute(
             "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"
         ).fetchone()["version"]
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+        }
     # Fresh databases always reach the current schema, not merely the version
     # where these columns were introduced.
-    assert version == 32
+    assert version == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert "context_summary" in cols
     assert "summary_boundary_message_id" in cols
 
@@ -24,7 +27,10 @@ def test_context_summary_roundtrip_and_default_null(tmp_path):
     conv_id = db.add_conversation({"title": "t", "character_id": None})
     assert db.get_conversation_context_summary(conv_id) == (None, None)
     db.set_conversation_context_summary(conv_id, "earlier turns recap", "msg-123")
-    assert db.get_conversation_context_summary(conv_id) == ("earlier turns recap", "msg-123")
+    assert db.get_conversation_context_summary(conv_id) == (
+        "earlier turns recap",
+        "msg-123",
+    )
     db.set_conversation_context_summary(conv_id, None, None)
     assert db.get_conversation_context_summary(conv_id) == (None, None)
 
@@ -48,7 +54,9 @@ def test_context_summary_write_does_not_bump_version_or_emit_sync(tmp_path):
             "SELECT COUNT(*) AS n FROM sync_log WHERE entity_id = ?", (conv_id,)
         ).fetchone()["n"]
     assert v_after == v_before, "context-summary write must not bump version"
-    assert sync_after == sync_before, "context-summary write must not emit a sync_log row"
+    assert sync_after == sync_before, (
+        "context-summary write must not emit a sync_log row"
+    )
 
 
 def test_get_context_summary_missing_conversation_returns_none_pair(tmp_path):

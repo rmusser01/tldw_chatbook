@@ -3,7 +3,7 @@
 import pytest
 from rich.style import Style
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
+from textual.widgets import Button, DataTable, Input, Select, Switch, TextArea
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
@@ -34,7 +34,9 @@ class SourcesPaneHarness(App):
         self.captured_messages.append(("source_selected", message.source))
 
     def on_create_source_requested(self, message: CreateSourceRequested) -> None:
-        self.captured_messages.append(("create_source_requested", message.payload))
+        self.captured_messages.append(
+            ("create_source_requested", message.runtime_backend, message.payload)
+        )
 
     def on_preview_requested(self, message: PreviewRequested) -> None:
         self.captured_messages.append(("preview_requested", message.entity))
@@ -137,11 +139,17 @@ async def _create_through_the_form(pilot, app, **field_values) -> dict:
     if app.create_error is not None:
         raise app.create_error
     assert app.created_sources, "the create request never reached the service"
+    assert app.captured_messages[-1][1] == "local"
     stored = app._service._db().get_subscription(
         int(app.created_sources[0]["source_id"])
     )
     assert stored is not None, "the source was not persisted"
     return stored
+
+
+def _option_pairs(select: Select) -> list[tuple[str, object]]:
+    """Return a Select's labels and values in display order."""
+    return [(str(label), value) for label, value in select._options]
 
 
 @pytest.mark.asyncio
@@ -376,7 +384,7 @@ def sample_sources():
 @pytest.mark.asyncio
 async def test_sources_pane_renders_table_and_toolbar():
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
         assert pane.query_one("#sources-search-input", Input)
         assert pane.query_one("#sources-type-select", Select)
@@ -390,7 +398,7 @@ async def test_the_last_checked_column_uses_the_check_vocabulary():
     column was the one holdout still saying "Last scraped" while every
     button/toast elsewhere on this screen says "check"/"Check now"."""
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
         table = pane.query_one("#sources-table", DataTable)
         columns = [str(col.label) for col in table.columns.values()]
@@ -408,7 +416,7 @@ async def test_toolbar_filter_selects_each_carry_a_visible_label():
     each Select instead carries a `tooltip` naming what it filters -- the
     one mechanism here that costs no column."""
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
 
         def tooltip_mentions(select_id: str, *keywords: str) -> None:
@@ -503,8 +511,9 @@ async def test_sources_pane_new_source_form_posts_request():
 
         assert not pane.query("#sources-create-form")
         assert len(app.captured_messages) == 1
-        kind, payload = app.captured_messages[0]
+        kind, runtime_backend, payload = app.captured_messages[0]
         assert kind == "create_source_requested"
+        assert runtime_backend == "local"
         assert payload["name"] == "New Feed"
         assert payload["url"] == "http://example.com/feed"
         assert payload["source_type"] == "rss"
@@ -534,14 +543,316 @@ async def test_sources_pane_new_source_form_carries_selected_check_frequency():
         pane.query_one("#sources-create-submit", Button).press()
         await pilot.pause()
 
-        _kind, payload = app.captured_messages[0]
+        _kind, runtime_backend, payload = app.captured_messages[0]
+        assert runtime_backend == "local"
         assert payload["check_frequency"] == 86_400
+
+
+@pytest.mark.asyncio
+async def test_backend_specific_create_type_options_and_filter_options():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        assert _option_pairs(pane.query_one("#sources-create-type", Select)) == [
+            ("RSS", "rss"),
+            ("Atom", "atom"),
+            ("Web page", "url"),
+        ]
+        assert _option_pairs(pane.query_one("#sources-type-select", Select)) == [
+            ("All", "all"),
+            ("RSS", "rss"),
+            ("Atom", "atom"),
+            ("Feed", "feed"),
+            ("Playlist", "playlist"),
+            ("Channel", "channel"),
+            ("Web page", "url"),
+        ]
+
+        pane.configure_create_backend("server", ("rss", "site", "forum"))
+        await pilot.pause()
+
+        assert _option_pairs(pane.query_one("#sources-create-type", Select)) == [
+            ("RSS", "rss"),
+            ("Site", "site"),
+            ("Forum", "forum"),
+        ]
+        assert _option_pairs(pane.query_one("#sources-type-select", Select)) == [
+            ("All", "all"),
+            ("RSS", "rss"),
+            ("Atom", "atom"),
+            ("Feed", "feed"),
+            ("Playlist", "playlist"),
+            ("Channel", "channel"),
+            ("Web page", "url"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_backend_switch_preserves_complete_draft_and_open_form():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.watchlist_choices = [{"id": 7, "name": "Research"}]
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        pane.query_one("#sources-create-type", Select).value = "url"
+        for _ in range(20):
+            await pilot.pause()
+            if pane.query("#sources-create-ignore-selectors"):
+                break
+        pane.query_one("#sources-create-name", Input).value = "Draft source"
+        pane.query_one("#sources-create-url", Input).value = "https://example.com"
+        pane.query_one("#sources-create-active", Switch).value = False
+        pane.query_one("#sources-create-watchlist", Select).value = 7
+        pane.query_one("#sources-create-tags", Input).value = "alpha, beta"
+        pane.query_one("#sources-create-frequency", Select).value = 86_400
+        pane.query_one("#sources-create-ignore-selectors", TextArea).text = (
+            ".advert\n.promo"
+        )
+        await pilot.pause()
+
+        pane.configure_create_backend("server", ("rss", "site", "forum"))
+        await pilot.pause()
+
+        assert pane.show_create_form
+        assert pane.query_one("#sources-create-name", Input).value == "Draft source"
+        assert pane.query_one("#sources-create-url", Input).value == "https://example.com"
+        assert pane.query_one("#sources-create-active", Switch).value is False
+        assert pane.query_one("#sources-create-watchlist", Select).value == 7
+        assert pane.query_one("#sources-create-tags", Input).value == "alpha, beta"
+        assert pane.query_one("#sources-create-type", Select).value == "rss"
+        assert not pane.query("#sources-create-frequency")
+        assert not pane.query("#sources-create-ignore-selectors")
+
+        pane.configure_create_backend("local", ("rss", "atom", "url"))
+        await pilot.pause()
+
+        assert pane.show_create_form
+        assert pane.query_one("#sources-create-name", Input).value == "Draft source"
+        assert pane.query_one("#sources-create-url", Input).value == "https://example.com"
+        assert pane.query_one("#sources-create-active", Switch).value is False
+        assert pane.query_one("#sources-create-watchlist", Select).value == 7
+        assert pane.query_one("#sources-create-tags", Input).value == "alpha, beta"
+        assert pane.query_one("#sources-create-frequency", Select).value == 86_400
+        assert pane.create_draft_ignore_selectors == ".advert\n.promo"
+        assert not pane.query("#sources-create-ignore-selectors")
+        pane.query_one("#sources-create-type", Select).value = "url"
+        for _ in range(20):
+            await pilot.pause()
+            if pane.query("#sources-create-ignore-selectors"):
+                break
+        assert (
+            pane.query_one("#sources-create-ignore-selectors", TextArea).text
+            == ".advert\n.promo"
+        )
+
+
+@pytest.mark.asyncio
+async def test_server_to_local_submit_before_recompose_uses_saved_frequency():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        pane.query_one("#sources-create-name", Input).value = "Draft source"
+        pane.query_one("#sources-create-url", Input).value = "https://example.com"
+        pane.query_one("#sources-create-frequency", Select).value = 86_400
+        await pilot.pause()
+
+        pane.configure_create_backend("server", ("rss", "site", "forum"))
+        await pilot.pause()
+        assert not pane.query("#sources-create-frequency")
+
+        pane.configure_create_backend("local", ("rss", "atom", "url"))
+        pane._submit_create_form()
+        await pilot.pause()
+
+        assert app.captured_messages == [
+            (
+                "create_source_requested",
+                "local",
+                {
+                    "name": "Draft source",
+                    "url": "https://example.com",
+                    "source_type": "rss",
+                    "active": True,
+                    "tags": [],
+                    "watchlist_id": None,
+                    "check_frequency": 86_400,
+                    "ignore_selectors": "",
+                },
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_server_payload_omits_local_fields_and_captures_backend():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.configure_create_backend("server", ("rss", "site", "forum"))
+        await pilot.pause()
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        pane.query_one("#sources-create-name", Input).value = "Forum source"
+        pane.query_one("#sources-create-url", Input).value = "https://example.com/forum"
+        pane.query_one("#sources-create-type", Select).value = "forum"
+        await pilot.pause()
+        pane.query_one("#sources-create-active", Switch).value = False
+        pane.query_one("#sources-create-tags", Input).value = "community, updates"
+        await pilot.pause()
+        pane.query_one("#sources-create-submit", Button).press()
+        await pilot.pause()
+
+        assert app.captured_messages == [
+            (
+                "create_source_requested",
+                "server",
+                {
+                    "name": "Forum source",
+                    "url": "https://example.com/forum",
+                    "source_type": "forum",
+                    "active": False,
+                    "tags": ["community", "updates"],
+                    "watchlist_id": None,
+                },
+            )
+        ]
+        assert pane.create_draft_active is True
+        assert pane.create_draft_frequency == 3600
+
+
+async def _submit_unsupported_form_type(
+    pilot,
+    app: SourcesPaneHarness,
+    *,
+    backend: str,
+    source_types: tuple[str, ...],
+    value: object,
+) -> tuple[SourcesPane, list[tuple[str, dict]]]:
+    pane = app.query_one(SourcesPane)
+    pane.configure_create_backend(backend, source_types)
+    await pilot.pause()
+    pane.query_one("#sources-new-button", Button).press()
+    await pilot.pause()
+    pane.query_one("#sources-create-name", Input).value = "Stale source"
+    pane.query_one("#sources-create-url", Input).value = "https://example.com/stale"
+    type_select = pane.query_one("#sources-create-type", Select)
+    type_select.set_options([("Stale", value)])
+    type_select.value = value
+    toasts: list[tuple[str, dict]] = []
+    app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+    pane._submit_create_form()
+    await pilot.pause()
+    return pane, toasts
+
+
+@pytest.mark.asyncio
+async def test_unsupported_form_type_sitemap_is_rejected_before_event(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    accepted = await service.create_source(
+        {
+            "name": "Imported sitemap",
+            "url": "https://example.com/sitemap.xml",
+            "source_type": "sitemap",
+            "active": True,
+            "tags": [],
+            "watchlist_id": None,
+        }
+    )
+    assert accepted["source_type"] == "sitemap"
+
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane, _toasts = await _submit_unsupported_form_type(
+            pilot,
+            app,
+            backend="local",
+            source_types=("rss", "atom", "url"),
+            value="sitemap",
+        )
+
+        assert pane.show_create_form
+        assert not app.captured_messages
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("backend", "source_types", "expected"),
+    [
+        (
+            "local",
+            ("rss", "atom", "url"),
+            "Local sources don't support 'Playlist'. Choose RSS, Atom, or Web page.",
+        ),
+        (
+            "server",
+            ("rss", "site", "forum"),
+            "Server sources don't support 'Playlist'. Choose RSS, Site, or Forum.",
+        ),
+    ],
+)
+async def test_source_type_recovery_uses_exact_registered_copy(
+    backend, source_types, expected
+):
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane, toasts = await _submit_unsupported_form_type(
+            pilot,
+            app,
+            backend=backend,
+            source_types=source_types,
+            value="playlist",
+        )
+
+        assert pane.show_create_form
+        assert not app.captured_messages
+        assert toasts == [(expected, {"severity": "error", "markup": False})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value", "display"),
+    [
+        ("\x00  Strange\t Type\n ", "Strange Type"),
+        ("x" * 41, f"{'x' * 39}…"),
+        ("\x00\t\n", "Unknown"),
+    ],
+)
+async def test_source_type_recovery_normalizes_unregistered_values(value, display):
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane, toasts = await _submit_unsupported_form_type(
+            pilot,
+            app,
+            backend="local",
+            source_types=("rss", "atom", "url"),
+            value=value,
+        )
+
+        assert pane.show_create_form
+        assert not app.captured_messages
+        assert toasts == [
+            (
+                f"Local sources don't support '{display}'. "
+                "Choose RSS, Atom, or Web page.",
+                {"severity": "error", "markup": False},
+            )
+        ]
 
 
 @pytest.mark.asyncio
 async def test_sources_pane_action_buttons_exist():
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
         assert pane.query_one("#sources-preview-button", Button)
         assert pane.query_one("#sources-check-now-button", Button)
@@ -552,7 +863,7 @@ async def test_sources_pane_action_buttons_exist():
 @pytest.mark.asyncio
 async def test_sources_pane_preview_and_check_now_disabled_without_selection():
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
         preview = pane.query_one("#sources-preview-button", Button)
         check_now = pane.query_one("#sources-check-now-button", Button)

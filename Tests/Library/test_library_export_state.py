@@ -28,7 +28,7 @@ from tldw_chatbook.Library.library_export_state import (
     default_export_name,
     export_button_tooltip,
     format_last_export_line,
-    next_media_quality,
+    media_quality_helper_copy,
     normalize_export_destination,
 )
 
@@ -60,14 +60,16 @@ def test_counts_none_renders_counting_placeholder_and_disables_export():
 def test_counts_landed_renders_scope_label():
     state = build_library_export_form_state(
         scope=ExportScope(kind="everything"),
-        counts={"media": 128, "conversations": 542, "notes": 87},
+        counts={"media": 128, "conversations": 542, "notes": 87, "prompts": 13},
         name="x",
         description="",
         media_quality=DEFAULT_MEDIA_QUALITY,
         destination="/tmp/out.zip",
     )
     assert state.counts_loading is False
-    assert state.scope_line == "Everything: 128 media · 542 conversations · 87 notes"
+    assert state.scope_line == (
+        "Everything: 128 media · 542 conversations · 87 notes · 13 prompts"
+    )
 
 
 def test_media_scoped_label_carries_type_filter():
@@ -175,7 +177,7 @@ def test_media_bearing_scopes_show_media_fields(kind):
     assert state.show_media_fields is True
 
 
-@pytest.mark.parametrize("kind", ["conversations", "notes"])
+@pytest.mark.parametrize("kind", ["conversations", "notes", "prompts"])
 def test_non_media_scopes_hide_media_fields(kind):
     state = build_library_export_form_state(
         scope=ExportScope(kind=kind),
@@ -261,14 +263,49 @@ def test_running_status_and_error_lines_pass_through_unchanged():
     assert failed_state.error_line == "Permission denied"
 
 
-# --- next_media_quality -------------------------------------------------------
+# --- quality option set -------------------------------------------------------
+# task-14902: ``next_media_quality`` retired with the per-press cycle -- the
+# quality control now opens a direct-pick strip over MEDIA_QUALITY_OPTIONS
+# (see Tests/UI/test_library_choice_strips.py), so the option tuple itself
+# is the remaining contract.
 
 
-def test_next_media_quality_cycles_and_wraps():
-    assert next_media_quality("thumbnail") == "compressed"
-    assert next_media_quality("compressed") == "original"
-    assert next_media_quality("original") == "thumbnail"
-    assert next_media_quality("bogus") == MEDIA_QUALITY_OPTIONS[0]
+def test_media_quality_options_are_the_three_known_values_in_order():
+    assert MEDIA_QUALITY_OPTIONS == ("thumbnail", "compressed", "original")
+    assert DEFAULT_MEDIA_QUALITY == "thumbnail"
+
+
+def test_export_form_state_carries_quality_choices_visible_flag():
+    state = build_library_export_form_state(
+        scope=ExportScope(kind="everything"),
+        counts={"media": 1, "conversations": 0, "notes": 0},
+        name="Library export 2026-08-11",
+        description="",
+        media_quality="thumbnail",
+        destination="",
+        quality_choices_visible=True,
+    )
+    assert state.quality_choices_visible is True
+
+
+# --- media_quality_helper_copy -------------------------------------------------
+# task-2859 item 3: the helper line used to be ONE fixed sentence describing
+# "original" quality, shown under the quality button no matter which value
+# was actually selected -- so "quality: thumbnail ⇄" was captioned with
+# "original copies full media files into the zip". Each option now gets its
+# own honest caption naming its own effect.
+
+
+def test_media_quality_helper_copy_matches_each_option_to_its_own_effect():
+    assert "small preview" in media_quality_helper_copy("thumbnail")
+    assert "shrinks" in media_quality_helper_copy("compressed")
+    assert "full media files" in media_quality_helper_copy("original")
+    # A thumbnail caption never claims to keep full files, and vice versa.
+    assert "full media files" not in media_quality_helper_copy("thumbnail")
+
+
+def test_media_quality_helper_copy_degrades_to_original_for_unknown_value():
+    assert media_quality_helper_copy("bogus") == media_quality_helper_copy("original")
 
 
 # --- normalize_export_destination ---------------------------------------------

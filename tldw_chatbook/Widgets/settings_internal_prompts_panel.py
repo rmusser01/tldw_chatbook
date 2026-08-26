@@ -98,21 +98,48 @@ class InternalPromptsPanel(Vertical):
         row.prompt_id = spec.id  # type: ignore[attr-defined]
         return row
 
+    def focus_prompt(self, prompt_id: str) -> bool:
+        """Filter to and focus one existing prompt row.
+
+        This is the navigation seam used by other Settings categories. It
+        deliberately reuses this panel's search and editor ownership instead
+        of constructing a second prompt editor.
+        """
+
+        spec = CATALOG.get(prompt_id)
+        if spec is None:
+            return False
+        try:
+            search = self.query_one("#internal-prompts-search", Input)
+            row = self.query_one("#" + _row_id(prompt_id), Button)
+        except (NoMatches, QueryError):
+            return False
+        search.value = prompt_id
+        row.scroll_visible(animate=False)
+        row.focus()
+        return True
+
     @on(Input.Changed, "#internal-prompts-search")
     def _on_search(self, event: Input.Changed) -> None:
         needle = event.value.strip().lower()
         for subsystem, specs in authoring.iter_specs_by_subsystem():
             any_visible = False
             for spec in specs:
-                match = (not needle) or needle in spec.title.lower() \
-                    or needle in spec.description.lower() or needle in spec.id.lower()
+                match = (
+                    (not needle)
+                    or needle in spec.title.lower()
+                    or needle in spec.description.lower()
+                    or needle in spec.id.lower()
+                )
                 try:
                     self.query_one("#" + _row_id(spec.id), Button).display = match
                 except (NoMatches, QueryError):
                     continue
                 any_visible = any_visible or match
             try:
-                self.query_one("#group-header-" + subsystem, Static).display = any_visible
+                self.query_one(
+                    "#group-header-" + subsystem, Static
+                ).display = any_visible
             except (NoMatches, QueryError):
                 pass
 
@@ -159,6 +186,7 @@ class InternalPromptsPanel(Vertical):
                 )
             except Exception:  # never let the worker crash the app
                 return False
+
         return await asyncio.to_thread(_io)
 
     def _refresh_row(self, prompt_id: str) -> None:

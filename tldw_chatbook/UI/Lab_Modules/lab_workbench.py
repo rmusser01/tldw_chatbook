@@ -30,8 +30,8 @@ from .lab_rail_layout import LAB_RAIL_INSPECTOR, LAB_RAIL_LEFT, LabRailLayout
 #:
 #: The minimum is sized to the longest rail label across all three Lab modes
 #: ("Speech Recognition", 18 characters) plus padding, border and the
-#: active row's accent bar. Measured, not estimated: at 20 the 15-character
-#: "Download Models" rendered as "Download". Matches `#mcp-hub-rail`.
+#: active row's accent bar. The exact surviving label is pinned by the
+#: rendered no-truncation test. Matches `#mcp-hub-rail`.
 LAB_RAIL_MIN_WIDTH = 24
 LAB_RAIL_MAX_WIDTH = 32
 #: Bounds of the expanded inspector, mirroring `#lab-inspector` in

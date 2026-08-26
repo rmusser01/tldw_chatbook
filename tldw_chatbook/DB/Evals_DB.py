@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.sql_validation import validate_identifier
+from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
 
 # Database Schema Version
 SCHEMA_VERSION = 5
@@ -190,6 +191,13 @@ class EvalsDB:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
+            # can lose the last commit or two, acceptable for this local eval
+            # results store) and avoids an fsync on every commit -- the
+            # default FULL was fsyncing the WAL on every commit despite WAL
+            # already being enabled. See Library_Ingest_Jobs_DB.py:57-61 for
+            # the original template (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
             self._local.connection = conn
         return self._local.connection
 
@@ -1082,7 +1090,25 @@ class EvalsDB:
         return tasks
 
     def search_tasks(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Search tasks using FTS5."""
+        """Search tasks using FTS5.
+
+        Args:
+            query: Plain user text, matched as ONE quoted literal FTS5
+                PHRASE (``build_phrase_match_query``) -- the words must be
+                adjacent and in order, which is what this seam did before
+                TASK-19558 too. Short or punctuation-bearing queries take
+                the LIKE branch below instead. FTS5 operators are inert.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            The matching task dicts; empty when ``query`` is not searchable.
+        """
+        if not isinstance(query, str):
+            # task-19558 (E2 sweep): `None` from an unset filter reached the
+            # generator below and raised a bare `TypeError`. Pre-dates the
+            # task -- fixed here because it is the same failure mode, at the
+            # last seam in this family that still had it.
+            return []
         conn = self._get_connection()
 
         # Remove null bytes and other control characters
@@ -1100,10 +1126,14 @@ class EvalsDB:
                 (f"%{query}%", f"%{query}%", limit),
             )
         else:
-            # For normal queries, use FTS5 with proper escaping
-            # Escape double quotes in the query
-            escaped_query = query.replace('"', '""')
-            safe_query = f'"{escaped_query}"' if escaped_query else '""'
+            # For normal queries, use FTS5 with proper escaping (the ONE
+            # escape lives in `Utils/fts5_match_forms`; TASK-19558). Phrase,
+            # not AND-of-tokens: this seam bound a quoted PHRASE before the
+            # task too, so widening it would be an unmeasured behaviour
+            # change riding along with a security fix.
+            safe_query = build_phrase_match_query(query)
+            if not safe_query:
+                return []
             cursor = conn.execute(
                 """
                 SELECT t.* FROM eval_tasks t
@@ -1301,9 +1331,29 @@ class EvalsDB:
             return cursor.rowcount > 0
 
     def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Search datasets using FTS5."""
-        # Escape special characters in FTS5 query by wrapping in quotes
-        safe_query = f'"{query}"' if query else '""'
+        """Search datasets using FTS5.
+
+        Args:
+            query: Plain user text, matched as ONE quoted literal FTS5
+                PHRASE (``build_phrase_match_query``) -- the words must be
+                adjacent and in order, as this seam did before TASK-19558.
+                FTS5 operators in it are inert.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            The matching dataset dicts; empty when ``query`` is not
+            searchable (None, empty, NUL-bearing or punctuation-only).
+        """
+        # Escape special characters in FTS5 query by wrapping in quotes.
+        # TASK-19558: this wrapping never doubled an embedded `"`, so a
+        # dataset search containing one raised OperationalError and one
+        # shaped `x" OR name:"y` escaped the literal into a live column
+        # filter. `build_phrase_match_query` is the ONE escape; phrase
+        # rather than AND-of-tokens because this seam bound a phrase before
+        # the task too (see `search_tasks`).
+        safe_query = build_phrase_match_query(query)
+        if not safe_query:
+            return []
 
         conn = self._get_connection()
         cursor = conn.execute(

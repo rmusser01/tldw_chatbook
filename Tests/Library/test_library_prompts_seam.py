@@ -6,15 +6,23 @@ Library rail badge can render without needing a full paginated fetch just
 to read a number.
 """
 
+import asyncio
+import threading
+
 import pytest
 
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Prompt_Management.local_prompt_service import LocalPromptService
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
 )
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
+    PaginatedPromptsResponse,
+    PromptBriefResponse,
+)
 
 
 @pytest.mark.asyncio
@@ -52,6 +60,178 @@ async def test_prompt_scope_service_count_prompts_passes_through_to_local_backen
 
     # Defaults to "local" per the interface contract.
     assert await service.count_prompts() == 1
+
+
+@pytest.mark.asyncio
+async def test_prompts_user_content_evidence_counts_only_active_local_user_prompts(
+    tmp_path,
+):
+    db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
+    service = PromptScopeService(
+        local_service=ScopeLocalPromptService(db), server_service=None
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+    db.add_prompt(name="alpha", author="user", details="d", user_prompt="private")
+    evidence = await service.get_library_user_content_evidence(mode="local")
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+    db.soft_delete_prompt("alpha")
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompts_local_store_treats_user_named_samples_as_user_content(tmp_path):
+    """Names/authors are content, not provenance, in the profile-owned store."""
+    db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
+    service = PromptScopeService(
+        local_service=ScopeLocalPromptService(db), server_service=None
+    )
+    db.add_prompt(
+        name="Bundled sample", author="System", details="user-created", user_prompt="x"
+    )
+
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompts_user_content_evidence_runs_sync_leaf_off_loop_and_is_cancellable():
+    entered = threading.Event()
+    release = threading.Event()
+    thread_ids = []
+
+    class BlockingPrompts:
+        def count_prompts(self):
+            thread_ids.append(threading.get_ident())
+            entered.set()
+            release.wait(2)
+            return 0
+
+    service = PromptScopeService(local_service=BlockingPrompts(), server_service=None)
+    loop_thread = threading.get_ident()
+    task = asyncio.create_task(service.get_library_user_content_evidence(mode="local"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        await asyncio.sleep(0)
+        assert thread_ids == [thread_ids[0]]
+        assert thread_ids[0] != loop_thread
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(task, timeout=0.01)
+        release.set()
+        assert await service.count_prompts(mode="local") == 0
+        assert len(thread_ids) == 2
+        assert all(thread_id != loop_thread for thread_id in thread_ids)
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_prompts_user_content_evidence_runs_real_async_adapter_off_loop_and_is_cancellable():
+    entered = threading.Event()
+    release = threading.Event()
+    thread_ids = []
+
+    class BlockingPromptInterop:
+        def list_prompts(self, **_kwargs):
+            thread_ids.append(threading.get_ident())
+            entered.set()
+            release.wait(2)
+            return [], 0, 1, 0
+
+    service = PromptScopeService(
+        local_service=LocalPromptService(BlockingPromptInterop()),
+        server_service=None,
+    )
+    loop_thread = threading.get_ident()
+    task = asyncio.create_task(service.get_library_user_content_evidence(mode="local"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        await asyncio.sleep(0)
+        assert thread_ids == [thread_ids[0]]
+        assert thread_ids[0] != loop_thread
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(task, timeout=0.01)
+        release.set()
+        assert await service.count_prompts(mode="local") == 0
+        assert len(thread_ids) == 2
+        assert all(thread_id != loop_thread for thread_id in thread_ids)
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_prompts_user_content_evidence_validates_server_provenance_and_total():
+    class ServerPrompts:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        async def list_prompts(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.payload
+
+    user = ServerPrompts(
+        {
+            "items": [{"id": 1, "name": "Private prompt"}],
+            "total_items": 1,
+            "page": 1,
+            "per_page": 1,
+        }
+    )
+    service = PromptScopeService(local_service=None, server_service=user)
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+    assert user.calls == [
+        {
+            "page": 1,
+            "per_page": 1,
+            "include_deleted": False,
+            "sort_by": "last_modified",
+            "sort_order": "desc",
+        }
+    ]
+
+    service = PromptScopeService(
+        local_service=None,
+        server_service=ServerPrompts(
+            PaginatedPromptsResponse(
+                items=[PromptBriefResponse(id=2, name="Server model prompt")],
+                total_items=1,
+            )
+        ),
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    service = PromptScopeService(
+        local_service=None,
+        server_service=ServerPrompts(PaginatedPromptsResponse()),
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.EMPTY
+    )
+
+    service = PromptScopeService(
+        local_service=None, server_service=ServerPrompts({"items": []})
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
 
 @pytest.mark.asyncio

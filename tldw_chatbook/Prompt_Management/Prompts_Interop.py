@@ -233,10 +233,30 @@ def update_keywords_for_prompt(prompt_id: int, keywords_list: List[str]) -> None
     db.update_keywords_for_prompt(prompt_id, keywords_list)
 
 
-def soft_delete_prompt(prompt_id_or_name_or_uuid: Union[int, str]) -> bool:
-    """Soft deletes a prompt. See PromptsDatabase.soft_delete_prompt for details."""
+def soft_delete_prompt(
+    prompt_id_or_name_or_uuid: Union[int, str],
+    *,
+    expected_version: Optional[int] = None,
+) -> bool:
+    """Soft-delete a Prompt/Recipe through the shared database instance.
+
+    Args:
+        prompt_id_or_name_or_uuid: Numeric id, UUID, or name of the artifact.
+        expected_version: Optional active-row version required for deletion.
+
+    Returns:
+        ``True`` when the artifact is soft-deleted.
+
+    Raises:
+        InputError: If the identifier or expected version is invalid.
+        ConflictError: If no active artifact matches the identifier.
+        ExpectedVersionConflictError: If the expected version is stale.
+        DatabaseError: If persistence fails.
+    """
     db = get_db_instance()
-    return db.soft_delete_prompt(prompt_id_or_name_or_uuid)
+    return db.soft_delete_prompt(
+        prompt_id_or_name_or_uuid, expected_version=expected_version
+    )
 
 
 def soft_delete_keyword(keyword_text: str) -> bool:
@@ -280,6 +300,86 @@ def fetch_prompt_details(
     """Fetches detailed information for a prompt. See PromptsDatabase.fetch_prompt_details for details."""
     db = get_db_instance()
     return db.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
+
+
+# --- Library read seams (task-1337) ---
+
+
+def list_library_prompts_page(*, limit: int, offset: int) -> Dict[str, Any]:
+    """Page active library prompts with an exact total.
+
+    Args:
+        limit: Maximum number of prompts to return.
+        offset: Number of prompts to skip.
+
+    Returns:
+        A bounded page containing prompt items and exact total.
+
+    Raises:
+        DatabaseError: If the prompts database cannot be read.
+    """
+    db = get_db_instance()
+    return db.list_library_prompts_page(limit=limit, offset=offset)
+
+
+def search_library_prompts_page(
+    *, query: str, limit: int, offset: int
+) -> Dict[str, Any]:
+    """Search active library prompts and forward match evidence.
+
+    Args:
+        query: Literal case-insensitive search text.
+        limit: Maximum number of prompts to return.
+        offset: Number of matching prompts to skip.
+
+    Returns:
+        A bounded page with exact total and match evidence.
+
+    Raises:
+        DatabaseError: If the prompts database cannot be read.
+    """
+    db = get_db_instance()
+    return db.search_library_prompts_page(query=query, limit=limit, offset=offset)
+
+
+def get_library_prompt_overview(prompt_uuid: str) -> Optional[Dict[str, Any]]:
+    """Return a bounded overview of one active prompt.
+
+    Args:
+        prompt_uuid: Stable prompt UUID.
+
+    Returns:
+        Bounded prompt metadata and section previews, or None when absent.
+
+    Raises:
+        DatabaseError: If the prompts database cannot be read.
+    """
+    db = get_db_instance()
+    return db.get_library_prompt_overview(prompt_uuid)
+
+
+def get_library_prompt_section(
+    prompt_uuid: str, *, section: str, start: int, max_chars: int
+) -> Optional[Dict[str, Any]]:
+    """Return a windowed section segment of one active prompt.
+
+    Args:
+        prompt_uuid: Stable prompt UUID.
+        section: Whitelisted prompt section name.
+        start: Zero-based character offset.
+        max_chars: Maximum characters to return.
+
+    Returns:
+        Bounded prompt section metadata and text, or None when absent.
+
+    Raises:
+        InputError: If the section name is not supported.
+        DatabaseError: If the prompts database cannot be read.
+    """
+    db = get_db_instance()
+    return db.get_library_prompt_section(
+        prompt_uuid, section=section, start=start, max_chars=max_chars
+    )
 
 
 def export_prompt_to_server_payload(

@@ -24,6 +24,8 @@ fixtures from `test_console_dictation.py`/`test_console_dictation_streaming.py`.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.widgets import Input, Static
 
@@ -40,8 +42,12 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
-from tldw_chatbook.Widgets.Console.console_composer_bar import _DraftHistorySnapshot
-
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ComposerDraftSnapshot,
+    ComposerTransactionValidationError,
+    _DraftHistorySnapshot,
+    _snapshot_fingerprint,
+)
 
 # ---------------------------------------------------------------------------
 # Pure composer-level tests: typed-run coalescing, mutation-kind boundaries,
@@ -120,6 +126,196 @@ def test_composer_undo_reverts_paste_insertion():
 
     assert composer.undo() is True
     assert composer.draft_text() == "before "
+
+
+def test_second_collapsed_paste_and_boundary_are_one_undo_transaction():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+    assert composer.draft_text() == first + "\n" + second
+
+    assert composer.undo() is True
+    assert composer.draft_text() == first
+
+    assert composer.redo() is True
+    assert composer.draft_text() == first + "\n" + second
+
+
+def test_undo_redo_preserves_collapsed_tokens_and_generated_boundary_identity():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    assert composer.undo() is True
+    after_undo = composer.capture_draft_snapshot()
+    assert [
+        (segment.origin, segment.collapse_state) for segment in after_undo.segments
+    ] == [("paste", "collapsed")]
+
+    assert composer.redo() is True
+    after_redo = composer.capture_draft_snapshot()
+    assert [segment.text for segment in after_redo.segments] == [first, "\n", second]
+    assert [segment.generated_boundary for segment in after_redo.segments] == [
+        False,
+        True,
+        False,
+    ]
+    assert [segment.collapse_state for segment in after_redo.segments] == [
+        "collapsed",
+        "literal",
+        "collapsed",
+    ]
+
+
+def test_backspace_right_paste_removes_orphan_boundary_and_undo_restores_both():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    composer.delete_left()
+
+    assert composer.draft_text() == first
+    assert composer.undo() is True
+    assert composer.draft_text() == first + "\n" + second
+    assert composer.capture_draft_snapshot().segments[1].generated_boundary is True
+
+
+def test_delete_left_paste_removes_orphan_boundary_and_undo_restores_both():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+    composer.position_cursor_from_display_index(0)
+
+    composer.delete_right()
+
+    assert composer.draft_text() == second
+    assert composer.undo() is True
+    assert composer.draft_text() == first + "\n" + second
+    assert composer.capture_draft_snapshot().segments[1].generated_boundary is True
+
+
+def test_deleting_paste_does_not_remove_user_authored_newline():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_text("\n")
+    composer.insert_pasted_text(second)
+
+    composer.delete_left()
+
+    assert composer.draft_text() == first + "\n"
+    snapshot = composer.capture_draft_snapshot()
+    assert snapshot.segments[-1].text == "\n"
+    assert snapshot.segments[-1].generated_boundary is False
+
+
+def test_export_restore_history_preserves_current_and_undo_structured_paste_state():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+    composer.delete_left()
+    history = composer.export_undo_history()
+
+    restored = ConsoleComposerBar(paste_collapse_threshold=50)
+    restored.load_draft(composer.draft_text())
+    restored.restore_undo_history(history)
+
+    assert restored.capture_draft_snapshot().segments[0].origin == "paste"
+    assert restored.capture_draft_snapshot().segments[0].collapse_state == "collapsed"
+    assert restored.undo() is True
+    snapshot = restored.capture_draft_snapshot()
+    assert [segment.text for segment in snapshot.segments] == [first, "\n", second]
+    assert snapshot.segments[1].generated_boundary is True
+
+
+def _snapshot_with_orphaned_generated_boundary() -> ComposerDraftSnapshot:
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text("A" * 80)
+    composer.insert_pasted_text("B" * 90)
+    snapshot = composer.capture_draft_snapshot()
+    orphaned_segments = snapshot.segments[1:]
+    cursor_index = sum(len(segment.text) for segment in orphaned_segments)
+    fingerprint = _snapshot_fingerprint(
+        segments=orphaned_segments,
+        cursor_index=cursor_index,
+        selection=None,
+        edit_serial=snapshot.edit_serial,
+        generation=snapshot.generation,
+    )
+    return replace(
+        snapshot,
+        segments=orphaned_segments,
+        cursor_index=cursor_index,
+        selection=None,
+        fingerprint=fingerprint,
+    )
+
+
+def test_restore_snapshot_rejects_orphaned_generated_boundary():
+    forged = _snapshot_with_orphaned_generated_boundary()
+    composer = ConsoleComposerBar()
+
+    with pytest.raises(ComposerTransactionValidationError, match="generated boundary"):
+        composer.restore_snapshot(forged)
+
+
+def test_restore_history_discards_orphaned_generated_boundary_entry():
+    forged = _snapshot_with_orphaned_generated_boundary()
+    entry = _DraftHistorySnapshot(
+        text="".join(segment.text for segment in forged.segments),
+        cursor_index=forged.cursor_index,
+        segments=forged.segments,
+    )
+    composer = ConsoleComposerBar()
+    composer.load_draft("safe")
+
+    composer.restore_undo_history(([entry], []))
+
+    assert composer.undo() is False
+    assert composer.draft_text() == "safe"
+
+
+@pytest.mark.asyncio
+async def test_session_switch_restores_current_collapsed_paste_structure():
+    _, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_a = store.ensure_session(title="Paste A")
+        composer.load_draft("")
+        console._session._sync_console_session_draft()
+        first = "A" * 80
+        second = "B" * 90
+        composer.insert_pasted_text(first)
+        composer.insert_pasted_text(second)
+
+        session_b = store.create_session(title="Paste B")
+        console._session._sync_console_session_draft()
+        assert store.active_session_id == session_b.id
+
+        store.switch_session(session_a.id)
+        console._session._sync_console_session_draft()
+
+        snapshot = composer.capture_draft_snapshot()
+        assert [segment.text for segment in snapshot.segments] == [first, "\n", second]
+        assert [segment.collapse_state for segment in snapshot.segments] == [
+            "collapsed",
+            "literal",
+            "collapsed",
+        ]
+        assert snapshot.segments[1].generated_boundary is True
 
 
 def test_composer_undo_reverts_file_segment_insertion():
@@ -266,6 +462,75 @@ def test_composer_export_and_restore_undo_history_round_trips():
     # The export is a real copy, not aliased to the live stacks.
     composer.insert_text("c")
     assert composer.export_undo_history() != exported
+
+
+def test_composer_transaction_checkpoint_restores_all_user_undo_state():
+    composer = ConsoleComposerBar()
+    composer.insert_text("private undo origin")
+    composer.insert_file_segment("private file body", label="notes.txt")
+    prompt_undo = composer.capture_draft_snapshot()
+    composer.replace_snapshot_as_paste(prompt_undo, "active draft")
+
+    history_source = ConsoleComposerBar()
+    history_source.insert_text("first")
+    history_source.insert_pasted_text(" second")
+    assert history_source.undo() is True
+    composer.restore_undo_history(history_source.export_undo_history())
+    composer.select_all_draft()
+
+    before = composer.capture_draft_snapshot()
+    history_before = composer.export_undo_history()
+    checkpoint = composer.capture_transaction_checkpoint()
+    assert "private" not in repr(checkpoint)
+
+    composer.insert_text_as_paste("failed append")
+    composer.invalidate_improvement_undo()
+    composer.restore_undo_history(None)
+    composer.rollback_transaction(checkpoint)
+
+    after = composer.capture_draft_snapshot()
+    assert after.segments == before.segments
+    assert after.cursor_index == before.cursor_index
+    assert after.selection == before.selection
+    assert after.edit_serial == before.edit_serial
+    assert composer.export_undo_history() == history_before
+    assert composer.improvement_undo_available is True
+    assert composer.undo_improvement() is True
+    restored = composer.capture_draft_snapshot()
+    assert restored.segments == prompt_undo.segments
+    assert restored.cursor_index == prompt_undo.cursor_index
+    assert restored.selection == prompt_undo.selection
+
+
+@pytest.mark.parametrize(
+    "forged_fields",
+    [
+        {"undo_stack": ("not history",)},
+        {"redo_stack": []},
+        {"coalescing_active": 1},
+        {"undo_stack": (_DraftHistorySnapshot(text=object(), cursor_index=-99),)},
+        {"undo_stack": (_DraftHistorySnapshot(text="valid", cursor_index=True),)},
+        {"redo_stack": (_DraftHistorySnapshot(text="valid", cursor_index=-1),)},
+        {"redo_stack": (_DraftHistorySnapshot(text="valid", cursor_index=6),)},
+    ],
+)
+def test_composer_transaction_checkpoint_rejects_forged_internal_shapes(
+    forged_fields,
+):
+    composer = ConsoleComposerBar()
+    composer.insert_text("unchanged")
+    before = composer.capture_draft_snapshot()
+    history_before = composer.export_undo_history()
+    checkpoint = replace(
+        composer.capture_transaction_checkpoint(),
+        **forged_fields,
+    )
+
+    with pytest.raises(ComposerTransactionValidationError):
+        composer.rollback_transaction(checkpoint)
+
+    assert composer.capture_draft_snapshot() == before
+    assert composer.export_undo_history() == history_before
 
 
 def test_composer_restore_undo_history_none_gives_empty_stacks():
@@ -821,7 +1086,7 @@ async def test_console_undo_redo_re_collapses_over_threshold_restored_segment():
         # literal payload -- painting the literal is exactly what froze
         # the UI thread.
         painted = visible_draft.render_line(0).text.rstrip()
-        assert f"Pasted Text: {len(big_text)} Characters" in painted
+        assert f"Pasted text | {len(big_text)} characters | Expand" in painted
         assert big_text not in painted
 
         # Sanity: canonical text still round-trips the FULL content --
@@ -833,7 +1098,7 @@ async def test_console_undo_redo_re_collapses_over_threshold_restored_segment():
         # must repaint collapsed too, not expanded.
         assert composer.redo() is True
         painted_after_redo = visible_draft.render_line(0).text.rstrip()
-        assert "Pasted Text:" in painted_after_redo
+        assert "Pasted text |" in painted_after_redo
         assert big_text not in painted_after_redo
         assert composer.draft_text() == big_text + "!"
 
@@ -863,7 +1128,7 @@ def test_composer_undo_redo_does_not_double_collapse_already_collapsed_snapshot(
     assert composer.draft_text() == big_text
     assert [segment.collapse_state for segment in composer._segments] == ["collapsed"]
     # The segment's real text is the raw payload, never the display string
-    # ("Pasted Text: N Characters") -- a token-of-a-token would fail this.
+    # ("Pasted text | N characters | Expand") -- a token-of-a-token would fail this.
     assert composer._segments[0].text == big_text
 
     assert composer.undo() is True
@@ -934,7 +1199,7 @@ async def test_console_undo_of_ordinary_typed_text_stays_literal_not_a_paste_tok
     """W-1 (HIGH): the NEW-2 re-collapse fix reused `paste_collapse_
     threshold` (shipped default 50 chars) as the undo-restore gate, so
     undo of ordinary TYPED draft text over 50 characters repainted as an
-    opaque "Pasted Text: N Characters" token -- `has_paste_segments()`
+    opaque "Pasted text | N characters | Expand" token -- `has_paste_segments()`
     became True for text that was never pasted, and one Backspace then
     deleted the WHOLE restored draft in a single step (a collapsed token
     deletes as one unit). This lands squarely on the AC's own flagship
@@ -967,7 +1232,7 @@ async def test_console_undo_of_ordinary_typed_text_stays_literal_not_a_paste_tok
         assert composer.has_paste_segments() is False
         painted = visible_draft.render_line(0).text.rstrip()
         assert message[:20] in painted
-        assert "Pasted Text:" not in painted
+        assert "Pasted text |" not in painted
 
         # One Backspace removes exactly one character -- not the token
         # that a collapsed segment would delete as an atomic unit.
@@ -1118,6 +1383,6 @@ async def test_console_undo_recollapses_regardless_of_collapse_large_pastes_sett
         assert composer.undo() is True
 
         painted = visible_draft.render_line(0).text.rstrip()
-        assert f"Pasted Text: {len(big_text)} Characters" in painted
+        assert f"Pasted text | {len(big_text)} characters | Expand" in painted
         assert big_text not in painted
         assert composer.draft_text() == big_text

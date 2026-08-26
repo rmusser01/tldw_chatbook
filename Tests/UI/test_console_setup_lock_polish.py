@@ -14,6 +14,10 @@ Pins the four lock-state fixes from the 2026-08 Console UX review:
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -36,7 +40,7 @@ def _widget_text(widget) -> str:
     return str(getattr(renderable, "plain", renderable))
 
 
-class EmptyTranscriptActionHarness(App):
+class EmptyTranscriptActionHarness(ConsolidatedCSSApp):
     """Bare transcript harness recording Workbench action requests."""
 
     def __init__(self):
@@ -51,7 +55,7 @@ class EmptyTranscriptActionHarness(App):
         self.workbench_actions.append(event.action_id)
 
 
-class SetupModalActionHarness(App):
+class SetupModalActionHarness(ConsolidatedCSSApp):
     """Bare setup-modal harness recording actions and notifications."""
 
     def __init__(self, state: ConsoleSetupCardState):
@@ -80,7 +84,7 @@ class SetupModalActionHarness(App):
         self.notifications.append((str(message), severity))
 
 
-class ConsoleHarness(App):
+class ConsoleHarness(ConsolidatedCSSApp):
     """Real ChatScreen harness (mirrors test_console_workbench_contract)."""
 
     def __init__(self, app_instance):

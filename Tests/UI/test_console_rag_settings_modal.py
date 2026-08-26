@@ -9,13 +9,17 @@ screen.
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_RAG_SOURCE_TYPES,
 )
+from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
     CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX,
@@ -26,12 +30,24 @@ from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
 )
 
 
+def _retrieval_for(screen) -> ConsoleRetrievalController:
+    """Bind the controller's pure settings edges to a lightweight screen."""
+    owner = object.__new__(ConsoleRetrievalController)
+    owner._library_rag_source_scope = lambda: normalize_console_rag_source_types(
+        getattr(screen, "_console_library_rag_source_types", None)
+    )
+    owner._set_library_rag_source_scope = screen._set_console_library_rag_source_scope
+    owner._set_library_rag_query = screen._set_console_library_rag_query
+    owner._run_library_rag_action = screen._run_console_library_rag_from_visible_action
+    return owner
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_run_returns_the_query_and_is_gated_on_non_blank_text():
     """Run is disabled while blank, enables on typing, and returns the query."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -71,7 +87,7 @@ async def test_run_returns_the_query_and_is_gated_on_non_blank_text():
 async def test_prefilled_query_is_runnable_and_enter_submits():
     """A prefilled modal is one keypress from retrieval (Enter submits)."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -101,7 +117,7 @@ async def test_prefilled_query_is_runnable_and_enter_submits():
 async def test_cancel_escape_and_backdrop_all_dismiss_without_changes():
     """Every no-action exit returns None; inside clicks keep it open."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -149,7 +165,7 @@ async def test_modal_shows_one_toggle_per_library_source_with_display_labels():
     vocabulary, with Library's display-cased labels -- the checked ones
     are exactly the current selection."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     app = RagHost()
@@ -189,7 +205,7 @@ async def test_every_source_toggle_fits_inside_the_modal_box():
     alone would have passed that.
     """
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     app = RagHost()
@@ -216,7 +232,7 @@ async def test_toggling_a_source_off_returns_the_reduced_source_types():
     ``source_types`` without media (the screen then sends exactly that to
     retrieval)."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -255,7 +271,7 @@ async def test_cancel_discards_toggle_changes():
     """(c) modal half: toggles changed then cancelled return nothing at
     all, so the screen's stored scope cannot move."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -285,10 +301,8 @@ async def test_cancel_discards_toggle_changes():
 def test_cancel_leaves_the_screens_stored_scope_untouched():
     """(c) screen half: the ``None`` callback writes neither the query nor
     the source scope."""
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     screen = Mock()
-    ChatScreen._apply_console_rag_settings_choice(screen, None)
+    _retrieval_for(screen)._apply_console_rag_settings_choice(None)
 
     screen._set_console_library_rag_query.assert_not_called()
     screen._set_console_library_rag_source_scope.assert_not_called()
@@ -301,7 +315,7 @@ async def test_run_is_gated_on_at_least_one_selected_source():
     the Run action is gated on a selection the same way it is gated on a
     non-blank query."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     app = RagHost()
@@ -334,7 +348,7 @@ async def test_modal_summary_line_and_readiness_card_share_one_builder():
     string for the same selection, and both track a toggle."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -350,7 +364,7 @@ async def test_modal_summary_line_and_readiness_card_share_one_builder():
         summary = modal.query_one("#console-rag-settings-scope", Static)
 
         assert _static_plain_text(summary) == (
-            ChatScreen._console_library_rag_scope_label(screen)
+            _retrieval_for(screen)._console_library_rag_scope_label()
         )
         assert _static_plain_text(summary) == (
             "Sources: Notes, Conversations (Media, Prompts off)"
@@ -360,7 +374,7 @@ async def test_modal_summary_line_and_readiness_card_share_one_builder():
         await pilot.pause()
         screen._console_library_rag_source_types = ("notes", "media", "conversations")
         assert _static_plain_text(summary) == (
-            ChatScreen._console_library_rag_scope_label(screen)
+            _retrieval_for(screen)._console_library_rag_scope_label()
         )
 
 
@@ -376,19 +390,19 @@ def test_readiness_card_label_uses_the_library_summary_grammar():
 
     screen._console_library_rag_source_types = ("notes", "conversations")
     assert (
-        ChatScreen._console_library_rag_scope_label(screen)
+        _retrieval_for(screen)._console_library_rag_scope_label()
         == "Sources: Notes, Conversations (Media, Prompts off)"
     )
 
     screen._console_library_rag_source_types = ("notes", "media", "conversations")
     assert (
-        ChatScreen._console_library_rag_scope_label(screen)
+        _retrieval_for(screen)._console_library_rag_scope_label()
         == "Sources: Notes, Media, Conversations (Prompts off)"
     )
 
     screen._console_library_rag_source_types = LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
     assert (
-        ChatScreen._console_library_rag_scope_label(screen)
+        _retrieval_for(screen)._console_library_rag_scope_label()
         == "Sources: all local sources"
     )
 
@@ -435,11 +449,8 @@ def test_stored_source_scope_is_what_retrieval_receives():
 def test_modal_choice_stores_the_source_scope_before_running():
     """The modal's Run stores the chosen sources through the one writer,
     then delegates the run -- so the retrieval that follows uses them."""
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     screen = Mock()
-    ChatScreen._apply_console_rag_settings_choice(
-        screen,
+    _retrieval_for(screen)._apply_console_rag_settings_choice(
         ConsoleRagSettingsResult(
             query="what changed",
             run=True,
@@ -466,10 +477,19 @@ def test_source_scope_survives_a_screen_state_round_trip():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
-    from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_fleet_controller,
+        stub_message_controller,
+    )
 
     def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
         screen = ChatScreen.__new__(ChatScreen)
+        screen._retrieval = Mock()
+        # Precedes the `_console_chat_store` assignment: that setter reaches
+        # `_console_runtime().set_chat_store`, which reads
+        # `self._fleet._console_wake_user_priority` (TASK-21381).
+        stub_fleet_controller(screen, context="rag settings bare screen")
         screen._console_chat_store = store
         screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
         screen._console_visible_draft_session_id = None
@@ -510,7 +530,7 @@ def test_source_scope_survives_a_screen_state_round_trip():
 
     assert restored._console_library_rag_source_types == ("notes", "prompts")
     assert (
-        ChatScreen._console_library_rag_scope_label(restored)
+        _retrieval_for(restored)._console_library_rag_scope_label()
         == "Sources: Notes, Prompts (Media, Conversations off)"
     )
 
@@ -568,30 +588,28 @@ def test_screen_callback_stores_sanitized_query_and_delegates_run():
     """The screen-side callback owns sanitization and the run delegation."""
     from textual.css.query import QueryError
 
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     screen = Mock()
     screen._console_library_rag_query = ""
     screen.query_one = Mock(side_effect=QueryError("not mounted"))
 
     # The bare state contract: sanitize, store through the one query
     # writer (`_set_console_library_rag_query`), delegate when run=True.
-    ChatScreen._apply_console_rag_settings_choice(
-        screen, ConsoleRagSettingsResult(query="  spaced   query  ", run=True)
+    _retrieval_for(screen)._apply_console_rag_settings_choice(
+        ConsoleRagSettingsResult(query="  spaced   query  ", run=True)
     )
     screen._set_console_library_rag_query.assert_called_once_with("spaced query")
     screen._run_console_library_rag_from_visible_action.assert_called_once()
 
     screen._set_console_library_rag_query.reset_mock()
     screen._run_console_library_rag_from_visible_action.reset_mock()
-    ChatScreen._apply_console_rag_settings_choice(
-        screen, ConsoleRagSettingsResult(query="no run", run=False)
+    _retrieval_for(screen)._apply_console_rag_settings_choice(
+        ConsoleRagSettingsResult(query="no run", run=False)
     )
     screen._set_console_library_rag_query.assert_called_once_with("no run")
     screen._run_console_library_rag_from_visible_action.assert_not_called()
 
     screen._set_console_library_rag_query.reset_mock()
-    ChatScreen._apply_console_rag_settings_choice(screen, None)
+    _retrieval_for(screen)._apply_console_rag_settings_choice(None)
     screen._set_console_library_rag_query.assert_not_called()
 
 
@@ -621,8 +639,8 @@ def test_visible_run_action_falls_back_to_the_composer_draft():
         "what changed in auth"
     )
     screen.app_instance.notify.assert_not_called()
-    screen._stage_console_library_rag_launch.assert_called_once()
-    launch = screen._stage_console_library_rag_launch.call_args.args[0]
+    screen._retrieval._stage_console_library_rag_launch.assert_called_once()
+    launch = screen._retrieval._stage_console_library_rag_launch.call_args.args[0]
     assert launch.payload["query"] == "what changed in auth"
     request = screen._execute_console_library_rag_search.call_args.args[0]
     assert request.query == "what changed in auth"
@@ -639,7 +657,7 @@ def test_visible_run_action_falls_back_to_the_composer_draft():
 
     empty.app_instance.notify.assert_not_called()
     empty._open_console_rag_settings.assert_called_once()
-    empty._stage_console_library_rag_launch.assert_not_called()
+    empty._retrieval._stage_console_library_rag_launch.assert_not_called()
 
 
 @pytest.mark.unit
@@ -734,7 +752,7 @@ def test_prefill_guards_reject_paths_urls_and_oversized_drafts_at_both_sites(
     ChatScreen._run_console_library_rag_from_visible_action(run_screen)
 
     run_screen._set_console_library_rag_query.assert_not_called()
-    run_screen._stage_console_library_rag_launch.assert_not_called()
+    run_screen._retrieval._stage_console_library_rag_launch.assert_not_called()
     run_screen.app_instance.notify.assert_not_called()
     run_screen._open_console_rag_settings.assert_called_once()
 

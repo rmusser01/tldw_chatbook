@@ -439,3 +439,29 @@ def test_a_run_with_a_hostile_stats_blob_still_normalizes():
     assert run["filtered_count"] == 0
     assert run["error_count"] == 0
     assert run["duration"] is None
+
+
+def test_normalize_coerces_is_flagged_to_a_real_bool():
+    """task-3072: the `queued_for_briefing` precedent, repeated.
+
+    `get_new_items` is `SELECT i.*`, so the column is already on the row --
+    but SQLite hands back 0/1 ints, and every downstream consumer (row
+    glyph, Star button state, toggle arithmetic) wants an actual flag.
+    """
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        normalize_watchlist_item,
+    )
+
+    flagged = normalize_watchlist_item(
+        "local", {"id": 11, "subscription_id": 3, "title": "Starred", "is_flagged": 1}
+    )
+    unflagged = normalize_watchlist_item(
+        "local", {"id": 12, "subscription_id": 3, "title": "Plain", "is_flagged": 0}
+    )
+    legacy_row = normalize_watchlist_item(
+        "local", {"id": 13, "subscription_id": 3, "title": "No column read"}
+    )
+
+    assert flagged["is_flagged"] is True
+    assert unflagged["is_flagged"] is False
+    assert legacy_row["is_flagged"] is False

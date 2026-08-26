@@ -1,47 +1,90 @@
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
 
 
-def test_world_book_entries_regex_migrate_v21_to_v22(tmp_path):
+def _seed_v21_database(db_path, monkeypatch) -> None:
+    with monkeypatch.context() as v21_patch:
+        v21_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 21)
+        db = CharactersRAGDB(str(db_path), client_id="v21-seed")
+        version = db.get_connection().execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        ).fetchone()
+        assert version["version"] == 21
+        db.get_connection().executescript(
+            """
+            DROP TRIGGER world_book_entries_sync_create;
+            DROP TRIGGER world_book_entries_sync_update;
+            ALTER TABLE world_book_entries DROP COLUMN regex;
+
+            CREATE TRIGGER world_book_entries_sync_create
+            AFTER INSERT ON world_book_entries BEGIN
+              INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+              VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
+                     (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
+                     json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
+                                 'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
+                                 'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                                 'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                                 'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                                 'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
+            END;
+
+            CREATE TRIGGER world_book_entries_sync_update
+            AFTER UPDATE ON world_book_entries
+            WHEN OLD.keys IS NOT NEW.keys OR
+                 OLD.content IS NOT NEW.content OR
+                 OLD.enabled IS NOT NEW.enabled OR
+                 OLD.position IS NOT NEW.position OR
+                 OLD.insertion_order IS NOT NEW.insertion_order OR
+                 OLD.priority IS NOT NEW.priority OR
+                 OLD.selective IS NOT NEW.selective OR
+                 OLD.secondary_keys IS NOT NEW.secondary_keys OR
+                 OLD.case_sensitive IS NOT NEW.case_sensitive OR
+                 OLD.extensions IS NOT NEW.extensions
+            BEGIN
+              INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+              VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified,
+                     (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
+                     json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
+                                 'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
+                                 'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                                 'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                                 'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                                 'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
+            END;
+            """
+        )
+        columns = {
+            row[1]
+            for row in db.get_connection()
+            .execute("PRAGMA table_info(world_book_entries)")
+            .fetchall()
+        }
+        assert "priority" in columns
+        assert "regex" not in columns
+        for trigger_name in (
+            "world_book_entries_sync_create",
+            "world_book_entries_sync_update",
+        ):
+            trigger_sql = db.get_connection().execute(
+                "SELECT sql FROM sqlite_master WHERE name = ?", (trigger_name,)
+            ).fetchone()["sql"]
+            assert "priority" in trigger_sql
+            assert "regex" not in trigger_sql
+        db.close_connection()
+
+
+def test_world_book_entries_regex_migrate_v21_to_v22(tmp_path, monkeypatch):
     db_path = tmp_path / "chacha.sqlite"
-    db = CharactersRAGDB(str(db_path), client_id="test-client")
-    conn = db.get_connection()
-    # Simulate a V21-shaped DB: drop the V22 additions.
-    conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_create")
-    conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_update")
-    conn.execute("ALTER TABLE world_book_entries DROP COLUMN regex")
-    # A V21 fixture also predates the V27->V28 character-authority column.
-    conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
-    # A V21 fixture also predates the V29->V30 local-only usage_json column.
-    conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
-    # ...and the V30->V31 local-only metadata_json column. Without this the
-    # "rewound" fixture still carried a v31 column, so the re-migration took
-    # `_migrate_from_v30_to_v31`'s already-present branch and this test
-    # silently stopped exercising the clean path (task-2364 Qodo round).
-    conn.execute("ALTER TABLE messages DROP COLUMN metadata_json")
-    # A v21 fixture must not retain citation tables introduced at v26→v27.
-    for table in (
-        "rag_artifact_owner_operations",
-        "rag_artifact_owner_leases",
-        "rag_source_observations",
-        "rag_message_trace_owners",
-        "rag_trace_evidence_refs",
-        "rag_answer_attempt_payloads",
-        "rag_evidence_runs",
-        "rag_citation_traces",
-        "rag_evidence_snapshots",
-        "rag_payload_tombstones",
-        "rag_legacy_migration_journal",
-        "rag_identity_context",
-    ):
-        conn.execute(f"DROP TABLE {table}")
-    conn.execute(
-        "UPDATE db_schema_version SET version = 21 WHERE schema_name = ?",
-        (db._SCHEMA_NAME,),
-    )
-    conn.commit()
-    db.close_connection()
+    _seed_v21_database(db_path, monkeypatch)
 
-    migrated = CharactersRAGDB(str(db_path), client_id="test-client")
+    # Reopen the genuine v21 schema with current support.
+    migrated = open_current_chachanotes_from_legacy(
+        db_path, client_id="test-client"
+    )
     mconn = migrated.get_connection()
     version = mconn.execute(
         "SELECT version FROM db_schema_version WHERE schema_name = ?",

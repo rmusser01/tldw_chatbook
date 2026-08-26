@@ -21,12 +21,12 @@ from tldw_chatbook.Constants import (
     TAB_LIBRARY,
     TAB_LLM,
     TAB_MCP,
-    TAB_MEDIA,
     TAB_PERSONAS,
     TAB_SETTINGS,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_INGEST_MEDIA,
 )
@@ -38,7 +38,6 @@ from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
-from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
@@ -56,7 +55,7 @@ ROUTE_SPECS = (
     ("chat", TAB_CHAT, ChatScreen),
     ("personas", TAB_PERSONAS, PersonasScreen),
     ("library", TAB_LIBRARY, LibraryScreen),
-    ("media", TAB_MEDIA, MediaScreen),
+    ("media", TAB_LIBRARY, LibraryScreen),
     ("search", TAB_LIBRARY, LibraryScreen),
     ("ingest", TAB_LIBRARY, LibraryScreen),
     ("mcp", TAB_MCP, MCPScreen),
@@ -66,7 +65,6 @@ ROUTE_SPECS = (
 CHAT_SESSION_TITLE = "TASK-906 Console owner"
 PERSONAS_QUERY = "TASK-906 personas owner"
 LIBRARY_QUERY = "TASK-906 library owner"
-MEDIA_QUERY = "TASK-906 media owner"
 SETTINGS_QUERY = "TASK-906 settings owner"
 SECRET_SNAPSHOT_KEYS = frozenset(
     {
@@ -215,16 +213,10 @@ async def _exercise_route(route: str, screen: object, pilot: Any) -> None:
         await pilot.pause()
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
     elif route == "media":
-        assert type(screen) is MediaScreen
-        await _wait_until(
-            pilot,
-            lambda: screen.media_window is not None,
-            "production Media owner did not mount",
-        )
-        screen.media_window.active_media_type = "all-media"
-        screen.media_window.runtime_state.active_media_type = "all-media"
-        screen.media_window.search_panel.search_term = MEDIA_QUERY
-        assert screen.media_window.search_panel.search_term == MEDIA_QUERY
+        # TASK-2851 retired the standalone MediaScreen route. The legacy
+        # route now deep-links to Library's canonical Media canvas.
+        assert type(screen) is LibraryScreen
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
     elif route == "search":
         # The standalone Search screen is retired (RAG UX v2 PR-1, Task 1):
         # "search" now aliases to Library's Search/RAG canvas, same as
@@ -281,16 +273,8 @@ async def _assert_restored_route(route: str, screen: object, pilot: Any) -> None
             LIBRARY_ROW_INGEST_MEDIA,
         }
     elif route == "media":
-        assert type(screen) is MediaScreen
-        await _wait_until(
-            pilot,
-            lambda: (
-                screen.media_window is not None
-                and screen.media_window.active_media_type == "all-media"
-                and screen.media_window.search_panel.search_term == MEDIA_QUERY
-            ),
-            "fresh Media owner did not restore its snapshot",
-        )
+        assert type(screen) is LibraryScreen
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
     elif route == "search":
         # The legacy nav context re-applies on every bare "search" visit
         # (see the matching branch in ``_exercise_route``), so the rail row
@@ -460,7 +444,7 @@ async def test_registered_routes_use_fresh_production_owners_and_safe_snapshots(
     """Exercise every changed route twice through the normal production app."""
     for route, canonical_tab, screen_type in ROUTE_SPECS:
         assert resolve_screen_target(route) == (
-            "library" if route in {"ingest", "search"} else route,
+            "library" if route in {"ingest", "media", "search"} else route,
             canonical_tab,
             screen_type,
         )

@@ -10,6 +10,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 
 @dataclass(frozen=True)
 class ConsoleEditResult:
@@ -41,7 +43,9 @@ class _EditMessageTextArea(TextArea):
         await super()._on_key(event)
 
 
-class ConsoleEditMessageModal(ModalScreen[ConsoleEditResult | None]):
+class ConsoleEditMessageModal(
+    SafeModalDismissMixin, ModalScreen[ConsoleEditResult | None]
+):
     """Edit an existing Console transcript message without using the composer."""
 
     DEFAULT_CSS = """
@@ -64,7 +68,8 @@ class ConsoleEditMessageModal(ModalScreen[ConsoleEditResult | None]):
 
     #console-edit-message-body {
         width: 100%;
-        height: 16;
+        height: 1fr;
+        min-height: 8;
     }
 
     #console-edit-message-error {
@@ -95,7 +100,8 @@ class ConsoleEditMessageModal(ModalScreen[ConsoleEditResult | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-edit-message-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     def __init__(self, *, content: str, can_resend: bool = False) -> None:
         super().__init__()
@@ -135,7 +141,9 @@ class ConsoleEditMessageModal(ModalScreen[ConsoleEditResult | None]):
                         variant="primary",
                     )
 
-    def on_mount(self, event: events.Mount) -> None:
+    # Textual supplies the event while composing MRO message handlers, so this
+    # event-shaped handler is not an OO override of the mixin hook.
+    def on_mount(self, event: events.Mount) -> None:  # type: ignore[override]
         # Event time shares the clock domain of Key.time — the stale-key
         # guard compares against it (TASK-360).
         self._opened_at = event.time
@@ -143,13 +151,10 @@ class ConsoleEditMessageModal(ModalScreen[ConsoleEditResult | None]):
         area.opened_at = event.time
         area.focus()
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
     @on(Button.Pressed, "#console-edit-message-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, "#console-edit-message-save")
     def _save(self, event: Button.Pressed) -> None:

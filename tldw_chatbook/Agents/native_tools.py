@@ -32,6 +32,11 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         "mistral",
         "deepseek",
         "moonshot",
+        "zai",
+        # TASK-3771: both QwenCloud wire modes normalize function calls to
+        # OpenAI shape and translate canonical assistant/tool continuation.
+        # Joined Console tests exercise the real dispatcher and HTTP boundary.
+        "qwencloud",
         "custom-openai-api",
         "custom-openai-api-2",
         # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
@@ -164,5 +169,12 @@ def parse_native_tool_calls(message: dict | None) -> tuple[ToolCall, ...]:
                 parsed = None
             if isinstance(parsed, dict):
                 args = parsed
-        calls.append(ToolCall(name=name, args=args, call_id=str(raw.get("id") or "")))
+        calls.append(
+            ToolCall(
+                name=name,
+                args=args,
+                call_id=str(raw.get("id") or ""),
+                raw_arguments=raw_args if isinstance(raw_args, str) else "",
+            )
+        )
     return tuple(calls)

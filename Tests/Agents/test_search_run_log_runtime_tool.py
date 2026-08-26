@@ -7,12 +7,11 @@ import re
 import pytest
 
 from tldw_chatbook.Agents.agent_models import (
-    AGENT_KIND_PRIMARY,
-    AGENT_KIND_SUBAGENT,
     RUN_DONE,
     RUNTIME_TOOL_NAMES,
     SEARCH_RUN_LOG_TOOL_NAME,
     SPAWN_TOOL_NAME,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     ModelTurn,
     RunBudget,
@@ -29,6 +28,8 @@ from tldw_chatbook.Agents.tool_catalog import (
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.test_agent_runtime import make_deps
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
 def test_name_is_registered_as_a_runtime_tool():
@@ -148,18 +149,24 @@ def test_subagent_cannot_call_search_run_log(tmp_path, monkeypatch):
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
-    calls = []
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
-        _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"contains": "x"}),  # child tries
-        {"choices": [{"message": {"content": "child gave up"}}]},
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-
-    def chat(**kwargs):
-        calls.append(kwargs)
-        return script.pop(0)
-
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread and its provider call may interleave with the parent's.
+    # An ADDRESSED script (one queue per agent) replaces the single ordered
+    # queue this test used to pop; every reply below still goes to exactly
+    # the agent it was written for.
+    chat = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {
+            "native task": [
+                _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"contains": "x"}),  # child tries
+                {"choices": [{"message": {"content": "child gave up"}}]},
+            ]
+        },
+        reply=verbatim,
+    )
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(
         conversation_id="c1",
@@ -172,13 +179,17 @@ def test_subagent_cannot_call_search_run_log(tmp_path, monkeypatch):
         ),
         api_endpoint="llama_cpp",  # non-native: fence protocol, schemas render into the system prompt
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
-    # (a) schema gate: the child's OWN call (calls[1] -- the parent's spawn
-    # dispatch runs the child's whole loop inline before dispatch returns,
-    # so this is the second chat_call invocation overall) must never have
-    # been offered search_run_log at all.
-    child_system_prompt = calls[1]["messages_payload"][0]["content"]
+    # (a) schema gate: the child's OWN first call must never have been
+    # offered search_run_log at all. Addressed by task text rather than by
+    # `calls[1]`: under the fleet the child's call is no longer guaranteed
+    # to be the second chat_call overall, but it is still THE call this
+    # assertion always meant.
+    child_system_prompt = chat.child_calls["native task"][0]["messages_payload"][0][
+        "content"
+    ]
     assert SEARCH_RUN_LOG_TOOL_NAME not in child_system_prompt
 
     # (b) dispatch gate: the child's call, made regardless of (a), must be
@@ -215,7 +226,7 @@ class _AllowGate:
     allows.
     """
 
-    def check(self, tool):
+    def check(self, tool, run_id):
         return None
 
 
@@ -263,6 +274,14 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     marker = "END_MARKER_7f3a9c"
     big_content = "A" * 10_000 + marker + "C" * 40_000
     (sandbox / "big.txt").write_text(big_content, encoding="utf-8")
+
+    async def safe_read_file(_self, **_kwargs):
+        # This test exercises lossless recovery for safe content. Real
+        # read_file results include an absolute path and are intentionally
+        # omitted from the durable run log at the privacy boundary.
+        return {"content": big_content, "size_bytes": len(big_content)}
+
+    monkeypatch.setattr(file_tools.ReadFileTool, "execute", safe_read_file)
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
@@ -322,6 +341,65 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     )
 
 
+def test_sensitive_large_result_has_no_recoverable_run_log_handle(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Agents import run_log as run_log_module
+    from tldw_chatbook.Agents.run_log_format import iter_records
+    import tldw_chatbook.Tools.file_operation_tools as file_tools
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(file_tools, "_resolve_sandbox_config", lambda: str(sandbox))
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    (sandbox / "private.txt").write_text("S" * 30_000, encoding="utf-8")
+    calls = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _svc_fence("read_file", {"file_path": "private.txt"})
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider(gate=_AllowGate()))
+    service = AgentService(db, registry, chat_call=chat)
+    _run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "read it"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("read_file",),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    truncated = calls[1]["messages_payload"][-1]["content"]
+    assert "Re-issue the call with a narrower query" in truncated
+    assert "full result is recorded" not in truncated
+    assert "search_run_log(from_record=" not in truncated
+
+    run_dir = next(path for path in (tmp_path / ".agent-runs").iterdir() if path.is_dir())
+    records = [
+        record
+        for segment in sorted(run_dir.glob("logs.*.txt"))
+        for record in iter_records(segment.read_bytes())
+    ]
+    result_record = next(record for record in records if record.type == "tool_result")
+    assert result_record.content == "[local path withheld]"
+
+
 def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkeypatch):
     """IMPORTANT 5's regression test: `kind` is implemented in
     `search_records` and justified by spec §4.1 ("a parent can search its
@@ -340,15 +418,22 @@ def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkey
     reg.register_provider(BuiltinToolProvider())
 
     child_marker = "CHILD_ONLY_MARKER_4b8e"
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "investigate"}),  # parent spawns
-        {"choices": [{"message": {"content": child_marker}}]},  # child's final answer
-        _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"kind": "subagent"}),  # parent searches
-        {"choices": [{"message": {"content": "done"}}]},  # parent's final answer
-    ]
-
-    def chat(**kwargs):
-        return script.pop(0)
+    # PR2a Task 6.5: with the fleet ON the child runs on its own thread, so
+    # (a) the script is ADDRESSED per agent instead of one ordered queue,
+    # and (b) the parent must `wait_agents` before searching -- previously
+    # the inline spawn guaranteed the child's records were already in the
+    # log by the time spawn returned. The step budget is raised to fit that
+    # extra round; nothing here ever asserted on the budget.
+    chat = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "investigate"}),  # parent spawns
+            _svc_fence(WAIT_AGENTS_TOOL_NAME, {}),  # ... and collects
+            _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"kind": "subagent"}),  # then searches
+            {"choices": [{"message": {"content": "done"}}]},  # parent's final answer
+        ],
+        {"investigate": [{"choices": [{"message": {"content": child_marker}}]}]},
+        reply=verbatim,
+    )
 
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(
@@ -358,7 +443,7 @@ def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkey
             model="m",
             system_prompt="s",
             allowed_tools=("calculator", SPAWN_TOOL_NAME),
-            budget=RunBudget(),
+            budget=RunBudget(max_steps=16),
         ),
         api_endpoint="llama_cpp",
     )

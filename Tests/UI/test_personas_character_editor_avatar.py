@@ -12,6 +12,10 @@ import pytest
 from PIL import Image
 from rich_pixels import Pixels
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
@@ -42,7 +46,7 @@ from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character
 # ===================================================================
 
 
-class _Host(App):
+class _Host(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.removed = 0
@@ -456,3 +460,133 @@ class TestCharacterEditorAvatarThumbnailFit:
             editor = screen.query_one(PersonasCharacterEditorWidget)
             assert editor.current_avatar_bytes() is not None
             assert len(editor.query("#personas-char-editor-avatar-thumb > *")) == 1
+
+
+
+# ===================================================================
+# task-3793: no-fold thumbnail pins.
+#
+# The thumb containers used to reserve max-width 24 PLUS padding 0 1, so the
+# 24-column mosaic baked by PersonasScreen._build_avatar_pixels folded at 22
+# content columns: every folded line painted a black continuation row (the
+# "striped portrait" the owner reported) and the folded stack clipped at
+# max-height 10. The boxes are now padding-free and set_avatar_thumbnail /
+# set_expression_thumbnail size the Static explicitly from the renderable
+# grid, so a mismatch degrades to a crop, never a fold.
+# ===================================================================
+
+
+def _cover_mosaic():
+    from tldw_chatbook.Utils.mosaic_render import mosaic_from_image
+
+    return mosaic_from_image(
+        Image.new("RGB", (820, 1230), (64, 200, 180)),
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+        fit="cover",
+    )
+
+
+@pytest.mark.asyncio
+async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
+    """task-3793 regression: the editor avatar thumb must not fold into stripes.
+
+    Asserts the mounted Static's painted height equals the mosaic row count
+    (no continuation rows), its width fits the container's content box, and
+    the container carries no padding that would shrink the content box below
+    the mosaic build width (the fold-into-stripes root cause).
+    """
+    from textual.containers import Container
+    from textual.widgets import Static
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A", "image": b"x"})
+        await pilot.pause()
+        mosaic = _cover_mosaic()
+        ed.set_avatar_thumbnail(mosaic)
+        await pilot.pause()
+        thumb_box = ed.query_one("#personas-char-editor-avatar-thumb", Container)
+        static = thumb_box.query_one(Static)
+        # Before task-3793 the painted height was ~2x the mosaic rows (fold).
+        assert static.region.height == len(mosaic.plain.split("\n"))
+        assert static.region.width <= thumb_box.content_size.width
+        padding = thumb_box.styles.padding
+        assert (padding.top, padding.right, padding.bottom, padding.left) == (
+            0,
+            0,
+            0,
+            0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_expression_thumbnail_static_matches_mosaic_grid_no_fold():
+    """task-3793 regression: expression-slot thumbs must not fold into stripes.
+
+    Same contract as the avatar thumb, scoped to one expression state: the
+    mounted Static's painted height equals the mosaic row count, its width
+    fits the container's content box, and the container has zero padding.
+    """
+    from textual.containers import Container
+    from textual.widgets import Static
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A", "image": b"x"})
+        await pilot.pause()
+        mosaic = _cover_mosaic()
+        ed.set_expression_thumbnail("thinking", mosaic)
+        await pilot.pause()
+        thumb_box = ed.query_one(
+            "#personas-char-editor-expr-thinking-thumb", Container
+        )
+        static = thumb_box.query_one(Static)
+        assert static.region.height == len(mosaic.plain.split("\n"))
+        assert static.region.width <= thumb_box.content_size.width
+        padding = thumb_box.styles.padding
+        assert (padding.top, padding.right, padding.bottom, padding.left) == (
+            0,
+            0,
+            0,
+            0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_thumbnails_fall_back_to_box_dims_for_non_text_renderable():
+    """Non-Text renderables get the thumb box dims, not a default-width Static.
+
+    Pins the documented ``explicit_cell_size`` contract (PR #1434 review) for
+    both ``set_avatar_thumbnail`` and ``set_expression_thumbnail``: when the
+    renderable's grid cannot be read (e.g. a ``rich_pixels`` renderable), the
+    helpers fall back to the container box (AVATAR_THUMB_COLS x
+    AVATAR_THUMB_LINES), matching the console builder.
+    """
+    from rich.panel import Panel
+    from textual.containers import Container
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+    )
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A", "image": b"x"})
+        await pilot.pause()
+        ed.set_avatar_thumbnail(Panel("portrait"))
+        ed.set_expression_thumbnail("thinking", Panel("thinking"))
+        await pilot.pause()
+        avatar_box = ed.query_one("#personas-char-editor-avatar-thumb", Container)
+        expr_box = ed.query_one(
+            "#personas-char-editor-expr-thinking-thumb", Container
+        )
+        for box in (avatar_box, expr_box):
+            static = box.query_one(Static)
+            assert static.styles.width.value == AVATAR_THUMB_COLS
+            assert static.styles.height.value == AVATAR_THUMB_LINES

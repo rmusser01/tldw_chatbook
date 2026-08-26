@@ -112,6 +112,10 @@ class LibraryMediaViewerState:
     read_later: bool
     media_type: str
     is_markdown: bool
+    backend: str
+    canonical_id: str
+    original_source: str
+    stored_representation: str
 
 
 def _text(value: Any) -> str:
@@ -218,6 +222,10 @@ def _empty_state() -> LibraryMediaViewerState:
         read_later=False,
         media_type="",
         is_markdown=False,
+        backend="local",
+        canonical_id="",
+        original_source="",
+        stored_representation="No stored content",
     )
 
 
@@ -254,6 +262,8 @@ def build_library_media_viewer_state(
     *,
     now: datetime | None = None,
     arrival_note: str = "",
+    backend: str = "local",
+    canonical_id: str = "",
 ) -> LibraryMediaViewerState:
     """Build the Library media viewer canvas display state.
 
@@ -266,6 +276,9 @@ def build_library_media_viewer_state(
         arrival_note: One-shot context line rendered FIRST in the metadata
             lines (task-2223: e.g. reaching this item via a dedup-matched
             ingest row); empty renders nothing extra.
+        backend: Provenance backend displayed by Reader Info.
+        canonical_id: Stable backend-qualified id. When omitted, it is
+            derived from ``backend`` and the detail's media id.
 
     Returns:
         Immutable viewer state: title, ordered metadata lines, content,
@@ -289,13 +302,22 @@ def build_library_media_viewer_state(
         else ""
     )
 
+    content = _text(detail.get("content"))
+    is_markdown = _is_markdown_media(media_type, content)
+
     lines: list[str] = []
     # (task-2223) One-shot arrival context, e.g. reaching this item via a
     # dedup-matched ingest row -- rendered first so the "why am I here"
     # is answered before the metadata.
     if arrival_note:
         lines.append(arrival_note)
-    lines.append(f"Type: {media_type}")
+    # task-4023 AC#7: an item the viewer renders as Markdown must not
+    # introduce itself as "Type: plaintext" -- say what the user is
+    # looking at, while still naming the stored type honestly.
+    if is_markdown and media_type == "plaintext":
+        lines.append("Type: markdown (stored as plaintext)")
+    else:
+        lines.append(f"Type: {media_type}")
     if author:
         lines.append(f"Author: {author}")
     if url and not url.startswith("local://"):
@@ -309,7 +331,6 @@ def build_library_media_viewer_state(
     if updated_age:
         lines.append(f"Updated: {updated_age}")
 
-    content = _text(detail.get("content"))
     analysis = _text(detail.get("analysis_content")) or _latest_version_analysis_text(
         detail
     )
@@ -332,7 +353,14 @@ def build_library_media_viewer_state(
         },
         read_later=read_later,
         media_type=media_type,
-        is_markdown=_is_markdown_media(media_type, content),
+        is_markdown=is_markdown,
+        backend=backend,
+        canonical_id=canonical_id
+        or (
+            f"{backend}:media:{media_id.removeprefix('media-')}" if media_id else ""
+        ),
+        original_source=url,
+        stored_representation=("Complete stored text" if content else "No stored content"),
     )
 
 

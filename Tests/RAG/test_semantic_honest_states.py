@@ -186,6 +186,95 @@ class TestResolveSemanticRagService:
         assert resolved is None
         assert reason == SEMANTIC_REASON_INIT_FAILED
 
+    def test_cached_service_is_re_resolved_after_a_profile_switch(self, monkeypatch):
+        """(RAG-port P0 review, I1) This resolver WRITES `app._rag_service`,
+        and a profile switch (`set_active_profile` -> `reset_shared_rag_
+        service`) only clears the module singleton. Whatever it cached must
+        therefore be re-resolved once the shared-service generation moves,
+        or every surface reading this cache keeps serving the old profile
+        for the rest of the session."""
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        old_service = StrictRagService()
+        new_service = StrictRagService()
+        app = SimpleNamespace()
+        _deps(monkeypatch, True)
+        ingestion_indexing.reset_shared_rag_service()
+        try:
+            _factory(monkeypatch, lambda profile_name=None: old_service)
+            resolved, _ = asyncio.run(resolve_semantic_rag_service(app))
+            assert resolved is old_service
+            assert app._rag_service is old_service
+
+            # Profile switch: singleton dropped, generation bumped.
+            ingestion_indexing.reset_shared_rag_service()
+            _factory(monkeypatch, lambda profile_name=None: new_service)
+
+            resolved, reason = asyncio.run(resolve_semantic_rag_service(app))
+            assert reason is None
+            assert resolved is new_service
+            assert app._rag_service is new_service
+        finally:
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_injected_service_without_a_stamp_wins_even_after_a_reset(
+        self, monkeypatch
+    ):
+        """The injection contract is unchanged: a service placed directly on
+        the app was never resolved through the shared seam, so a generation
+        bump says nothing about it and must not evict it."""
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        service = StrictRagService()
+        app = SimpleNamespace(_rag_service=service)
+        monkeypatch.setattr(
+            sa,
+            "embeddings_rag_deps_installed",
+            lambda: (_ for _ in ()).throw(AssertionError("deps probe must not run")),
+        )
+        _forbidden_factory(monkeypatch)
+        ingestion_indexing.set_shared_rag_service(None)
+
+        resolved, reason = asyncio.run(resolve_semantic_rag_service(app))
+        assert resolved is service
+        assert reason is None
+
+    def test_cache_publishes_one_atomic_service_generation_tuple(self):
+        """(Qodo PR #1428 finding 2) `cache_app_rag_service` used to publish
+        `app._rag_service` and the generation attr as two separate writes,
+        leaving a window where a concurrent reader saw the service with no
+        generation stamp yet and hit the unstamped-injection carve-out,
+        skipping staleness validation for a service that WAS resolved
+        through the shared seam. The fix publishes `(service, generation)`
+        as one attribute; pin that it exists and holds the exact pair."""
+        service = StrictRagService()
+        app = SimpleNamespace()
+
+        sa.cache_app_rag_service(app, service, generation=7)
+
+        stamp = getattr(app, sa.APP_RAG_SERVICE_STAMP_ATTR)
+        assert stamp == (service, 7)
+
+    def test_atomic_stamp_is_the_single_source_when_present(self):
+        """Prove the atomic stamp -- not the legacy raw `_rag_service`
+        attribute -- governs `current_app_rag_service` once it is present,
+        by making the two disagree (simulating exactly the torn-write
+        window the finding describes) and confirming the stamp wins."""
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        stamped_service = StrictRagService()
+        other_service = StrictRagService()
+        app = SimpleNamespace()
+        generation = ingestion_indexing.shared_rag_service_generation()
+
+        sa.cache_app_rag_service(app, stamped_service, generation)
+        # Simulate a stale/disagreeing raw attribute -- the atomic stamp
+        # must still be what `current_app_rag_service` trusts.
+        app._rag_service = other_service
+
+        resolved = sa.current_app_rag_service(app)
+        assert resolved is stamped_service
+
 
 class TestSemanticIndexIsEmpty:
     """Trustworthy-count probe: only an error-free integer 0 counts as empty."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from textual.message import Message
@@ -24,6 +25,7 @@ PersonaEntityKind = Literal[
 ]
 PersonaAction = Literal[
     "create",
+    "create_actor_pack",
     "import",
     "export",
     "duplicate",
@@ -34,6 +36,122 @@ PersonaAction = Literal[
     "cancel",
     "refresh",
 ]
+PersonaBuddyAction = Literal["use", "show", "close", "disable"]
+PersonaBuddySource = Literal["local", "server"]
+ActorPackExportActorKind = Literal["character", "persona"]
+
+
+class ActorPackImportRequested(Message):
+    """Request the dedicated Actor Pack picker without carrying path/content."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PersonaBuddyActionPayload:
+    action: PersonaBuddyAction
+    source: PersonaBuddySource
+    persona_id: str
+    revision: int
+
+
+class PersonaBuddyActionRequested(Message):
+    """Request one explicit Buddy ownership or visibility change."""
+
+    __slots__ = ("_payload",)
+
+    def __init__(
+        self,
+        *,
+        action: PersonaBuddyAction,
+        source: PersonaBuddySource,
+        persona_id: str,
+        revision: int,
+    ) -> None:
+        super().__init__()
+        if (
+            action not in {"use", "show", "close", "disable"}
+            or source not in {"local", "server"}
+            or not persona_id
+            or type(revision) is not int
+            or revision < 1
+        ):
+            raise ValueError("invalid Persona Buddy action")
+        self._payload = _PersonaBuddyActionPayload(
+            action=action,
+            source=source,
+            persona_id=persona_id,
+            revision=revision,
+        )
+
+    @property
+    def action(self) -> PersonaBuddyAction:
+        return self._payload.action
+
+    @property
+    def source(self) -> PersonaBuddySource:
+        return self._payload.source
+
+    @property
+    def persona_id(self) -> str:
+        return self._payload.persona_id
+
+    @property
+    def revision(self) -> int:
+        return self._payload.revision
+
+
+@dataclass(frozen=True, slots=True)
+class _ActorPackExportPayload:
+    actor_kind: ActorPackExportActorKind
+    source: PersonaBuddySource
+    local_actor_id: str
+    actor_revision: int
+
+
+class ActorPackExportRequested(Message):
+    """Request export of one exact selected local actor revision."""
+
+    __slots__ = ("_payload",)
+
+    def __init__(
+        self,
+        *,
+        actor_kind: ActorPackExportActorKind,
+        source: PersonaBuddySource,
+        local_actor_id: str,
+        actor_revision: int,
+    ) -> None:
+        super().__init__()
+        if (
+            actor_kind not in {"character", "persona"}
+            or source not in {"local", "server"}
+            or type(local_actor_id) is not str
+            or not local_actor_id
+            or type(actor_revision) is not int
+            or actor_revision < 1
+        ):
+            raise ValueError("invalid Actor Pack export request")
+        self._payload = _ActorPackExportPayload(
+            actor_kind=actor_kind,
+            source=source,
+            local_actor_id=local_actor_id,
+            actor_revision=actor_revision,
+        )
+
+    @property
+    def actor_kind(self) -> ActorPackExportActorKind:
+        return self._payload.actor_kind
+
+    @property
+    def source(self) -> PersonaBuddySource:
+        return self._payload.source
+
+    @property
+    def local_actor_id(self) -> str:
+        return self._payload.local_actor_id
+
+    @property
+    def actor_revision(self) -> int:
+        return self._payload.actor_revision
 
 
 class PersonaModeChanged(Message):
@@ -116,8 +234,13 @@ class PersonaMarksChanged(Message):
 
 
 __all__ = [
+    "ActorPackExportActorKind",
+    "ActorPackExportRequested",
     "PersonaAction",
     "PersonaActionRequested",
+    "PersonaBuddyAction",
+    "PersonaBuddyActionRequested",
+    "PersonaBuddySource",
     "PersonaEntityKind",
     "PersonaEntitySelected",
     "PersonaMarksChanged",

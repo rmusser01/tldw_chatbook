@@ -1,11 +1,18 @@
 import inspect
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from unittest.mock import Mock
 
 import pytest
 
 import tldw_chatbook.Prompt_Management.prompt_scope_service as prompt_scope_module
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Prompt_Management.prompt_batch_models import (
+    PromptBatchDeleteResult,
+    PromptBatchRestoreResult,
+    PromptBatchTarget,
+    PromptDeleteReceiptEntry,
+    PromptRestoreResultEntry,
+)
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService,
     PromptBackend,
@@ -13,11 +20,19 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     ServerPromptService,
     build_prompt_scope_service,
 )
-from tldw_chatbook.Prompt_Management.prompt_normalizers import normalize_prompt_record
+from tldw_chatbook.Prompt_Management.prompt_normalizers import (
+    normalize_prompt_list,
+    normalize_prompt_record,
+)
+from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
+    PromptRestoreError,
+    PromptRestoreErrorCode,
+)
 from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
     CANONICAL_JSON_UTF8_V1,
     PromptCapabilityError,
     canonical_json_utf8_size,
+    local_prompt_capabilities,
 )
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     PaginatedPromptsResponse,
@@ -175,16 +190,80 @@ class FakeLocalPromptService:
         self.calls.append(("update_prompt", prompt_identifier, payload))
         return {**self.prompt, **payload}
 
-    def delete_prompt(self, prompt_identifier):
-        self.calls.append(("delete_prompt", prompt_identifier))
+    def delete_prompt(self, prompt_identifier, *, expected_version=None):
+        self.calls.append(("delete_prompt", prompt_identifier, expected_version))
         return True
+
+    def restore_deleted_prompt(self, prompt_identifier, *, expected_version):
+        self.calls.append(
+            ("restore_deleted_prompt", prompt_identifier, expected_version)
+        )
+        return {
+            **self.prompt,
+            "version": expected_version + 1,
+            "deleted": 0,
+        }
+
+    def count_prompt_versions(self, prompt_identifier):
+        self.calls.append(("count_prompt_versions", prompt_identifier))
+        return 6
+
+    def list_prompt_versions(
+        self, prompt_identifier, *, page_size=25, before_change_id=None
+    ):
+        self.calls.append(
+            ("list_prompt_versions", prompt_identifier, page_size, before_change_id)
+        )
+        return {
+            "items": [
+                {
+                    "change_id": 42,
+                    "entity": "Prompts",
+                    "entity_uuid": "local-uuid-7",
+                    "operation": "update",
+                    "timestamp": "2026-08-08T00:00:00.000Z",
+                    "version": 3,
+                    "payload": {
+                        "name": "Local Prompt",
+                        "system_prompt": "Local system",
+                        "user_prompt": "Local user",
+                    },
+                }
+            ],
+            "predecessor": None,
+            "total_count": 1,
+            "has_more": False,
+            "next_before_change_id": None,
+        }
+
+    def restore_prompt_version(
+        self, prompt_identifier, *, change_id, version, expected_version
+    ):
+        self.calls.append(
+            (
+                "restore_prompt_version",
+                prompt_identifier,
+                change_id,
+                version,
+                expected_version,
+            )
+        )
+        return {
+            "outcome": "restored",
+            "snapshot_unavailable": False,
+            "no_change": False,
+            "source_version": version,
+            "current_version": expected_version,
+            "new_version": expected_version + 1,
+            "retained_current_keywords": False,
+        }
 
     def create_prompt_collection(self, payload):
         self.calls.append(("create_prompt_collection", payload))
         return {"collection_id": 3}
 
-    def list_prompt_collections(self, *, limit=200, offset=0):
-        self.calls.append(("list_prompt_collections", limit, offset))
+    def list_prompt_collections(self, *, query="", limit=200, offset=0):
+        self.calls.append(("list_prompt_collections", query, limit, offset))
         return {
             "collections": [
                 {
@@ -215,6 +294,26 @@ class FakeLocalPromptService:
             "name": payload.get("name") or "Local Collection",
             "description": payload.get("description"),
             "prompt_ids": payload.get("prompt_ids") or [],
+        }
+
+    def list_prompt_collection_memberships(self, prompt_id):
+        self.calls.append(("list_prompt_collection_memberships", prompt_id))
+        return {
+            "prompt_id": prompt_id,
+            "collection_ids": (3, 8),
+            "changed": False,
+            "saved": True,
+        }
+
+    def replace_prompt_collection_memberships(self, prompt_id, collection_ids):
+        self.calls.append(
+            ("replace_prompt_collection_memberships", prompt_id, collection_ids)
+        )
+        return {
+            "prompt_id": prompt_id,
+            "collection_ids": tuple(sorted(collection_ids)),
+            "changed": True,
+            "saved": True,
         }
 
 
@@ -351,6 +450,232 @@ class FakeServerPromptService:
         )
 
 
+class RecordingPromptBrowseDatabase:
+    """Signature-real adapter target for the Task 3 database seam."""
+
+    def __init__(self):
+        self.calls = []
+
+    def browse_prompts(
+        self,
+        *,
+        query="",
+        collection_id=None,
+        sort_by="last_modified",
+        sort_order="desc",
+        page=1,
+        page_size=50,
+    ):
+        self.calls.append(
+            {
+                "query": query,
+                "collection_id": collection_id,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+                "page": page,
+                "page_size": page_size,
+            }
+        )
+        return (
+            [
+                {
+                    "id": 7,
+                    "uuid": "local-uuid-7",
+                    "name": "Local Prompt",
+                    "artifact_type": "prompt",
+                }
+            ],
+            3,
+            3,
+            201,
+        )
+
+
+def test_browse_prompt_local_adapter_exposes_narrow_keyword_only_signature():
+    parameters = inspect.signature(LocalPromptService.browse_prompts).parameters
+
+    assert tuple(parameters) == (
+        "self",
+        "query",
+        "collection_id",
+        "sort_by",
+        "sort_order",
+        "page",
+        "page_size",
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for name, parameter in parameters.items()
+        if name != "self"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["local", PromptBackend.LOCAL])
+async def test_browse_prompt_routes_normalized_local_scope_through_real_adapter(mode):
+    database = RecordingPromptBrowseDatabase()
+    policy = FakePolicyEnforcer()
+    server = FakeServerPromptService()
+    service = PromptScopeService(
+        local_service=LocalPromptService(database),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    result = await service.browse_prompts(
+        mode=mode,
+        query="  alpha beta \n",
+        collection_id=8,
+        sort_by=" NAME ",
+        sort_order=" ASC ",
+        page=4,
+        page_size=999,
+    )
+
+    assert database.calls == [
+        {
+            "query": "alpha beta",
+            "collection_id": 8,
+            "sort_by": "name",
+            "sort_order": "asc",
+            "page": 4,
+            "page_size": 100,
+        }
+    ]
+    assert result["items"][0]["id"] == "local:prompt:local-uuid-7"
+    assert result["total_items"] == 201
+    assert result["total_pages"] == 3
+    assert result["current_page"] == 3
+    assert result["page"] == 3
+    assert result["per_page"] == 100
+    assert policy.actions == ["prompts.list.local"]
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_browse_prompt_omitted_page_size_keeps_generic_fifty_row_default():
+    database = RecordingPromptBrowseDatabase()
+    service = PromptScopeService(
+        local_service=LocalPromptService(database),
+        server_service=FakeServerPromptService(),
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    result = await service.browse_prompts()
+
+    assert database.calls[0]["page_size"] == 50
+    assert result["per_page"] == 50
+
+
+def test_normalize_prompt_list_preserves_divergent_page_aliases():
+    normalized = normalize_prompt_list(
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 2,
+            "page": 1,
+            "per_page": 20,
+        },
+        backend="local",
+        page=9,
+        per_page=50,
+    )
+
+    assert normalized["current_page"] == 2
+    assert normalized["page"] == 1
+    assert normalized["per_page"] == 20
+
+
+def test_normalize_prompt_list_defaults_page_metadata_only_when_keys_are_absent():
+    normalized = normalize_prompt_list(
+        {"items": [], "total_items": 0, "total_pages": 0},
+        backend="local",
+        page=4,
+        per_page=20,
+    )
+
+    assert normalized["current_page"] == 4
+    assert normalized["page"] == 4
+    assert normalized["per_page"] == 20
+
+
+@pytest.mark.parametrize(
+    "field", ["total_items", "total_pages", "current_page", "page", "per_page"]
+)
+@pytest.mark.parametrize("value", [True, None, 1.5])
+def test_normalize_prompt_list_rejects_present_non_integer_envelope_metadata(
+    field, value
+):
+    payload = {
+        "items": [],
+        "total_items": 0,
+        "total_pages": 0,
+        "current_page": 1,
+        "page": 1,
+        "per_page": 20,
+    }
+    payload[field] = value
+
+    with pytest.raises((TypeError, ValueError), match=field):
+        normalize_prompt_list(payload, backend="local", page=7, per_page=50)
+
+
+@pytest.mark.asyncio
+async def test_browse_prompt_policy_denial_stops_before_local_adapter_call():
+    database = RecordingPromptBrowseDatabase()
+    policy = FakePolicyEnforcer.deny()
+    service = PromptScopeService(
+        LocalPromptService(database), FakeServerPromptService(), policy
+    )
+
+    with pytest.raises(PermissionError, match="blocked"):
+        await service.browse_prompts()
+
+    assert policy.actions == ["prompts.list.local"]
+    assert database.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["server", "all", "mixed"])
+async def test_browse_prompt_rejects_non_local_library_modes_without_routing(mode):
+    database = RecordingPromptBrowseDatabase()
+    server = FakeServerPromptService()
+    service = PromptScopeService(LocalPromptService(database), server)
+
+    with pytest.raises(ValueError, match="local|backend"):
+        await service.browse_prompts(mode=mode)
+
+    assert database.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"sort_by": "name; DROP TABLE Prompts"}, "sort_by"),
+        ({"sort_order": "sideways"}, "sort_order"),
+        ({"collection_id": True}, "collection_id"),
+        ({"page": 0}, "page"),
+        ({"page_size": 0}, "page_size"),
+        ({"query": None}, "query"),
+    ],
+)
+async def test_browse_prompt_rejects_invalid_scope_before_adapter_call(kwargs, message):
+    database = RecordingPromptBrowseDatabase()
+    policy = FakePolicyEnforcer()
+    service = PromptScopeService(
+        LocalPromptService(database), FakeServerPromptService(), policy
+    )
+
+    with pytest.raises((TypeError, ValueError), match=message):
+        await service.browse_prompts(**kwargs)
+
+    assert database.calls == []
+    assert policy.actions == []
+
+
 @pytest.mark.asyncio
 async def test_prompt_scope_lists_local_and_server_prompts_with_stable_ids():
     policy = FakePolicyEnforcer()
@@ -379,6 +704,110 @@ async def test_prompt_scope_lists_local_and_server_prompts_with_stable_ids():
     assert server_result["items"][0]["backend"] == "server"
     assert server_result["current_page"] == 2
     assert policy.actions == ["prompts.list.local", "prompts.list.server"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_count_prompt_versions_uses_real_index_only_count(
+    monkeypatch,
+):
+    database = PromptsDatabase(":memory:", client_id="scope-history-count")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Retained count", author=None, details="v1"
+        )
+        database.update_prompt_by_id(prompt_id, {"details": "v2"}, expected_version=1)
+        assert database.soft_delete_prompt(prompt_id) is True
+        database.add_prompt(name="Unrelated", author=None, details="other")
+
+        count_calls = []
+        real_count = database.get_prompt_history_count
+
+        def count_only(entity_uuid):
+            count_calls.append(entity_uuid)
+            return real_count(entity_uuid)
+
+        monkeypatch.setattr(database, "get_prompt_history_count", count_only)
+        monkeypatch.setattr(
+            database,
+            "get_prompt_history_entries",
+            lambda *_args, **_kwargs: pytest.fail("history page must not be read"),
+        )
+        monkeypatch.setattr(
+            database,
+            "_decode_prompt_history_row",
+            lambda *_args, **_kwargs: pytest.fail(
+                "history payload must not be decoded"
+            ),
+        )
+        service = PromptScopeService(
+            local_service=LocalPromptService(database),
+            server_service=FakeServerPromptService(),
+        )
+
+        count = await service.count_prompt_versions(
+            mode="local", prompt_identifier=prompt_uuid
+        )
+
+        assert count == 2
+        assert count_calls == [prompt_uuid]
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_count_prompt_versions_routes_policy_and_local_adapter():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(
+        local_service=local,
+        server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
+    )
+
+    count = await service.count_prompt_versions(
+        mode="local", prompt_identifier="local-uuid-7"
+    )
+
+    assert count == 6
+    assert local.calls == [("count_prompt_versions", "local-uuid-7")]
+    assert policy.actions == ["prompts.versions.list.local"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_count_prompt_versions_fails_truthfully_for_server():
+    policy = FakePolicyEnforcer()
+    server = FakeServerPromptService()
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(PromptCapabilityError, match="server.*retained history count"):
+        await service.count_prompt_versions(
+            mode="server", prompt_identifier="server-uuid-9"
+        )
+
+    assert server.calls == []
+    assert policy.actions == ["prompts.versions.list.server"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_count", [True, -1, "2", 1.5, None])
+async def test_prompt_scope_count_prompt_versions_rejects_invalid_local_counts(
+    invalid_count,
+):
+    local = FakeLocalPromptService()
+    local.count_prompt_versions = lambda _identifier: invalid_count
+    service = PromptScopeService(
+        local_service=local,
+        server_service=FakeServerPromptService(),
+    )
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        await service.count_prompt_versions(
+            mode="local", prompt_identifier="local-uuid-7"
+        )
 
 
 @pytest.mark.parametrize(
@@ -535,6 +964,50 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
         "prompts.update.server",
         "prompts.delete.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_restores_deleted_local_prompt_as_conditional_update():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    restored = await service.restore_deleted_prompt(
+        mode="local",
+        prompt_identifier="local-uuid-7",
+        expected_version=4,
+    )
+
+    assert restored["id"] == "local:prompt:local-uuid-7"
+    assert restored["local_id"] == 7
+    assert restored["version"] == 5
+    assert local.calls[-1] == (
+        "restore_deleted_prompt",
+        "local-uuid-7",
+        4,
+    )
+    assert server.calls == []
+    assert policy.actions == ["prompts.update.local"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_forwards_expected_version_for_local_delete():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    deleted = await service.delete_prompt(
+        mode="local",
+        prompt_identifier="local-uuid-7",
+        expected_version=4,
+    )
+
+    assert deleted is True
+    assert local.calls[-1] == ("delete_prompt", "local-uuid-7", 4)
+    assert server.calls == []
+    assert policy.actions == ["prompts.delete.local"]
 
 
 @pytest.mark.asyncio
@@ -709,8 +1182,8 @@ async def test_prompt_scope_routes_server_usage_versions_and_restore():
     ]
     assert policy.actions[-3:] == [
         "prompts.use.server",
-        "prompts.versions.server",
-        "prompts.restore_version.server",
+        "prompts.versions.list.server",
+        "prompts.versions.restore.server",
     ]
 
 
@@ -754,23 +1227,230 @@ async def test_prompt_scope_refuses_to_record_unknown_artifact_usage():
 
 
 @pytest.mark.asyncio
-async def test_prompt_scope_rejects_local_version_history_until_supported():
+async def test_prompt_scope_routes_local_retained_history_and_restore_through_live_adapter():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
     service = PromptScopeService(
-        local_service=FakeLocalPromptService(),
+        local_service=local,
         server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local prompt version history is unavailable"):
-        await service.list_prompt_versions(
-            mode="local", prompt_identifier="local-uuid-7"
+    page = await service.list_prompt_versions(
+        mode="local", prompt_identifier="local-uuid-7", page_size=7, before_change_id=50
+    )
+    restored = await service.restore_prompt_version(
+        mode="local",
+        prompt_identifier="local-uuid-7",
+        change_id=42,
+        version=3,
+        expected_version=3,
+    )
+
+    assert page["items"][0]["backend"] == "local"
+    assert restored["new_version"] == 4
+    assert local.calls[-2:] == [
+        ("list_prompt_versions", "local-uuid-7", 7, 50),
+        ("restore_prompt_version", "local-uuid-7", 42, 3, 3),
+    ]
+    assert policy.actions[-2:] == [
+        "prompts.versions.list.local",
+        "prompts.versions.restore.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_app_wired_local_restore_uses_real_retained_history_transaction():
+    database = PromptsDatabase(":memory:", client_id="scope-retained-history")
+    try:
+        prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Original",
+            author="Author",
+            details="Original details",
+            system_prompt="Original system",
+            user_prompt="Original user",
+            keywords=["original"],
+        )
+        database.update_prompt_by_id(
+            prompt_id,
+            {
+                "name": "Current",
+                "details": "Current details",
+                "keywords": ["current"],
+            },
+            expected_version=1,
+        )
+        service = PromptScopeService(
+            local_service=LocalPromptService(database),
+            server_service=FakeServerPromptService(),
         )
 
-    with pytest.raises(ValueError, match="Local prompt version restore is unavailable"):
-        await service.restore_prompt_version(
-            mode="local",
-            prompt_identifier="local-uuid-7",
-            version=1,
+        page = await service.list_prompt_versions(
+            mode="local", prompt_identifier=prompt_uuid, page_size=10
         )
+        source = next(item for item in page["items"] if item["version"] == 1)
+        result = await service.restore_prompt_version(
+            mode="local",
+            prompt_identifier=prompt_uuid,
+            change_id=source["change_id"],
+            version=source["version"],
+            expected_version=2,
+        )
+
+        restored = database.fetch_prompt_details(prompt_uuid)
+        assert result == {
+            "outcome": "restored",
+            "snapshot_unavailable": False,
+            "no_change": False,
+            "source_version": 1,
+            "current_version": 2,
+            "new_version": 3,
+            "retained_current_keywords": False,
+        }
+        assert restored["name"] == "Original"
+        assert restored["keywords"] == ["original"]
+        assert restored["version"] == 3
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_local_history_page_and_restore_enforce_current_capabilities_and_legacy_recipe_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = PromptsDatabase(":memory:", client_id="scope-history-capabilities")
+    capabilities = replace(local_prompt_capabilities(), compiled_lane_limit=4)
+    monkeypatch.setattr(
+        prompt_scope_module, "local_prompt_capabilities", lambda: capabilities
+    )
+    try:
+        _legacy_id, legacy_uuid, _message = database.add_prompt(
+            name="Legacy Recipe",
+            author=None,
+            details="literal legacy details",
+            system_prompt="[bold]literal legacy system[/bold]",
+            user_prompt="literal legacy user",
+            prompt_format="legacy",
+            artifact_type="recipe",
+        )
+        definition = block_definition(content="hello")
+        _large_id, large_uuid, _message = database.add_prompt(
+            name="Large structured Prompt",
+            author=None,
+            details="literal structured details",
+            system_prompt="",
+            user_prompt="hello",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=definition,
+            artifact_type="prompt",
+        )
+        service = PromptScopeService(
+            local_service=LocalPromptService(database),
+            server_service=FakeServerPromptService(),
+        )
+
+        cases = (
+            (
+                legacy_uuid,
+                "legacy_recipe",
+                "Legacy Recipe snapshots are preview-only.",
+            ),
+            (
+                large_uuid,
+                "current_capability_unsupported",
+                "This retained version is not supported by current local Prompt "
+                "capabilities.",
+            ),
+        )
+        for prompt_uuid, expected_state, expected_reason in cases:
+            page = await service.list_prompt_versions(
+                mode="local", prompt_identifier=prompt_uuid, page_size=10
+            )
+            source = page["items"][0]
+            assert source["compatibility_state"] == expected_state
+            assert source["compatibility_reason"] == expected_reason
+            assert source["restore_eligible"] is False
+
+            before_detail = database.fetch_prompt_details(prompt_uuid)
+            before_count = database.get_prompt_history_count(prompt_uuid)
+            with pytest.raises(PromptRestoreError) as exc_info:
+                await service.restore_prompt_version(
+                    mode="local",
+                    prompt_identifier=prompt_uuid,
+                    change_id=source["change_id"],
+                    version=source["version"],
+                    expected_version=before_detail["version"],
+                )
+
+            assert exc_info.value.code is PromptRestoreErrorCode.VALIDATION
+            assert database.fetch_prompt_details(prompt_uuid) == before_detail
+            assert database.get_prompt_history_count(prompt_uuid) == before_count
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_structured_compact_snapshot_no_change_preserves_durable_json():
+    database = PromptsDatabase(":memory:", client_id="scope-compact-no-change")
+    compact_definition = (
+        '{"schema_version":2,"kind":"block_prompt","lanes":['
+        '{"id":"system","blocks":[]},'
+        '{"id":"user","blocks":[{"id":"u","title":"User",'
+        '"syntax":"freeform","content":"Hello"}]}]}'
+    )
+    try:
+        _prompt_id, prompt_uuid, _message = database.add_prompt(
+            name="Compact structured",
+            author=None,
+            details="Details",
+            system_prompt="",
+            user_prompt="Hello",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=compact_definition,
+            artifact_type="prompt",
+        )
+        service = PromptScopeService(
+            local_service=LocalPromptService(database),
+            server_service=FakeServerPromptService(),
+        )
+        page = await service.list_prompt_versions(
+            mode="local", prompt_identifier=prompt_uuid, page_size=1
+        )
+        source = page["items"][0]
+        before = (
+            database.get_connection()
+            .execute(
+                "SELECT version, prompt_definition FROM Prompts WHERE uuid = ?",
+                (prompt_uuid,),
+            )
+            .fetchone()
+        )
+        before_history_count = database.get_prompt_history_count(prompt_uuid)
+
+        result = await service.restore_prompt_version(
+            mode="local",
+            prompt_identifier=prompt_uuid,
+            change_id=source["change_id"],
+            version=1,
+            expected_version=1,
+        )
+
+        after = (
+            database.get_connection()
+            .execute(
+                "SELECT version, prompt_definition FROM Prompts WHERE uuid = ?",
+                (prompt_uuid,),
+            )
+            .fetchone()
+        )
+        assert result["outcome"] == "no_change"
+        assert result["new_version"] == 1
+        assert tuple(after) == tuple(before)
+        assert database.get_prompt_history_count(prompt_uuid) == before_history_count
+    finally:
+        database.close_connection()
 
 
 @pytest.mark.asyncio
@@ -848,7 +1528,9 @@ async def test_prompt_scope_routes_local_prompt_collections_with_policy():
         description="Offline prompts",
         prompt_ids=[7],
     )
-    listed = await service.list_prompt_collections(mode="local", limit=50, offset=5)
+    listed = await service.list_prompt_collections(
+        mode="local", query="  Collection  ", limit=50, offset=5
+    )
     fetched = await service.get_prompt_collection(mode="local", collection_id=3)
     updated = await service.update_prompt_collection(
         mode="local",
@@ -875,7 +1557,7 @@ async def test_prompt_scope_routes_local_prompt_collections_with_policy():
                 "prompt_ids": [7],
             },
         ),
-        ("list_prompt_collections", 50, 5),
+        ("list_prompt_collections", "Collection", 50, 5),
         ("get_prompt_collection", 3),
         (
             "update_prompt_collection",
@@ -889,6 +1571,257 @@ async def test_prompt_scope_routes_local_prompt_collections_with_policy():
         "prompts.collections.detail.local",
         "prompts.collections.update.local",
     ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_routes_local_prompt_memberships_with_bounded_outcomes():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    listed = await service.list_prompt_collection_memberships(mode="local", prompt_id=7)
+    replaced = await service.replace_prompt_collection_memberships(
+        mode=PromptBackend.LOCAL,
+        prompt_id=7,
+        collection_ids=[8, 3],
+    )
+
+    assert listed == {
+        "prompt_id": 7,
+        "collection_ids": (3, 8),
+        "changed": False,
+    }
+    assert replaced == {
+        "prompt_id": 7,
+        "collection_ids": (3, 8),
+        "changed": True,
+    }
+    assert policy.actions == [
+        "prompts.collections.detail.local",
+        "prompts.collections.update.local",
+    ]
+    assert local.calls[-2:] == [
+        ("list_prompt_collection_memberships", 7),
+        ("replace_prompt_collection_memberships", 7, (3, 8)),
+    ]
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"collection_ids": (3, 8), "changed": False},
+        {"prompt_id": 8, "collection_ids": (3, 8), "changed": False},
+    ],
+)
+async def test_prompt_scope_membership_list_rejects_missing_or_mismatched_response_id(
+    response,
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    local.list_prompt_collection_memberships = Mock(return_value=response)
+    service = PromptScopeService(local, FakeServerPromptService(), policy)
+
+    with pytest.raises(ValueError, match="response prompt_id"):
+        await service.list_prompt_collection_memberships(mode="local", prompt_id=7)
+
+    assert policy.actions == ["prompts.collections.detail.local"]
+    local.list_prompt_collection_memberships.assert_called_once_with(7)
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_membership_replace_rejects_different_response_collection_ids():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    local.replace_prompt_collection_memberships = Mock(
+        return_value={
+            "prompt_id": 7,
+            "collection_ids": (3, 9),
+            "changed": True,
+        }
+    )
+    service = PromptScopeService(local, FakeServerPromptService(), policy)
+
+    with pytest.raises(ValueError, match="response collection_ids"):
+        await service.replace_prompt_collection_memberships(
+            mode="local", prompt_id=7, collection_ids=[8, 3]
+        )
+
+    assert policy.actions == ["prompts.collections.update.local"]
+    local.replace_prompt_collection_memberships.assert_called_once_with(7, (3, 8))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["server", "all", "mixed", None])
+async def test_prompt_scope_rejects_non_local_membership_modes_before_policy_or_adapter(
+    mode,
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match="local-only"):
+        await service.list_prompt_collection_memberships(mode=mode, prompt_id=7)
+    with pytest.raises(ValueError, match="local-only"):
+        await service.replace_prompt_collection_memberships(
+            mode=mode, prompt_id=7, collection_ids=[3]
+        )
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt_id", "collection_ids"),
+    [
+        (True, [3]),
+        (0, [3]),
+        (2**63, [3]),
+        ("7", [3]),
+        (7, None),
+        (7, "3"),
+        (7, [3, True]),
+        (7, [3, 4, 3]),
+        (7, [3, 2**63]),
+    ],
+)
+async def test_prompt_scope_rejects_invalid_memberships_before_policy_or_adapter(
+    prompt_id, collection_ids
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError):
+        await service.replace_prompt_collection_memberships(
+            mode="local", prompt_id=prompt_id, collection_ids=collection_ids
+        )
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt_id", [True, 0, -1, 1.5, "7", 2**63])
+async def test_prompt_scope_rejects_invalid_membership_list_id_before_policy_or_adapter(
+    prompt_id,
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match="prompt_id"):
+        await service.list_prompt_collection_memberships(
+            mode="local", prompt_id=prompt_id
+        )
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_membership_policy_denial_stops_before_local_adapter():
+    policy = FakePolicyEnforcer.deny()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService(), policy)
+
+    with pytest.raises(PermissionError):
+        await service.list_prompt_collection_memberships(mode="local", prompt_id=7)
+
+    assert policy.actions == ["prompts.collections.detail.local"]
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_membership_update_policy_denial_stops_before_local_adapter():
+    policy = FakePolicyEnforcer.deny()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService(), policy)
+
+    with pytest.raises(PermissionError):
+        await service.replace_prompt_collection_memberships(
+            mode="local", prompt_id=7, collection_ids=[3]
+        )
+
+    assert policy.actions == ["prompts.collections.update.local"]
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_rejects_server_collection_query_before_policy_or_adapter():
+    policy = FakePolicyEnforcer()
+    server = FakeServerPromptService()
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Server prompt collection search"):
+        await service.list_prompt_collections(mode="server", query="sales")
+
+    assert policy.actions == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"query": None},
+        {"limit": True},
+        {"limit": 0},
+        {"offset": False},
+        {"offset": -1},
+        {"offset": 2**63},
+    ],
+)
+async def test_prompt_scope_validates_collection_catalog_before_policy_or_adapter(
+    kwargs,
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(
+        local_service=local,
+        server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises((TypeError, ValueError)):
+        await service.list_prompt_collections(mode="local", **kwargs)
+
+    assert policy.actions == []
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_accepts_signed_maximum_collection_catalog_offset():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    service = PromptScopeService(
+        local_service=local,
+        server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
+    )
+
+    listed = await service.list_prompt_collections(
+        mode="local", limit=1, offset=(2**63) - 1
+    )
+
+    assert listed["offset"] == (2**63) - 1
+    assert local.calls == [
+        ("list_prompt_collections", "", 1, (2**63) - 1),
+    ]
+    assert policy.actions == ["prompts.collections.list.local"]
 
 
 def test_local_prompt_service_persists_prompt_collections(tmp_path):
@@ -1440,3 +2373,297 @@ async def test_measurement_descriptor_requires_exact_json_types(measurement):
     capabilities = await service.get_capabilities(mode="server")
 
     assert capabilities.json_byte_measurement is None
+
+
+class FakeBatchLocalPromptService:
+    def __init__(self):
+        self.calls = []
+        self.deleted_result = PromptBatchDeleteResult(
+            entries=(
+                PromptDeleteReceiptEntry(7, "Seven", "prompt", 4),
+                PromptDeleteReceiptEntry(9, "Nine", "recipe", 3),
+            )
+        )
+        self.restored_result = PromptBatchRestoreResult(
+            entries=(
+                PromptRestoreResultEntry(7, 5),
+                PromptRestoreResultEntry(9, 4),
+            )
+        )
+
+    def delete_prompts(self, *, targets):
+        self.calls.append(("delete", targets))
+        return self.deleted_result
+
+    def restore_deleted_prompts(self, *, targets):
+        self.calls.append(("restore", targets))
+        return self.restored_result
+
+
+class MissingBatchLocalPromptService:
+    def __init__(self):
+        self.calls = []
+
+
+class PromptBatchTargetSubclass(PromptBatchTarget):
+    pass
+
+
+def _forged_prompt_batch_target(local_id, expected_version) -> PromptBatchTarget:
+    target = object.__new__(PromptBatchTarget)
+    object.__setattr__(target, "local_id", local_id)
+    object.__setattr__(target, "expected_version", expected_version)
+    return target
+
+
+@pytest.mark.asyncio
+async def test_prompt_batch_methods_are_keyword_only_typed_and_return_local_objects():
+    from typing import get_type_hints
+
+    local = FakeBatchLocalPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, FakeServerPromptService(), policy)
+    targets = (PromptBatchTarget(7, 3), PromptBatchTarget(9, 2))
+    scope._normalize_prompt_record = Mock(
+        side_effect=AssertionError("batch results must not be normalized")
+    )
+
+    for method_name, result_type in (
+        ("delete_prompts", PromptBatchDeleteResult),
+        ("restore_deleted_prompts", PromptBatchRestoreResult),
+    ):
+        method = getattr(PromptScopeService, method_name)
+        signature = inspect.signature(method)
+        assert signature.parameters["mode"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert signature.parameters["targets"].kind is inspect.Parameter.KEYWORD_ONLY
+        hints = get_type_hints(method)
+        assert hints["targets"] == tuple[PromptBatchTarget, ...]
+        assert hints["return"] is result_type
+
+    with pytest.raises(TypeError):
+        await scope.delete_prompts("local", targets)  # type: ignore[misc]
+    assert policy.actions == []
+    assert local.calls == []
+
+    deleted = await scope.delete_prompts(mode="local", targets=targets)
+    restore_targets = deleted.targets
+    restored = await scope.restore_deleted_prompts(
+        mode="local", targets=restore_targets
+    )
+
+    assert deleted is local.deleted_result
+    assert restored is local.restored_result
+    assert policy.actions == ["prompts.delete.local", "prompts.update.local"]
+    assert local.calls[0][0] == "delete"
+    assert local.calls[0][1] is targets
+    assert local.calls[1][0] == "restore"
+    assert local.calls[1][1] is restore_targets
+    assert scope._normalize_prompt_record.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [None, "local", PromptBackend.LOCAL])
+@pytest.mark.parametrize(
+    ("method_name", "action", "result_attribute"),
+    [
+        ("delete_prompts", "prompts.delete.local", "deleted_result"),
+        ("restore_deleted_prompts", "prompts.update.local", "restored_result"),
+    ],
+)
+async def test_prompt_batch_methods_accept_established_local_mode_forms_once(
+    mode, method_name, action, result_attribute
+):
+    local = FakeBatchLocalPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, FakeServerPromptService(), policy)
+    targets = (PromptBatchTarget(7, 3), PromptBatchTarget(9, 2))
+
+    result = await getattr(scope, method_name)(mode=mode, targets=targets)
+
+    assert result is getattr(local, result_attribute)
+    assert policy.actions == [action]
+    assert len(local.calls) == 1
+    assert local.calls[0][1] is targets
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "action", "operation"),
+    [
+        ("delete_prompts", "prompts.delete.local", "delete"),
+        ("restore_deleted_prompts", "prompts.update.local", "restore"),
+    ],
+)
+async def test_prompt_batch_methods_canonicalize_targets_before_one_policy_call(
+    method_name, action, operation
+):
+    local = FakeBatchLocalPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, FakeServerPromptService(), policy)
+    targets = (PromptBatchTarget(9, 2), PromptBatchTarget(7, 3))
+
+    await getattr(scope, method_name)(mode="local", targets=targets)
+
+    assert policy.actions == [action]
+    assert local.calls == [(operation, tuple(reversed(targets)))]
+
+
+INVALID_PROMPT_BATCH_TARGETS = [
+    ([], TypeError, "targets"),
+    ((), ValueError, "non-empty"),
+    ((object(),), TypeError, "targets"),
+    ((PromptBatchTargetSubclass(7, 3),), TypeError, "targets"),
+    (
+        (PromptBatchTarget(7, 3), PromptBatchTarget(7, 4)),
+        ValueError,
+        "unique local IDs",
+    ),
+    ((_forged_prompt_batch_target(True, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(0, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(-1, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(2**63, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(1, False),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, 0),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, -1),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, 2**63),), ValueError, "expected_version"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", ["delete_prompts", "restore_deleted_prompts"])
+@pytest.mark.parametrize(
+    ("targets", "error_type", "message"), INVALID_PROMPT_BATCH_TARGETS
+)
+async def test_prompt_batch_invalid_targets_fail_before_policy_or_backends(
+    method_name, targets, error_type, message
+):
+    local = FakeBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(error_type, match=message):
+        await getattr(scope, method_name)(mode="local", targets=targets)
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", ["delete_prompts", "restore_deleted_prompts"])
+@pytest.mark.parametrize("mode", ["LOCAL", "remote", 1])
+async def test_prompt_batch_invalid_modes_fail_before_policy_or_backends(
+    method_name, mode
+):
+    local = FakeBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match="Invalid prompt backend"):
+        await getattr(scope, method_name)(mode=mode, targets=(PromptBatchTarget(7, 3),))
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", ["delete_prompts", "restore_deleted_prompts"])
+@pytest.mark.parametrize("mode", ["server", PromptBackend.SERVER])
+async def test_prompt_batch_server_modes_are_refused_before_policy_or_backends(
+    method_name, mode
+):
+    local = FakeBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match="local-only"):
+        await getattr(scope, method_name)(mode=mode, targets=(PromptBatchTarget(7, 3),))
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "action"),
+    [
+        ("delete_prompts", "prompts.delete.local"),
+        ("restore_deleted_prompts", "prompts.update.local"),
+    ],
+)
+async def test_prompt_batch_policy_denial_makes_no_backend_call(method_name, action):
+    local = FakeBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer.deny()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(PermissionError, match="blocked"):
+        await getattr(scope, method_name)(
+            mode="local", targets=(PromptBatchTarget(7, 3),)
+        )
+
+    assert policy.actions == [action]
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "action", "message"),
+    [
+        ("delete_prompts", "prompts.delete.local", "batch delete"),
+        ("restore_deleted_prompts", "prompts.update.local", "batch restore"),
+    ],
+)
+async def test_prompt_batch_missing_local_method_fails_after_one_policy_decision(
+    method_name, action, message
+):
+    local = MissingBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match=message):
+        await getattr(scope, method_name)(
+            mode="local", targets=(PromptBatchTarget(7, 3),)
+        )
+
+    assert policy.actions == [action]
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "action"),
+    [
+        ("delete_prompts", "prompts.delete.local"),
+        ("restore_deleted_prompts", "prompts.update.local"),
+    ],
+)
+async def test_prompt_batch_missing_local_backend_fails_after_one_policy_decision(
+    method_name, action
+):
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(None, server, policy)
+
+    with pytest.raises(ValueError, match="Local prompt backend is unavailable"):
+        await getattr(scope, method_name)(
+            mode="local", targets=(PromptBatchTarget(7, 3),)
+        )
+
+    assert policy.actions == [action]
+    assert server.calls == []
+
+
+def test_prompt_batch_scope_methods_have_no_post_return_normalizer_or_server_path():
+    for method_name in ("delete_prompts", "restore_deleted_prompts"):
+        source = inspect.getsource(getattr(PromptScopeService, method_name))
+        assert "_normalize_prompt_record" not in source
+        assert "server_service" not in source

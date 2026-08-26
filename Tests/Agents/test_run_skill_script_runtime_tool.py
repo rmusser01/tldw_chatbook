@@ -46,6 +46,9 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_service import FleetChat, verbatim
+
 # --- Step 1 unit tests (name + schema shape) --------------------------------
 
 
@@ -349,24 +352,29 @@ def test_subagent_can_also_dispatch_and_be_pinned_run_skill_script(tmp_path):
         seen.append((skill_name, script_path, args))
         return ToolResult(ok=True, content="stdout: hi")
 
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "child task"}),  # parent spawns
-        _svc_fence(
-            "run_skill_script",
-            {
-                "skill_name": "demo",
-                "script_path": "scripts/hello.py",
-                "args": ["x"],
-            },
-        ),  # child dispatches
-        {"choices": [{"message": {"content": "child done"}}]},
-        {"choices": [{"message": {"content": "parent done"}}]},
-    ]
-    calls = []
-
-    def chat_call(**kwargs):
-        calls.append(kwargs)
-        return script.pop(0)
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- one ordered queue is no longer deterministic. Addressed
+    # per agent instead; the replies themselves are unchanged.
+    chat_call = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "child task"}),  # parent spawns
+            {"choices": [{"message": {"content": "parent done"}}]},
+        ],
+        {
+            "child task": [
+                _svc_fence(
+                    "run_skill_script",
+                    {
+                        "skill_name": "demo",
+                        "script_path": "scripts/hello.py",
+                        "args": ["x"],
+                    },
+                ),  # child dispatches
+                {"choices": [{"message": {"content": "child done"}}]},
+            ]
+        },
+        reply=verbatim,
+    )
 
     service = AgentService(db, reg, chat_call=chat_call, run_skill_script_tool=runner)
     _rid, outcome = service.run_turn(
@@ -380,15 +388,19 @@ def test_subagent_can_also_dispatch_and_be_pinned_run_skill_script(tmp_path):
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
     # Dispatch reached the CHILD.
     assert seen == [("demo", "scripts/hello.py", ["x"])]
 
-    # The schema was pinned into the CHILD's own first turn too. calls[0] is
-    # the parent's first call (before it spawns); calls[1] is the child's
-    # first call.
-    child_first_system_content = calls[1]["messages_payload"][0]["content"]
+    # The schema was pinned into the CHILD's own first turn too. Addressed
+    # by task text rather than by `calls[1]`: under the fleet the child's
+    # call is no longer guaranteed to be the second chat_call overall, but
+    # it is still THE call this assertion always meant.
+    child_first_system_content = chat_call.child_calls["child task"][0][
+        "messages_payload"
+    ][0]["content"]
     assert RUN_SKILL_SCRIPT_TOOL_NAME in child_first_system_content
 
     child_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "subagent"]

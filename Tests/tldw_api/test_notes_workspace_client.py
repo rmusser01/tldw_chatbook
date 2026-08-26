@@ -599,7 +599,22 @@ class TestNotesWorkspaceClient:
         expected_kwargs,
     ):
         client = TLDWAPIClient("http://localhost:8000")
-        mocked = AsyncMock(return_value={"ok": True})
+        if method_name == "list_workspace_sources":
+            response = []
+        elif method_name in {"create_workspace_source", "update_workspace_source"}:
+            response = {
+                "id": "src-1",
+                "workspace_id": "ws-1",
+                "media_id": 9,
+                "title": "Paper",
+                "source_type": "pdf",
+                "position": 0,
+                "selected": True,
+                "version": 4,
+            }
+        else:
+            response = {}
+        mocked = AsyncMock(return_value=response)
         monkeypatch.setattr(client, "_request", mocked)
 
         await getattr(client, method_name)(*call_args, **call_kwargs)

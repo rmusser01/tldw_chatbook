@@ -21,10 +21,12 @@
 #
 #########################################
 
+import atexit
 import json
 import sqlite3
 import threading
 import time
+import weakref
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +42,7 @@ from .base_db import BaseDB
 from .sql_validation import validate_identifier
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.fts5_match_forms import quote_fts5_token
 
 
 #: Fallback `auto_pause_threshold` when the config value is missing or
@@ -48,6 +51,173 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 #: `auto_pause_after_failures = 10`, so a broken/hand-edited config still
 #: produces the same default a fresh install would get.
 _DEFAULT_AUTO_PAUSE_THRESHOLD = 10
+
+#: Lock-wait ceiling for every connection this database opens, in
+#: milliseconds (task-19562 AC4).
+#:
+#: **Measured, not assumed** -- the acceptance criterion demanded exactly
+#: that. Against a real `SubscriptionsDB`, with one connection holding
+#: `BEGIN IMMEDIATE` for 1.0 s while a second timed its own:
+#:
+#:     busy_timeout (ms): 5000        <- inherited, nothing set it
+#:     journal_mode     : wal
+#:     second writer blocked for 1.07s -> acquired
+#:
+#: So the lane's PLAUSIBLE rating is CONFIRMED: nothing in this file,
+#: `base_db.py` or the private-path connector ever set `busy_timeout`, and
+#: Python's `sqlite3.connect(timeout=5.0)` default made it 5 s -- a writer
+#: collision really does block its caller for as long as the lock is held,
+#: up to that ceiling, and then raises `OperationalError`.
+#:
+#: Two narrowings the number does NOT support, both worth stating because
+#: the obvious readings are wrong:
+#:
+#: * `journal_mode = wal`, so readers never block writers and writers never
+#:   block readers. The exposure is **writer-vs-writer only**, not "any of
+#:   the 22 async service methods".
+#: * Setting this pragma is **not** the fix for the stall. 5000 is what the
+#:   connection already had; the value is written down here so it is pinned
+#:   and cannot drift silently if the connector ever passes its own
+#:   `timeout=`. Lowering it would only convert a stall into an earlier
+#:   `database is locked` exception on a path with no retry. The stall stops
+#:   mattering because the sqlite work no longer runs on the event loop
+#:   (part B, `Subscriptions/db_offload.py`), not because of this line.
+BUSY_TIMEOUT_MS = 5000
+
+#: Every live, writable `SubscriptionsDB`, weakly held, so the interpreter
+#: can checkpoint their WALs on the way out (see
+#: `_checkpoint_open_databases_at_exit`).
+_OPEN_SUBSCRIPTIONS_DBS: "weakref.WeakSet[SubscriptionsDB]" = weakref.WeakSet()
+_OPEN_DBS_LOCK = threading.Lock()
+_ATEXIT_REGISTERED = False
+
+#: True once the exit hook is running. Checked before every `logger` call on
+#: the settle path, and it is not defensive decoration: the first version of
+#: this hook logged a genuine warning from a test process whose temporary
+#: database directory had already been removed, and loguru's sink was gone
+#: too -- so the *diagnostic* raised `ValueError: I/O operation on closed
+#: file` and printed a logging traceback on every exit. A settle running
+#: during teardown reports nothing; there is nobody left to report to.
+_INTERPRETER_EXITING = False
+
+
+class _ThreadExitCleanup:
+    """Close and de-register one thread's connection when that thread ends.
+
+    Review of PR #1964. `SubscriptionsDB._connections` holds a **strong**
+    reference to every thread's connection so shutdown can count them, but
+    `close()` only removes the *calling* thread's entry. A worker thread that
+    ended without calling `close()` therefore left its connection pinned by
+    that dict for the life of the process -- descriptor, `-wal` and `-shm`
+    handles included. Measured over 20 concurrent short-lived threads: the
+    registry stayed at 21 entries and 43 open descriptors, permanently, and a
+    `gc.collect()` could not reclaim any of it.
+
+    Nothing outside the owning thread may close a sqlite3 connection --
+
+        ProgrammingError: SQLite objects created in a thread can only be
+        used in that same thread.
+
+    -- which is why `close_all_connections` reports other threads' connections
+    instead of closing them. The one place the rule *is* satisfied is the
+    dying thread itself: CPython clears a thread's `threading.local` storage
+    on that thread as it exits, so an object living only in that storage gets
+    finalized there. That is this class. Verified rather than assumed: over 10
+    threads, `__del__` ran 10 times, `threading.get_ident()` inside it matched
+    the ident recorded at construction every time, and the descriptor count on
+    the database returned to its pre-thread baseline (20 -> 0).
+
+    It deliberately does not checkpoint. The `-wal` is settled by SQLite when
+    the last connection to the database closes, and by `checkpoint_wal` /
+    `close_all_connections` on the shutdown path; a thread ending is not the
+    place to add I/O that could raise.
+
+    The instance must be reachable ONLY from the owning thread's local
+    storage. Handing a reference to anything longer-lived (the registry
+    included) would postpone the finalization this exists to trigger.
+    """
+
+    __slots__ = ("_connection", "_registry", "_lock", "_ident")
+
+    def __init__(self, connection, registry, lock, ident: int) -> None:
+        self._connection = connection
+        self._registry = registry
+        self._lock = lock
+        self._ident = ident
+
+    def detach(self) -> None:
+        """Give up ownership -- the connection was closed explicitly instead."""
+        self._connection = None
+
+    def __del__(self) -> None:
+        connection = self._connection
+        if connection is None:
+            return
+        self._connection = None
+        # Best-effort throughout: this runs during thread teardown, where a
+        # raised exception becomes an "Exception ignored in" traceback on
+        # stderr and helps nobody.
+        try:
+            with self._lock:
+                if self._registry.get(self._ident) is connection:
+                    del self._registry[self._ident]
+        except Exception:  # noqa: BLE001 -- thread teardown, best effort
+            pass
+        try:
+            connection.close()
+        except Exception:  # noqa: BLE001 -- thread teardown, best effort
+            pass
+
+
+def _checkpoint_open_databases_at_exit() -> None:
+    """Settle every open subscriptions database at interpreter exit.
+
+    task-19562, and the measurement matters more than the intent here.
+    `SubscriptionsDB` keeps **thread-local** connections and nothing ever
+    closed them, so an app that ran watchlist checks exited with a
+    connection still open per worker thread. The obvious conclusion --
+    that the `-wal` is therefore left behind -- was **tested and is false
+    for a clean exit**: a child process that wrote a 4.1 MB `-wal` and
+    exited normally left only `subs.db` on disk, with this hook suppressed
+    exactly as with it enabled. CPython finalizes the connection objects,
+    and SQLite checkpoints and removes the `-wal` when the last connection
+    to a database closes.
+
+    So this hook is not what saves the `-wal` on the ordinary path. What it
+    does buy is a *defined* moment and a defined error path: `atexit` runs
+    while imports and sqlite are still usable, rather than depending on
+    garbage-collection order during interpreter teardown (the regime that
+    produces "Exception ignored in:" noise). The behaviour it performs is
+    covered directly by
+    `Tests/Subscriptions/test_subscriptions_db_connection_lifecycle.py`.
+
+    The path where the `-wal` genuinely does survive is `app.py`'s
+    SIGINT/SIGTERM handler, which calls `os._exit(0)` -- that skips
+    `atexit` too, so no hook here can reach it. Recorded rather than
+    papered over; the hard-exit itself is task-19561's subject.
+
+    Deliberately best-effort and silent on failure: a diagnostic must never
+    be the thing that breaks the exit.
+    """
+    global _INTERPRETER_EXITING
+    _INTERPRETER_EXITING = True
+    with _OPEN_DBS_LOCK:
+        databases = list(_OPEN_SUBSCRIPTIONS_DBS)
+    for database in databases:
+        try:
+            if not Path(database.db_path_str).exists():
+                # The file went away under a still-live instance (routine
+                # for a temporary-directory test). There is nothing to
+                # settle, and touching it would only re-create it.
+                continue
+            database.close_all_connections()
+        except Exception:  # noqa: BLE001 -- interpreter shutdown, best effort
+            pass
+
+
+def _sqlite_unicode_casefold(value: Any) -> str:
+    """Casefold SQLite text without raising on NULL or malformed values."""
+    return value.casefold() if isinstance(value, str) else ""
 
 
 def _default_auto_pause_threshold() -> int:
@@ -80,7 +250,9 @@ def _default_auto_pause_threshold() -> int:
         `_DEFAULT_AUTO_PAUSE_THRESHOLD` if the config value is absent, not
         parseable as an int, or not positive.
     """
-    configured = get_cli_setting("subscriptions", "auto_pause_after_failures", _DEFAULT_AUTO_PAUSE_THRESHOLD)
+    configured = get_cli_setting(
+        "subscriptions", "auto_pause_after_failures", _DEFAULT_AUTO_PAUSE_THRESHOLD
+    )
     try:
         threshold = int(configured)
     except (TypeError, ValueError):
@@ -105,6 +277,20 @@ class RateLimitError(SubscriptionError):
     """Exception for rate limit violations."""
 
     pass
+
+
+class SubscriptionsDBUnavailableError(SubscriptionError):
+    """Fixed failure for an unavailable agent-readable Watchlists database."""
+
+    def __init__(self) -> None:
+        super().__init__("Watchlists database is unavailable")
+
+
+class SubscriptionsDBReadError(SubscriptionError):
+    """Fixed failure for a transient agent-read readiness operation."""
+
+    def __init__(self) -> None:
+        super().__init__("Watchlists database read failed")
 
 
 # --- Database Class ---
@@ -144,7 +330,19 @@ def ensure_site_configs_schema(db_path) -> None:
     # outside all of that, and would be an undocumented raw call site --
     # `Tests/DB/test_private_sqlite_inventory.py` audits exactly that and
     # caught this when the helper was first written.
-    with closing(connect_private_sqlite("db.subscriptions.site_configs", db_path)) as conn:
+    with closing(
+        connect_private_sqlite("db.subscriptions.site_configs", db_path)
+    ) as conn:
+        if str(db_path) != ":memory:":
+            conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local watchlist/feed
+        # cache) and avoids an fsync per commit -- this connection is
+        # short-lived (one DDL script, one commit, close), but it can be the
+        # first connection this file ever sees, so it must not leave the
+        # file on DELETE+FULL for whichever connection opens it next
+        # (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(SITE_CONFIGS_DDL)
         conn.commit()
 
@@ -170,16 +368,96 @@ class SubscriptionsDB(BaseDB):
 
     _CURRENT_SCHEMA_VERSION = 1
 
-    def __init__(self, db_path: Union[str, Path], client_id: str = "default"):
+    _AGENT_READ_REQUIRED_COLUMNS = {
+        "subscriptions": frozenset(
+            {
+                "id",
+                "name",
+                "type",
+                "source",
+                "is_active",
+                "is_paused",
+                "last_checked",
+                "last_successful_check",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "subscription_items": frozenset(
+            {
+                "id",
+                "subscription_id",
+                "url",
+                "title",
+                "content",
+                "published_date",
+                "author",
+                "status",
+                "diff_summary",
+                "change_percentage",
+                "change_type",
+                "canonical_url",
+                "created_at",
+                "updated_at",
+                "content_format",
+                "content_kind",
+                "effective_date",
+            }
+        ),
+        "watchlists": frozenset({"id", "name"}),
+        "watchlist_sources": frozenset({"watchlist_id", "subscription_id"}),
+    }
+
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str = "default",
+        *,
+        read_only: bool = False,
+    ):
         """
         Initialize the Subscriptions database.
 
         Args:
             db_path: Path to the SQLite database file or ':memory:'
             client_id: Client identifier for multi-client support
+            read_only: Open an existing database without initializing schema
         """
         self._local = threading.local()
-        super().__init__(db_path, client_id)
+        # Every thread-local connection this instance has open, keyed by the
+        # ident of the thread that owns it (task-19562). `threading.local` is
+        # invisible from any other thread, so without this registry nothing --
+        # not shutdown, not a test -- could even *count* the connections, let
+        # alone checkpoint behind them. Assigned before `super().__init__`
+        # because schema initialization touches `self.conn`.
+        #
+        # The reference held here is a STRONG one, which is why every entry is
+        # paired with a `_ThreadExitCleanup` in the owning thread's local
+        # storage (review of PR #1964): without that, a thread that ended
+        # without calling `close()` left its connection pinned by this dict for
+        # the life of the process -- descriptor and WAL lock included --
+        # inverting the very leak the registry was added to expose. A
+        # `weakref.WeakValueDictionary` would be tidier and is not available:
+        # CPython raises `TypeError: cannot create weak reference to
+        # 'sqlite3.Connection' object` (measured on 3.12.11).
+        self._connections: Dict[int, sqlite3.Connection] = {}
+        self._connections_lock = threading.Lock()
+        self._read_only = read_only
+        # Only the monotonic complete state is retained. A false/incomplete
+        # probe is deliberately not cached: a background FTS backfill may
+        # make the same long-lived owner complete before its next search.
+        self._fts_items_complete: Optional[bool] = None
+        super().__init__(db_path, client_id, initialize_schema=not read_only)
+        if read_only:
+            try:
+                self.conn
+            except Exception:
+                self.close()
+                raise SubscriptionsDBUnavailableError() from None
+        elif not self.is_memory_db:
+            # Read-only instances have no `-wal` of their own to settle, and
+            # an in-memory database ceases to exist with its connection.
+            self._register_for_exit_checkpoint()
 
     def _get_connection(self) -> sqlite3.Connection:
         """Return a connection with foreign-key enforcement enabled.
@@ -191,9 +469,81 @@ class SubscriptionsDB(BaseDB):
         deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
         each enable it per connection.
         """
+        if self._read_only:
+            conn = connect_private_sqlite(
+                "db.subscriptions.agent_read",
+                self.db_path_str,
+                read_only=True,
+                must_exist=True,
+            )
+            conn.row_factory = sqlite3.Row
+            try:
+                conn.create_function(
+                    "unicode_casefold",
+                    1,
+                    _sqlite_unicode_casefold,
+                    deterministic=True,
+                )
+                conn.execute("PRAGMA foreign_keys = ON;")
+                conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
+                conn.execute("PRAGMA query_only = ON;")
+            except Exception:
+                conn.close()
+                raise
+            return conn
+
         conn = super()._get_connection()
+        conn.create_function(
+            "unicode_casefold",
+            1,
+            _sqlite_unicode_casefold,
+            deterministic=True,
+        )
         conn.execute("PRAGMA foreign_keys = ON;")
+        # Written down rather than inherited (task-19562 AC4, see
+        # `BUSY_TIMEOUT_MS` for the measurement). Set BEFORE the WAL
+        # conversion below for the reason `AgentRuns_DB` documents: turning a
+        # rollback-journal file into a WAL one briefly needs an exclusive
+        # lock, and that conversion must not run with no lock-wait budget.
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL;")
+        # NORMAL is safe under WAL (SQLite-documented pairing: app-crash-safe,
+        # only an OS/power crash can lose the last commit or two -- acceptable
+        # for this local watchlist/feed cache) and avoids an fsync on every
+        # commit; DELETE mode's default FULL previously made every writer
+        # exclusive-lock readers too, a multi-second-stall candidate on slow
+        # disks (task-15465). Unconditional: synchronous is per-connection,
+        # so every connection this DB opens needs it, not just the first.
+        conn.execute("PRAGMA synchronous = NORMAL;")
         return conn
+
+    def assert_agent_read_ready(self) -> None:
+        """Require the exact core schema used by Watchlists agent reads.
+
+        FTS tables are deliberately not part of readiness. Search checks FTS
+        coverage separately and falls back to literal ``LIKE`` when the index
+        is absent or incomplete.
+
+        Raises:
+            SubscriptionsDBUnavailableError: If a required table or column is
+                unavailable. The fixed message contains no SQL, path, or
+                stored value.
+            SubscriptionsDBReadError: If the readiness read fails operationally.
+                The fixed message contains no underlying exception payload.
+        """
+        try:
+            conn = self.conn
+            for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
+                columns = {
+                    row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
+                }
+                if not required_columns <= columns:
+                    raise SubscriptionsDBUnavailableError()
+        except SubscriptionsDBUnavailableError:
+            raise
+        except (sqlite3.Error, OSError):
+            raise SubscriptionsDBReadError() from None
 
     def _initialize_schema(self):
         """Initialize the database schema.
@@ -511,27 +861,41 @@ class SubscriptionsDB(BaseDB):
         cursor = conn.cursor()
 
         # Add columns to subscription_items
-        items_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")}
+        items_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")
+        }
         if "queued_for_briefing" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0"
+            )
         if "run_id" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
         if "alert_matches" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT"
+            )
 
         # Add columns to subscription_filters
-        filters_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")}
+        filters_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")
+        }
         if "priority" not in filters_cols:
-            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0"
+            )
         if "is_include_required" not in filters_cols:
-            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0"
+            )
 
         # Widen CHECK constraint on subscription_filters.action.
         # Must check for the literal action value 'include' rather than the
         # bare substring, because the new column `is_include_required` would
         # otherwise make the substring match and skip the migration.
         existing_check = None
-        for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
+        for row in cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
+        ):
             existing_check = row[0]
         if existing_check and "'include'" not in existing_check:
             # This rebuild predates FK enforcement (Task 1a) and may run
@@ -591,7 +955,9 @@ class SubscriptionsDB(BaseDB):
                     FROM subscription_filters
                 """)
                 cursor.execute("DROP TABLE subscription_filters")
-                cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
+                cursor.execute(
+                    "ALTER TABLE subscription_filters_new RENAME TO subscription_filters"
+                )
                 cursor.execute("""
                     CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
                     AFTER UPDATE ON subscription_filters
@@ -623,8 +989,12 @@ class SubscriptionsDB(BaseDB):
                     )
 
         # Indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)"
+        )
 
         # Reader/body columns. `content` holds the renderable body: article text
         # for feed items, diff text for site changes. `url_snapshots` remains the
@@ -632,13 +1002,95 @@ class SubscriptionsDB(BaseDB):
         if "content" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN content TEXT")
         if "content_format" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_format TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN content_format TEXT"
+            )
         if "content_kind" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_kind TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN content_kind TEXT"
+            )
         # Flag is a separate boolean, not a status: the status CHECK has no
         # 'flagged' value, and an item can be flagged *and* reviewed at once.
         if "is_flagged" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0"
+            )
+
+        # TASK-15464: a stored, indexed effective-date column, replacing the
+        # per-row `COALESCE(datetime(published_date), datetime(created_at))`
+        # expression `get_new_items` used to ORDER BY -- unindexable, so
+        # every Items-pane refresh sorted the WHOLE table before its LIMIT
+        # ever applied.
+        #
+        # `GENERATED ALWAYS AS (...) VIRTUAL`, not a plain column maintained
+        # by a trigger or by application code: it is auto-computed for every
+        # existing row (no separate backfill UPDATE -- SQLite evaluates the
+        # expression on demand, and materializes it into the index below at
+        # index-build time, over however many legacy rows already exist) and
+        # auto-maintained on every INSERT/UPDATE of `published_date` or
+        # `created_at`, through every write path there is or ever will be --
+        # unlike a trigger, which only covers paths someone remembered to
+        # keep it in sync with, and unlike the current single write path
+        # (`persist_subscription_item`), which would otherwise be the one
+        # place a future column-writer would have to remember to update too.
+        # `STORED` was tried first and rejected: SQLite's `ALTER TABLE ADD
+        # COLUMN` refuses it outright ("cannot add a STORED column") --
+        # only `VIRTUAL` can be added to an existing table after the fact;
+        # probe-verified (task-15464) before deciding.
+        #
+        # The expression is deliberately byte-for-byte the same one
+        # `get_new_items`'s ORDER BY and `since` predicate used to spell out
+        # inline, and probe-verified (task-15464) against real SQLite
+        # (3.49.1) before this was written:
+        #   - NULL, `''`, or an unparseable `published_date` (`datetime()`
+        #     returns NULL for all three) falls back to `created_at`,
+        #     identically to the old expression -- because it IS the old
+        #     expression, just stored instead of recomputed per row per
+        #     query.
+        #   - A mixed-format `created_at` (space-separated
+        #     `CURRENT_TIMESTAMP` vs. ingest's ISO `T`+offset) normalizes
+        #     through the same `datetime()` call either way.
+        #   - Ties (equal effective date) sort by ascending `id` today, with
+        #     or without this index -- SQLite appends the rowid as a
+        #     non-unique index's own implicit final key, so an index scan
+        #     produces the identical tie order a full-table sort already
+        #     does. The ORDER BY clauses below make this explicit
+        #     (`, i.id ASC`) rather than leaning on that implicit behaviour.
+        #
+        # TRAP, found by the same probe: `PRAGMA table_info` does NOT list a
+        # virtual generated column at all -- SQLite reports it only through
+        # `PRAGMA table_xinfo` (in that pragma's `hidden` field). The
+        # idempotency guard below therefore reads `table_xinfo`, not the
+        # `table_info`-sourced `items_cols` every other guard in this method
+        # uses: guarding on `items_cols` here would find "effective_date"
+        # absent FOREVER (it can never appear in `table_info`'s output) and
+        # re-run the ALTER on every single schema init after the first,
+        # crashing with "duplicate column name: effective_date" the very
+        # next time this method runs.
+        #
+        # No `BEGIN IMMEDIATE` wrapper (contrast the `extraction_fingerprint`
+        # migration above): that one needs atomicity because a DDL statement
+        # autocommits immediately under Python's sqlite3 implicit-BEGIN
+        # policy, and a crash between ITS ALTER and its follow-up UPDATEs
+        # would leave the one-time gate spent with the data half-migrated.
+        # There are no follow-up DML statements here to strand -- the ALTER
+        # and the CREATE INDEX are each independently atomic DDL, and a
+        # generated column cannot be written to directly (confirmed by the
+        # same probe: an explicit INSERT/UPDATE naming it raises), so there
+        # is no data-migration step for a crash to catch mid-way at all.
+        items_xcols = {
+            row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
+        }
+        if "effective_date" not in items_xcols:
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN effective_date TEXT "
+                "GENERATED ALWAYS AS "
+                "(COALESCE(datetime(published_date), datetime(created_at))) VIRTUAL"
+            )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_effective_date "
+            "ON subscription_items(effective_date DESC)"
+        )
 
         # Snapshot extraction fingerprint + one-time TASK-1362 "noise, not
         # volume" data migration (spec:
@@ -686,7 +1138,9 @@ class SubscriptionsDB(BaseDB):
         # BEGIN IMMEDIATE exists precisely for that. The exemption is
         # deliberate, not ignorance of the rule; pinned by
         # `test_migration_rolls_back_atomically_on_mid_migration_failure`.
-        snapshot_cols = {row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")}
+        snapshot_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")
+        }
         if "extraction_fingerprint" not in snapshot_cols:
             from ..Subscriptions.noise_defaults import default_ignore_selectors_text
 
@@ -899,7 +1353,9 @@ class SubscriptionsDB(BaseDB):
         # _initialize_schema (base_db.py:76), which creates it and then calls
         # this method. Only the column needs checking, for databases created
         # before batch_id existed.
-        run_cols = {row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")}
+        run_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
+        }
         if "batch_id" not in run_cols:
             cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
         cursor.execute(
@@ -1091,16 +1547,13 @@ class SubscriptionsDB(BaseDB):
                    SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END)
             FROM subscription_items si
             """,
-            (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
-        ).fetchall()
+                (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
+            ).fetchall()
 
         # No `if row[0] is not None` filter here: watchlists.id and
         # watchlist_sources.watchlist_id are NOT NULL, and both sentinels
         # bind non-null literals, so every row's bucket id is always non-null.
-        return {
-            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
-            for row in rows
-        }
+        return {row[0]: {"total": row[1] or 0, "unread": row[2] or 0} for row in rows}
 
     def get_source_item_counts(self) -> Dict[int, Dict[str, int]]:
         """Per-source item totals and unread counts, for rail badges.
@@ -1121,29 +1574,198 @@ class SubscriptionsDB(BaseDB):
             FROM subscription_items
             GROUP BY subscription_id
             """
-        ).fetchall()
-        return {
-            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
-            for row in rows
-        }
+            ).fetchall()
+        return {row[0]: {"total": row[1] or 0, "unread": row[2] or 0} for row in rows}
 
     @property
     def conn(self):
-        """Thread-local database connection."""
+        """Thread-local database connection, registered for shutdown."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = self._get_connection()
+            connection = self._get_connection()
+            self._local.conn = connection
+            with self._connections_lock:
+                self._connections[threading.get_ident()] = connection
+            # Assigned LAST, and only into this thread's local storage: from
+            # here the cleanup owns closing and de-registering this connection
+            # when the thread ends (review of PR #1964). Nothing else may hold
+            # a reference to it, or it would never be finalized.
+            self._local.connection_cleanup = _ThreadExitCleanup(
+                connection,
+                self._connections,
+                self._connections_lock,
+                threading.get_ident(),
+            )
         return self._local.conn
+
+    def _register_for_exit_checkpoint(self) -> None:
+        """Join the set of databases the interpreter settles on the way out."""
+        global _ATEXIT_REGISTERED
+        with _OPEN_DBS_LOCK:
+            _OPEN_SUBSCRIPTIONS_DBS.add(self)
+            if not _ATEXIT_REGISTERED:
+                atexit.register(_checkpoint_open_databases_at_exit)
+                _ATEXIT_REGISTERED = True
+
+    def checkpoint_wal(self) -> bool:
+        """Fold the `-wal` back into the database file and truncate it.
+
+        task-19562. Nothing in this app ever checkpointed this database
+        explicitly. SQLite's automatic checkpoint keeps the `-wal` bounded
+        but never truncates it, so a long-running app carries whatever the
+        last burst of writes left there -- measured at 4.1 MB after 300
+        inserts, and 0 bytes after one `wal_checkpoint(TRUNCATE)`. That is
+        the standing cost this addresses; the file is separately (and
+        adequately) settled by SQLite itself when the last connection to it
+        closes, which is why the exit hook's own docstring is careful about
+        what it does and does not buy.
+
+        `TRUNCATE` needs every other connection to be idle; when one is not,
+        SQLite reports busy rather than raising, and this falls back to
+        `PASSIVE`, which folds in what it can without waiting. Either way the
+        database file is complete afterwards.
+
+        Returns:
+            True when the `-wal` was truncated, False when only a partial
+            (or no) checkpoint was possible -- including for an in-memory or
+            read-only database, which have nothing to checkpoint.
+        """
+        if self.is_memory_db or self._read_only:
+            return False
+        try:
+            connection = self.conn
+            if connection.in_transaction:
+                # A checkpoint cannot see past this connection's own open
+                # transaction; committing here would durably persist work the
+                # caller has not finished, so the honest answer is to decline.
+                return False
+            row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
+        except Exception:  # noqa: BLE001
+            # Broader than sqlite3.Error on purpose: `self.conn` above can
+            # also raise from the private-path connector (the database file
+            # deleted under a still-live instance -- routine in tests, and
+            # possible at shutdown). A settle that cannot happen is a
+            # warning, never a raise out of a close path.
+            if not _INTERPRETER_EXITING:
+                logger.warning("SubscriptionsDB WAL checkpoint failed during shutdown")
+            return False
+        # (busy, log_pages, checkpointed_pages); busy=0 means TRUNCATE ran.
+        if row is not None and row[0] == 0:
+            return True
+        try:
+            self.conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+        except sqlite3.Error:
+            pass
+        return False
+
+    def close_all_connections(self) -> int:
+        """Settle this database for shutdown: checkpoint, then close.
+
+        task-19562. Closes the CALLING thread's connection after
+        checkpointing the `-wal` (the checkpoint is database-wide, so one
+        connection settles the file for all of them).
+
+        Connections owned by *other, still-live* threads are counted and
+        reported, not closed. That is a measured limitation, not an oversight:
+        sqlite3 refuses a cross-thread close --
+
+            ProgrammingError: SQLite objects created in a thread can only be
+            used in that same thread.
+
+        -- and an exception raised out of a shutdown path is worse than a
+        connection the operating system is about to reclaim anyway. The part
+        that actually matters for the file on disk (the checkpoint) is done
+        regardless of which thread calls this.
+
+        Connections whose thread has already EXITED are neither counted nor
+        retained: `_ThreadExitCleanup` closed and de-registered each of them on
+        its own thread as that thread ended (review of PR #1964). So the number
+        returned is the number of connections a still-live thread could
+        actually be using, and the registry itself holds no descriptor open.
+
+        Returns:
+            The number of connections still open on other live threads.
+        """
+        self.checkpoint_wal()
+        self.close()
+        with self._connections_lock:
+            remaining = len(self._connections)
+        if remaining and not _INTERPRETER_EXITING:
+            logger.debug(
+                "SubscriptionsDB connections remain open on other threads after "
+                "WAL checkpoint"
+            )
+        return remaining
 
     @contextmanager
     def transaction(self):
-        """Context manager for database transactions."""
+        """Context manager for database transactions, safe to nest.
+
+        task-19562 part C. This used to commit unconditionally on exit. A
+        nested `with self.transaction()` therefore had its INNER exit
+        durably commit the OUTER transaction's work as well, so a later
+        failure in the outer scope could no longer roll back what the inner
+        block had already written -- silent partial persistence, with no
+        error anywhere.
+
+        Nesting is now tracked per thread (the connection is thread-local,
+        so the depth must be too), mirroring `ChaChaNotes_DB`'s
+        `TransactionContextManager`: only the OUTERMOST block commits or
+        rolls back, and an inner block simply yields the same connection. An
+        exception still propagates outward, so the outermost block rolls the
+        whole unit back as a caller would expect.
+
+        Measured, and the earlier note here was wrong. It claimed
+        `record_check_result` -- the call site the task named -- did not nest
+        ("instrumented depth 1"). Re-instrumented per argument shape:
+
+            record_check_result WITH stats    -> 2 entries, depths [1, 2]
+            record_check_result WITHOUT stats -> 1 entry,  depths [1]
+
+        The nesting is `record_check_result` -> `_update_subscription_stats`
+        -> `update_subscription_stats`, which opens its own `transaction()`
+        for the `subscription_stats` upsert. It is reached whenever `stats`
+        is truthy -- which is every real check, since `execute_run` always
+        passes stats. The earlier measurement can only have exercised the
+        `stats=None` path. So this was **live**, not latent: before this
+        change, the daily-statistics write durably committed the enclosing
+        subscription-health UPDATE. Nothing after that point in
+        `record_check_result` can fail today (only metric logging follows),
+        which is why no incident was ever observed -- but the ordering was
+        one added statement away from silent partial persistence.
+
+        Yields:
+            The thread-local `sqlite3.Connection`. The same object is yielded
+            to a nested block, so an inner `with` shares the outer's
+            transaction rather than starting its own.
+
+        Raises:
+            Exception: Whatever the body raises, re-raised unchanged after the
+                OUTERMOST block rolls back. An inner block does not roll back;
+                the exception propagates so the outermost can.
+        """
         conn = self.conn
+        if not hasattr(self._local, "transaction_depth"):
+            self._local.transaction_depth = 0
+
+        if self._local.transaction_depth > 0:
+            # Inner block: join the outer transaction. No commit, no
+            # rollback -- the outermost owns both.
+            self._local.transaction_depth += 1
+            try:
+                yield conn
+            finally:
+                self._local.transaction_depth -= 1
+            return
+
+        self._local.transaction_depth = 1
         try:
             yield conn
             conn.commit()
         except Exception:
             conn.rollback()
             raise
+        finally:
+            self._local.transaction_depth = 0
 
     # --- Core Subscription Management ---
 
@@ -1790,6 +2412,639 @@ class SubscriptionsDB(BaseDB):
 
     # --- Item Management ---
 
+    @staticmethod
+    def _quote_fts5_term(term: str) -> str:
+        """Return `term` as a literal FTS5 string (embedded quotes doubled).
+
+        The same rule `Library/library_fts_query.py`'s `_quote_fts_term`
+        pins for the Library's RAG search: once every user term is a
+        double-quoted literal, no input can introduce FTS5 operators
+        (``OR``/``NEAR``/``NOT``, column filters, parentheses) -- the only
+        bare syntax in the emitted query is the AND-join below. The
+        Library's plural/singular widening is deliberately NOT copied: a
+        reader scanning for a feed's own words wants exactly those words.
+        """
+        return quote_fts5_token(term)
+
+    #: The list-page projection shared by `get_new_items` and its
+    #: `_search_items_rows` search half (TASK-15464). Deliberately NOT
+    #: `i.*`: the old `SELECT i.*` dragged two unbounded-size columns into
+    #: every one of up to 100 list rows on every Items-pane refresh, and
+    #: neither has a single reader on the list path --
+    #:
+    #: - `content`: the audit's named cost, full scraped article/diff text.
+    #:   Read only by the DETAIL path now (`get_item_content`, a one-row
+    #:   fetch on selection -- see that method's docstring), not by anything
+    #:   that renders the list itself.
+    #: - `extracted_data`: for an API-type subscription,
+    #:   `LocalWatchlistsService._normalize_api_item` stores the entire raw
+    #:   upstream item payload here (`"extracted_data": item`) -- just as
+    #:   unbounded as `content`, and `normalize_watchlist_item` never maps
+    #:   it into its output dict at all, on this query or any other. Nothing
+    #:   downstream of `get_new_items` has ever read it.
+    #:
+    #: Most of the columns below ARE read somewhere downstream of this query
+    #: today (`watchlist_normalizers.normalize_watchlist_item`, the reader's
+    #: `item_dates` sort, or `WatchlistsCollectionsScreen` directly) --
+    #: traced column-by-column in task-15464's Implementation Notes. Two
+    #: kept anyway despite tracing to no reader at all: `categories` and
+    #: `enclosures`. Unlike `content`/`extracted_data` above, neither is a
+    #: large-payload column (small scalar/short-JSON fields), so cutting
+    #: them would not have served the projection's actual goal -- narrowing
+    #: away unbounded-size columns -- and would have been scope creep past
+    #: what this task's ACs asked for. They stay, unread, until a future
+    #: reader needs them or a separate cleanup task removes them on its own
+    #: evidence.
+    #:
+    #: One exception traced the OTHER way: `article_list._render_row` (the
+    #: Read tab's row renderer) DOES read `content` on the list path, for a
+    #: 160-char preview snippet under the title (`html_text.body_snippet`).
+    #: Rather than let that one reader drag the full column back in,
+    #: `content_preview` is a CHEAP projected expression -- a 2000-character
+    #: prefix (`substr` counts characters, not bytes), not the whole
+    #: (possibly many-KB) body -- comfortably enough text for `body_snippet`
+    #: to find its 160 plain-text characters after HTML-tag-stripping in
+    #: every realistic case; a snippet cut a few characters short on some
+    #: pathological markup-to-text ratio is an acceptable soft failure for a
+    #: preview, unlike truncating the reader's actual body. `article_list.py`
+    #: prefers this column and falls back to `content` only for a hand-built
+    #: dict that never went through this query at all (tests; a future
+    #: non-DB source).
+    _LIST_ITEM_COLUMNS = (
+        "i.id, i.subscription_id, i.url, i.title, i.content_hash, "
+        "i.published_date, i.author, i.categories, i.enclosures, i.status, "
+        "i.media_id, i.processing_error, i.previous_hash, "
+        "i.change_percentage, i.diff_summary, i.change_type, "
+        "i.canonical_url, i.duplicate_of, i.created_at, i.updated_at, "
+        "i.queued_for_briefing, i.run_id, i.alert_matches, "
+        "i.content_format, i.content_kind, i.is_flagged, "
+        "substr(i.content, 1, 2000) AS content_preview, "
+        "s.name as subscription_name, s.type as subscription_type"
+    )
+
+    #: Narrow metadata projection for agent search. This is intentionally not
+    #: based on the broader UI list projection: raw processing errors, alert
+    #: matches, hashes, categories/enclosures, flags, and redundant previews
+    #: are not part of the agent evidence contract.
+    _AGENT_LIST_ITEM_COLUMNS = (
+        "i.id, i.subscription_id, i.url, i.title, i.published_date, "
+        "i.author, i.status, i.canonical_url, i.created_at, i.updated_at, "
+        "i.content_format, i.content_kind, i.effective_date, "
+        "s.name AS subscription_name, s.type AS subscription_type, "
+        "s.source AS subscription_source, "
+        "s.is_active AS subscription_is_active, "
+        "s.is_paused AS subscription_is_paused, "
+        "s.created_at AS subscription_created_at, "
+        "s.updated_at AS subscription_updated_at, "
+        "s.last_checked AS subscription_last_checked, "
+        "s.last_successful_check AS subscription_last_successful_check"
+    )
+    _AGENT_SEARCH_PAGE_LIMIT = 50
+    _AGENT_MEMBERSHIP_SOURCE_LIMIT = 50
+    _AGENT_MEMBERSHIP_COLLECTION_LIMIT = 20
+    _AGENT_RESOLUTION_CANDIDATE_LIMIT = 20
+
+    @classmethod
+    def _agent_search_projection(
+        cls, search_terms: Sequence[str]
+    ) -> tuple[str, List[Any]]:
+        """Build the LIKE fallback's bounded literal-context projection.
+
+        The body window is centered on the first query term found beyond its
+        leading 1,000 characters. This includes a deep body match even when
+        an earlier AND term matched only the title or author. With no deep
+        body term, the ordinary leading preview is the useful bounded input.
+        """
+        deep_match_legs: List[str] = []
+        projection_params: List[Any] = []
+        for term in search_terms:
+            deep_match_legs.append(
+                "WHEN instr(lower(COALESCE(i.content, '')), lower(?)) > 1000 "
+                "THEN instr(lower(COALESCE(i.content, '')), lower(?)) - 1000"
+            )
+            projection_params.extend((term, term))
+        start_expression = (
+            f"CASE {' '.join(deep_match_legs)} ELSE 1 END" if deep_match_legs else "1"
+        )
+        return (
+            cls._AGENT_LIST_ITEM_COLUMNS
+            + f", substr(i.content, {start_expression}, 2000) "
+            "AS content_match_context",
+            projection_params,
+        )
+
+    @classmethod
+    def _agent_fts_search_projection(cls) -> str:
+        """Build an FTS-tokenizer-aware, character-bounded body projection.
+
+        FTS5 ``snippet`` uses the same Unicode/diacritic and punctuation
+        tokenization as the MATCH that admitted the row. Restrict it to the
+        content column (index 1), cap its token window, and apply a final
+        character bound so unusually long tokens cannot make a list row
+        unbounded. Empty markers keep public snippet formatting in the later
+        service layer.
+        """
+        return (
+            cls._AGENT_LIST_ITEM_COLUMNS
+            + ", substr(snippet(subscription_items_fts, 1, '', '', '', 32), "
+            "1, 2000) AS content_match_context"
+        )
+
+    @staticmethod
+    def _item_scope_predicates(
+        *,
+        subscription_id: Optional[int],
+        status: Optional[str],
+        watchlist_id: Optional[int],
+        statuses: Optional[Sequence[str]],
+        since: Optional[str],
+    ) -> tuple[List[str], List[Any]]:
+        """Build the shared source, collection, status, and date predicates.
+
+        The date floor targets the generated normalized ``effective_date``
+        column and normalizes the bound value through SQLite ``datetime()``;
+        this preserves the legacy mixed stored-date behavior and index path.
+        """
+        predicates: List[str] = []
+        params: List[Any] = []
+        if subscription_id is not None:
+            predicates.append("i.subscription_id = ?")
+            params.append(subscription_id)
+        if status is not None:
+            predicates.append("i.status = ?")
+            params.append(status)
+        if watchlist_id is not None:
+            predicates.append(
+                "i.subscription_id IN ("
+                "SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?"
+                ")"
+            )
+            params.append(watchlist_id)
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            predicates.append(f"i.status IN ({placeholders})")
+            params.extend(statuses)
+        if since is not None:
+            predicates.append("i.effective_date >= datetime(?)")
+            params.append(since)
+        return predicates, params
+
+    def _subscription_items_fts_is_complete(self, conn: Any) -> bool:
+        """Whether every current item id has a real FTS docsize row.
+
+        An external-content FTS table can appear to contain all content rows
+        even when its index is only partially backfilled. The shadow docsize
+        table is the actual membership authority. An anti-join proves exact
+        coverage of item ids; table presence or equal counts cannot.
+
+        Only ``True`` is cached. Existing insert/update/delete triggers keep a
+        proven-complete index complete, while an incomplete legacy database is
+        rechecked on every later search so a background backfill can take
+        effect without reopening this owner.
+        """
+        if self._fts_items_complete is True:
+            return True
+        try:
+            row = conn.execute(
+                """
+                SELECT NOT EXISTS (
+                    SELECT 1
+                    FROM subscription_items i
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM subscription_items_fts_docsize d
+                        WHERE d.id = i.id
+                    )
+                    LIMIT 1
+                )
+                """
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        complete = bool(row and row[0])
+        if complete:
+            self._fts_items_complete = True
+        return complete
+
+    def _search_items_rows(
+        self,
+        conn: Any,
+        where_clause: str,
+        params: List[Any],
+        search_terms: List[str],
+        limit: int,
+        *,
+        select_columns: Optional[str] = None,
+        select_params: Sequence[Any] = (),
+        fts_select_columns: Optional[str] = None,
+    ) -> List[Any]:
+        """The `search` half of `get_new_items`: FTS5 MATCH, LIKE fallback.
+
+        The happy path JOINs `subscription_items_fts` (external-content over
+        title/content/author) and MATCHes the AND-of-quoted-terms query. The
+        fallback fires on `sqlite3.OperationalError` -- the table missing on
+        a pre-migration database, or fts5 compiled out of the bundled SQLite
+        -- and answers the same question with AND-of-terms,
+        OR-across-columns LIKEs whose wildcards are escaped (``%``/``_``/
+        ``\\`` stay literal). Either way the caller gets rows; the search
+        box must never raise into the reader.
+        """
+        columns = select_columns or self._LIST_ITEM_COLUMNS
+        fts_columns = fts_select_columns or columns
+        effective_fts_select_params = () if fts_select_columns else select_params
+        match = " AND ".join(self._quote_fts5_term(term) for term in search_terms)
+        fts_where = (
+            f"{where_clause} AND subscription_items_fts MATCH ?"
+            if where_clause
+            else "WHERE subscription_items_fts MATCH ?"
+        )
+        if self._subscription_items_fts_is_complete(conn):
+            try:
+                return conn.execute(
+                    f"""
+                    SELECT {fts_columns}
+                    FROM subscription_items i
+                    JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {fts_where}
+                    ORDER BY i.effective_date DESC, i.id ASC
+                    LIMIT ?
+                    """,
+                    tuple([*effective_fts_select_params, *params, match, limit]),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                logger.debug(
+                    "subscription_items_fts unavailable; falling back to LIKE search."
+                )
+        like_clauses: List[str] = []
+        like_params: List[Any] = []
+        for term in search_terms:
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like_clauses.append(
+                "(i.title LIKE ? ESCAPE '\\' OR i.content LIKE ? ESCAPE '\\' "
+                "OR i.author LIKE ? ESCAPE '\\')"
+            )
+            like_params.extend([f"%{escaped}%"] * 3)
+        like_predicates = " AND ".join(like_clauses)
+        like_where = (
+            f"{where_clause} AND {like_predicates}"
+            if where_clause
+            else f"WHERE {like_predicates}"
+        )
+        return conn.execute(
+            f"""
+            SELECT {columns}
+            FROM subscription_items i
+            JOIN subscriptions s ON i.subscription_id = s.id
+            {like_where}
+            ORDER BY i.effective_date DESC, i.id ASC
+            LIMIT ?
+            """,
+            tuple([*select_params, *params, *like_params, limit]),
+        ).fetchall()
+
+    def search_items_for_agent(
+        self,
+        *,
+        query: Optional[str] = None,
+        subscription_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        statuses: Optional[Sequence[str]] = None,
+        since: Optional[str] = None,
+        limit: int = 10,
+        snapshot_max_item_id: Optional[int] = None,
+        after_effective_date: Optional[str] = None,
+        after_item_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one bounded, stable-keyset page for agent evidence.
+
+        This is a storage seam, not the public tool contract: validation,
+        canonical IDs, cursors, JSON packing, URL handling, and excerpt text
+        normalization belong to the tool service. Values are bound SQL
+        parameters and all multi-row body material stays capped at 2,000
+        characters.
+
+        The first page captures the current maximum item id. Later pages pass
+        that value back, admitting every pre-existing row (including one with
+        a future effective date) while excluding all later inserts. The
+        continuation key follows ``effective_date DESC, id ASC`` explicitly,
+        including the NULL-date sink.
+
+        Args:
+            query: Literal whitespace-delimited search terms, or blank to
+                browse without a text predicate.
+            subscription_id: Optional source-row scope.
+            watchlist_id: Optional collection-row scope.
+            statuses: Optional status values to include; ``None`` means all.
+            since: Optional inclusive effective-date floor.
+            limit: Page size from 1 through 50.
+            snapshot_max_item_id: First-page item-ID high-water, or ``None``
+                to capture the current maximum.
+            after_effective_date: Last row's effective date, or ``None`` for
+                the NULL-date sink.
+            after_item_id: Last row ID for keyset continuation.
+
+        Returns:
+            A mapping containing bounded ``items``, ``has_more``, and the
+            traversal ``snapshot_max_item_id``.
+
+        Raises:
+            ValueError: If ``limit`` is outside 1..50 or an effective-date
+                continuation omits ``after_item_id``.
+        """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        if limit > self._AGENT_SEARCH_PAGE_LIMIT:
+            raise ValueError(f"limit must be at most {self._AGENT_SEARCH_PAGE_LIMIT}")
+        if after_effective_date is not None and after_item_id is None:
+            raise ValueError("after_item_id is required with after_effective_date")
+
+        search_terms = query.split() if query and query.strip() else []
+        select_columns, select_params = self._agent_search_projection(search_terms)
+        fts_select_columns = self._agent_fts_search_projection()
+        predicates, params = self._item_scope_predicates(
+            subscription_id=subscription_id,
+            status=None,
+            watchlist_id=watchlist_id,
+            statuses=statuses,
+            since=since,
+        )
+
+        with self.transaction() as conn:
+            if snapshot_max_item_id is None:
+                high_water_row = conn.execute(
+                    "SELECT COALESCE(MAX(id), 0) FROM subscription_items"
+                ).fetchone()
+                snapshot_max_item_id = int(high_water_row[0])
+            predicates.append("i.id <= ?")
+            params.append(snapshot_max_item_id)
+
+            if after_item_id is not None:
+                if after_effective_date is None:
+                    predicates.append("i.effective_date IS NULL AND i.id > ?")
+                    params.append(after_item_id)
+                else:
+                    predicates.append(
+                        "(i.effective_date IS NULL "
+                        "OR i.effective_date < datetime(?) "
+                        "OR (i.effective_date = datetime(?) AND i.id > ?))"
+                    )
+                    params.extend(
+                        [after_effective_date, after_effective_date, after_item_id]
+                    )
+
+            where_clause = f"WHERE {' AND '.join(predicates)}"
+            fetch_limit = limit + 1
+            if search_terms:
+                rows = self._search_items_rows(
+                    conn,
+                    where_clause,
+                    params,
+                    search_terms,
+                    fetch_limit,
+                    select_columns=select_columns,
+                    select_params=select_params,
+                    fts_select_columns=fts_select_columns,
+                )
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT {select_columns}
+                    FROM subscription_items i
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {where_clause}
+                    ORDER BY i.effective_date DESC, i.id ASC
+                    LIMIT ?
+                    """,
+                    tuple([*select_params, *params, fetch_limit]),
+                ).fetchall()
+
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+            "snapshot_max_item_id": snapshot_max_item_id,
+        }
+
+    def get_item_detail_for_agent(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """Return one authoritative item joined to its source, or ``None``.
+
+        Unlike ``get_item_content``, a missing row is distinguishable from a
+        present row whose article body is NULL. The single-row detail path may
+        read full ``content``; raw ``extracted_data`` and source secrets are
+        intentionally not projected.
+
+        Args:
+            item_id: ``subscription_items.id`` to retrieve.
+
+        Returns:
+            The allowlisted item/source row, including a possibly-null
+            ``content`` value, or ``None`` when the item does not exist.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    i.id, i.subscription_id, i.url, i.title, i.content,
+                    i.published_date, i.author, i.status, i.diff_summary,
+                    i.change_percentage, i.change_type, i.canonical_url,
+                    i.created_at, i.updated_at, i.content_format,
+                    i.content_kind, i.effective_date,
+                    s.name AS subscription_name,
+                    s.type AS subscription_type,
+                    s.source AS subscription_source,
+                    s.is_active AS subscription_is_active,
+                    s.is_paused AS subscription_is_paused,
+                    s.created_at AS subscription_created_at,
+                    s.updated_at AS subscription_updated_at,
+                    s.last_checked AS subscription_last_checked,
+                    s.last_successful_check AS subscription_last_successful_check
+                FROM subscription_items i
+                JOIN subscriptions s ON s.id = i.subscription_id
+                WHERE i.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    @classmethod
+    def _bounded_agent_candidate_limit(cls, limit: int) -> int:
+        """Clamp a caller's candidate request to the storage boundary."""
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        return min(limit, cls._AGENT_RESOLUTION_CANDIDATE_LIMIT)
+
+    def resolve_source_candidates(
+        self, query: Union[str, int], *, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Resolve an id, or exact name/URL first, else partial names.
+
+        Both legs query ``subscriptions`` directly, so candidates beyond the
+        legacy ``get_all_subscriptions``/UI scan ceiling remain reachable.
+        Ambiguity is retained for the tool service to report rather than being
+        silently resolved here.
+
+        Args:
+            query: Numeric source ID, or an exact/partial source name or exact
+                configured URL. Exact names take precedence over exact URLs.
+            limit: Requested candidate count, capped at 20.
+
+        Returns:
+            Deterministically ordered, allowlisted source candidates.
+
+        Raises:
+            ValueError: If ``limit`` is less than one.
+        """
+        bounded_limit = self._bounded_agent_candidate_limit(limit)
+        source_columns = (
+            "id, name, type, source, is_active, is_paused, created_at, "
+            "updated_at, last_checked, last_successful_check"
+        )
+        with self.transaction() as conn:
+            if isinstance(query, int):
+                row = conn.execute(
+                    f"SELECT {source_columns} FROM subscriptions WHERE id = ?",
+                    (query,),
+                ).fetchone()
+                return [dict(row)] if row is not None else []
+            rows = conn.execute(
+                f"""
+                SELECT {source_columns}
+                FROM subscriptions
+                WHERE unicode_casefold(name) = unicode_casefold(?)
+                ORDER BY unicode_casefold(name), name, id
+                LIMIT ?
+                """,
+                (query, bounded_limit),
+            ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    f"""
+                    SELECT {source_columns}
+                    FROM subscriptions
+                    WHERE source = ?
+                    ORDER BY unicode_casefold(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    f"""
+                    SELECT {source_columns}
+                    FROM subscriptions
+                    WHERE instr(unicode_casefold(name), unicode_casefold(?)) > 0
+                    ORDER BY unicode_casefold(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_collection_candidates(
+        self, query: Union[str, int], *, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Resolve an id, or exact names first, else bounded partial names.
+
+        Args:
+            query: Numeric collection ID or an exact/partial collection name.
+            limit: Requested candidate count, capped at 20.
+
+        Returns:
+            Deterministically ordered collection ID/name candidates.
+
+        Raises:
+            ValueError: If ``limit`` is less than one.
+        """
+        bounded_limit = self._bounded_agent_candidate_limit(limit)
+        with self.transaction() as conn:
+            if isinstance(query, int):
+                row = conn.execute(
+                    "SELECT id, name FROM watchlists WHERE id = ?", (query,)
+                ).fetchone()
+                return [dict(row)] if row is not None else []
+            rows = conn.execute(
+                """
+                SELECT id, name
+                FROM watchlists
+                WHERE unicode_casefold(name) = unicode_casefold(?)
+                ORDER BY unicode_casefold(name), name, id
+                LIMIT ?
+                """,
+                (query, bounded_limit),
+            ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    """
+                    SELECT id, name
+                    FROM watchlists
+                    WHERE instr(unicode_casefold(name), unicode_casefold(?)) > 0
+                    ORDER BY unicode_casefold(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_source_collection_memberships(
+        self, subscription_ids: Sequence[int]
+    ) -> Dict[int, Dict[str, Any]]:
+        """Load bounded collection memberships for at most one result page.
+
+        One window-ranked ``IN`` query fetches at most one lookahead beyond
+        the per-source collection cap. Each source therefore reports whether
+        additional memberships were omitted, without an N+1 count/query.
+
+        Args:
+            subscription_ids: Source row IDs from one agent search page.
+
+        Returns:
+            Mapping of each requested source ID to ``collections`` (at most
+            20 deterministic ID/name rows) and ``has_more`` truncation state.
+
+        Raises:
+            ValueError: If more than 50 distinct source IDs are supplied.
+        """
+        unique_ids = list(dict.fromkeys(subscription_ids))
+        if len(unique_ids) > self._AGENT_MEMBERSHIP_SOURCE_LIMIT:
+            raise ValueError(
+                "source collection memberships accepts at most "
+                f"{self._AGENT_MEMBERSHIP_SOURCE_LIMIT} source ids"
+            )
+        memberships: Dict[int, Dict[str, Any]] = {
+            source_id: {"collections": [], "has_more": False}
+            for source_id in unique_ids
+        }
+        if not unique_ids:
+            return memberships
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                WITH ranked_memberships AS (
+                    SELECT ws.subscription_id, w.id, w.name,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ws.subscription_id
+                               ORDER BY lower(w.name), w.name, w.id
+                           ) AS membership_rank
+                    FROM watchlist_sources ws
+                    JOIN watchlists w ON w.id = ws.watchlist_id
+                    WHERE ws.subscription_id IN ({placeholders})
+                )
+                SELECT subscription_id, id, name, membership_rank
+                FROM ranked_memberships
+                WHERE membership_rank <= ?
+                ORDER BY subscription_id, membership_rank
+                """,
+                (*unique_ids, self._AGENT_MEMBERSHIP_COLLECTION_LIMIT + 1),
+            ).fetchall()
+        for row in rows:
+            result = memberships[int(row["subscription_id"])]
+            if row["membership_rank"] > self._AGENT_MEMBERSHIP_COLLECTION_LIMIT:
+                result["has_more"] = True
+                continue
+            result["collections"].append({"id": int(row["id"]), "name": row["name"]})
+        return memberships
+
     def get_new_items(
         self,
         subscription_id: Optional[int] = None,
@@ -1799,6 +3054,9 @@ class SubscriptionsDB(BaseDB):
         watchlist_id: Optional[int] = None,
         unassigned_only: bool = False,
         statuses: Optional[List[str]] = None,
+        is_flagged: Optional[bool] = None,
+        search: Optional[str] = None,
+        since: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Items for a subscription (or all of them), newest first.
 
@@ -1822,6 +3080,14 @@ class SubscriptionsDB(BaseDB):
         multi-status form of `status` for a caller that wants more than one
         bucket without wanting all of them.
 
+        TASK-15464: rows carry every `subscription_items` column EXCEPT
+        `content` (full body text) and `extracted_data` (an API source's raw
+        upstream payload) -- both unbounded-size, and neither has a reader
+        on this list-page path (see `_LIST_ITEM_COLUMNS`'s docstring for the
+        trace). A caller that needs the body of ONE already-listed item
+        (opening it in the reader) fetches it separately through
+        `get_item_content`, a single indexed-by-id read.
+
         Args:
             subscription_id: Restrict to one subscription, or `None` for all.
             status: The single status to return, or `None` for every status.
@@ -1840,10 +3106,34 @@ class SubscriptionsDB(BaseDB):
                 bucket by name passes `status="new"`, or names `"new"` in
                 `statuses`); passing both is rejected rather than silently
                 intersected.
+            is_flagged: Restrict to starred rows (`True`) or unstarred rows
+                (`False`), or `None` to not filter by the flag at all
+                (TASK-3072 -- the Starred feed's page). Composes with every
+                other predicate, the same as the membership scopes.
+            search: Full-text terms over title/content/author (TASK-3791 --
+                the reader's `/`). Whitespace-separated terms are ANDed, each
+                matched literally (FTS5 operator syntax in the input is
+                neutralized by quoting); the FTS table is used when it reads,
+                with a LIKE fallback when it does not. `None` or blank passes
+                no predicate at all.
+            since: Effective-date floor (TASK-3791 -- the Today feed's page):
+                only rows at/after `since` (inclusive). Both sides go through
+                SQLite `datetime()` -- the stored columns are mixed-format
+                (CURRENT_TIMESTAMP's space shape and ingest's ISO `T`+offset)
+                and a bare string compare orders ' ' before 'T' (PR #1443
+                review); an unparseable feed-supplied `published_date`
+                normalizes to NULL and the COALESCE falls back to
+                `created_at`.
 
         Returns:
             One dict per item row, joined to its subscription's name and type,
-            ordered by `created_at` descending.
+            ordered by EFFECTIVE date descending (`published_date`, falling
+            back to `created_at` -- TASK-3072), both sides normalized through
+            `datetime()` so mixed stored formats order correctly (PR #1443
+            review); rows whose dates are both unparseable sink to the end of
+            the page. The reader re-sorts its displayed page precisely in
+            Python (`Subscriptions/item_dates.py`), so this clause's job is
+            picking the right PAGE, not the final row order.
 
         Raises:
             ValueError: If both `status` and `statuses` are passed.
@@ -1856,45 +3146,44 @@ class SubscriptionsDB(BaseDB):
         # their product is how the "all statuses" case came to be missing in
         # the first place. Values stay bound parameters -- only the fixed
         # predicate TEXT is assembled here.
-        predicates: List[str] = []
-        params: List[Any] = []
-        if subscription_id:
-            predicates.append("i.subscription_id = ?")
-            params.append(subscription_id)
-        if status is not None:
-            predicates.append("i.status = ?")
-            params.append(status)
+        predicates, params = self._item_scope_predicates(
+            subscription_id=subscription_id,
+            status=status,
+            watchlist_id=watchlist_id,
+            statuses=statuses,
+            since=since,
+        )
         if run_id is not None:
             predicates.append("i.run_id = ?")
             params.append(run_id)
-        if watchlist_id is not None:
-            predicates.append(
-                "i.subscription_id IN (SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?)"
-            )
-            params.append(watchlist_id)
         if unassigned_only:
             predicates.append(
                 "NOT EXISTS (SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = i.subscription_id)"
             )
-        if statuses is not None:
-            placeholders = ", ".join("?" for _ in statuses)
-            predicates.append(f"i.status IN ({placeholders})")
-            params.extend(statuses)
+        if is_flagged is not None:
+            predicates.append("i.is_flagged = ?")
+            params.append(1 if is_flagged else 0)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
-        params.append(limit)
 
+        search_terms = search.split() if search and search.strip() else []
         with self.transaction() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT i.*, s.name as subscription_name, s.type as subscription_type
-                FROM subscription_items i
-                JOIN subscriptions s ON i.subscription_id = s.id
-                {where_clause}
-                ORDER BY i.created_at DESC
-                LIMIT ?
-                """,
-                tuple(params),
-            ).fetchall()
+            if search_terms:
+                rows = self._search_items_rows(
+                    conn, where_clause, params, search_terms, limit
+                )
+            else:
+                params.append(limit)
+                rows = conn.execute(
+                    f"""
+                    SELECT {self._LIST_ITEM_COLUMNS}
+                    FROM subscription_items i
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {where_clause}
+                    ORDER BY i.effective_date DESC, i.id ASC
+                    LIMIT ?
+                    """,
+                    tuple(params),
+                ).fetchall()
         return [dict(row) for row in rows]
 
     def get_item_status(self, item_id: int) -> str:
@@ -1929,6 +3218,44 @@ class SubscriptionsDB(BaseDB):
         if row is None:
             raise KeyError(f"Subscription item not found: {item_id}")
         return str(row["status"] or "new")
+
+    def get_item_content(self, item_id: int) -> Optional[str]:
+        """The full body text of one item -- the reader's DETAIL fetch.
+
+        TASK-15464. `get_new_items`'s list-page projection (`_LIST_ITEM_
+        COLUMNS`) deliberately excludes `content`: up to 100 rows' worth of
+        full scraped article/diff text, dragged along on every Items-pane
+        refresh for a column no list row ever rendered. This is the other
+        half -- a single indexed-by-primary-key read, fetched once, only
+        for the item actually opened in the reader.
+
+        Deliberately `Optional[str]` rather than raising, UNLIKE the
+        sibling `get_item_status` immediately above: `status` always has a
+        value once a row exists (defaulting to `"new"`, so `None` can only
+        mean "no such row" and a raise is the honest signal). `content` has
+        no such guarantee -- a row that exists but was never scraped a body
+        (mid-ingest, or a `change`-kind item whose renderable is
+        `diff_summary` instead) legitimately has `content IS NULL`, which is
+        not an error. Both "no such row" and "row exists, content is NULL"
+        return `None` here, indistinguishably -- the caller
+        (`WatchlistsCollectionsScreen._load_item_content`) treats a `None`
+        the same way either way: leave whatever `content` the caller's own
+        item dict already carries untouched, rather than raise or overwrite
+        it with an empty body.
+
+        Args:
+            item_id: The `subscription_items` row id.
+
+        Returns:
+            The stored `content`, or `None` if no row has this id, or the
+            row has one but its `content` column is itself NULL.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT content FROM subscription_items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        return row["content"] if row is not None else None
 
     def get_url_snapshots(
         self, subscription_id: int, url: str, *, limit: int = 2
@@ -2115,6 +3442,95 @@ class SubscriptionsDB(BaseDB):
                 "UPDATE subscription_items SET queued_for_briefing = ? WHERE id = ?",
                 (1 if queued else 0, item_id),
             )
+
+    def set_item_flagged(self, item_id: int, flagged: bool) -> None:
+        """Set or clear the global "starred" flag on one item (TASK-3072).
+
+        Same shape and same global semantics as `set_item_briefing_queued`:
+        one row, one flag -- an item starred through any scope reads starred
+        in all of them, and nothing but this explicit call changes it.
+        `persist_subscription_item` never writes the column, so the flag
+        survives re-fetches (pinned in
+        `Tests/DB/test_subscriptions_db_watchlists.py`).
+
+        Args:
+            item_id: `subscription_items.id` to update.
+            flagged: `True` to star the item, `False` to unstar it.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET is_flagged = ? WHERE id = ?",
+                (1 if flagged else 0, item_id),
+            )
+
+    def get_flagged_items_count(self) -> int:
+        """How many items are starred, across every source and status.
+
+        The Starred rail node's badge (TASK-3072). Status-agnostic on
+        purpose: starring is orthogonal to triage, and a badge that shrank
+        as the user read their starred items would read as data loss.
+
+        Returns:
+            The count of rows with ``is_flagged = 1``.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM subscription_items WHERE is_flagged = 1"
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_unread_items_count_since(self, since: str) -> int:
+        """How many unread items fall at/after `since` -- the Today badge.
+
+        TASK-3791. The floor compares the EFFECTIVE date (``published_date``,
+        falling back to ``created_at``), the same expression `get_new_items`
+        orders by and its `since` predicate filters on, so the badge and the
+        node's page answer the same question.
+
+        The predicate reads the ``effective_date`` generated column
+        (TASK-15770), not the inline
+        ``COALESCE(datetime(published_date), datetime(created_at))`` it used
+        to spell out: the column IS that expression (task-15464's
+        ``_ensure_watchlists_schema`` block), so the count is unchanged, but
+        the column name lets ``idx_subscription_items_effective_date`` serve
+        the floor as an index range instead of a full-table scan -- SQLite
+        (probe-verified on 3.49.1) does NOT rewrite the byte-identical
+        inline expression to the generated column on its own.
+
+        Args:
+            since: Inclusive ISO floor (the screen passes local midnight).
+
+        Returns:
+            The count of ``status = 'new'`` rows at or after the floor.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM subscription_items "
+                "WHERE status = 'new' AND effective_date >= datetime(?)",
+                (since,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_subscription_id_by_source(self, source: str) -> Optional[int]:
+        """The id of the subscription with exactly this `source` URL, or None.
+
+        TASK-3604. OPML import resolves each feed against the existing
+        roster before creating anything -- `add_subscription` is a plain
+        INSERT with no uniqueness constraint on `source`, so without this
+        lookup a re-import duplicates every feed and the additive-only
+        round-trip (ADR-043 rule 6) is impossible.
+
+        Args:
+            source: The exact source URL/identifier to match.
+
+        Returns:
+            The subscription's id, or `None` when no row carries it.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT id FROM subscriptions WHERE source = ?", (source,)
+            ).fetchone()
+        return int(row[0]) if row else None
 
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
         """Create a new `briefings` row for a watchlist.
@@ -3472,10 +4888,47 @@ class SubscriptionsDB(BaseDB):
         return results
 
     def close(self):
-        """Close database connections."""
-        if hasattr(self._local, "conn") and self._local.conn:
-            self._local.conn.close()
+        """Close THIS thread's connection, checkpointing the `-wal` first.
+
+        Scope is unchanged from before task-19562 and is load-bearing: this
+        closes only the calling thread's connection and clears that thread's
+        slot, and the `conn` property reopens lazily, which is what makes it
+        safe for `app.py`'s FTS backfill to call it from a *pooled* thread
+        that will later serve other watchlists work. Do not "improve" it into
+        a close of the instance.
+
+        What is new is that the connection is checkpointed on the way out
+        (task-19562) and dropped from `_connections`, so the registry never
+        reports a connection that is already gone. Use
+        `close_all_connections` for the shutdown path, which adds the
+        database-wide settle.
+
+        The thread-exit cleanup is detached first (review of PR #1964): this
+        thread has closed and de-registered its own connection, so the
+        finalizer has nothing left to do and must not act on a connection this
+        thread may since have reopened.
+        """
+        cleanup = getattr(self._local, "connection_cleanup", None)
+        if cleanup is not None:
+            cleanup.detach()
+            self._local.connection_cleanup = None
+        connection = getattr(self._local, "conn", None)
+        if connection:
+            try:
+                if not self.is_memory_db and not connection.in_transaction:
+                    mode = connection.execute("PRAGMA journal_mode;").fetchone()
+                    if mode and str(mode[0]).lower() == "wal":
+                        connection.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except sqlite3.Error as exc:
+                if not _INTERPRETER_EXITING:
+                    logger.warning(
+                        f"WAL checkpoint before close failed for "
+                        f"{self.db_path_str}: {exc}"
+                    )
+            connection.close()
             self._local.conn = None
+        with self._connections_lock:
+            self._connections.pop(threading.get_ident(), None)
 
 
 # End of Subscriptions_DB.py

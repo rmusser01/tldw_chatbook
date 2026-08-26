@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 import asyncio
 import threading
 import time
@@ -386,7 +390,7 @@ async def test_skill_install_card_allow_and_deny():
         SkillInstallConfirmCard,
     )
 
-    class _Host(App[None]):
+    class _Host(ConsolidatedCSSApp):
         def __init__(self):
             super().__init__()
             self.decided = []
@@ -545,3 +549,32 @@ async def test_restored_pending_install_never_mounts_an_actionable_card_through_
             == "Restored summary text should survive"
         )
         assert "Restored summary text should survive" in _visible_text(console)
+
+
+def test_confirm_zero_timeout_keeps_round_armed_for_late_decision():
+    """ADR-067: timeout 0 = no deadline. The pre-ADR code armed
+    `deadline = now + 0` and denied at the first 1s poll; the round must
+    now stay armed and resolve on the user's decision."""
+    controller, _ = _controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_skill_install = received.append
+    controller.skill_install_confirm_timeout_seconds = lambda: 0.0
+
+    def _allow_late() -> None:
+        time.sleep(1.6)
+        controller.resolve_pending_skill_install(
+            True, request_id=received[0]["request_id"]
+        )
+
+    decider = threading.Thread(target=_allow_late)
+    decider.start()
+    started = time.monotonic()
+    allowed = controller.request_skill_install_confirm("https://x/y")
+    elapsed = time.monotonic() - started
+    decider.join()
+
+    assert allowed is True
+    assert elapsed >= 1.5
+    # Card was told no deadline exists.
+    assert received[0]["timeout_seconds"] == 0.0

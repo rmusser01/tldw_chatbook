@@ -1,6 +1,6 @@
 ---
 id: TASK-1683
-title: 'Impersonate drafts the user's next reply'
+title: Impersonate drafts the user's next reply
 status: Done
 assignee:
   - '@claude'

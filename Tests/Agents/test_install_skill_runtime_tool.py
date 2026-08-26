@@ -9,12 +9,15 @@ runtime_schemas (never disclosure-gated) only for the top-level agent
 import json
 
 from tldw_chatbook.Agents.agent_models import (
+    CHECK_AGENTS_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
+    WAIT_AGENTS_TOOL_NAME,
     RUN_LOG_SLICE_TOOL_NAME,
     RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     SEARCH_RUN_LOG_TOOL_NAME,
+    SEND_TO_AGENT_TOOL_NAME,
     SPAWN_TOOL_NAME,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
@@ -30,6 +33,8 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.tool_catalog import INSTALL_SKILL_TOOL_SCHEMA
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 
+from Tests.Agents.test_agent_service import FleetChat, verbatim
+
 
 def test_install_skill_name_in_runtime_tool_names():
     assert INSTALL_SKILL_TOOL_NAME == "install_skill"
@@ -43,6 +48,9 @@ def test_install_skill_name_in_runtime_tool_names():
         SEARCH_RUN_LOG_TOOL_NAME,
         RUN_LOG_STATS_TOOL_NAME,
         RUN_LOG_SLICE_TOOL_NAME,
+        WAIT_AGENTS_TOOL_NAME,
+        CHECK_AGENTS_TOOL_NAME,
+        SEND_TO_AGENT_TOOL_NAME,
     }
 
 
@@ -137,6 +145,8 @@ from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRe
 from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import join_fleet_children
+
 
 def _svc_fence(name, args):
     return {"choices": [{"message": {"content": _fence(name, args)}}]}
@@ -180,15 +190,25 @@ def test_subagent_cannot_call_install_skill(tmp_path):
     def installer(url):
         raise AssertionError("subagent must never reach the installer")
 
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),   # parent spawns
-        _svc_fence("install_skill", {"url": "https://github.com/o/r"}),  # child tries
-        {"choices": [{"message": {"content": "child gave up"}}]},
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), install_skill_tool=installer
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- one ordered queue is no longer deterministic. Addressed
+    # per agent instead; the replies themselves are unchanged.
+    chat = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),   # parent spawns
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {
+            "native task": [
+                _svc_fence(
+                    "install_skill", {"url": "https://github.com/o/r"}
+                ),  # child tries
+                {"choices": [{"message": {"content": "child gave up"}}]},
+            ]
+        },
+        reply=verbatim,
     )
+    service = AgentService(db, reg, chat_call=chat, install_skill_tool=installer)
     _rid, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -198,6 +218,7 @@ def test_subagent_cannot_call_install_skill(tmp_path):
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     child_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "subagent"]
     assert len(child_runs) == 1

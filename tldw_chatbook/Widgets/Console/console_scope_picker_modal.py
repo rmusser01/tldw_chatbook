@@ -84,6 +84,8 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 from tldw_chatbook.Chat.console_glyphs import GLYPH_SOURCE_MEDIA, GLYPH_SOURCE_NOTE
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Chat.rag_scope import (
@@ -236,10 +238,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class ConsoleScopePickerModal(ModalScreen[None]):
+class ConsoleScopePickerModal(SafeModalDismissMixin, ModalScreen[None]):
     """Pick a static media/note item set to narrow RAG retrieval scope."""
 
-    BINDINGS = [("escape", "dismiss_picker", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-scope-picker-modal"
 
     def __init__(
         self,
@@ -384,7 +387,7 @@ class ConsoleScopePickerModal(ModalScreen[None]):
                 yield Button("Clear scope", id=CLEAR_SCOPE_BTN_ID, compact=True)
                 yield Button("Cancel", id=CANCEL_BTN_ID, compact=True)
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         self._sync_tab_buttons()
         self._sync_view_buttons()
         # Selected view needs no lister I/O -- render synchronously so it's
@@ -877,9 +880,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         self.dismiss(None)
 
     @on(Button.Pressed, f"#{CANCEL_BTN_ID}")
-    def _cancel_pressed(self, event: Button.Pressed) -> None:
+    async def _cancel_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
-    def action_dismiss_picker(self) -> None:
-        self.dismiss(None)
+    async def action_dismiss_picker(self) -> None:
+        await self.request_safe_cancel(source="visible")

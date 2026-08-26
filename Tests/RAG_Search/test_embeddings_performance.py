@@ -17,7 +17,7 @@ from tldw_chatbook.RAG_Search.simplified import (
 )
 
 # Import test utilities from conftest
-from .conftest import requires_embeddings, requires_chromadb
+from .conftest import requires_real_embeddings, requires_chromadb
 
 
 @pytest.mark.performance
@@ -149,7 +149,8 @@ class TestEmbeddingPerformance:
 
             service.close()
 
-    @requires_embeddings
+    @pytest.mark.integration
+    @requires_real_embeddings
     def test_real_model_performance(self, request):
         """Benchmark performance with real embedding model.
 
@@ -710,16 +711,3 @@ class TestPerformanceOptimizations:
             assert all(shape == (texts_per_thread, 384) for shape in results)
 
             service.close()
-
-
-def test_performance_summary():
-    """Generate performance summary report"""
-    # This test just ensures all performance tests can run
-    # In a real scenario, you'd collect and analyze all metrics
-    print("\n=== Performance Test Summary ===")
-    print("All performance tests completed successfully")
-    print("==============================\n")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-m", "performance"])

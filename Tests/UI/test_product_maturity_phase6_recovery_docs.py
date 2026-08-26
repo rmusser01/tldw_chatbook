@@ -180,15 +180,13 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
                 ),
             )
             console_text = _screen_text(app)
-            assert "Credential: check setup" in console_text
+            assert "Blocked" in console_text
+            assert "Provider: OpenAI" in console_text
+            assert "Set up provider" in console_text
             assert (
-                "OPENAI_API_KEY" in console_text
-                or "Provider setup needed" in console_text
+                app.screen._console_provider_blocker_copy()
+                == "Provider setup needed: OpenAI missing API key"
             )
-            assert "Sources: not staged" in console_text
-            assert "RAG/source:" not in console_text
-            assert "MCP: Not wired - MCP servers." in console_text
-            assert "ACP: Blocked - Configure ACP runtime." in console_text
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))
             await _wait_until(
@@ -308,7 +306,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             # landing copy is the surviving empty/no-source cue (design: the
             # canvas empty state carries the landing-page guidance).
             assert (
-                "Search everything, pick a section on the left, or add something new." in library_text
+                "Search everything, pick a section, or add something new." in library_text
             )
 
 

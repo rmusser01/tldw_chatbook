@@ -39,6 +39,12 @@ except ImportError:
 # Local imports
 from ..config import get_cli_setting
 from ..STT.legacy_bridge import LegacyTranscriptionBridge
+from ..STT.contracts import BufferAudioSource
+from ..STT.dispatch_coordinator import (
+    DictationCaptureHandle,
+    LocalSTTDispatchCoordinator,
+)
+from ..STT.parakeet_sources import ParakeetSourceKey, ParakeetSourceService
 from ..Utils.path_validation import validate_path_simple
 from .parakeet_v2_artifact import active_managed_parakeet_v2_dir
 from .parakeet_v2_installer import (
@@ -50,6 +56,7 @@ from .parakeet_v2_installer import (
 )
 from .stt_batch_routing import (
     BatchSTTRoutingError,
+    PARAKEET_V2_MODEL,
     PARAKEET_V3_MODEL,
     resolve_batch_stt_route,
 )
@@ -1022,6 +1029,7 @@ class _LegacyTranscriptionBackend:
                 language,
                 **kwargs,
             )
+        # Retained until TASK-605; unreachable from production Parakeet facade.
         if provider == "parakeet-onnx":
             return self._transcribe_buffer_with_parakeet_onnx(
                 audio_data,
@@ -3526,6 +3534,7 @@ class _LegacyTranscriptionBackend:
         # Get model configuration
         model = model or self.config.get("default_model", "base")
         language = language or self.config.get("default_language", "en")
+        local_files_only = kwargs.pop("local_files_only", False)
 
         # Load model - use the same logic as in _transcribe_with_faster_whisper
         cache_key = f"faster-whisper-{model}"
@@ -3542,7 +3551,7 @@ class _LegacyTranscriptionBackend:
                             device=self.config["device"],
                             compute_type=self.config["compute_type"],
                             download_root=None,
-                            local_files_only=False,
+                            local_files_only=local_files_only,
                         )
                     model_load_time = time.time() - model_load_start
                     logger.info(
@@ -3844,9 +3853,9 @@ class _LegacyTranscriptionBackend:
         # not lose precision for real int16 input).
         tmp_path: Optional[str] = None
         try:
-            pcm = np.clip(
-                np.round(audio_array * 32768.0), -32768, 32767
-            ).astype(np.int16)
+            pcm = np.clip(np.round(audio_array * 32768.0), -32768, 32767).astype(
+                np.int16
+            )
             # `prefix` identifies these files as ours in a temp-dir listing;
             # review Finding 3 (PR #1171): a crash between here and the
             # `finally` below leaves raw microphone audio on disk, so a
@@ -4096,12 +4105,30 @@ class _LegacyTranscriptionBackend:
 class TranscriptionService:
     """Explicit compatibility facade over the retained transcription backend."""
 
-    def __init__(self):
-        """Initialize the retained backend bridge without changing defaults."""
+    def __init__(
+        self,
+        *,
+        local_stt_dispatcher: LocalSTTDispatchCoordinator | None = None,
+        parakeet_source_service: ParakeetSourceService | None = None,
+    ) -> None:
+        """Initialize the facade over retained and shared local execution."""
 
         self._bridge = LegacyTranscriptionBridge(_LegacyTranscriptionBackend)
+        self._local_stt_dispatcher = local_stt_dispatcher
+        self._owns_parakeet_source_service = parakeet_source_service is None
+        self._parakeet_source_service = (
+            parakeet_source_service
+            if parakeet_source_service is not None
+            else ParakeetSourceService()
+        )
         # Preserve construction-time configuration and availability probing.
         _ = self._bridge.config
+
+    @property
+    def uses_deferred_local_stt_dispatch(self) -> bool:
+        """Return whether Parakeet calls use the app-owned coordinator."""
+
+        return self._local_stt_dispatcher is not None
 
     @property
     def config(self) -> Dict[str, Any]:
@@ -4118,7 +4145,11 @@ class TranscriptionService:
     def cleanup(self) -> None:
         """Clean up resources held by the retained backend."""
 
-        self._bridge.cleanup_legacy()
+        try:
+            self._bridge.cleanup_legacy()
+        finally:
+            if self._owns_parakeet_source_service:
+                self._parakeet_source_service.close()
 
     def transcribe(
         self,
@@ -4184,7 +4215,44 @@ class TranscriptionService:
         language: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Forward the unchanged public buffer-transcription call."""
+        """Transcribe PCM through shared Parakeet or the retained providers."""
+
+        effective_provider = provider or self.config["default_provider"]
+        if effective_provider == "parakeet-onnx":
+            if self._local_stt_dispatcher is None:
+                raise TranscriptionError(
+                    "Parakeet ONNX buffer transcription requires the shared local executor."
+                )
+            source = BufferAudioSource(
+                audio_data,
+                sample_rate,
+                channels,
+                sample_width,
+            )
+            model_id = model or PARAKEET_V2_MODEL
+            precision = (
+                str(
+                    kwargs.pop(
+                        "precision",
+                        get_cli_setting(
+                            "transcription.default_precision",
+                            "int8",
+                        ),
+                    )
+                    or "int8"
+                )
+                .strip()
+                .lower()
+            )
+            dispatch = self._parakeet_source_service.resolve(
+                ParakeetSourceKey.from_values(model_id, precision),
+                override=kwargs.pop("model_dir", None),
+            )
+            return self._local_stt_dispatcher.transcribe_buffer(
+                source=source,
+                dispatch=dispatch,
+                language=language or "en",
+            )
 
         return self._bridge.transcribe_buffer_legacy(
             audio_data,
@@ -4195,6 +4263,41 @@ class TranscriptionService:
             model,
             language,
             **kwargs,
+        )
+
+    def begin_dictation_capture(
+        self,
+        *,
+        capture_generation: int,
+        model: str | None,
+        language: str,
+        sample_rate: int,
+        channels: int,
+        sample_width: int,
+        on_logical_segment: Callable[[int, str], None],
+    ) -> DictationCaptureHandle:
+        """Reserve one asynchronous Parakeet dictation capture."""
+
+        if self._local_stt_dispatcher is None:
+            raise TranscriptionError("The shared local executor is unavailable.")
+        model_id = model or PARAKEET_V2_MODEL
+        precision = (
+            str(get_cli_setting("transcription.default_precision", "int8") or "int8")
+            .strip()
+            .lower()
+        )
+        dispatch = self._parakeet_source_service.resolve(
+            ParakeetSourceKey.from_values(model_id, precision),
+            override=None,
+        )
+        return self._local_stt_dispatcher.begin_dictation(
+            capture_generation=capture_generation,
+            dispatch=dispatch,
+            sample_rate=sample_rate,
+            channels=channels,
+            sample_width=sample_width,
+            language=language,
+            on_logical_segment=on_logical_segment,
         )
 
     def get_available_providers(self) -> List[str]:
@@ -4246,6 +4349,10 @@ class TranscriptionService:
         **kwargs,
     ):
         """Create a retained-provider streaming transcriber when supported."""
+
+        effective_provider = provider or self.config["default_provider"]
+        if effective_provider == "parakeet-onnx":
+            return None
 
         return self._bridge.create_streaming_transcriber_legacy(
             provider,

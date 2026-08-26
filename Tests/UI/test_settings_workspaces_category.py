@@ -72,12 +72,21 @@ async def test_create_rename_archive_unarchive_flow() -> None:
             await _wait_for_selector(
                 screen,
                 pilot,
-                "#settings-workspace-create-name",
+                "#settings-workspace-create",
             )
 
-            # Create with a free-form name.
-            screen.query_one("#settings-workspace-create-name", Input).value = "Client X"
+            # Create with a free-form name via the shared create modal.
             screen.query_one("#settings-workspace-create", Button).press()
+            await pilot.pause()
+            modal = app.screen
+            assert modal is not screen
+            await _wait_for_selector(modal, pilot, "#workspace-create-name")
+            modal.query_one("#workspace-create-name", Input).value = "Client X"
+            # Leave inactive so the rename/duplicate-name/set-active steps
+            # below still exercise the Settings-side "Set active" button.
+            modal.query_one("#workspace-create-make-active", Checkbox).value = False
+            modal.query_one("#workspace-create-confirm", Button).press()
+            await pilot.pause()
             created = []
             for _ in range(200):
                 created = [
@@ -182,6 +191,68 @@ async def test_create_rename_archive_unarchive_flow() -> None:
 
 
 @pytest.mark.asyncio
+async def test_activation_failure_surfaces_inline_but_creates_workspace() -> None:
+    """TASK-17962: ``set_active_workspace`` raising after a successful
+    create on the Settings surface must not crash the handler -- the
+    failure shows up inline (``#settings-workspaces-result``) while the
+    workspace itself still exists, mirroring the Console/Library seam
+    tests for the same activation-failure path (Library:
+    ``test_create_workspace_recomposes_after_activation_failure`` in
+    ``Tests/UI/test_post_release_workspaces_library_depth.py``).
+    """
+    from unittest.mock import patch
+
+    from textual.widgets import Button, Input
+
+    from tldw_chatbook.Workspaces.registry_service import (
+        WorkspaceRegistryServiceError,
+    )
+
+    app = _build_test_app(configured_default="settings")
+    registry = app.workspace_registry_service
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test(size=(180, 50)) as pilot:
+            screen = await _wait_for_settings_screen(app, pilot)
+            await _wait_for_selector(screen, pilot, "#settings-category-workspaces")
+            category = screen.query_one("#settings-category-workspaces", Button)
+            category.scroll_visible(animate=False)
+            category.press()
+            await _wait_for_selector(screen, pilot, "#settings-workspace-create")
+
+            def _boom(workspace_id: str) -> None:
+                raise WorkspaceRegistryServiceError("boom")
+
+            registry.set_active_workspace = _boom
+
+            screen.query_one("#settings-workspace-create", Button).press()
+            await pilot.pause()
+            modal = app.screen
+            assert modal is not screen
+            await _wait_for_selector(modal, pilot, "#workspace-create-name")
+            modal.query_one("#workspace-create-name", Input).value = "Client Z"
+            # Leave "Switch to this workspace" checked (default) so Create
+            # actually attempts activation.
+            modal.query_one("#workspace-create-confirm", Button).press()
+            await pilot.pause()
+
+            created: list = []
+            for _ in range(200):
+                created = [
+                    w for w in registry.list_workspaces() if w.name == "Client Z"
+                ]
+                if created and "boom" in _visible_text(screen):
+                    break
+                await pilot.pause(0.01)
+
+            assert created, "workspace creation itself must have succeeded"
+            assert "boom" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
 async def test_compact_overview_keeps_a_painted_recovery_action() -> None:
     """The full Settings app keeps one real action above the compact fold."""
     from unittest.mock import patch
@@ -224,7 +295,10 @@ async def test_default_workspace_card_is_protected() -> None:
 
         assert not screen.query("#settings-workspace-rename-apply")
         assert not screen.query("#settings-workspace-archive")
-        assert "stays tool-less" in _visible_text(screen)
+        visible = _visible_text(screen)
+        assert "use private scratch" in visible
+        assert "only to bind external folders" in visible
+        assert "tool-less" not in visible
 
 
 @pytest.mark.asyncio

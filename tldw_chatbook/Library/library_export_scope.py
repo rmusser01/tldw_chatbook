@@ -2,13 +2,14 @@
 
 The Library canvases render capped snapshots of each source
 (``LIBRARY_SOURCE_PAGE_SIZES`` in ``UI/Screens/library_screen.py``: notes
-100, media 50, conversations 50 rows). Resolving a bulk export from those
+100, media 50, conversations 50, prompts 50 rows). Resolving a bulk export from those
 rendered snapshots would silently truncate any library larger than the
 page size. This module -- and the ``get_all_*`` DB methods it calls
 (``Client_Media_DB_v2.MediaDatabase.get_all_active_media_ids``,
 ``DB.ChaChaNotes_DB.CharactersRAGDB.get_all_conversation_ids``/
-``get_all_note_ids``) -- deliberately never reads a rendered snapshot: every
-count/resolve call issues a fresh, uncapped id query against the database.
+``get_all_note_ids``, ``DB.Prompts_DB.PromptsDatabase.get_all_active_prompt_ids``)
+-- deliberately never reads a rendered snapshot: every count/resolve call
+issues a fresh, uncapped id query against the database.
 
 Pure module: stdlib + ``Chatbooks.chatbook_models.ContentType`` + type hints
 only. DB handles are passed in by the caller and never constructed here.
@@ -21,7 +22,7 @@ from typing import Mapping, Protocol
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 
-_VALID_KINDS = ("everything", "media", "conversations", "notes")
+_VALID_KINDS = ("everything", "media", "conversations", "notes", "prompts")
 
 # Sentinel used by the Library media canvas's "no filter" select option.
 _UNFILTERED_MEDIA_TYPE_SENTINEL = "All"
@@ -30,6 +31,7 @@ _KIND_TO_CONTENT_TYPE = {
     "media": ContentType.MEDIA,
     "conversations": ContentType.CONVERSATION,
     "notes": ContentType.NOTE,
+    "prompts": ContentType.PROMPT,
 }
 
 
@@ -38,7 +40,7 @@ class ExportScope:
     """What a Library chatbook export should include.
 
     Attributes:
-        kind: One of "everything", "media", "conversations", "notes".
+        kind: One of "everything", "media", "conversations", "notes", "prompts".
         media_type: Only meaningful when ``kind == "media"``; a specific
             media ``type`` column value to filter to. Ignored for every
             other ``kind``. ``None`` and the Library media canvas's "no
@@ -46,7 +48,7 @@ class ExportScope:
             media item is in scope.
         ids: An explicit subset of ids to export, overriding a whole-source
             query. Only meaningful for a single-source ``kind`` ("media",
-            "conversations", "notes") -- raises if set with
+            "conversations", "notes", "prompts") -- raises if set with
             ``kind="everything"``. When non-empty, every resolver returns
             these ids directly without querying the database.
     """
@@ -80,6 +82,12 @@ class ChaChaNotesIdSource(Protocol):
     def get_all_note_ids(self) -> list[str]: ...
 
 
+class PromptIdSource(Protocol):
+    """The subset of ``DB.Prompts_DB.PromptsDatabase`` this module needs."""
+
+    def get_all_active_prompt_ids(self) -> list[int]: ...
+
+
 def _effective_media_type(scope: ExportScope) -> str | None:
     """Return the media ``type`` filter to apply, or ``None`` for unfiltered.
 
@@ -100,14 +108,17 @@ def count_export_scope(
     scope: ExportScope,
     media_db: MediaIdSource,
     chachanotes_db: ChaChaNotesIdSource,
+    prompts_db: PromptIdSource | None,
 ) -> dict[str, int]:
     """Count every item in ``scope`` per source, with no page cap.
 
-    Always returns all three keys ("media", "conversations", "notes") so
-    the export form can render a stable three-source summary; a source
-    outside ``scope`` reports 0 rather than being omitted from the dict.
+    Always returns all four keys ("media", "conversations", "notes",
+    "prompts") so the export form can render a stable four-source summary; a source
+    outside ``scope`` reports 0 rather than being omitted from the dict. When
+    the optional Prompt source is unavailable, its count remains 0 without
+    suppressing healthy sources in an ``everything`` export.
     """
-    counts = {"media": 0, "conversations": 0, "notes": 0}
+    counts = {"media": 0, "conversations": 0, "notes": 0, "prompts": 0}
     if scope.ids:
         counts[scope.kind] = len(scope.ids)
         return counts
@@ -119,6 +130,8 @@ def count_export_scope(
         counts["conversations"] = len(chachanotes_db.get_all_conversation_ids())
     if scope.kind in ("everything", "notes"):
         counts["notes"] = len(chachanotes_db.get_all_note_ids())
+    if prompts_db is not None and scope.kind in ("everything", "prompts"):
+        counts["prompts"] = len(prompts_db.get_all_active_prompt_ids())
     return counts
 
 
@@ -126,15 +139,16 @@ def resolve_export_selections(
     scope: ExportScope,
     media_db: MediaIdSource,
     chachanotes_db: ChaChaNotesIdSource,
+    prompts_db: PromptIdSource | None,
 ) -> dict[ContentType, list[str]]:
     """Resolve every id in ``scope`` into a ``ChatbookCreator`` content-selection dict.
 
     Issues a fresh, uncapped id query per in-scope source -- never reads a
     rendered/capped Library snapshot (see module docstring).
 
-    Ids are ``str(int(...))`` for media (``ChatbookCreator._collect_media``
-    calls ``int(media_id)`` on each entry before looking it up) and native
-    id strings for conversations/notes (already UUID strings in the DB).
+    Ids are ``str(int(...))`` for media and Prompts (their collectors parse
+    integer source ids) and native id strings for conversations/notes
+    (already UUID strings in the DB).
 
     A ``ContentType`` key is present only when its source is in ``scope``
     *and* resolves at least one id: a source outside ``scope`` is never
@@ -143,7 +157,8 @@ def resolve_export_selections(
     ``ChatbookCreator.create_chatbook``'s ``if ContentType.X in
     content_selections`` guards -- and the caller's
     ``ContentType.MEDIA in selections`` -> ``include_media`` decision --
-    correct without extra empty-list special-casing downstream.
+    correct without extra empty-list special-casing downstream. An unavailable
+    optional Prompt source is likewise omitted while other sources resolve.
     """
     if scope.ids:
         return {_KIND_TO_CONTENT_TYPE[scope.kind]: list(scope.ids)}
@@ -165,14 +180,21 @@ def resolve_export_selections(
         note_ids = list(chachanotes_db.get_all_note_ids())
         if note_ids:
             selections[ContentType.NOTE] = note_ids
+    if prompts_db is not None and scope.kind in ("everything", "prompts"):
+        prompt_ids = [str(value) for value in prompts_db.get_all_active_prompt_ids()]
+        if prompt_ids:
+            selections[ContentType.PROMPT] = prompt_ids
     return selections
 
 
 def export_scope_label(scope: ExportScope, counts: Mapping[str, int]) -> str:
     """Build the export form's scope summary line.
 
+    The widest scope names all four portable Library sources. Skills and
+    collections remain outside Chatbook export.
+
     Examples:
-        "Everything: 128 media · 542 conversations · 87 notes"
+        "Everything: 128 media · 542 conversations · 87 notes · 13 prompts"
         "Media (type: video) · 12 items"
         "Media · 12 items"
         "Conversations · 542 items"
@@ -184,7 +206,8 @@ def export_scope_label(scope: ExportScope, counts: Mapping[str, int]) -> str:
         return (
             f"Everything: {counts.get('media', 0)} media · "
             f"{counts.get('conversations', 0)} conversations · "
-            f"{counts.get('notes', 0)} notes"
+            f"{counts.get('notes', 0)} notes · "
+            f"{counts.get('prompts', 0)} prompts"
         )
     if scope.kind == "media":
         media_type = _effective_media_type(scope)
@@ -193,4 +216,8 @@ def export_scope_label(scope: ExportScope, counts: Mapping[str, int]) -> str:
         return f"Media · {counts.get('media', 0)} items"
     if scope.kind == "conversations":
         return f"Conversations · {counts.get('conversations', 0)} items"
-    return f"Notes · {counts.get('notes', 0)} items"
+    if scope.kind == "notes":
+        return f"Notes · {counts.get('notes', 0)} items"
+    prompt_count = counts.get("prompts", 0)
+    suffix = "item" if prompt_count == 1 else "items"
+    return f"Prompts · {prompt_count} {suffix}"

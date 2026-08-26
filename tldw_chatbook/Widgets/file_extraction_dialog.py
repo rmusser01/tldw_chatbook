@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class FileExtractionDialog(ModalScreen):
     """Dialog to preview and save extracted files."""
 
-    CSS = """
+    BUNDLED_SCREEN_CSS = """
     FileExtractionDialog {
         align: center middle;
     }
@@ -74,7 +74,7 @@ class FileExtractionDialog(ModalScreen):
     """
 
     # Store the extracted files
-    extracted_files: reactive[List[ExtractedFile]] = reactive([])
+    extracted_files: reactive[List[ExtractedFile]] = reactive(list)
     selected_index: reactive[Optional[int]] = reactive(None)
 
     def __init__(

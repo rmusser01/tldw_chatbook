@@ -1,4 +1,5 @@
-"""Exa/Serper/Yandex backends (task-1355): request-shape + parser pins, live smoke."""
+"""Exa/Serper/Yandex backends (task-1355): request-shape + parser pins, live smoke.
+Also google/brave/duckduckgo/kagi/tavily/searx timeout pins (task-3060)."""
 
 import base64
 import json
@@ -9,9 +10,14 @@ from tldw_chatbook.Web_Scraping import WebSearch_APIs
 
 
 class _FakeResponse:
-    def __init__(self, payload, status_code=200):
+    def __init__(self, payload, status_code=200, headers=None):
         self._payload = payload
         self.status_code = status_code
+        # searx's response is inspected for Content-Type before .json()/.text
+        # is chosen -- every OTHER engine's fake response never reads this,
+        # so a JSON-flavored default is a safe, additive default for them.
+        self.headers = headers if headers is not None else {"Content-Type": "application/json"}
+        self.text = ""
 
     def json(self):
         return self._payload
@@ -49,6 +55,122 @@ def _patch_requests(monkeypatch, payload, status_code=200):
 
 def _set_key(monkeypatch, key, value):
     monkeypatch.setitem(WebSearch_APIs.loaded_config_data["search_engines"], key, value)
+
+
+# ---------------------------------------------------------------------------
+# task-3060: HTTP timeouts for the six older backends (google, brave,
+# duckduckgo, kagi, tavily, searx). serper/exa/yandex already got timeout=30
+# in task-1355 (pinned above); bing already carries its own timeout=10
+# (untouched, out of scope); baidu is a bare `pass` stub with no HTTP call
+# (dropped from scope, AC #1 amended -- see the task file).
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Google
+# ---------------------------------------------------------------------------
+
+_GOOGLE_PAYLOAD = {"items": [{"title": "G Title", "link": "https://g.example/", "snippet": "g snippet"}]}
+
+
+def test_google_request_carries_timeout(monkeypatch):
+    _set_key(monkeypatch, "google_search_api_key", "test-google-key")
+    _set_key(monkeypatch, "google_search_engine_id", "test-cx")
+    fake = _patch_requests(monkeypatch, _GOOGLE_PAYLOAD)
+    WebSearch_APIs.search_web_google("cherry cake")
+    assert fake.calls, "search_web_google made no request"
+    for call in fake.calls:
+        assert call["timeout"] == 30
+
+
+def test_google_timeout_raises_existing_error_contract(monkeypatch):
+    """AC #2: a simulated hang must surface as a bounded-time error, not
+    block indefinitely. search_web_google's existing contract (unchanged by
+    this task) is to log and re-raise a RequestException unmodified -- a
+    requests.Timeout IS a RequestException, so this proves the SAME
+    behavior the code already had for any other network failure, now
+    reachable because the call finally carries a timeout at all."""
+    _set_key(monkeypatch, "google_search_api_key", "test-google-key")
+    _set_key(monkeypatch, "google_search_engine_id", "test-cx")
+
+    class _TimeoutRequests:
+        exceptions = WebSearch_APIs.requests.exceptions
+
+        def get(self, *a, **k):
+            raise WebSearch_APIs.requests.exceptions.Timeout("simulated hang")
+
+    monkeypatch.setattr(WebSearch_APIs, "requests", _TimeoutRequests())
+    with pytest.raises(WebSearch_APIs.requests.exceptions.Timeout):
+        WebSearch_APIs.search_web_google("cherry cake")
+
+
+# ---------------------------------------------------------------------------
+# Brave
+# ---------------------------------------------------------------------------
+
+_BRAVE_PAYLOAD = {"web": {"results": [{"title": "Br Title", "url": "https://br.example/",
+                                        "description": "br snippet"}]}}
+
+
+def test_brave_request_carries_timeout(monkeypatch):
+    _set_key(monkeypatch, "brave_search_ai_api_key", "test-brave-key")
+    fake = _patch_requests(monkeypatch, _BRAVE_PAYLOAD)
+    WebSearch_APIs.search_web_brave("cherry cake", "US", "en", "en", 10)
+    assert fake.calls, "search_web_brave made no request"
+    for call in fake.calls:
+        assert call["timeout"] == 30
+
+
+# ---------------------------------------------------------------------------
+# DuckDuckGo
+# ---------------------------------------------------------------------------
+
+
+class _FakeDDGResponse:
+    def __init__(self, content: bytes):
+        self.content = content
+
+
+class _FakeDDGRequests:
+    """DuckDuckGo's response is read via `.content` (raw bytes), not
+    `.json()` -- a distinct fake shape from `_FakeRequests` above."""
+
+    def __init__(self, content: bytes):
+        self.calls = []
+        self._content = content
+
+    def post(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        return _FakeDDGResponse(self._content)
+
+
+def test_duckduckgo_request_carries_timeout(monkeypatch):
+    if not WebSearch_APIs.LXML_AVAILABLE:
+        pytest.skip("lxml not available")
+    # "No  results." (DDG's own literal, two spaces) short-circuits the
+    # function immediately after the request -- avoids needing a realistic
+    # lxml-parseable HTML fixture just to pin the request kwargs.
+    fake = _FakeDDGRequests(b"No  results.")
+    monkeypatch.setattr(WebSearch_APIs, "requests", fake)
+    WebSearch_APIs.search_web_duckduckgo("cherry cake")
+    assert fake.calls, "search_web_duckduckgo made no request"
+    for call in fake.calls:
+        assert call["timeout"] == 30
+
+
+# ---------------------------------------------------------------------------
+# Kagi
+# ---------------------------------------------------------------------------
+
+_KAGI_PAYLOAD = {"data": [{"t": 0, "title": "K Title", "url": "https://k.example/", "snippet": "k snippet"}]}
+
+
+def test_kagi_request_carries_timeout(monkeypatch):
+    _set_key(monkeypatch, "kagi_search_api_key", "test-kagi-key")
+    fake = _patch_requests(monkeypatch, _KAGI_PAYLOAD)
+    WebSearch_APIs.search_web_kagi("cherry cake", 10)
+    assert fake.calls, "search_web_kagi made no request"
+    for call in fake.calls:
+        assert call["timeout"] == 30
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +501,16 @@ def test_tavily_end_to_end_through_process(monkeypatch):
     ]
 
 
+def test_tavily_request_carries_timeout(monkeypatch):
+    """task-3060."""
+    _set_key(monkeypatch, "tavily_search_api_key", "test-tavily-key")
+    fake = _patch_requests(monkeypatch, _TAVILY_PAYLOAD)
+    WebSearch_APIs.search_web_tavily("cherry cake")
+    assert fake.calls, "search_web_tavily made no request"
+    for call in fake.calls:
+        assert call["timeout"] == 30
+
+
 def test_tavily_parser_non_dict_item_raises_value_error():
     """Per-item shape validation: a list element that is not a dict must raise ValueError
     with the index, RED-first test to prove the index is reported."""
@@ -420,6 +552,36 @@ _SEARX_HITS = [
 ]
 _SEARX_PAYLOAD = json.dumps(_SEARX_HITS)
 _SEARX_ERROR_PAYLOAD = json.dumps({"error": "No information was found online for the search query."})
+
+
+class _FakeSearxSession:
+    """search_web_searx breaks the standard `requests.get/post` idiom every
+    other engine here uses: it calls `searx_create_session()` ->
+    `requests.Session()` -> `session.get(...)`. `_FakeRequests` above has no
+    `.Session()` stub, so this test patches `searx_create_session` directly
+    (task-3060, Important 5) rather than extending the shared fake."""
+
+    def __init__(self, payload):
+        self.calls = []
+        self._payload = payload
+
+    def get(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        return _FakeResponse(self._payload)
+
+
+def test_searx_request_carries_timeout(monkeypatch):
+    """task-3060. Also mocks `random.uniform` (Minor 8): search_web_searx
+    calls `time.sleep(random.uniform(2, 5))` before every request --
+    precedent: test_deep_search_pipeline.py:667."""
+    _set_key(monkeypatch, "searx_search_api_url", "https://searx.example.com/search")
+    fake_session = _FakeSearxSession(_SEARX_HITS)
+    monkeypatch.setattr(WebSearch_APIs, "searx_create_session", lambda: fake_session)
+    monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
+    WebSearch_APIs.search_web_searx("cherry cake")
+    assert fake_session.calls, "search_web_searx made no request"
+    for call in fake_session.calls:
+        assert call["timeout"] == 30
 
 
 def test_searx_parser_loads_json_string():

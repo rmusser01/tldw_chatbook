@@ -20,6 +20,7 @@ from tldw_chatbook.DB.Prompts_DB import (
     DatabaseError,
     InputError,
     ConflictError,
+    ExpectedVersionConflictError,
     add_or_update_prompt,
     load_prompt_details_for_ui,
     export_prompt_keywords_to_csv,
@@ -187,6 +188,70 @@ class TestPromptOperations:
         # Should not be in active prompts
         prompts = in_memory_db.get_all_prompts()
         assert not any(p["id"] == prompt_id for p in prompts)
+
+    def test_restore_deleted_prompt_preserves_artifact_and_keywords(self, in_memory_db):
+        """Undo resurrects the exact tombstone as a new current version."""
+        prompt_id, _uuid, _message = in_memory_db.add_prompt(
+            name="Restore recipe",
+            author="Author",
+            details="Details",
+            system_prompt="System lane",
+            user_prompt="User lane",
+            keywords=["Alpha", "Beta"],
+            artifact_type="recipe",
+        )
+        assert in_memory_db.soft_delete_prompt(prompt_id) is True
+
+        restored = in_memory_db.restore_deleted_prompt(
+            prompt_id, expected_version=2
+        )
+
+        assert restored["id"] == prompt_id
+        assert restored["deleted"] == 0
+        assert restored["version"] == 3
+        assert restored["artifact_type"] == "recipe"
+        assert restored["system_prompt"] == "System lane"
+        assert restored["user_prompt"] == "User lane"
+        assert in_memory_db.fetch_keywords_for_prompt(prompt_id) == ["alpha", "beta"]
+        events = in_memory_db.get_sync_log_entries()
+        prompt_events = [event for event in events if event["entity"] == "Prompts"]
+        assert prompt_events[-1]["operation"] == "update"
+        assert prompt_events[-1]["payload"]["deleted"] == 0
+        assert prompt_events[-1]["payload"]["keywords"] == ["alpha", "beta"]
+
+    def test_restore_deleted_prompt_rejects_stale_expected_version(self, in_memory_db):
+        """A stale receipt cannot resurrect a newer tombstone."""
+        prompt_id, _uuid, _message = in_memory_db.add_prompt(
+            name="Stale restore", author=None, details=None
+        )
+        assert in_memory_db.soft_delete_prompt(prompt_id) is True
+
+        with pytest.raises(ExpectedVersionConflictError):
+            in_memory_db.restore_deleted_prompt(prompt_id, expected_version=1)
+
+        tombstone = in_memory_db.fetch_prompt_details(prompt_id, include_deleted=True)
+        assert tombstone is not None
+        assert tombstone["deleted"] == 1
+        assert tombstone["version"] == 2
+
+    def test_soft_delete_prompt_rejects_stale_expected_version(self, in_memory_db):
+        """A stale editor cannot create a tombstone its receipt cannot restore."""
+        prompt_id, _uuid, _message = in_memory_db.add_prompt(
+            name="Concurrent delete", author=None, details=None
+        )
+        in_memory_db.update_prompt_by_id(
+            prompt_id,
+            {"details": "changed elsewhere"},
+            expected_version=1,
+        )
+
+        with pytest.raises(ExpectedVersionConflictError):
+            in_memory_db.soft_delete_prompt(prompt_id, expected_version=1)
+
+        current = in_memory_db.fetch_prompt_details(prompt_id, include_deleted=True)
+        assert current is not None
+        assert current["deleted"] == 0
+        assert current["version"] == 2
 
     def test_duplicate_prompt_name(self, in_memory_db):
         """Test that duplicate prompt names are rejected."""
@@ -650,3 +715,251 @@ class TestErrorHandling:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+# ---------------------------------------------------------------------------
+# Library query seams (task-1337 plan Task 3)
+# ---------------------------------------------------------------------------
+
+
+def _set_prompt_timestamps(db, prompt_id, last_modified):
+    # Prompts sync triggers require version to increment by exactly 1 per UPDATE.
+    db.execute_query(
+        "UPDATE Prompts SET last_modified = ?, version = version + 1 WHERE id = ?",
+        (last_modified, prompt_id),
+    )
+    # Seed helpers must not leak an ambient transaction into public mutations,
+    # which own their BEGIN IMMEDIATE and durable commit boundary.
+    db.get_connection().commit()
+
+
+def _seed_library_prompt(
+    db,
+    *,
+    name,
+    details=None,
+    system_prompt=None,
+    user_prompt=None,
+    keywords=None,
+    prompt_definition=None,
+    author="author",
+    last_modified="2026-01-01 00:00:00",
+):
+    prompt_id, prompt_uuid, _ = db.add_prompt(
+        name=name,
+        author=author,
+        details=details if details is not None else f"details for {name}",
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        keywords=keywords or [],
+        prompt_definition=prompt_definition,
+    )
+    assert prompt_id is not None, f"seed for {name!r} failed"
+    _set_prompt_timestamps(db, prompt_id, last_modified)
+    return prompt_id, prompt_uuid
+
+
+def test_library_prompts_page_lists_active_with_stable_order(in_memory_db):
+    db = in_memory_db
+    first_id, _ = _seed_library_prompt(
+        db, name="First", last_modified="2026-01-01 00:00:00"
+    )
+    second_id, _ = _seed_library_prompt(
+        db, name="Second", last_modified="2026-01-03 00:00:00"
+    )
+    third_id, _ = _seed_library_prompt(
+        db, name="Third", last_modified="2026-01-02 00:00:00"
+    )
+    deleted_id, _ = _seed_library_prompt(db, name="Deleted")
+    assert db.get_connection().in_transaction is False
+    db.soft_delete_prompt(deleted_id)
+
+    page_one = db.list_library_prompts_page(limit=2, offset=0)
+    assert page_one["total"] == 3
+    assert [item["id"] for item in page_one["items"]] == [second_id, third_id]
+
+    page_two = db.list_library_prompts_page(limit=2, offset=2)
+    assert page_two["total"] == 3
+    assert [item["id"] for item in page_two["items"]] == [first_id]
+
+    beyond = db.list_library_prompts_page(limit=10, offset=50)
+    assert beyond["total"] == 3
+    assert beyond["items"] == []
+
+
+def test_library_prompts_page_projection_is_bounded(in_memory_db):
+    db = in_memory_db
+    keywords = [f"kw{index:02d}" for index in range(25)]
+    _, prompt_uuid = _seed_library_prompt(
+        db,
+        name="Projected",
+        details="secret details " * 100,
+        system_prompt="sys " * 500,
+        user_prompt="usr " * 500,
+        prompt_definition={"messages": [{"role": "user", "content": "hi"}]},
+        keywords=keywords,
+    )
+
+    item = db.list_library_prompts_page(limit=10, offset=0)["items"][0]
+    assert item["uuid"] == prompt_uuid
+    assert item["name"] == "Projected"
+    assert len(item["details_preview"]) <= 241
+    assert item["has_system_prompt"] == 1
+    assert item["has_user_prompt"] == 1
+    assert item["has_prompt_definition"] == 1
+    assert len(item["keywords"]) == 20
+    assert item["keyword_total"] == 25
+    assert item["keywords_truncated"] is True
+    # Full section text belongs to the detail seam only.
+    for forbidden in ("system_prompt", "user_prompt", "prompt_definition", "details"):
+        assert forbidden not in item
+
+
+def test_library_prompts_search_exact_name_first_and_distinct_total(in_memory_db):
+    db = in_memory_db
+    exact_id, _ = _seed_library_prompt(
+        db,
+        name="Quarterly",
+        details="nothing relevant here",
+        keywords=["quarterly", "quarterly-finance"],
+        last_modified="2026-01-01 00:00:00",
+    )
+    body_id, _ = _seed_library_prompt(
+        db,
+        name="Other",
+        system_prompt="a quarterly deep dive",
+        last_modified="2026-02-01 00:00:00",
+    )
+
+    payload = db.search_library_prompts_page(query="quarterly", limit=10, offset=0)
+    assert payload["total"] == 2
+    assert [item["id"] for item in payload["items"]] == [exact_id, body_id]
+    exact_item, body_item = payload["items"]
+    assert "name" in exact_item["matched_fields"]
+    assert "keywords" in exact_item["matched_fields"]
+    assert "quarterly" in exact_item["matched_keywords"]
+    assert "quarterly-finance" in exact_item["matched_keywords"]
+    assert "system_prompt" in body_item["matched_fields"]
+
+
+def test_library_prompts_search_covers_every_section_and_literal_wildcards(in_memory_db):
+    db = in_memory_db
+    details_id, _ = _seed_library_prompt(db, name="D", details="needle in details")
+    user_id, _ = _seed_library_prompt(db, name="U", user_prompt="needle in user")
+    definition_id, _ = _seed_library_prompt(
+        db, name="J", prompt_definition='{"text": "needle in definition"}'
+    )
+    target_id, _ = _seed_library_prompt(db, name="100% ready_now", details="plain")
+    _seed_library_prompt(db, name="readyXnow decoy", details="plain decoy body")
+
+    for expected_id in (details_id, user_id, definition_id):
+        payload = db.search_library_prompts_page(query="needle", limit=10, offset=0)
+        assert expected_id in [item["id"] for item in payload["items"]]
+
+    percent = db.search_library_prompts_page(query="100%", limit=10, offset=0)
+    assert [item["id"] for item in percent["items"]] == [target_id]
+
+    underscore = db.search_library_prompts_page(query="ready_now", limit=10, offset=0)
+    assert [item["id"] for item in underscore["items"]] == [target_id]
+
+    for hostile in ('"unclosed', "ready OR", "AND )(", "ready*", "NEAR/1"):
+        result = db.search_library_prompts_page(query=hostile, limit=10, offset=0)
+        assert isinstance(result["total"], int)
+        assert isinstance(result["items"], list)
+
+
+def test_library_prompt_overview_bounds_every_section(in_memory_db):
+    db = in_memory_db
+    _, prompt_uuid = _seed_library_prompt(
+        db,
+        name="Overview",
+        details="d" * 1000,
+        system_prompt="s" * 2000,
+        user_prompt="u" * 3000,
+        prompt_definition="x" * 4000,
+    )
+
+    overview = db.get_library_prompt_overview(prompt_uuid)
+    assert overview is not None
+    assert overview["uuid"] == prompt_uuid
+    assert overview["name"] == "Overview"
+    assert isinstance(overview["version"], int)
+    sections = overview["sections"]
+    assert sections["details"]["total_chars"] == 1000
+    assert sections["system_prompt"]["total_chars"] == 2000
+    assert sections["user_prompt"]["total_chars"] == 3000
+    assert sections["prompt_definition"]["total_chars"] == 4000
+    for section in sections.values():
+        assert len(section["preview"]) <= 241
+    # No full section text and no version-history expansion.
+    assert "system_prompt" not in overview
+    assert "user_prompt" not in overview
+    assert "prompt_definition" not in overview
+    assert "versions" not in overview
+    assert "history" not in overview
+
+
+def test_library_prompt_section_windows_text(in_memory_db):
+    db = in_memory_db
+    body = "abcdef" * 900  # 5400 chars
+    _, prompt_uuid = _seed_library_prompt(db, name="Sectioned", system_prompt=body)
+
+    detail = db.get_library_prompt_section(
+        prompt_uuid, section="system_prompt", start=1200, max_chars=2000
+    )
+    assert detail is not None
+    assert detail["uuid"] == prompt_uuid
+    assert detail["section"] == "system_prompt"
+    assert detail["total_chars"] == len(body)
+    assert detail["start"] == 1200
+    assert detail["returned_chars"] == 2000
+    assert detail["has_more"] is True
+    assert detail["text"] == body[1200:3200]
+
+    tail = db.get_library_prompt_section(
+        prompt_uuid, section="system_prompt", start=5000, max_chars=2000
+    )
+    assert tail["text"] == body[5000:]
+    assert tail["has_more"] is False
+
+    missing = db.get_library_prompt_section(
+        "no-such-uuid", section="system_prompt", start=0, max_chars=100
+    )
+    assert missing is None
+
+
+def test_library_prompt_detail_reads_run_inside_transaction(in_memory_db):
+    db = in_memory_db
+    _, prompt_uuid = _seed_library_prompt(
+        db, name="Transactional", system_prompt="bounded body"
+    )
+    conn = db.get_connection()
+    conn.commit()
+    observed: list[bool] = []
+
+    def record_transaction_state(sql: str) -> None:
+        if "FROM Prompts" in sql and (
+            "AS details_total" in sql or "AS total_chars" in sql
+        ):
+            observed.append(conn.in_transaction)
+
+    conn.set_trace_callback(record_transaction_state)
+    try:
+        assert db.get_library_prompt_overview(prompt_uuid) is not None
+        assert db.get_library_prompt_section(
+            prompt_uuid, section="system_prompt", start=0, max_chars=20
+        ) is not None
+    finally:
+        conn.set_trace_callback(None)
+
+    assert observed == [True, True]
+
+
+def test_library_prompt_section_rejects_invalid_section(in_memory_db):
+    db = in_memory_db
+    _, prompt_uuid = _seed_library_prompt(db, name="Guarded", system_prompt="body")
+    with pytest.raises((InputError, ValueError)):
+        db.get_library_prompt_section(
+            prompt_uuid, section="sync_log", start=0, max_chars=100
+        )

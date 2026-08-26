@@ -1,15 +1,13 @@
 """task-2900: Lab ▸ Models defers its five heavy hidden views past first paint.
 
-Same pattern as task-2725 (Roleplay): the ollama view (58 widgets) and the
-four library views (download-models 76, curated, installed, remote) arrive
+Same pattern as task-2725 (Roleplay): the ollama view and the four library
+views (curated, installed, external, remote) arrive
 `display: none` behind the CSS `-active` mechanism anyway; mounting them
 after first paint takes their CSS-application cost off the click→paint
 critical path. `watch_active_view` already tolerates absent views.
 """
 
 from __future__ import annotations
-
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -24,11 +22,11 @@ _DEFERRED_VIEW_IDS = (
     "llm-view-ollama",
     "llm-view-curated",
     "llm-view-installed",
+    "llm-view-external",
     "llm-view-remote",
-    "llm-view-download-models",
 )
 
-_ALL_VIEW_IDS = _DEFERRED_VIEW_IDS + (
+_FIRST_PAINT_VIEW_IDS = (
     "llm-view-llama-cpp",
     "llm-view-llamafile",
     "llm-view-vllm",
@@ -36,6 +34,16 @@ _ALL_VIEW_IDS = _DEFERRED_VIEW_IDS + (
     "llm-view-transformers",
     "llm-view-mlx-lm",
 )
+_ALL_VIEW_IDS = _FIRST_PAINT_VIEW_IDS + _DEFERRED_VIEW_IDS
+
+
+def _mounted_view_ids(window: LLMManagementWindow) -> tuple[str | None, ...]:
+    return tuple(
+        sorted(
+            (view.id for view in window.query(".llm-view")),
+            key=lambda view_id: view_id or "",
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -49,12 +57,16 @@ def _no_splash(monkeypatch):
 
 
 async def test_first_paint_excludes_the_deferred_views(monkeypatch):
-    """Compose alone must not mount the deferred views (the perf mechanism)."""
+    """First paint has exactly the six eager views and five deferred views."""
+    scheduled: list[object] = []
+
+    def hold_after_refresh(self, callback, *args, **kwargs):
+        scheduled.append(callback)
+
     monkeypatch.setattr(
         LLMManagementWindow,
-        "_mount_deferred_views",
-        AsyncMock(),
-        raising=False,
+        "call_after_refresh",
+        hold_after_refresh,
     )
 
     app = _build_test_app()
@@ -64,11 +76,16 @@ async def test_first_paint_excludes_the_deferred_views(monkeypatch):
         await app.push_screen(screen)
         await pilot.pause()
 
-        for view_id in _DEFERRED_VIEW_IDS:
-            assert not list(screen.query(f"#{view_id}")), (
-                f"#{view_id} mounted during compose — back on the "
-                "click→paint critical path"
-            )
+        window = screen.query_one(LLMManagementWindow)
+        mounted_ids = _mounted_view_ids(window)
+        mapped_ids = set(window.view_mapping.values())
+
+        assert [callback.__name__ for callback in scheduled] == [
+            "_finish_deferred_mount"
+        ]
+        assert mounted_ids == tuple(sorted(_FIRST_PAINT_VIEW_IDS))
+        assert mapped_ids - set(mounted_ids) == set(_DEFERRED_VIEW_IDS)
+        assert len(mapped_ids) == len(_ALL_VIEW_IDS) == 11
 
 
 async def test_load_mounts_every_view_with_llamacpp_active():
@@ -82,9 +99,11 @@ async def test_load_mounts_every_view_with_llamacpp_active():
         for _ in range(6):
             await pilot.pause()
 
-        for view_id in _ALL_VIEW_IDS:
-            found = list(screen.query(f"#{view_id}"))
-            assert len(found) == 1, f"#{view_id} missing after load"
+        window = screen.query_one(LLMManagementWindow)
+        mounted_ids = _mounted_view_ids(window)
+        assert mounted_ids == tuple(sorted(_ALL_VIEW_IDS))
+        assert len(mounted_ids) == len(_ALL_VIEW_IDS) == 11
+        assert set(window.view_mapping.values()) == set(_ALL_VIEW_IDS)
 
         active = [
             view_id
@@ -115,10 +134,7 @@ async def test_ollama_view_activates_and_renders_after_deferral():
         assert list(view.query("#ollama-exec-path")), (
             "extracted ollama view lost its executable-path input"
         )
-        prereq = [
-            str(w.renderable)
-            for w in view.query(".prereq-hint").results()
-        ]
+        prereq = [str(w.renderable) for w in view.query(".prereq-hint").results()]
         assert any("Requires: Ollama" in text for text in prereq), (
             f"prereq line missing from extracted view: {prereq}"
         )

@@ -5,20 +5,37 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_switcher_state import (
     ConsoleSwitcherEntry,
     build_console_switcher_entries,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
 )
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+
+
+_SWITCHER_TITLE_MAX_CHARACTERS = 500
+_SWITCHER_SUBTITLE_MAX_CHARACTERS = 500
+
+
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`). A full refresh removes
+#: and remounts one `Button` per matching entry (up to
+#: `CONSOLE_SWITCHER_RESULT_LIMIT`), which should not happen on every
+#: keystroke (task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -29,7 +46,9 @@ class ConsoleSwitcherChoice:
     entry: ConsoleSwitcherEntry
 
 
-class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
+class ConsoleSessionSwitcherModal(
+    SafeModalDismissMixin, ModalScreen["ConsoleSwitcherChoice | None"]
+):
     """Fuzzy-find and activate a Console session or persisted conversation."""
 
     DEFAULT_CSS = """
@@ -58,6 +77,13 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         color: gray;
     }
 
+    #console-switcher-cancel {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
     .console-switcher-result {
         width: 100%;
         height: 2;
@@ -66,8 +92,9 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
     }
     """
 
+    SAFE_MODAL_CONTENT = "#console-switcher-modal"
     BINDINGS = [
-        ("escape", "dismiss_switcher", "Cancel"),
+        ("escape", "request_safe_cancel", "Cancel"),
         ("f2", "rename_entry", "Rename"),
         ("down", "switcher_cursor_down", "Next result"),
         ("up", "switcher_cursor_up", "Previous result"),
@@ -89,6 +116,7 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         super().__init__(**kwargs)
         self._rows = rows
         self._entries: tuple[ConsoleSwitcherEntry, ...] = ()
+        self._query_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         """Build the search input and results container."""
@@ -106,8 +134,9 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
                 "Enter: open  |  F2: rename  |  Up/Down: navigate  |  Esc: close",
                 id="console-switcher-hints",
             )
+            yield Button("Cancel", id="console-switcher-cancel")
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         """Focus the search input and populate the initial (unfiltered) results."""
         self.query_one("#console-switcher-query", Input).focus()
         await self._refresh_results("")
@@ -134,31 +163,53 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         else:
             buttons = []
             for index, entry in enumerate(self._entries):
+                display_title = sanitize_character_display_label(
+                    entry.title,
+                    max_characters=_SWITCHER_TITLE_MAX_CHARACTERS,
+                ) or "Untitled conversation"
+                display_subtitle = sanitize_character_display_label(
+                    entry.subtitle,
+                    max_characters=_SWITCHER_SUBTITLE_MAX_CHARACTERS,
+                )
                 label = (
-                    entry.title
-                    if not entry.subtitle
-                    else f"{entry.title}\n  {entry.subtitle}"
+                    display_title
+                    if not display_subtitle
+                    else f"{display_title}\n  {display_subtitle}"
                 )
                 button = Button(
-                    label,
+                    Text(label),
                     id=f"console-switcher-result-{index}",
                     classes="console-switcher-result",
                     compact=True,
                 )
                 button.set_class(entry.is_active, "console-switcher-result-active")
-                button.tooltip = f"Switch to {entry.title}"
+                button.tooltip = escape_markup(f"Switch to {display_title}")
                 buttons.append(button)
             await results.mount_all(buttons)
 
     @on(Input.Changed, "#console-switcher-query")
-    async def _query_changed(self, event: Input.Changed) -> None:
-        """Recompute results as the search query changes.
+    def _query_changed(self, event: Input.Changed) -> None:
+        """Recompute results as the search query changes (debounced).
 
         Args:
             event: The search input's change event.
         """
         event.stop()
-        await self._refresh_results(event.value)
+        query = event.value
+        self._cancel_query_debounce()
+        self._query_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS,
+            lambda: self.run_worker(
+                self._refresh_results(query),
+                exclusive=True,
+                group="console-session-switcher-search",
+            ),
+        )
+
+    def _cancel_query_debounce(self) -> None:
+        if self._query_debounce_timer is not None:
+            self._query_debounce_timer.stop()
+            self._query_debounce_timer = None
 
     @on(Input.Submitted, "#console-switcher-query")
     def _query_submitted(self, event: Input.Submitted) -> None:
@@ -169,6 +220,7 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         """
         event.stop()
         if self._entries:
+            self._cancel_query_debounce()
             self.dismiss(ConsoleSwitcherChoice("activate", self._entries[0]))
 
     def _result_buttons(self) -> list[Button]:
@@ -225,11 +277,18 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         event.stop()
         index = self._result_index_from_widget_id(event.button.id or "")
         if index is not None and 0 <= index < len(self._entries):
+            self._cancel_query_debounce()
             self.dismiss(ConsoleSwitcherChoice("activate", self._entries[index]))
 
-    def action_dismiss_switcher(self) -> None:
-        """Dismiss the switcher with no result (Escape)."""
-        self.dismiss(None)
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self._cancel_query_debounce()
+        self.dismiss_safe_once(None)
+
+    @on(Button.Pressed, "#console-switcher-cancel")
+    async def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self.request_safe_cancel(source="button")
 
     def action_rename_entry(self) -> None:
         """Request a rename for the focused result, or the first native entry (F2).
@@ -246,10 +305,12 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         if focused_index is not None and 0 <= focused_index < len(self._entries):
             focused_entry = self._entries[focused_index]
             if focused_entry.native_session_id:
+                self._cancel_query_debounce()
                 self.dismiss(ConsoleSwitcherChoice("rename", focused_entry))
                 return
         for entry in self._entries:
             if entry.native_session_id:
+                self._cancel_query_debounce()
                 self.dismiss(ConsoleSwitcherChoice("rename", entry))
                 return
 

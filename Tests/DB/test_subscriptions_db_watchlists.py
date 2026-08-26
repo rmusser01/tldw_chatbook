@@ -1,6 +1,9 @@
+import sqlite3
+
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 
 
 @pytest.fixture
@@ -11,6 +14,15 @@ def db(tmp_path):
 def _columns(db, table):
     cursor = db.conn.cursor()
     return {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+
+
+def _xcolumns(db, table):
+    """Like `_columns`, but via `table_xinfo` -- the only pragma that lists
+    a virtual generated column (TASK-15464; `PRAGMA table_info` omits it
+    entirely, which is the whole reason `_ensure_watchlists_schema`'s
+    `effective_date` guard reads this pragma instead of `table_info`)."""
+    cursor = db.conn.cursor()
+    return {row[1]: row for row in cursor.execute(f"PRAGMA table_xinfo({table})")}
 
 
 def _tables(db):
@@ -823,3 +835,896 @@ def test_restore_items_new_chunks_batches_bigger_than_the_host_parameter_limit(d
 
     assert restored == len(ids)
     assert all(db.get_item_status(item_id) == "new" for item_id in ids)
+
+
+# --- TASK-3072: is_flagged (star) plumbing ------------------------------------
+
+
+def test_set_item_flagged_roundtrip(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    item_id = _item_id(db, "https://in.example/0")
+
+    db.set_item_flagged(item_id, True)
+
+    rows = db.get_new_items(status=None, is_flagged=True)
+    assert [r["id"] for r in rows] == [item_id]
+
+    db.set_item_flagged(item_id, False)
+    assert db.get_new_items(status=None, is_flagged=True) == []
+
+
+def test_get_new_items_is_flagged_filter_combines_with_scope(db_with_memberships):
+    # The flag is one more independent predicate fragment: it must compose
+    # with the watchlist membership scope, not replace it.
+    db, watchlist_id, in_watchlist, _unassigned = db_with_memberships
+    in_item = _item_id(db, "https://in.example/0")
+    loose_item = _item_id(db, "https://loose.example/0")
+    db.set_item_flagged(in_item, True)
+    db.set_item_flagged(loose_item, True)
+
+    rows = db.get_new_items(status=None, is_flagged=True, watchlist_id=watchlist_id)
+
+    assert [r["id"] for r in rows] == [in_item]
+    assert all(r["subscription_id"] == in_watchlist for r in rows)
+
+
+def test_flag_is_global_not_per_watchlist(db_with_memberships):
+    # ADR-018's note on `queued_for_briefing` applies verbatim: one row, one
+    # flag -- an item starred through any scope reads starred in all of them.
+    db, watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    item_id = _item_id(db, "https://in.example/0")
+    db.set_item_flagged(item_id, True)
+
+    scoped = db.get_new_items(status=None, watchlist_id=watchlist_id)
+    flagged_row = next(r for r in scoped if r["id"] == item_id)
+    assert flagged_row["is_flagged"] == 1
+
+
+def test_flags_persist_across_re_fetch(db_with_memberships):
+    """The spec's load-bearing claim, pinned end to end.
+
+    `persist_subscription_item`'s upsert never writes `is_flagged` -- the
+    column is absent from both the INSERT list and the ON CONFLICT update --
+    so a re-fetch of the same item (same subscription+url+content_hash, the
+    conflict key) updates the content and leaves the user's star alone.
+    """
+    db, _watchlist_id, in_watchlist, _unassigned = db_with_memberships
+    with db.transaction() as conn:
+        item_id = persist_subscription_item(
+            conn,
+            in_watchlist,
+            {
+                "url": "https://in.example/refetch",
+                "title": "v1",
+                "content": "body v1",
+                "content_kind": "article",
+                "content_format": "text",
+                "content_hash": "hash-1",
+            },
+            run_id=None,
+            now="2026-08-07T10:00:00+00:00",
+        )
+    db.set_item_flagged(item_id, True)
+
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            in_watchlist,
+            {
+                "url": "https://in.example/refetch",
+                "title": "v2",
+                "content": "body v2",
+                "content_kind": "article",
+                "content_format": "text",
+                "content_hash": "hash-1",
+            },
+            run_id=None,
+            now="2026-08-07T12:00:00+00:00",
+        )
+
+    rows = db.get_new_items(status=None, is_flagged=True)
+    assert [r["id"] for r in rows] == [item_id]
+    assert rows[0]["title"] == "v2", "precondition: the upsert's UPDATE path fired"
+
+
+def test_get_flagged_items_count_is_status_agnostic(db_with_memberships):
+    # A starred item stays starred when read: the Starred feed's badge
+    # counts across statuses.
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    db.set_item_flagged(_item_id(db, "https://in.example/0"), True)  # new
+    db.set_item_flagged(_item_id(db, "https://in.example/2"), True)  # reviewed
+
+    assert db.get_flagged_items_count() == 2
+
+
+# --- TASK-3072: effective-date ordering ---------------------------------------
+
+
+def test_get_new_items_orders_by_published_date_desc(db):
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    # Fetched together (created_at ~identical), published in a different
+    # order: the list must follow PUBLISHED order, not fetch order.
+    for url, published in (
+        ("https://f.example/old", "2026-08-01T09:00:00+00:00"),
+        ("https://f.example/newest", "2026-08-07T09:00:00+00:00"),
+        ("https://f.example/middle", "2026-08-05T09:00:00+00:00"),
+    ):
+        _insert_item(db, source_id, url, url, "body")
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+                (published, url),
+            )
+
+    rows = db.get_new_items(status=None)
+
+    assert [r["url"] for r in rows] == [
+        "https://f.example/newest",
+        "https://f.example/middle",
+        "https://f.example/old",
+    ]
+
+
+def test_get_new_items_falls_back_to_created_at_when_unpublished(db):
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    _insert_item(db, source_id, "https://f.example/dated", "dated", "body")
+    _insert_item(db, source_id, "https://f.example/undated", "undated", "body")
+    with db.transaction() as conn:
+        # The dated item was fetched BEFORE the undated one (older
+        # created_at), but published long ago: effective-date order puts the
+        # freshly fetched undated item first, not last.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ?, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "2026-08-06T09:00:00+00:00", "https://f.example/dated"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET created_at = ? WHERE url = ?",
+            ("2026-08-07T09:00:00+00:00", "https://f.example/undated"),
+        )
+
+    rows = db.get_new_items(status=None)
+
+    assert [r["url"] for r in rows] == [
+        "https://f.example/undated",
+        "https://f.example/dated",
+    ]
+
+
+# --- TASK-15464: narrow list projection + indexed effective-date ordering ------
+
+
+def test_effective_date_generated_column_and_index_created(db):
+    """AC#2: a stored, indexed effective-date column exists.
+
+    `PRAGMA table_info` -- the `_columns` helper, and `items_cols` inside
+    `_ensure_watchlists_schema` itself -- does NOT list a virtual generated
+    column at all; only `table_xinfo` does. This test deliberately uses
+    `_xcolumns`, not `_columns`, so it would fail loudly if that distinction
+    were ever forgotten.
+    """
+    xcols = _xcolumns(db, "subscription_items")
+    assert "effective_date" in xcols
+    assert "effective_date" not in _columns(db, "subscription_items")
+
+    indexes = {
+        row[0]
+        for row in db.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='subscription_items'"
+        )
+    }
+    assert "idx_subscription_items_effective_date" in indexes
+
+
+def test_schema_migration_over_effective_date_is_idempotent(db):
+    """Re-running the migration must not re-ALTER the generated column --
+    it would raise "duplicate column name: effective_date". This is the
+    `table_xinfo`-vs-`table_info` guard's own regression test: swapping the
+    guard back to `table_info` makes this go red immediately.
+    """
+    db._ensure_watchlists_schema()
+    db._ensure_watchlists_schema()
+    db._ensure_watchlists_schema()
+    assert "effective_date" in _xcolumns(db, "subscription_items")
+
+
+def test_get_new_items_excludes_content_and_extracted_data_from_list_rows(db):
+    """AC#1: the list-page projection carries every column EXCEPT
+    `content` (full body) and `extracted_data` (an API source's raw
+    upstream payload) -- neither has a reader on the list path (see
+    `SubscriptionsDB._LIST_ITEM_COLUMNS`'s docstring).
+    """
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://a.example/1",
+                "title": "A",
+                "content": "full scraped article body",
+                "extracted_data": {"raw": "upstream payload"},
+                "content_hash": "h1",
+            },
+            run_id=None,
+            now="2026-08-11T00:00:00+00:00",
+        )
+
+    rows = db.get_new_items(status=None)
+    assert len(rows) == 1
+    assert "content" not in rows[0]
+    assert "extracted_data" not in rows[0]
+    # Every other column the reader actually depends on (via
+    # `normalize_watchlist_item`) is still present.
+    for expected in (
+        "id", "subscription_id", "url", "title", "content_hash",
+        "published_date", "author", "status", "created_at", "updated_at",
+        "queued_for_briefing", "run_id", "alert_matches", "content_format",
+        "content_kind", "is_flagged", "subscription_name", "subscription_type",
+    ):
+        assert expected in rows[0], f"missing expected list column: {expected}"
+
+
+def test_get_new_items_content_preview_is_a_cheap_prefix_not_the_full_body(db):
+    """The list row's own snippet source (`article_list._render_row`) reads
+    `content_preview`, a `substr(content, 1, 2000)` projection -- present on
+    every list row (unlike `content` itself) and always short, even when the
+    underlying body is much longer.
+    """
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    long_body = "word " * 10_000  # 50,000 characters, far past the 2000-character cap.
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {"url": "https://a.example/1", "title": "A", "content": long_body, "content_hash": "h1"},
+            run_id=None,
+            now="2026-08-11T00:00:00+00:00",
+        )
+
+    rows = db.get_new_items(status=None)
+    assert len(rows) == 1
+    assert "content" not in rows[0]
+    assert rows[0]["content_preview"] == long_body[:2000]
+    assert len(rows[0]["content_preview"]) < len(long_body)
+
+
+def test_get_new_items_search_like_fallback_still_matches_on_content(db):
+    """The LIKE-fallback search predicate still filters on `i.content` --
+    narrowing the SELECT list narrows what comes back in the row, not what
+    the search box can match against.
+    """
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://a.example/1",
+                "title": "Untitled",
+                "content": "a rare word: FrobnicateXYZ",
+                "content_hash": "h1",
+            },
+            run_id=None,
+            now="2026-08-11T00:00:00+00:00",
+        )
+    # Force the LIKE fallback path deterministically rather than relying on
+    # a MATCH failing for some other reason.
+    db.conn.execute("DROP TABLE subscription_items_fts")
+    db.conn.commit()
+
+    rows = db.get_new_items(status=None, search="FrobnicateXYZ")
+    assert len(rows) == 1
+    assert "content" not in rows[0]
+
+
+def test_get_item_content_returns_full_body(db):
+    """AC#1: the DETAIL fetch still loads full content."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        item_id = persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://a.example/1",
+                "title": "A",
+                "content": "full scraped article body",
+                "content_hash": "h1",
+            },
+            run_id=None,
+            now="2026-08-11T00:00:00+00:00",
+        )
+
+    assert db.get_item_content(item_id) == "full scraped article body"
+
+
+def test_get_item_content_returns_none_for_missing_row(db):
+    assert db.get_item_content(999999) is None
+
+
+def test_get_item_content_returns_none_for_row_with_null_content(db):
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscription_items (subscription_id, url, title) VALUES (?, ?, ?)",
+            (source_id, "https://a.example/1", "No body"),
+        )
+        item_id = conn.execute(
+            "SELECT id FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+        ).fetchone()[0]
+
+    assert db.get_item_content(item_id) is None
+
+
+_LEGACY_SCHEMA_SQL = """
+    CREATE TABLE subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT, type TEXT, source TEXT NOT NULL UNIQUE,
+        priority INTEGER DEFAULT 3, tags TEXT, folder TEXT,
+        is_active BOOLEAN DEFAULT 1, is_paused BOOLEAN DEFAULT 0,
+        check_frequency INTEGER DEFAULT 3600, last_checked DATETIME,
+        last_success DATETIME, last_error TEXT, error_count INTEGER DEFAULT 0,
+        consecutive_failures INTEGER DEFAULT 0, auto_pause_threshold INTEGER DEFAULT 10,
+        description TEXT, custom_headers TEXT, auth_config TEXT, extraction_rules TEXT,
+        rate_limit_config TEXT, notification_threshold FLOAT DEFAULT 0.1,
+        auto_ingest BOOLEAN DEFAULT 0, notification_config TEXT,
+        change_threshold FLOAT DEFAULT 0.0, ignore_selectors TEXT,
+        etag TEXT, last_modified TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE subscription_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subscription_id INTEGER NOT NULL,
+        url TEXT NOT NULL, title TEXT, content_hash TEXT, published_date DATETIME,
+        author TEXT, categories TEXT, enclosures TEXT, extracted_data TEXT,
+        status TEXT DEFAULT 'new', media_id INTEGER, processing_error TEXT,
+        previous_hash TEXT, change_percentage FLOAT, diff_summary TEXT, change_type TEXT,
+        canonical_url TEXT, duplicate_of INTEGER,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(subscription_id, url, content_hash)
+    );
+"""
+
+
+def test_ordering_parity_legacy_backfill_vs_new_insert_maintained(tmp_path):
+    """AC#2/AC#3: sort-semantics parity between the OLD inline
+    `COALESCE(datetime(published_date), datetime(created_at))` expression
+    and the new stored `effective_date` column + index, over a fixture that
+    mixes:
+
+    - a LEGACY row set, inserted into a hand-built pre-migration database
+      (no `effective_date` column, no `SubscriptionsDB` involved yet) and
+      then BACKFILLED by opening it through `SubscriptionsDB` -- exercising
+      the migration's `ALTER TABLE`, not just a fresh schema's
+      `CREATE TABLE`;
+    - a "NEW" row set, inserted afterwards through the real
+      `persist_subscription_item` write path, exercising the generated
+      column's INSERT-time maintenance;
+    - valid, NULL, and unparseable-garbage `published_date`;
+    - ties (identical effective dates), including one tied PAIR across the
+      legacy/new boundary.
+
+    The expected order is not a hand-written list: it is the SAME OLD
+    expression, independently recomputed against the live table, so this
+    test would fail if the new column/index ever disagreed with what
+    today's query actually computes -- not merely with what a human
+    predicted it would compute.
+    """
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_LEGACY_SCHEMA_SQL)
+    conn.execute(
+        "INSERT INTO subscriptions (id, name, type, source) "
+        "VALUES (1, 'Legacy', 'rss', 'https://legacy.example/f')"
+    )
+    legacy_rows = [
+        # (url, published_date, created_at)
+        ("https://legacy.example/valid", "2024-01-16T09:00:00Z", "2024-01-01 00:00:00"),
+        ("https://legacy.example/null", None, "2024-02-01 00:00:00"),
+        ("https://legacy.example/garbage", "not-a-real-date", "2024-03-01 00:00:00"),
+        ("https://legacy.example/tie-a", "2024-05-01T00:00:00Z", "2024-01-01 00:00:00"),
+        ("https://legacy.example/tie-b", "2024-05-01T00:00:00Z", "2024-01-01 00:00:00"),
+    ]
+    for url, published, created in legacy_rows:
+        conn.execute(
+            "INSERT INTO subscription_items "
+            "(subscription_id, url, title, published_date, created_at, content_hash) "
+            "VALUES (1, ?, ?, ?, ?, ?)",
+            (url, url, published, created, url),
+        )
+    conn.commit()
+    conn.close()
+
+    # Opening through SubscriptionsDB runs `_ensure_watchlists_schema`,
+    # ALTERing the generated column onto this pre-existing table and
+    # building the index over these five already-there rows -- the "legacy
+    # backfill" half of the fixture.
+    legacy_db = SubscriptionsDB(str(path), client_id="parity-probe")
+    try:
+        # "NEW" rows, inserted through the real write path AFTER the column
+        # exists -- the "insert-maintained" half. One is tied with a LEGACY
+        # row (a mixed legacy/new tie).
+        with legacy_db.transaction() as sconn:
+            for url, title, published, now, content_hash in (
+                ("https://new.example/valid", "new valid", "2024-06-01T00:00:00Z", "2024-01-01T00:00:00+00:00", "n1"),
+                ("https://new.example/null", "new null", None, "2024-04-01T00:00:00+00:00", "n2"),
+                ("https://new.example/garbage", "new garbage", "still-garbage", "2024-04-15T00:00:00+00:00", "n3"),
+                ("https://new.example/tie-c", "new tie", "2024-05-01T00:00:00Z", "2024-01-01T00:00:00+00:00", "n4"),
+            ):
+                persist_subscription_item(
+                    sconn,
+                    1,
+                    {"url": url, "title": title, "published_date": published, "content_hash": content_hash},
+                    run_id=None,
+                    now=now,
+                )
+
+        old_order = [
+            row[0]
+            for row in legacy_db.conn.execute(
+                """
+                SELECT id FROM subscription_items
+                ORDER BY COALESCE(datetime(published_date), datetime(created_at)) DESC, id ASC
+                """
+            ).fetchall()
+        ]
+
+        new_rows = legacy_db.get_new_items(status=None, limit=100)
+        new_order = [r["id"] for r in new_rows]
+
+        assert len(old_order) == 9  # 5 legacy + 4 new
+        assert new_order == old_order
+    finally:
+        legacy_db.close()
+
+
+def test_get_new_items_since_predicate_uses_effective_date_column(db):
+    """The `since` predicate was rewritten to `i.effective_date >= datetime(?)`
+    (TASK-15464) -- provably the same expression as the old inline
+    COALESCE, since `effective_date` IS that expression. This is the
+    regression test: a fixture spanning the floor, including a NULL
+    `published_date` row whose `created_at` decides which side of the floor
+    it lands on.
+    """
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    _insert_item(db, source_id, "https://f.example/before", "before", "body")
+    _insert_item(db, source_id, "https://f.example/at", "at", "body")
+    _insert_item(db, source_id, "https://f.example/after", "after", "body")
+    _insert_item(db, source_id, "https://f.example/undated-after", "undated-after", "body")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-06T00:00:00+00:00", "https://f.example/before"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-07T00:00:00+00:00", "https://f.example/at"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-08T00:00:00+00:00", "https://f.example/after"),
+        )
+        # No published_date at all; created_at (default CURRENT_TIMESTAMP,
+        # i.e. "now") is well after the floor.
+        conn.execute(
+            "UPDATE subscription_items SET created_at = ? WHERE url = ?",
+            ("2026-08-09T00:00:00+00:00", "https://f.example/undated-after"),
+        )
+
+    rows = db.get_new_items(status=None, since="2026-08-07T00:00:00+00:00")
+
+    assert {r["url"] for r in rows} == {
+        "https://f.example/at",
+        "https://f.example/after",
+        "https://f.example/undated-after",
+    }
+
+
+# --- TASK-3791: search/since predicates on get_new_items -----------------------
+
+
+def test_get_new_items_search_matches_title_content_and_author(db):
+    """The FTS path covers all three indexed columns."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "RAG Evaluation", "plain body")
+    _insert_item(db, source_id, "https://a.example/2", "Plain title", "retrieval quality rubric")
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscription_items (subscription_id, url, title, content, author) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (source_id, "https://a.example/3", "Another plain", "plain body", "Coraline Ada"),
+        )
+    _insert_item(db, source_id, "https://a.example/4", "Unrelated", "nothing")
+
+    assert {r["url"] for r in db.get_new_items(status=None, search="RAG")} == {
+        "https://a.example/1"
+    }
+    assert {r["url"] for r in db.get_new_items(status=None, search="rubric")} == {
+        "https://a.example/2"
+    }
+    assert {r["url"] for r in db.get_new_items(status=None, search="Coraline")} == {
+        "https://a.example/3"
+    }
+
+
+def test_get_new_items_search_multi_term_is_and(db):
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "retrieval only", "plain")
+    _insert_item(db, source_id, "https://a.example/2", "retrieval quality", "the rubric")
+
+    assert {r["url"] for r in db.get_new_items(status=None, search="retrieval rubric")} == {
+        "https://a.example/2"
+    }, "every whitespace-separated term must match (AND semantics)"
+    assert db.get_new_items(status=None, search="retrieval missing") == []
+
+
+def test_get_new_items_search_hostile_queries_never_raise(db):
+    """FTS5 query-syntax injection attempts return a list, never an error."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "RAG Evaluation", "retrieval")
+
+    for hostile in (
+        '"unbalanced',
+        "[bracket]",
+        "NEAR/1",
+        "AND OR",
+        "title: x",
+        "*",
+        "a*b",
+        "()",
+        '"',
+        "NOT",
+    ):
+        rows = db.get_new_items(status=None, search=hostile)
+        assert isinstance(rows, list), f"search={hostile!r} must not raise"
+
+
+def test_get_new_items_search_falls_back_to_like_without_fts(db):
+    """When the FTS read raises (table absent on a pre-migration DB, fts5
+    compiled out), the LIKE fallback answers the same question -- and LIKE
+    wildcards in the query stay literal."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "fallback token here", "plain")
+    _insert_item(db, source_id, "https://a.example/2", "100x coverage", "plain")
+    _insert_item(db, source_id, "https://a.example/3", "100% coverage", "plain")
+    with db.transaction() as conn:
+        conn.execute("DROP TABLE subscription_items_fts")
+
+    assert {r["url"] for r in db.get_new_items(status=None, search="fallback")} == {
+        "https://a.example/1"
+    }, "the LIKE fallback must answer when FTS is unavailable"
+    assert {r["url"] for r in db.get_new_items(status=None, search="100%")} == {
+        "https://a.example/3"
+    }, "LIKE wildcards in the query must stay literal"
+
+
+def test_get_new_items_since_floor_uses_effective_date(db):
+    """`since` compares the EFFECTIVE date (published, else created) -- the
+    same COALESCE the ordering uses."""
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    for url in ("https://f.example/old-pub", "https://f.example/old-created",
+                "https://f.example/on-floor", "https://f.example/newer"):
+        _insert_item(db, source_id, url, url, "body")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old-pub"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = NULL, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old-created"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-07T00:00:00+00:00", "https://f.example/on-floor"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-08T09:00:00+00:00", "https://f.example/newer"),
+        )
+
+    rows = db.get_new_items(status=None, since="2026-08-07T00:00:00+00:00")
+    assert {r["url"] for r in rows} == {
+        "https://f.example/on-floor",
+        "https://f.example/newer",
+    }, "the floor is inclusive, and falls back to created_at when published is NULL"
+
+
+def test_get_new_items_since_floor_handles_mixed_stored_formats(db):
+    """PR #1443 review: `created_at` defaults to CURRENT_TIMESTAMP's
+    SPACE-separated naive shape while ingest writes ISO `T`+offset, and a
+    bare string compare orders ' ' before 'T` -- a same-day item in the
+    space shape would wrongly fall BELOW an ISO floor. Both shapes must
+    count as today."""
+    from datetime import datetime, timezone
+
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    # `_insert_item` sets no created_at, so every row carries the schema's
+    # CURRENT_TIMESTAMP default -- the space shape, dated right now.
+    _insert_item(db, source_id, "https://f.example/space-shaped", "space", "body")
+    _insert_item(db, source_id, "https://f.example/iso-shaped", "iso", "body")
+    _insert_item(db, source_id, "https://f.example/old", "old", "body")
+    with db.transaction() as conn:
+        # The ISO leg, dated right now.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            (datetime.now(timezone.utc).isoformat(), "https://f.example/iso-shaped"),
+        )
+        # Genuinely old, in the ISO shape.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = NULL, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old"),
+        )
+
+    rows = db.get_new_items(
+        status=None,
+        since=datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00+00:00"),
+    )
+    assert {r["url"] for r in rows} == {
+        "https://f.example/space-shaped",
+        "https://f.example/iso-shaped",
+    }, "space-shaped and ISO-shaped same-day rows must BOTH clear the floor"
+
+
+def test_get_new_items_search_and_since_compose_with_the_other_predicates(db):
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    _insert_item(db, source_id, "https://f.example/hit", "rubric hit", "body")
+    _insert_item(db, source_id, "https://f.example/old", "rubric old", "body")
+    _insert_item(db, source_id, "https://f.example/other", "unrelated", "body")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T00:00:00+00:00", "https://f.example/old"),
+        )
+    db.set_item_flagged(
+        db.conn.execute(
+            "SELECT id FROM subscription_items WHERE url = ?",
+            ("https://f.example/hit",),
+        ).fetchone()[0],
+        True,
+    )
+
+    rows = db.get_new_items(
+        status=None, search="rubric", since="2026-08-07T00:00:00+00:00", is_flagged=True
+    )
+    assert {r["url"] for r in rows} == {"https://f.example/hit"}
+
+
+def test_get_unread_items_count_since_counts_only_newer_unread(db):
+    """The Today node badge: unread rows at/after the floor, nothing else."""
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    for url in ("https://f.example/a", "https://f.example/b", "https://f.example/c"):
+        _insert_item(db, source_id, url, url, "body")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T00:00:00+00:00", "https://f.example/a"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET status = ? WHERE url = ?",
+            ("reviewed", "https://f.example/c"),
+        )
+
+    assert db.get_unread_items_count_since("2026-08-07T00:00:00+00:00") == 1, (
+        "a is before the floor, c is reviewed -- only b counts"
+    )
+
+
+# --- TASK-15770: the Today-badge count is index-served ------------------------
+
+
+def _captured_count_sql(db):
+    """The SQL `get_unread_items_count_since` ACTUALLY executes, captured via
+    `set_trace_callback` -- not a copy of the string pasted into the test, so
+    the plan pin below cannot drift away from the production query."""
+    captured = []
+    db.conn.set_trace_callback(captured.append)
+    try:
+        db.get_unread_items_count_since("2026-08-07T00:00:00+00:00")
+    finally:
+        db.conn.set_trace_callback(None)
+    count_stmts = [s for s in captured if "COUNT(*)" in s and "subscription_items" in s]
+    assert len(count_stmts) == 1, (
+        f"expected exactly one COUNT statement, got: {captured}"
+    )
+    return count_stmts[0]
+
+
+def test_get_unread_items_count_since_is_index_served(db):
+    """AC#1/AC#2 (TASK-15770): the badge count query is served by
+    `idx_subscription_items_effective_date`, not a full-table scan.
+
+    The plan is pinned on the INDEX NAME appearing (lesson: EXPLAIN output
+    can hide a scan behind a table alias, so "no SCAN in the detail" alone
+    is a weaker pin), with the no-SCAN assertion kept as a secondary guard.
+    Born red against the pre-task inline-COALESCE shape: SQLite (probe-
+    verified on 3.49.1) does NOT rewrite the inline expression to the
+    generated column -- that shape full-scans.
+    """
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
+    _insert_item(db, source_id, "https://f.example/a", "a", "body")
+
+    sql = _captured_count_sql(db)
+    # The captured statement may arrive with the bound parameter already
+    # expanded (sqlite3_expanded_sql) or still holding the placeholder,
+    # depending on the sqlite3 module build -- EXPLAIN accordingly.
+    params = ("2026-08-07T00:00:00+00:00",) if "?" in sql else ()
+    plan_rows = db.conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+    details = [row[3] for row in plan_rows]
+
+    assert any("idx_subscription_items_effective_date" in d for d in details), (
+        f"badge count query is not index-served; plan: {details}"
+    )
+    assert not any(d.startswith("SCAN") for d in details), (
+        f"badge count query still scans; plan: {details}"
+    )
+
+
+def test_unread_count_parity_old_inline_expression_vs_rewritten_query(tmp_path):
+    """AC#3 (TASK-15770): the rewritten count is identical to the OLD inline
+    `COALESCE(datetime(published_date), datetime(created_at))` predicate's,
+    mirroring task-15464's ordering-parity test:
+
+    - LEGACY rows inserted into a hand-built pre-migration schema, then
+      BACKFILLED by opening through `SubscriptionsDB` (the ALTER path);
+    - NEW rows through the real `persist_subscription_item` write path;
+    - valid, NULL, and garbage `published_date`; timezone-offset dates that
+      cross the floor only after `datetime()` normalization; rows exactly AT
+      the floor (inclusive boundary); non-'new' statuses; one hard-deleted
+      row.
+
+    The expected count is the OLD expression independently recomputed
+    against the live table for each floor -- not a hand-written number.
+    """
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_LEGACY_SCHEMA_SQL)
+    conn.execute(
+        "INSERT INTO subscriptions (id, name, type, source) "
+        "VALUES (1, 'Legacy', 'rss', 'https://legacy.example/f')"
+    )
+    legacy_rows = [
+        # (url, published_date, created_at, status)
+        (
+            "https://legacy.example/valid",
+            "2024-01-16T09:00:00Z",
+            "2024-01-01 00:00:00",
+            "new",
+        ),
+        ("https://legacy.example/null", None, "2024-06-01 00:00:00", "new"),
+        (
+            "https://legacy.example/garbage",
+            "not-a-real-date",
+            "2024-06-02 00:00:00",
+            "new",
+        ),
+        (
+            "https://legacy.example/at-floor",
+            "2024-05-01T00:00:00Z",
+            "2024-01-01 00:00:00",
+            "new",
+        ),
+        (
+            "https://legacy.example/reviewed",
+            "2024-07-01T00:00:00Z",
+            "2024-01-01 00:00:00",
+            "reviewed",
+        ),
+        # Says "05-01" but normalizes to 2024-04-30 22:00 UTC -- BEFORE a
+        # 2024-05-01T00:00Z floor despite the date string.
+        (
+            "https://legacy.example/tz-before",
+            "2024-05-01T01:00:00+03:00",
+            "2024-01-01 00:00:00",
+            "new",
+        ),
+    ]
+    for url, published, created, status in legacy_rows:
+        conn.execute(
+            "INSERT INTO subscription_items "
+            "(subscription_id, url, title, published_date, created_at, status, content_hash) "
+            "VALUES (1, ?, ?, ?, ?, ?, ?)",
+            (url, url, published, created, status, url),
+        )
+    conn.commit()
+    conn.close()
+
+    legacy_db = SubscriptionsDB(str(path), client_id="count-parity-probe")
+    try:
+        with legacy_db.transaction() as sconn:
+            for url, title, published, now, content_hash in (
+                (
+                    "https://new.example/valid",
+                    "new valid",
+                    "2024-06-15T00:00:00Z",
+                    "2024-01-01T00:00:00+00:00",
+                    "n1",
+                ),
+                (
+                    "https://new.example/null",
+                    "new null",
+                    None,
+                    "2024-05-20T00:00:00+00:00",
+                    "n2",
+                ),
+                (
+                    "https://new.example/garbage",
+                    "new garbage",
+                    "still-garbage",
+                    "2024-04-15T00:00:00+00:00",
+                    "n3",
+                ),
+                (
+                    "https://new.example/at-floor",
+                    "new at floor",
+                    "2024-05-01T00:00:00Z",
+                    "2024-01-01T00:00:00+00:00",
+                    "n4",
+                ),
+                # Normalizes to 2024-05-01 02:00 UTC -- AFTER the floor
+                # despite the "04-30" date string.
+                (
+                    "https://new.example/tz-after",
+                    "new tz after",
+                    "2024-04-30T22:00:00-04:00",
+                    "2024-01-01T00:00:00+00:00",
+                    "n5",
+                ),
+                (
+                    "https://new.example/doomed",
+                    "deleted later",
+                    "2024-06-20T00:00:00Z",
+                    "2024-01-01T00:00:00+00:00",
+                    "n6",
+                ),
+            ):
+                persist_subscription_item(
+                    sconn,
+                    1,
+                    {
+                        "url": url,
+                        "title": title,
+                        "published_date": published,
+                        "content_hash": content_hash,
+                    },
+                    run_id=None,
+                    now=now,
+                )
+        # Read/unread transitions after insert, plus a hard delete.
+        with legacy_db.transaction() as sconn:
+            sconn.execute(
+                "UPDATE subscription_items SET status = 'ignored' WHERE url = ?",
+                ("https://new.example/null",),
+            )
+            sconn.execute(
+                "DELETE FROM subscription_items WHERE url = ?",
+                ("https://new.example/doomed",),
+            )
+
+        floors = (
+            "2024-05-01T00:00:00Z",  # the tie/tz boundary itself
+            "2024-05-01T02:00:00+03:00",  # offset floor: normalizes BEFORE the tie rows
+            "2024-06-01T00:00:00+00:00",  # mid-range
+            "2000-01-01T00:00:00+00:00",  # everything unread
+            "2030-01-01T00:00:00+00:00",  # nothing
+        )
+        nonzero_seen = False
+        for floor in floors:
+            old_count = legacy_db.conn.execute(
+                "SELECT COUNT(*) FROM subscription_items "
+                "WHERE status = 'new' AND "
+                "COALESCE(datetime(published_date), datetime(created_at)) >= datetime(?)",
+                (floor,),
+            ).fetchone()[0]
+            assert legacy_db.get_unread_items_count_since(floor) == old_count, (
+                f"count diverged from the old inline expression at floor {floor}"
+            )
+            nonzero_seen = nonzero_seen or old_count > 0
+        # Guard against a vacuous both-sides-zero pass on a broken fixture.
+        assert nonzero_seen
+        assert legacy_db.get_unread_items_count_since("2030-01-01T00:00:00+00:00") == 0
+    finally:
+        legacy_db.close()

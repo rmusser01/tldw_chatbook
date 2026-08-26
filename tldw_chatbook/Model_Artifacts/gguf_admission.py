@@ -7,9 +7,10 @@ import platform
 import stat
 import struct
 import unicodedata
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Iterator
 
 from ..Utils.path_validation import validate_path_simple
 
@@ -171,6 +172,44 @@ class LocalGGUFAdmission:
     metadata: GGUFMetadata
     source_identity: GGUFSourceIdentity
     platform_target: tuple[str, str]
+
+
+@dataclass(frozen=True)
+class LocalGGUFInspection:
+    """Bounded structure result for one safely opened local GGUF."""
+
+    path: Path = field(repr=False)
+    metadata: GGUFMetadata
+    source_identity: GGUFSourceIdentity
+
+
+@dataclass
+class OpenedLocalGGUF:
+    """One no-follow local GGUF handle with an admitted source identity."""
+
+    path: Path = field(repr=False)
+    handle: BinaryIO
+    descriptor: int
+    identity: GGUFSourceIdentity
+
+    def recheck(self) -> None:
+        """Fail if the open node or selected name changed after admission."""
+        try:
+            opened = _source_identity(os.fstat(self.descriptor))
+            named = _source_identity(
+                _checked_regular_source_info(
+                    self.path,
+                    unavailable_message="Selected local GGUF identity could not be verified",
+                )
+            )
+        except OSError:
+            raise GGUFPathError(
+                "Selected local GGUF identity could not be verified"
+            ) from None
+        if opened != self.identity or not _named_identity_matches_open(named, opened):
+            raise GGUFSourceChangedError(
+                "Selected local GGUF changed during validation"
+            )
 
 
 @dataclass
@@ -391,14 +430,14 @@ def _optional_display(retained: dict[str, object], key: str) -> str | None:
     return _sanitize_display(value)
 
 
-def _validate_architecture(value: str) -> None:
+def _validate_architecture_identifier(value: str) -> None:
     if (
         not value
         or not value.isascii()
         or any(character not in _ARCHITECTURE_CHARACTERS for character in value)
     ):
         raise GGUFArchitectureError(
-            "GGUF general.architecture is not compatible with transcribe.cpp 0.1.3"
+            "GGUF general.architecture is not a valid identifier"
         )
 
 
@@ -411,7 +450,7 @@ def require_transcribe_cpp_architecture(architecture: str) -> None:
     Raises:
         GGUFArchitectureError: If the identifier is malformed or unsupported.
     """
-    _validate_architecture(architecture)
+    _validate_architecture_identifier(architecture)
     if architecture not in TRANSCRIBE_CPP_ARCHITECTURES:
         raise GGUFArchitectureError(
             "GGUF general.architecture is not compatible with transcribe.cpp 0.1.3"
@@ -447,7 +486,7 @@ def normalize_platform_target(system: str, machine: str) -> tuple[str, str]:
     return target
 
 
-def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
+def inspect_gguf_structure(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
     """Inspect GGUF v3 structure and identity without reading tensor payload.
 
     The seekable handle must be positioned at byte zero. On success it remains
@@ -464,7 +503,7 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
         GGUFParseError: If the GGUF structure is malformed or truncated.
         GGUFVersionError: If the file does not use GGUF version 3.
         GGUFBoundsError: If the header exceeds an inspection budget.
-        GGUFArchitectureError: If the declared architecture is unsupported.
+        GGUFArchitectureError: If the declared architecture identifier is malformed.
     """
     if handle.tell() != 0:
         raise GGUFParseError("GGUF handle must be positioned at byte zero")
@@ -534,7 +573,7 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
     architecture = retained.get("general.architecture")
     if not isinstance(architecture, str):
         raise GGUFParseError("GGUF is missing general.architecture")
-    require_transcribe_cpp_architecture(architecture)
+    _validate_architecture_identifier(architecture)
 
     file_type = retained.get("general.file_type")
     if file_type is not None and (
@@ -551,6 +590,25 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
     )
 
 
+def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
+    """Inspect one GGUF accepted by the pinned transcribe.cpp runtime.
+
+    Args:
+        handle: Binary handle positioned at the beginning of the GGUF.
+        file_size: Authoritative byte size for bounded header inspection.
+
+    Returns:
+        Bounded metadata retained from the accepted GGUF header.
+
+    Raises:
+        GGUFParseError: If the GGUF header is malformed or exceeds a bound.
+        GGUFArchitectureError: If the architecture is unsupported by transcribe.cpp.
+    """
+    metadata = inspect_gguf_structure(handle, file_size=file_size)
+    require_transcribe_cpp_architecture(metadata.architecture)
+    return metadata
+
+
 def _source_identity(info: os.stat_result) -> GGUFSourceIdentity:
     return GGUFSourceIdentity(
         device=info.st_dev,
@@ -559,6 +617,28 @@ def _source_identity(info: os.stat_result) -> GGUFSourceIdentity:
         size_bytes=info.st_size,
         modified_ns=info.st_mtime_ns,
         changed_ns=info.st_ctime_ns,
+    )
+
+
+def _named_identity_matches_open(
+    named: GGUFSourceIdentity,
+    opened: GGUFSourceIdentity,
+) -> bool:
+    """Compare path and descriptor identities across native stat semantics."""
+    if platform.system() != "Windows":
+        return named == opened
+    return (
+        named.device,
+        named.inode,
+        named.mode,
+        named.size_bytes,
+        named.modified_ns,
+    ) == (
+        opened.device,
+        opened.inode,
+        opened.mode,
+        opened.size_bytes,
+        opened.modified_ns,
     )
 
 
@@ -572,124 +652,134 @@ def _read_only_no_follow_flags() -> int:
     )
 
 
-def validate_local_gguf(path: str | Path) -> LocalGGUFAdmission:
-    """Safely inspect one explicit local GGUF through a single descriptor.
+def _checked_regular_source_info(
+    path: Path,
+    *,
+    unavailable_message: str = "Selected local GGUF is unavailable",
+) -> os.stat_result:
+    """Return one named local regular-file result or raise a path-safe error."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        raise GGUFPathError(unavailable_message) from None
+    identity = _source_identity(info)
+    reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if (
+        stat.S_ISLNK(identity.mode)
+        or getattr(info, "st_file_attributes", 0) & reparse_point
+        or not stat.S_ISREG(identity.mode)
+    ):
+        raise GGUFPathError("Selected local GGUF is not a regular file")
+    return info
+
+
+@contextmanager
+def open_local_gguf(path: str | Path) -> Iterator[OpenedLocalGGUF]:
+    """Yield one no-follow regular GGUF handle with stable identity.
+
+    Args:
+        path: Explicit local GGUF selected by the user.
+
+    Yields:
+        The open binary handle and its descriptor-derived identity.
+
+    Raises:
+        GGUFPathError: If the path is invalid, unsafe, or cannot be opened.
+        GGUFSourceChangedError: If the selected name or open file changes.
+    """
+    try:
+        validated = validate_path_simple(
+            path, require_exists=False, probe_existing=False
+        )
+        selected = Path(validated).absolute()
+    except (OSError, ValueError):
+        raise GGUFPathError("Selected local GGUF path is invalid") from None
+    if selected.suffix.casefold() != ".gguf":
+        raise GGUFPathError("Selected local file must have a .gguf extension")
+    initial = _checked_regular_source_info(selected)
+    try:
+        descriptor = os.open(selected, _read_only_no_follow_flags())
+    except OSError:
+        raise GGUFPathError("Selected local GGUF could not be opened safely") from None
+    try:
+        handle = os.fdopen(descriptor, "rb", buffering=0, closefd=False)
+    except OSError:
+        os.close(descriptor)
+        raise GGUFPathError("Selected local GGUF could not be opened safely") from None
+    try:
+        opened = _source_identity(os.fstat(descriptor))
+    except OSError:
+        handle.close()
+        os.close(descriptor)
+        raise GGUFPathError(
+            "Selected local GGUF identity could not be verified"
+        ) from None
+    try:
+        if not _named_identity_matches_open(
+            _source_identity(initial), opened
+        ) or not stat.S_ISREG(opened.mode):
+            raise GGUFSourceChangedError(
+                "Selected local GGUF changed during validation"
+            )
+        local = OpenedLocalGGUF(selected, handle, descriptor, opened)
+        local.recheck()
+        yield local
+        local.recheck()
+    finally:
+        handle.close()
+        os.close(descriptor)
+
+
+def validate_local_gguf_structure(path: str | Path) -> LocalGGUFInspection:
+    """Safely inspect bounded GGUF structure through a single descriptor.
 
     Args:
         path: Explicit local path selected by the user.
 
     Returns:
-        The validated path, metadata, source identity, and platform target.
+        The validated path, metadata, and source identity.
 
     Raises:
         GGUFPathError: If the path cannot be validated, opened, or inspected.
         GGUFSourceChangedError: If the file changes during validation.
-        GGUFParseError: If the GGUF header is malformed or unsupported.
-        GGUFPlatformError: If no runtime wheel supports the current platform.
+        GGUFParseError: If the GGUF header is malformed.
     """
-    try:
-        validated_path = validate_path_simple(
-            path,
-            require_exists=False,
-            probe_existing=False,
-        )
-    except ValueError:
-        raise GGUFPathError("Selected local GGUF path is invalid") from None
-
-    try:
-        selected_path = Path(validated_path).absolute()
-    except OSError:
-        raise GGUFPathError("Selected local GGUF path is invalid") from None
-
-    if selected_path.suffix.casefold() != ".gguf":
-        raise GGUFPathError("Selected local file must have a .gguf extension")
-
-    try:
-        initial_info = os.lstat(selected_path)
-    except OSError:
-        raise GGUFPathError("Selected local GGUF is unavailable") from None
-    initial_identity = _source_identity(initial_info)
-    if stat.S_ISLNK(initial_identity.mode) or not stat.S_ISREG(initial_identity.mode):
-        raise GGUFPathError("Selected local GGUF is not a regular file")
-
-    try:
-        descriptor = os.open(selected_path, _read_only_no_follow_flags())
-    except OSError:
-        raise GGUFPathError("Selected local GGUF could not be opened safely") from None
-
-    try:
+    with open_local_gguf(path) as opened:
         try:
-            handle = os.fdopen(descriptor, "rb", buffering=0, closefd=False)
-        except OSError:
-            raise GGUFPathError(
-                "Selected local GGUF could not be opened safely"
-            ) from None
+            metadata = inspect_gguf_structure(
+                opened.handle,
+                file_size=opened.identity.size_bytes,
+            )
+        finally:
+            opened.recheck()
+        return LocalGGUFInspection(opened.path, metadata, opened.identity)
 
-        with handle:
-            try:
-                opened_info = os.fstat(descriptor)
-            except OSError:
-                raise GGUFPathError(
-                    "Selected local GGUF identity could not be verified"
-                ) from None
-            opened_identity = _source_identity(opened_info)
-            if initial_identity != opened_identity:
-                raise GGUFSourceChangedError(
-                    "Selected local GGUF changed during validation"
-                )
-            if not stat.S_ISREG(opened_identity.mode):
-                raise GGUFPathError("Selected local GGUF is not a regular file")
 
-            try:
-                named_info = os.lstat(selected_path)
-            except OSError:
-                raise GGUFPathError(
-                    "Selected local GGUF identity could not be verified"
-                ) from None
-            named_identity = _source_identity(named_info)
-            if stat.S_ISLNK(named_identity.mode) or not stat.S_ISREG(
-                named_identity.mode
-            ):
-                raise GGUFPathError("Selected local GGUF is not a regular file")
-            if named_identity != opened_identity:
-                raise GGUFSourceChangedError(
-                    "Selected local GGUF changed during validation"
-                )
+def validate_local_gguf(path: str | Path) -> LocalGGUFAdmission:
+    """Inspect one explicit local GGUF for the pinned transcribe.cpp runtime.
 
-            try:
-                try:
-                    metadata = inspect_gguf(
-                        handle,
-                        file_size=opened_identity.size_bytes,
-                    )
-                finally:
-                    try:
-                        final_identity = _source_identity(os.fstat(descriptor))
-                    except OSError:
-                        raise GGUFPathError(
-                            "Selected local GGUF identity could not be verified"
-                        ) from None
-                    if final_identity != opened_identity:
-                        raise GGUFSourceChangedError(
-                            "Selected local GGUF changed during validation"
-                        )
-            except OSError:
-                raise GGUFPathError(
-                    "Selected local GGUF could not be inspected safely"
-                ) from None
-    finally:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+    Args:
+        path: Explicit local GGUF selected by the user.
 
+    Returns:
+        Validated metadata, source identity, path, and runtime platform target.
+
+    Raises:
+        GGUFPathError: If the path cannot be validated or opened safely.
+        GGUFSourceChangedError: If the selected file changes during inspection.
+        GGUFParseError: If the GGUF header is malformed or exceeds a bound.
+        GGUFArchitectureError: If the architecture is unsupported by transcribe.cpp.
+        GGUFPlatformError: If transcribe.cpp has no wheel for the current platform.
+    """
+    inspected = validate_local_gguf_structure(path)
+    require_transcribe_cpp_architecture(inspected.metadata.architecture)
     platform_target = normalize_platform_target(
         platform.system(),
         platform.machine(),
     )
     return LocalGGUFAdmission(
-        path=selected_path,
-        metadata=metadata,
-        source_identity=opened_identity,
-        platform_target=platform_target,
+        inspected.path,
+        inspected.metadata,
+        inspected.source_identity,
+        platform_target,
     )

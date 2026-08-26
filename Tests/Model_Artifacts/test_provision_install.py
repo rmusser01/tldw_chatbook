@@ -39,10 +39,18 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactAcquisitionService,
     MAX_FILE_REFETCHES,
     TransferError,
+    TransferFailureCode,
     _ProvisionProgressState,
 )
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
+
+# Network opt-in (task-15111): this module fetches from
+# `FixtureArtifactServer`, an in-process HTTP server on an ephemeral
+# loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
 
 
 def _descriptor(
@@ -64,7 +72,11 @@ def _descriptor(
     settable per descriptor.
     """
 
-    files = (ArtifactFile("model.bin", len(files_body), hashlib.sha256(files_body).hexdigest()),)
+    files = (
+        ArtifactFile(
+            "model.bin", len(files_body), hashlib.sha256(files_body).hexdigest()
+        ),
+    )
     return ArtifactDescriptor(
         reference=ref,
         model_id="test/model",
@@ -106,7 +118,9 @@ async def test_preverify_matches_declared_hash_and_reports_real_progress(tmp_pat
     core = ModelArtifactService(tmp_path / "root")
     svc = ArtifactAcquisitionService(core)
     events: list[AcquisitionProgress] = []
-    progress_state = _ProvisionProgressState(callback=events.append, bytes_total=len(body))
+    progress_state = _ProvisionProgressState(
+        callback=events.append, bytes_total=len(body)
+    )
 
     await svc._preverify_artifact(desc, staging_dir, progress_state)
 
@@ -267,10 +281,14 @@ async def test_provision_preverify_total_ignores_fetch_phases_netted_staged_cred
 
     captured: list[_ProvisionProgressState] = []
 
-    async def fake_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
+    async def fake_fetch(
+        descriptor, staging_dir, progress_state, resolved_sources=None
+    ):
         captured.append(progress_state)
 
-    async def fake_preverify(descriptor, staging_dir, progress_state, resolved_sources=None):
+    async def fake_preverify(
+        descriptor, staging_dir, progress_state, resolved_sources=None
+    ):
         captured.append(progress_state)
 
     async def fake_install(descriptor, staging_dir):
@@ -348,7 +366,9 @@ async def test_preverify_mismatch_refetches_once_and_recovers_on_good_content(tm
 
         core = ModelArtifactService(tmp_path / "root")
         svc = ArtifactAcquisitionService(core, trusted_origins=_trusted(srv))
-        progress_state = _ProvisionProgressState(callback=None, bytes_total=len(correct_body))
+        progress_state = _ProvisionProgressState(
+            callback=None, bytes_total=len(correct_body)
+        )
 
         await svc._preverify_artifact(desc, staging_dir, progress_state)
 
@@ -360,7 +380,9 @@ async def test_preverify_mismatch_refetches_once_and_recovers_on_good_content(tm
 
 
 @pytest.mark.asyncio
-async def test_preverify_mismatch_persisting_past_max_refetches_raises_transfer_error(tmp_path):
+async def test_preverify_mismatch_persisting_past_max_refetches_raises_transfer_error(
+    tmp_path,
+):
     """When the refetch's content is ALSO wrong, exactly one refetch is
     attempted (MAX_FILE_REFETCHES == 1) before a typed, retryable failure."""
 
@@ -394,12 +416,15 @@ async def test_preverify_mismatch_persisting_past_max_refetches_raises_transfer_
 
         core = ModelArtifactService(tmp_path / "root")
         svc = ArtifactAcquisitionService(core, trusted_origins=_trusted(srv))
-        progress_state = _ProvisionProgressState(callback=None, bytes_total=len(correct_body))
+        progress_state = _ProvisionProgressState(
+            callback=None, bytes_total=len(correct_body)
+        )
 
         with pytest.raises(TransferError) as excinfo:
             await svc._preverify_artifact(desc, staging_dir, progress_state)
 
         assert excinfo.value.retryable is True
+        assert excinfo.value.code is TransferFailureCode.VERIFICATION_FAILED
         assert len(srv.requests["/model.bin"]) == MAX_FILE_REFETCHES
 
 
@@ -428,7 +453,16 @@ async def test_install_promotes_payload_and_removes_stage(tmp_path):
     (stage.payload / "model.bin").write_bytes(body)
     atomic_write_json(
         sidecar_path,
-        {"files": {"model.bin": {"etag": None, "last_modified": None, "bytes_done": len(body), "complete": True}}},
+        {
+            "files": {
+                "model.bin": {
+                    "etag": None,
+                    "last_modified": None,
+                    "bytes_done": len(body),
+                    "complete": True,
+                }
+            }
+        },
     )
 
     await svc._install_artifact(desc, stage)
@@ -470,16 +504,28 @@ async def test_finalize_failure_leaves_stage_intact_for_resume(tmp_path):
 
     stage = core._download_stage_for(desc, create=True)
     sidecar_path = stage.state / "fetch-state.json"
-    (stage.payload / "model.bin").write_bytes(b"corrupt!")  # wrong content, right length
+    (stage.payload / "model.bin").write_bytes(
+        b"corrupt!"
+    )  # wrong content, right length
     atomic_write_json(
         sidecar_path,
-        {"files": {"model.bin": {"etag": None, "last_modified": None, "bytes_done": 8, "complete": True}}},
+        {
+            "files": {
+                "model.bin": {
+                    "etag": None,
+                    "last_modified": None,
+                    "bytes_done": 8,
+                    "complete": True,
+                }
+            }
+        },
     )
 
     with pytest.raises(TransferError) as excinfo:
         await svc._install_artifact(desc, stage)
 
     assert excinfo.value.retryable is False
+    assert excinfo.value.code is TransferFailureCode.VERIFICATION_FAILED
     assert isinstance(excinfo.value.__cause__, ArtifactIntegrityError)
 
     assert stage.operation.exists()
@@ -584,7 +630,9 @@ async def test_retryable_finalize_failure_leaves_staged_bytes_resumable_via_rang
 
 
 @pytest.mark.asyncio
-async def test_provision_end_to_end_installs_and_activates_root_and_dependency(tmp_path):
+async def test_provision_end_to_end_installs_and_activates_root_and_dependency(
+    tmp_path,
+):
     dep_ref = ArtifactRef("dep-model", "d" * 40, "int8")
     root_ref = ArtifactRef("root-model", "r" * 40, "int8")
     dep_body = b"dependency-payload-" * 300
@@ -616,12 +664,16 @@ async def test_provision_end_to_end_installs_and_activates_root_and_dependency(t
         consent = grant_consent(svc, root_ref, catalog)
 
         events: list[AcquisitionProgress] = []
-        activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
+        activated = await svc.provision(
+            root_ref, consent, catalog, progress=events.append
+        )
 
         assert activated == root_ref
 
         installed_refs = {
-            item.descriptor.reference for item in core.list_installed() if item.descriptor is not None
+            item.descriptor.reference
+            for item in core.list_installed()
+            if item.descriptor is not None
         }
         assert installed_refs == {root_ref, dep_ref}
 
@@ -642,7 +694,12 @@ async def test_provision_end_to_end_installs_and_activates_root_and_dependency(t
         for phase in ("fetch", "pre-verify", "verify-install", "activate"):
             assert phase in phases_seen, f"missing phase {phase!r} in {phases_seen}"
         first = {phase: phases_seen.index(phase) for phase in set(phases_seen)}
-        assert first["fetch"] < first["pre-verify"] < first["verify-install"] < first["activate"]
+        assert (
+            first["fetch"]
+            < first["pre-verify"]
+            < first["verify-install"]
+            < first["activate"]
+        )
         assert phases_seen.count("activate") == 1
         assert phases_seen[-1] == "activate"
 
@@ -679,7 +736,9 @@ async def test_provision_corrupt_payload_refetches_exactly_once_then_fails(tmp_p
         core.install(prior_desc, prior_source)
         core.activate(prior_ref)
 
-        desc = _descriptor(ref, files_body=correct_body, source_url=srv.url("/model.bin"))
+        desc = _descriptor(
+            ref, files_body=correct_body, source_url=srv.url("/model.bin")
+        )
         catalog = DictCatalog({ref: desc})
         consent = grant_consent(svc, ref, catalog)
 
@@ -692,7 +751,9 @@ async def test_provision_corrupt_payload_refetches_exactly_once_then_fails(tmp_p
         assert len(srv.requests["/model.bin"]) == 1 + MAX_FILE_REFETCHES
 
         installed_refs = {
-            item.descriptor.reference for item in core.list_installed() if item.descriptor is not None
+            item.descriptor.reference
+            for item in core.list_installed()
+            if item.descriptor is not None
         }
         assert ref not in installed_refs
 
@@ -703,7 +764,9 @@ async def test_provision_corrupt_payload_refetches_exactly_once_then_fails(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_provision_activates_already_installed_closure_with_zero_fetch_requests(tmp_path):
+async def test_provision_activates_already_installed_closure_with_zero_fetch_requests(
+    tmp_path,
+):
     """The crash-after-install recovery path: both artifacts are already
     installed (simulating a prior run that crashed before activation) --
     provision() must activate them without any network activity at all."""
@@ -746,7 +809,9 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
         # is used here for consistency (see its docstring).
         consent = grant_consent(svc, root_ref, catalog)
         events: list[AcquisitionProgress] = []
-        activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
+        activated = await svc.provision(
+            root_ref, consent, catalog, progress=events.append
+        )
 
         assert activated == root_ref
         assert srv.requests == {}
@@ -759,7 +824,9 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
 
 
 @pytest.mark.asyncio
-async def test_provision_install_only_skips_activation_and_active_selector(tmp_path, monkeypatch):
+async def test_provision_install_only_skips_activation_and_active_selector(
+    tmp_path, monkeypatch
+):
     """``activate=False`` must leave an installed root usable but unselected.
 
     This catches a regression that ignores the install-only flag and runs the
@@ -829,6 +896,7 @@ async def test_install_artifact_wraps_core_integrity_error_as_non_retryable(
         await svc._install_artifact(desc, stage)
 
     assert excinfo.value.retryable is False
+    assert excinfo.value.code is TransferFailureCode.VERIFICATION_FAILED
     assert isinstance(excinfo.value.__cause__, ArtifactIntegrityError)
     assert "m" in str(excinfo.value)
     assert "finalize" in str(excinfo.value)
@@ -866,6 +934,7 @@ async def test_install_artifact_wraps_core_path_error_as_non_retryable(
         await svc._install_artifact(desc, stage)
 
     assert excinfo.value.retryable is False
+    assert excinfo.value.code is TransferFailureCode.LOCAL_STATE
     assert isinstance(excinfo.value.__cause__, ArtifactPathError)
     assert "m" in str(excinfo.value)
     assert "finalize" in str(excinfo.value)
@@ -903,6 +972,7 @@ async def test_provision_activate_wraps_core_state_error_as_retryable(
         await svc.provision(ref, consent, catalog)
 
     assert excinfo.value.retryable is True
+    assert excinfo.value.code is TransferFailureCode.LOCAL_STATE
     assert isinstance(excinfo.value.__cause__, ArtifactStateError)
     assert "root-model" in str(excinfo.value)
     assert "activate" in str(excinfo.value)

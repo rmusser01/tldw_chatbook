@@ -21,6 +21,7 @@ from typing import Any, Literal, NoReturn, cast
 
 
 ContractSurface = Literal["health", "models", "voices", "server_busy", "wav"]
+AudioCppSpeechTask = Literal["tts", "clone"]
 TimingMetadata = Mapping[str, float]
 
 _UNSAFE_IDENTIFIER_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
@@ -62,7 +63,7 @@ class AudioCppModel:
 
     model_id: str
     family: str
-    task: str
+    task: AudioCppSpeechTask
     mode: str
 
 
@@ -244,8 +245,14 @@ def parse_models_response(
     max_metadata_bytes: int,
     max_identifier_characters: int,
     max_models: int,
+    *,
+    require_speech_tasks: bool = False,
 ) -> tuple[AudioCppModel, ...]:
-    """Validate ``GET /v1/models`` and return only its TTS entries."""
+    """Validate ``GET /v1/models`` and return exact native speech entries.
+
+    ``require_speech_tasks`` is reserved for app-generated configurations,
+    whose exact model set may not contain an unexpected non-speech task.
+    """
 
     value = _load_json_object(
         body,
@@ -294,15 +301,17 @@ def parse_models_response(
         if model_id in seen_ids:
             _fail("models", "duplicate_id")
         seen_ids.add(model_id)
-        if task.casefold() == "tts":
+        if task in {"tts", "clone"}:
             tts_models.append(
                 AudioCppModel(
                     model_id=model_id,
                     family=family,
-                    task=task,
+                    task=cast(AudioCppSpeechTask, task),
                     mode=mode,
                 )
             )
+        elif require_speech_tasks:
+            _fail("models", "unexpected_task")
 
     return tuple(tts_models)
 

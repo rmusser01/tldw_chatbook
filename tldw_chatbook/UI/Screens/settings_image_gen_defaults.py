@@ -17,6 +17,7 @@ render ``ImageGenProbeResult.badge`` directly in the UI.
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import tomllib
@@ -33,11 +34,13 @@ from tldw_chatbook.Image_Generation.config import (
     _NON_SECRET,
     _resolve_secret,
     _SECRETS,
+    normalize_comfyui_image_origin,
 )
 from tldw_chatbook.Image_Generation.listing import (
     _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS,
     _is_fal_configured,
     _is_gemini_configured,
+    _is_comfyui_configured,
     _is_modelstudio_configured,
     _is_novita_configured,
     _is_openrouter_configured,
@@ -52,6 +55,7 @@ from tldw_chatbook.Utils.input_validation import validate_url
 BACKEND_IDS: tuple[str, ...] = (
     "stable_diffusion_cpp",
     "swarmui",
+    "comfyui",
     "openrouter",
     "novita",
     "together",
@@ -63,6 +67,7 @@ BACKEND_IDS: tuple[str, ...] = (
 BACKEND_LABELS: dict[str, str] = {
     "stable_diffusion_cpp": "SD.cpp (local)",
     "swarmui": "SwarmUI (local)",
+    "comfyui": "ComfyUI (H3 image edit)",
     "openrouter": "OpenRouter",
     "novita": "Novita",
     "together": "Together",
@@ -76,6 +81,7 @@ BACKEND_LABELS: dict[str, str] = {
 _CONFIGURED_CHECKS = {
     "stable_diffusion_cpp": _is_sd_cpp_configured,
     "swarmui": _is_swarmui_configured,
+    "comfyui": _is_comfyui_configured,
     "openrouter": _is_openrouter_configured,
     "novita": _is_novita_configured,
     "together": _is_together_configured,
@@ -91,7 +97,7 @@ class FieldSpec:
 
     toml_key: str
     label: str
-    kind: str  # "text" | "url" | "path" | "int" | "secret"
+    kind: str  # "text" | "url" | "origin" | "path" | "int" | "float" | "secret"
     min_value: float | None = None
 
 
@@ -110,6 +116,16 @@ FIELD_SCHEMA: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("default_model", "Default model", "text"),
         FieldSpec("timeout_seconds", "Timeout (seconds)", "int", min_value=1),
         FieldSpec("swarm_token", "Swarm token", "secret"),
+    ),
+    "comfyui": (
+        FieldSpec("base_url", "Base URL", "origin"),
+        FieldSpec("request_timeout_seconds", "Request timeout (seconds)", "float", min_value=0.1),
+        FieldSpec("connect_timeout_seconds", "Connect timeout (seconds)", "float", min_value=0.1),
+        FieldSpec("poll_interval_seconds", "Poll interval (seconds)", "float", min_value=0.1),
+        FieldSpec("total_deadline_seconds", "Total deadline (seconds)", "float", min_value=0.1),
+        FieldSpec("default_seed", "Default seed", "int", min_value=-1),
+        FieldSpec("default_steps", "Default steps", "int", min_value=1),
+        FieldSpec("default_sampler", "Default sampler", "text"),
     ),
     "openrouter": (
         FieldSpec("base_url", "Base URL", "url"),
@@ -224,6 +240,12 @@ def effective_placeholder(cfg: ImageGenerationConfig, backend_id: str, toml_key:
     """
     flat_field = _NON_SECRET[(backend_id, toml_key)]
     value = getattr(cfg, flat_field, None)
+    if backend_id == "comfyui" and toml_key in {
+        "default_seed",
+        "default_steps",
+        "default_sampler",
+    } and value is None:
+        return "Use packaged workflow"
     return "" if value is None else str(value)
 
 
@@ -407,6 +429,16 @@ def _coerce_value(spec: FieldSpec | None, raw_value: str) -> Any:
             return int(str(raw_value).strip())
         except (TypeError, ValueError):
             return raw_value  # validate_draft() is responsible for catching this
+    if spec is not None and spec.kind == "float":
+        try:
+            return float(str(raw_value).strip())
+        except (TypeError, ValueError):
+            return raw_value
+    if spec is not None and spec.kind == "origin":
+        try:
+            return normalize_comfyui_image_origin(raw_value)
+        except ValueError:
+            return raw_value
     return raw_value
 
 
@@ -611,6 +643,25 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
                     errors.append(
                         f"{backend_label} {spec.label} must be at least {int(spec.min_value)}."
                     )
+            elif spec.kind == "float":
+                try:
+                    parsed_float = float(str(raw_value).strip())
+                except (TypeError, ValueError):
+                    errors.append(f"{backend_label} {spec.label} must be a number.")
+                    continue
+                if not math.isfinite(parsed_float):
+                    errors.append(f"{backend_label} {spec.label} must be a number.")
+                elif spec.min_value is not None and parsed_float < spec.min_value:
+                    errors.append(
+                        f"{backend_label} {spec.label} must be at least {spec.min_value}."
+                    )
+            elif spec.kind == "origin":
+                try:
+                    normalize_comfyui_image_origin(raw_value)
+                except ValueError:
+                    errors.append(
+                        f"{backend_label} {spec.label} must be a valid http(s) origin."
+                    )
             elif spec.kind == "url":
                 # Qodo PR #901 fix 5: adopt the shared
                 # `input_validation.validate_url` (already used by
@@ -699,7 +750,7 @@ class ImageGenProbeResult:
 
 def _guarded_get(
     url: str, *, headers: Mapping[str, str] | None = None
-) -> tuple[httpx.Response | None, str | None]:
+) -> tuple[int | None, str | None]:
     """Egress-checked, sanitized GET shared by every network probe.
 
     Runs the SSRF egress check before any request (trusting only ``url``'s
@@ -707,19 +758,48 @@ def _guarded_get(
     short, non-redirect-following GET.
 
     Returns:
-        ``(response, None)`` for any HTTP answer -- including 4xx/5xx, which
+        ``(status_code, None)`` for any HTTP answer -- including 4xx/5xx, which
         still means the server responded -- or ``(None, badge)`` with a
         closed-set ``"Unreachable: <category>"`` badge on failure. Exception
         text is never propagated into the badge: it can carry hosts, ports,
         or embedded secrets (e.g. a malformed-URL error message).
     """
     try:
+        # (TASK-19556 (c), checked and deliberately KEPT) This is the same
+        # SHAPE as the sitemap/crawl self-trust that task corrected, but not
+        # the same PROVENANCE: `url` is always an OPERATOR-CONFIGURED value,
+        # which `config.py`'s [web_security] contract permits to be private.
+        # The shipped default backend is a LOCALHOST SwarmUI instance, so
+        # dropping the self-trust would break the zero-key default probe.
+        #
+        # All FIVE callers, enumerated (independent review: the original note
+        # listed only the first three, omitting the two that also attach a
+        # credential header -- which are the ones that matter most):
+        #   `_probe_swarmui`, `_probe_reachability_only` -- `base_url` as-is;
+        #   `_probe_comfyui`  -- via `normalize_comfyui_image_origin`;
+        #   `_probe_openai_compatible`, `_probe_gemini` -- `{base_url}/models`
+        #     plus an `Authorization`/`x-goog-api-key` header. The GET below
+        #     sets `follow_redirects=False`, so that credential cannot be
+        #     carried to a host other than the configured one.
+        #
+        # Where `base_url` comes from, exactly (`settings_screen.
+        # _image_gen_test_form_values`): the live Input when the user has
+        # edited it, else `effective_placeholder(...)` -- the resolved
+        # `[image_generation]` value from config.toml (or its shipped
+        # default). So "typed this session" is NOT required; "explicitly
+        # configured by the operator" is, and both sources satisfy it. No
+        # discovery response, server-provided default, or imported document
+        # writes that section. A content-derived URL must never be handed to
+        # this helper.
         check_url_or_raise(url, trusted_origins=origin_set(url))
     except EgressBlockedError:
         return None, "Unreachable: blocked by egress policy"
     try:
         with httpx.Client(timeout=PROBE_TIMEOUT_SECONDS, follow_redirects=False) as client:
-            return client.get(url, headers=dict(headers) if headers else None), None
+            with client.stream(
+                "GET", url, headers=dict(headers) if headers else None
+            ) as response:
+                return response.status_code, None
     except httpx.TimeoutException:
         return None, "Unreachable: timeout"
     except Exception:
@@ -732,10 +812,26 @@ def _guarded_get(
 def _probe_swarmui(base_url: str) -> ImageGenProbeResult:
     """SwarmUI has no models-listing route -- a plain GET on ``base_url``
     that gets *any* HTTP answer (even 4xx/5xx) means the server responded."""
-    _response, blocked_badge = _guarded_get(base_url)
+    _status_code, blocked_badge = _guarded_get(base_url)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     return ImageGenProbeResult(ok=True, badge="Reachable")
+
+
+def _probe_comfyui(base_url: str) -> ImageGenProbeResult:
+    """Explicit user-triggered object-schema reachability probe."""
+    try:
+        origin = normalize_comfyui_image_origin(base_url)
+    except ValueError:
+        return ImageGenProbeResult(ok=False, badge="Unreachable: invalid origin")
+    status_code, blocked_badge = _guarded_get(f"{origin}/object_info")
+    if blocked_badge is not None:
+        return ImageGenProbeResult(ok=False, badge=blocked_badge)
+    if status_code is not None and 200 <= status_code < 300:
+        return ImageGenProbeResult(ok=True, badge="Reachable")
+    return ImageGenProbeResult(
+        ok=False, badge=f"Unreachable: HTTP {status_code or 0}"
+    )
 
 
 def _probe_reachability_only(base_url: str) -> ImageGenProbeResult:
@@ -746,7 +842,7 @@ def _probe_reachability_only(base_url: str) -> ImageGenProbeResult:
     plain reachability GET on the configured base, same shape as
     ``_probe_swarmui`` but reporting the honest "auth unverified" badge
     (unlike swarmui, which has no auth concept at all)."""
-    _response, blocked_badge = _guarded_get(base_url)
+    _status_code, blocked_badge = _guarded_get(base_url)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
@@ -756,16 +852,16 @@ def _probe_openai_compatible(base_url: str, secret: str | None) -> ImageGenProbe
     """openrouter/together: OpenAI-compatible ``GET {base_url}/models``."""
     url = f"{base_url.rstrip('/')}/models"
     headers = {"Authorization": f"Bearer {secret}"} if secret else None
-    response, blocked_badge = _guarded_get(url, headers=headers)
+    status_code, blocked_badge = _guarded_get(url, headers=headers)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     if not secret:
         return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
-    if response.status_code in (401, 403):
+    if status_code in (401, 403):
         return ImageGenProbeResult(ok=False, badge="Auth failed")
-    if 200 <= response.status_code < 300:
+    if status_code is not None and 200 <= status_code < 300:
         return ImageGenProbeResult(ok=True, badge="Reachable")
-    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {response.status_code}")
+    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {status_code or 0}")
 
 
 def _probe_gemini(base_url: str, secret: str | None) -> ImageGenProbeResult:
@@ -777,16 +873,16 @@ def _probe_gemini(base_url: str, secret: str | None) -> ImageGenProbeResult:
     semantics."""
     url = f"{base_url.rstrip('/')}/models"
     headers = {"x-goog-api-key": secret} if secret else None
-    response, blocked_badge = _guarded_get(url, headers=headers)
+    status_code, blocked_badge = _guarded_get(url, headers=headers)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     if not secret:
         return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
-    if response.status_code in (401, 403):
+    if status_code in (401, 403):
         return ImageGenProbeResult(ok=False, badge="Auth failed")
-    if 200 <= response.status_code < 300:
+    if status_code is not None and 200 <= status_code < 300:
         return ImageGenProbeResult(ok=True, badge="Reachable")
-    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {response.status_code}")
+    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {status_code or 0}")
 
 
 def _probe_sd_cpp(form_values: Mapping[str, str]) -> ImageGenProbeResult:
@@ -875,6 +971,8 @@ def probe_backend(
     base_url = (form_values.get("base_url") or "").strip()
     if backend_id == "swarmui":
         return _probe_swarmui(base_url)
+    if backend_id == "comfyui":
+        return _probe_comfyui(base_url)
     if backend_id in ("openrouter", "together"):
         return _probe_openai_compatible(base_url, secret)
     if backend_id == "gemini":

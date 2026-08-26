@@ -18,7 +18,7 @@ __all__ = ["TldwMCPServer", "MCPClient", "is_mcp_available"]
 def is_mcp_available() -> bool:
     """Check if MCP dependencies are available."""
     try:
-        import mcp  # noqa: F401
+        import mcp_unified  # noqa: F401
 
         return True
     except ImportError:

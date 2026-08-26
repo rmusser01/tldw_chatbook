@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,9 @@ from tldw_chatbook.Image_Generation.capabilities import (
     resolve_backend_reference_image_capability,
 )
 from tldw_chatbook.Image_Generation.adapter_registry import get_registry
-from tldw_chatbook.Image_Generation.config import get_image_generation_config
+from tldw_chatbook.Image_Generation.config import (
+    normalize_comfyui_image_origin,
+)
 
 _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS = (
     AttributeError,
@@ -100,8 +103,29 @@ def _is_gemini_configured(cfg, enabled: bool) -> bool:
     return bool(api_key)
 
 
-def _resolve_supported_formats(name: str) -> list[str] | None:
-    registry = get_registry()
+def _comfyui_workflow_resource_available() -> bool:
+    """Check the one packaged workflow locally, without importing an adapter."""
+    try:
+        resource = files("tldw_chatbook.Image_Generation").joinpath(
+            "workflows", "minimax_h3_image_edit.json"
+        )
+        return resource.is_file()
+    except (AttributeError, ModuleNotFoundError, OSError, TypeError, ValueError):
+        return False
+
+
+def _is_comfyui_configured(cfg, enabled: bool) -> bool:
+    """Return local configurability; never probe the configured server."""
+    if not enabled or not _comfyui_workflow_resource_available():
+        return False
+    try:
+        normalize_comfyui_image_origin(cfg.comfyui_image_base_url)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _resolve_supported_formats(registry, name: str) -> list[str] | None:
     try:
         adapter_cls = registry.get_adapter_class(name)
     except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS:
@@ -118,8 +142,8 @@ def _resolve_supported_formats(name: str) -> list[str] | None:
     return sorted(cleaned) if cleaned else None
 
 def list_image_models_for_catalog() -> list[dict[str, Any]]:
-    cfg = get_image_generation_config()
     registry = get_registry()
+    cfg = registry.config
     enabled_backends = set(cfg.enabled_backends or [])
     names = registry.list_backend_names(include_disabled=False)
     if not names:
@@ -133,49 +157,91 @@ def list_image_models_for_catalog() -> list[dict[str, Any]]:
             try:
                 is_configured = _is_sd_cpp_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
                 is_configured = False
         if name == "swarmui":
             try:
                 is_configured = _is_swarmui_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
                 is_configured = False
         if name == "openrouter":
             try:
                 is_configured = _is_openrouter_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
                 is_configured = False
         if name == "novita":
             try:
                 is_configured = _is_novita_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
                 is_configured = False
         if name == "together":
             try:
                 is_configured = _is_together_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
                 is_configured = False
         if name == "modelstudio":
             try:
                 is_configured = _is_modelstudio_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
                 is_configured = False
         if name == "fal":
             try:
                 is_configured = _is_fal_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
                 is_configured = False
         if name == "gemini":
             try:
                 is_configured = _is_gemini_configured(cfg, enabled)
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
+                is_configured = False
+        if name == "comfyui":
+            try:
+                is_configured = _is_comfyui_configured(cfg, enabled)
+            except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
+                logger.debug(
+                    "Image backend config check failed for {} (error_type={})",
+                    name,
+                    type(exc).__name__,
+                )
                 is_configured = False
         entry: dict[str, Any] = {
             "provider": "image",
@@ -190,7 +256,7 @@ def list_image_models_for_catalog() -> list[dict[str, Any]]:
             "is_configured": bool(is_configured),
         }
 
-        supported_formats = _resolve_supported_formats(name)
+        supported_formats = _resolve_supported_formats(registry, name)
         if supported_formats:
             entry["supported_formats"] = supported_formats
 

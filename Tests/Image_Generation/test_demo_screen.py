@@ -55,9 +55,12 @@ async def test_demo_screen_lists_backends_and_generates(monkeypatch):
     monkeypatch.setattr(scr, "run_generation", fake_run_generation)
 
     from textual.app import App
+
+    # Load the consolidated widget CSS the real app loads (TASK-15450).
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
     from textual.widgets import Select, Static, TextArea, Input
 
-    class Host(App):
+    class Host(ConsolidatedCSSApp):
         def on_mount(self) -> None:
             self.push_screen(ImageGenDemoScreen(self))
 

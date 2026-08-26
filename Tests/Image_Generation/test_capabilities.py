@@ -3,7 +3,7 @@ import pytest
 
 def test_reference_image_capable_backends_frozenset():
     from tldw_chatbook.Image_Generation.capabilities import REFERENCE_IMAGE_CAPABLE_BACKENDS
-    assert REFERENCE_IMAGE_CAPABLE_BACKENDS == frozenset({"fal", "gemini"})
+    assert REFERENCE_IMAGE_CAPABLE_BACKENDS == frozenset({"comfyui", "fal", "gemini"})
     assert isinstance(REFERENCE_IMAGE_CAPABLE_BACKENDS, frozenset)
 
 
@@ -12,6 +12,17 @@ def test_resolve_backend_reference_image_capability_new_backends_supported(backe
     from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
     capability = resolve_backend_reference_image_capability(backend)
     assert capability.supported is True
+    assert capability.required is False
+    assert capability.reason is None
+
+
+def test_comfyui_reference_image_capability_is_required():
+    from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
+
+    capability = resolve_backend_reference_image_capability("comfyui")
+
+    assert capability.supported is True
+    assert capability.required is True
     assert capability.reason is None
 
 
@@ -26,6 +37,7 @@ def test_resolve_backend_reference_image_capability_legacy_backends_unsupported(
     from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
     capability = resolve_backend_reference_image_capability(backend)
     assert capability.supported is False
+    assert capability.required is False
 
 
 def test_resolve_backend_reference_image_capability_unknown_backend_unsupported():

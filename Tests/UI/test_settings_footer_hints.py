@@ -15,9 +15,12 @@ These tests pin:
   fire their actions;
 * a confirmation dialog before a dirty category's staged edits are
   discarded (clean categories keep the "nothing to revert" path);
-* narrow-width discoverability: when the footer collapses the screen hints
-  to an ellipsis at <=100 cols, F1 help still lists the ACTIVE category's
-  working shortcuts.
+* narrow-width discoverability: task-2860/LIB-18 reordered the responsive
+  ladder so the screen's OWN hints outrank the global cluster -- the
+  globals compact first (``AppFooterStatus.GLOBAL_HINTS_COMPACT``) while
+  the screen hints stay intact, and only once even that no longer fits
+  does the screen context collapse to an ellipsis. F1 help must still list
+  the ACTIVE category's working shortcuts once that collapse happens.
 """
 
 import pytest
@@ -131,7 +134,15 @@ async def test_printable_shortcut_keys_type_into_focused_text_fields():
         await pilot.pause()
 
         # The keys typed into the field; none of the s/r/t actions fired.
-        assert model_input.value == before + "srt"
+        # Not `before + "srt"`: Textual's `Input` ships `select_on_focus=True`,
+        # so focusing a NON-EMPTY field selects its contents and the first
+        # keystroke replaces them. That only became visible once the test
+        # config stopped being empty (task-15270) -- the shipping app has
+        # `[chat_defaults] model` set from the config template, so this is
+        # the behaviour a real user gets, and the claim under test (printable
+        # keys reach the field, not the screen bindings) is unchanged.
+        assert model_input.value.endswith("srt")
+        assert model_input.value != before
         assert not isinstance(host.screen, ConfirmationDialog)
         assert not toasts, f"no action toasts must fire, got {toasts}"
 
@@ -256,21 +267,27 @@ async def test_revert_without_changes_keeps_the_nothing_to_revert_path():
 
 @pytest.mark.asyncio
 async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
-    """At <=100 cols the footer elides screen hints; F1 help must list the
-    ACTIVE category's working shortcuts so the bindings stay discoverable."""
+    """The screen's own hints outrank the global cluster (task-2860/LIB-18).
+
+    The ladder compacts the globals first, then retains the highest-priority
+    screen actions that fit. At 70 columns Storage keeps ``s`` visible while
+    lower-priority ``r``/``t`` move to F1 help, where every active shortcut
+    remains discoverable."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(90, 28)) as pilot:
+    # At 70 columns the responsive prefix keeps only the primary Settings
+    # action alongside compact globals.
+    async with host.run_test(size=(70, 28)) as pilot:
         await _settle_settings(pilot)
         await _click_settings_category(pilot, "storage")
         screen = _active_destination_screen(host)
         footer = screen.query_one(AppFooterStatus)
 
         collapsed_text = str(footer.query_one("#footer-key-quit", Static).renderable)
-        assert "save category" not in collapsed_text, (
-            f"expected collapsed footer at 90 cols, got {collapsed_text!r}"
-        )
+        assert collapsed_text.startswith("s save category"), collapsed_text
+        assert "revert category" not in collapsed_text
+        assert "check storage" not in collapsed_text
 
         screen.action_show_workbench_help()
         await pilot.pause()

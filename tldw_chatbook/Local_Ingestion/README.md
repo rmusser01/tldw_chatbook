@@ -14,13 +14,9 @@ This module provides programmatic access to ingest local files into the tldw_cha
 
 ### Documents
 - PDF (`.pdf`)
-- Microsoft Word (`.docx`, `.doc`)
+- Microsoft Word (`.doc`, `.docx`)
 - OpenDocument Text (`.odt`)
 - Rich Text Format (`.rtf`)
-- PowerPoint (`.pptx`, `.ppt`)
-- Excel (`.xlsx`, `.xls`)
-- OpenDocument Spreadsheet (`.ods`)
-- OpenDocument Presentation (`.odp`)
 
 ### E-books
 - EPUB (`.epub`)
@@ -28,14 +24,20 @@ This module provides programmatic access to ingest local files into the tldw_cha
 - AZW (`.azw`, `.azw3`)
 - FictionBook (`.fb2`)
 
+### Web Pages
+- HTML (`.html`, `.htm`)
+
 ### Text Files
-- Plain Text (`.txt`, `.text`)
+- Plain Text (`.txt`)
 - Markdown (`.md`, `.markdown`)
 - reStructuredText (`.rst`)
+- Log files (`.log`)
+- CSV (`.csv`)
 
-### Structured Data
-- XML (`.xml`)
-- OPML (`.opml`)
+### Media
+- Images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.tif`)
+- Audio (`.mp3`, `.m4a`, `.wav`, `.flac`, `.ogg`, `.aac`, `.wma`, `.opus`)
+- Video (`.mp4`, `.avi`, `.mkv`, `.mov`, `.webm`, `.flv`, `.wmv`, `.m4v`, `.mpg`, `.mpeg`)
 
 ## Quick Start
 
@@ -46,17 +48,14 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 # Initialize database
 media_db = MediaDatabase("/path/to/media_db.sqlite", client_id="my_script")
 
-# Ingest a single file
+# Ingest a single file (raises FileIngestionError / FileNotFoundError on failure)
 result = ingest_local_file(
     file_path="/path/to/document.pdf",
     media_db=media_db,
     keywords=["important", "document"]
 )
 
-if result['success']:
-    print(f"Successfully ingested with media_id: {result['media_id']}")
-else:
-    print(f"Failed: {result['message']}")
+print(f"Successfully ingested with media_id: {result['media_id']}")
 ```
 
 ## API Reference
@@ -71,29 +70,38 @@ Process and ingest a single local file.
 - `title` (str, optional): Override the document title
 - `author` (str, optional): Set the document author
 - `keywords` (list, optional): Keywords to associate with the content
-- `perform_chunking` (bool): Whether to chunk the content (default: True)
-- `chunk_options` (dict, optional): Chunking configuration
-  - `method`: Chunking method ('semantic', 'tokens', 'sentences', etc.)
-  - `chunk_size`: Size of each chunk
-  - `overlap`: Overlap between chunks
+- `custom_prompt` (str, optional): Custom analysis prompt
+- `system_prompt` (str, optional): System prompt for analysis
 - `perform_analysis` (bool): Whether to analyze/summarize (default: False)
 - `api_name` (str, optional): API provider for analysis
 - `api_key` (str, optional): API key if not using config default
-- `custom_prompt` (str, optional): Custom analysis prompt
-- `system_prompt` (str, optional): System prompt for analysis
-- `summarize_recursively` (bool): Recursive summarization (default: False)
-- `overwrite` (bool): Overwrite existing content (default: False)
+- `chunk_options` (dict, optional): Chunking configuration. Omitting the
+  argument means "chunk with defaults"; an explicit `None` disables
+  chunking for every type; `{}` or a populated dict chunks with
+  defaults/overrides. Keys:
+  - `method`: Chunking method ('semantic', 'tokens', 'sentences', 'paragraphs', 'words', 'ebook_chapters')
+  - `size` / `max_size`: Chunk size (default varies by method)
+  - `overlap`: Overlap between chunks (default varies by method)
+  - `adaptive`: Use adaptive chunking (bool)
+  - `multi_level`: Use multi-level chunking (bool)
+  - `language`: Language code for semantic chunking
+- `metadata` (dict, optional): Additional metadata to store with the media
 
 **Returns:**
 Dictionary with:
-- `success` (bool): Whether ingestion succeeded
 - `media_id` (int): Database ID of ingested content
-- `media_uuid` (str): UUID of ingested content
-- `message` (str): Success/error message
-- `file_path` (str): Path of processed file
-- `media_type` (str): Detected media type
 - `title` (str): Final title used
-- `processing_details` (dict): Raw processing results
+- `author` (str): Author used
+- `content_length` (int): Length of extracted content
+- `chunks_created` (int): Number of chunks created
+- `keywords` (list): Keywords associated with the media
+- `analysis`: Analysis results (if performed)
+- `file_type` (str): Detected media type
+- `file_path` (str): Path of processed file
+
+**Raises:**
+- `FileIngestionError`: If ingestion fails
+- `FileNotFoundError`: If file doesn't exist
 
 ### `batch_ingest_files()`
 
@@ -103,11 +111,19 @@ Process multiple files with common options.
 - `file_paths` (list): List of file paths to process
 - `media_db` (MediaDatabase): Database instance
 - `common_keywords` (list, optional): Keywords for all files
+- `perform_analysis` (bool): Whether to analyze all files (default: False)
+- `api_name` (str, optional): API provider for analysis
+- `api_key` (str, optional): API key for analysis
+- `chunk_options` (dict, optional): Chunking options for all files (same semantics as `ingest_local_file`)
 - `stop_on_error` (bool): Stop on first error (default: False)
-- `**common_options`: Options applied to all files
 
 **Returns:**
-List of result dictionaries for each file.
+List of result dictionaries for each file. Failed files get a
+`{"file_path", "error", "success": False}` entry instead of a result
+(when `stop_on_error` is False).
+
+**Raises:**
+- `FileIngestionError`: If `stop_on_error` is True and an error occurs
 
 ### `ingest_directory()`
 
@@ -117,8 +133,9 @@ Scan and ingest all supported files in a directory.
 - `directory_path` (str/Path): Directory to scan
 - `media_db` (MediaDatabase): Database instance
 - `recursive` (bool): Include subdirectories (default: False)
-- `file_extensions` (list, optional): Limit to specific extensions
-- `**common_options`: Options applied to all files
+- `file_types` (list, optional): Limit to specific media types (e.g. `['pdf', 'document']`); None processes all supported types
+- `exclude_patterns` (list, optional): Filename patterns to exclude (e.g. `['*.tmp', 'draft_*']`)
+- `**kwargs`: Additional arguments passed to `ingest_local_file`
 
 **Returns:**
 List of result dictionaries for each file found.
@@ -137,10 +154,9 @@ result = ingest_local_file(
     perform_analysis=True,
     api_name="openai",
     custom_prompt="Summarize the key findings and implications",
-    perform_chunking=True,
     chunk_options={
         "method": "semantic",
-        "chunk_size": 1000,
+        "size": 1000,
         "overlap": 200
     }
 )
@@ -152,38 +168,38 @@ result = ingest_local_file(
 files = [
     "/docs/report1.pdf",
     "/docs/report2.docx",
-    "/docs/data.xlsx"
+    "/docs/notes.txt"
 ]
 
 results = batch_ingest_files(
     file_paths=files,
     media_db=media_db,
     common_keywords=["2024", "quarterly"],
-    perform_chunking=True,
-    chunk_options={"method": "tokens", "chunk_size": 500}
+    chunk_options={"method": "tokens", "size": 500}
 )
 
-# Check results
+# Check results (failed files carry success=False and an error message)
 for r in results:
-    print(f"{r['file_path']}: {'✓' if r['success'] else '✗'} {r['message']}")
+    if r.get("success") is False:
+        print(f"{r['file_path']}: ✗ {r['error']}")
+    else:
+        print(f"{r['file_path']}: ✓ media_id {r['media_id']}")
 ```
 
 ### Directory Ingestion
 
 ```python
-# Ingest all PDFs and EPUBs in a directory tree
+# Ingest all PDFs and e-books in a directory tree
 results = ingest_directory(
     directory_path="/home/user/Documents",
     media_db=media_db,
     recursive=True,
-    file_extensions=['.pdf', '.epub'],
+    file_types=['pdf', 'ebook'],
     keywords=["archive", "2024"],
     perform_analysis=False  # Just store, don't analyze
 )
 
 print(f"Processed {len(results)} files")
-successful = sum(1 for r in results if r['success'])
-print(f"Success rate: {successful}/{len(results)}")
 ```
 
 ### Integration with Existing Code
@@ -196,40 +212,43 @@ class DocumentProcessor:
     
     def process_upload(self, file_path: str, user_tags: list):
         """Process a user-uploaded document."""
-        result = ingest_local_file(
-            file_path=file_path,
-            media_db=self.media_db,
-            keywords=user_tags,
-            perform_analysis=True,
-            api_name=self.config.get('analysis_api')
-        )
-        
-        if result['success']:
-            self.notify_user(f"Document processed: {result['title']}")
-            return result['media_id']
-        else:
-            self.handle_error(result['message'])
+        try:
+            result = ingest_local_file(
+                file_path=file_path,
+                media_db=self.media_db,
+                keywords=user_tags,
+                perform_analysis=True,
+                api_name=self.config.get('analysis_api')
+            )
+        except FileIngestionError as e:
+            self.handle_error(str(e))
             return None
+        
+        self.notify_user(f"Document processed: {result['title']}")
+        return result['media_id']
 ```
 
 ## Error Handling
 
-The functions provide detailed error information:
+`ingest_local_file()` reports failure by raising:
+
+- `FileNotFoundError`: the file doesn't exist
+- `FileIngestionError`: unsupported file type, processing failure, or database storage failure (the message names the failing stage)
 
 ```python
-result = ingest_local_file(file_path="/path/to/file.pdf", media_db=db)
+from tldw_chatbook.Local_Ingestion import FileIngestionError
 
-if not result['success']:
-    if "not found" in result['message']:
-        print("File doesn't exist")
-    elif "Unsupported" in result['message']:
-        print(f"File type not supported: {result['media_type']}")
-    elif "Processing failed" in result['message']:
-        # Check processing_details for more info
-        print(f"Processing error: {result['processing_details'].get('error')}")
-    elif "Database storage failed" in result['message']:
-        print("Failed to save to database")
+try:
+    result = ingest_local_file(file_path="/path/to/file.pdf", media_db=db)
+except FileNotFoundError:
+    print("File doesn't exist")
+except FileIngestionError as e:
+    print(f"Ingestion failed: {e}")
 ```
+
+`batch_ingest_files()` catches per-file errors (unless `stop_on_error=True`)
+and appends a `{"file_path", "error", "success": False}` entry to the
+results for each failed file.
 
 ## Performance Considerations
 
@@ -247,13 +266,17 @@ if not result['success']:
 
 ## Database Considerations
 
-- The functions use the existing `MediaDatabase.add_media_with_keywords()` method
+- The pipeline writes through `persist_parsed_media()`, whose single
+  `add_media_with_keywords()` call is the only database write in the ingest path
 - Content is deduplicated by URL and content hash
-- Use `overwrite=True` to update existing content
+- Use `persist_parsed_media(payload, media_db, overwrite_existing=True)` to update existing content — this governs **live** rows only.
+  A match that is sitting in Trash (`is_trash = 1`) is never modified by
+  `overwrite_existing`; restoring it requires the explicit
+  `restore_trashed=True` opt-in at the `add_media_with_keywords` level
+  (task-4026; the Library ingest writer `persist_parsed_media` passes it)
 - All operations are transactional
 
 ## See Also
 
-- `examples/local_file_ingestion_example.py` - Complete working examples
 - Individual processor documentation in their respective modules
 - Media database documentation in `DB/Client_Media_DB_v2.py`

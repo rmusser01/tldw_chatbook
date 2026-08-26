@@ -77,10 +77,128 @@ class AudioTranscriptionError(AudioProcessingError):
     pass
 
 
+#: Multipliers for the ``[[HH:]MM:]SS`` timecode fields, least significant
+#: first -- the order :func:`parse_media_timecode` walks them in.
+_TIMECODE_UNIT_SECONDS = (1, 60, 3600)
+
+
+def parse_media_timecode(value: Optional[str]) -> Optional[float]:
+    """Parse an ingest time-range field into seconds.
+
+    Accepts the two spellings the "Start at"/"Stop at" fields advertise:
+    ``HH:MM:SS`` (or the shorter ``MM:SS``) and a bare number of seconds.
+    Fractional seconds are preserved.
+
+    Args:
+        value: The field's raw value; ``None``/blank means "no bound".
+
+    Returns:
+        The value in seconds, or ``None`` when there is no bound or the
+        text is not a timecode this function understands. Callers must
+        treat ``None`` as "unknown", never as zero.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    parts = text.split(":")
+    if len(parts) > len(_TIMECODE_UNIT_SECONDS):
+        return None
+    total = 0.0
+    try:
+        for index, part in enumerate(reversed(parts)):
+            total += float(part) * _TIMECODE_UNIT_SECONDS[index]
+    except ValueError:
+        return None
+    return total if total >= 0 else None
+
+
+def _format_seconds(seconds: float) -> str:
+    """Render a duration for ffmpeg's ``-t``, without trailing zero noise."""
+    text = f"{seconds:.3f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def build_ffmpeg_trim_args(
+    start_time: Optional[str], end_time: Optional[str]
+) -> tuple[list[str], list[str]]:
+    """Build the ffmpeg arguments for an ABSOLUTE ``[start, stop]`` window.
+
+    (task-3306 xhigh review round) This is the single authority for what
+    the ingest form's "Start at"/"Stop at" mean, because the two media
+    paths used to disagree. ``_extract_audio_from_video`` emitted ``-ss``
+    BEFORE ``-i`` -- input seeking, which rebases the output's timestamps
+    to zero -- and then ``-to`` as an OUTPUT option, so "Stop at 1:00" with
+    "Start at 0:30" selected 0:30-1:30 (twice the requested span, including
+    content the user had excluded). ``_extract_time_range`` put ``-ss``
+    after ``-i``, where ``-to`` is absolute, and selected 0:30-1:00. Same
+    two fields, same job, two different windows.
+
+    Both callers now share this builder, and "Stop at" is absolute
+    everywhere -- which is what the label promises.
+
+    The tradeoff, chosen correctness-first and then speed: absolute stop
+    could have been bought by moving ``-ss`` after ``-i`` on the video path
+    (output seeking, where ``-to`` is already absolute), but output seeking
+    decodes and discards everything before the start -- trimming the last
+    minute of a two-hour recording would decode 119 minutes first. So the
+    fast pre-input seek is kept and the absolute stop is converted into the
+    duration it implies (``-t``), which is exact under input seeking. The
+    conversion needs both bounds to parse as timecodes; when either does
+    not (or the window is empty/inverted), the builder falls back to output
+    seeking, which is slower but keeps the same absolute meaning rather
+    than silently reinterpreting the user's numbers.
+
+    Args:
+        start_time: "Start at" value (``HH:MM:SS`` or seconds); blank/None
+            means "from the beginning".
+        end_time: "Stop at" value, absolute in the source's own timeline;
+            blank/None means "to the end".
+
+    Returns:
+        ``(pre_input_args, post_input_args)`` -- arguments to place before
+        the ``-i <input>`` pair and after it, respectively. Both are empty
+        when neither bound is set.
+    """
+    start = str(start_time or "").strip()
+    end = str(end_time or "").strip()
+
+    if not start and not end:
+        return [], []
+    if not start:
+        # No start bound: "stop at X" is already a duration from zero.
+        return [], ["-t", end]
+    if not end:
+        return ["-ss", start], []
+
+    start_seconds = parse_media_timecode(start)
+    end_seconds = parse_media_timecode(end)
+    if (
+        start_seconds is not None
+        and end_seconds is not None
+        and end_seconds > start_seconds
+    ):
+        return ["-ss", start], ["-t", _format_seconds(end_seconds - start_seconds)]
+
+    # Unparseable or non-positive window: keep the absolute meaning by
+    # seeking on the output side, where -to is not rebased.
+    logger.warning(
+        "Time-range trim could not be converted to a duration; falling back "
+        "to slower output-side seeking."
+    )
+    return [], ["-ss", start, "-to", end]
+
+
 class LocalAudioProcessor:
     """Handles local audio processing including download, transcription, and analysis."""
 
-    def __init__(self, media_db: Optional[MediaDatabase] = None):
+    def __init__(
+        self,
+        media_db: Optional[MediaDatabase] = None,
+        *,
+        transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
+    ):
         """
         Initialize the audio processor.
 
@@ -90,6 +208,7 @@ class LocalAudioProcessor:
         from ..RAG_Search.chunking_service import ChunkingService
 
         self.media_db = media_db
+        self._transcription_runner = transcription_runner
         self.config = get_media_ingestion_defaults("audio")
         self.chunking_service = ChunkingService()
         self._cancelled = False  # Flag to track cancellation
@@ -294,6 +413,7 @@ class LocalAudioProcessor:
         use_adaptive_chunking: bool = False,
         use_multi_level_chunking: bool = False,
         chunk_language: Optional[str] = None,
+        chunk_template: Optional[Dict[str, Any]] = None,
         diarize: bool = False,
         vad_use: bool = False,
         timestamp_option: bool = True,
@@ -335,6 +455,11 @@ class LocalAudioProcessor:
             use_adaptive_chunking: Whether to enable adaptive chunk sizing.
             use_multi_level_chunking: Whether to emit multiple chunk levels.
             chunk_language: Optional language hint for chunking.
+            chunk_template: Optional pre-resolved chunking-template dict
+                (task 10, spec §9.2 -- the widened audio/video ingest seam;
+                the video path forwards the same name through ``**kwargs``).
+                Its chunk-stage options merge under the scalar chunking
+                arguments at the shared chunk site.
             diarize: Whether to request speaker diarization.
             vad_use: Whether to request voice activity detection.
             timestamp_option: Whether to request transcript timestamps.
@@ -402,6 +527,7 @@ class LocalAudioProcessor:
                         use_adaptive_chunking=use_adaptive_chunking,
                         use_multi_level_chunking=use_multi_level_chunking,
                         chunk_language=chunk_language,
+                        chunk_template=chunk_template,
                         diarize=diarize,
                         vad_use=vad_use,
                         timestamp_option=timestamp_option,
@@ -539,7 +665,7 @@ class LocalAudioProcessor:
             try:
                 logger.info("[AUDIO] Calling _transcribe_audio()")
                 context = kwargs.get("transcription_context") or {}
-                direct_local_kwargs = (
+                provenance_kwargs = (
                     {
                         "model_path": context.get("model_path"),
                         "attempt_id": context.get("attempt_id"),
@@ -552,7 +678,8 @@ class LocalAudioProcessor:
                         ),
                         "timestamps": kwargs.get("timestamp_option", True),
                     }
-                    if provider == "transcribe-cpp"
+                    if provider
+                    in {"faster-whisper", "parakeet-onnx", "transcribe-cpp"}
                     else {}
                 )
                 transcription_result = self._transcribe_audio(
@@ -572,7 +699,7 @@ class LocalAudioProcessor:
                     vad_filter=kwargs.get("vad_use", False),
                     diarize=kwargs.get("diarize", False),
                     progress_callback=transcription_progress_callback,
-                    **direct_local_kwargs,
+                    **provenance_kwargs,
                 )
                 logger.info("[AUDIO] _transcribe_audio() returned successfully")
             except Exception as e:
@@ -641,6 +768,10 @@ class LocalAudioProcessor:
                     overlap=kwargs.get("chunk_overlap", 200),
                     language=kwargs.get("chunk_language")
                     or kwargs.get("transcription_language", "en"),
+                    # (task 10, spec §9.2) the widened audio/video seam: the
+                    # pre-resolved template rides through to the chunking
+                    # service (video's ``**kwargs`` path lands here too).
+                    template=kwargs.get("chunk_template"),
                 )
                 result["chunks"] = chunks
                 logger.debug(f"Chunking completed: {len(chunks)} chunks created")
@@ -743,6 +874,21 @@ class LocalAudioProcessor:
             f"[AUDIO] Transcription kwargs: provider={kwargs.get('provider')}, model={kwargs.get('model')}, language={kwargs.get('language')}"
         )
 
+        def cancellable_progress_callback(progress, message, data=None):
+            if self.is_cancelled():
+                logger.info("[AUDIO] Transcription cancelled by user")
+                raise AudioTranscriptionError("Transcription cancelled by user")
+            if progress_callback:
+                logger.debug(f"[AUDIO] Progress update: {progress}% - {message}")
+                progress_callback(progress, message, data)
+
+        if self._transcription_runner is not None:
+            return self._transcription_runner(
+                audio_path,
+                progress_callback=cancellable_progress_callback,
+                **kwargs,
+            )
+
         if kwargs.get("provider") == "transcribe-cpp":
             from tldw_chatbook.STT.persistence import (
                 build_transcription_provenance_document,
@@ -783,15 +929,6 @@ class LocalAudioProcessor:
                 "transcription_provenance": provenance,
             }
 
-        # Wrap progress callback to check for cancellation
-        def cancellable_progress_callback(progress, message, data=None):
-            if self.is_cancelled():
-                logger.info("[AUDIO] Transcription cancelled by user")
-                raise AudioTranscriptionError("Transcription cancelled by user")
-            if progress_callback:
-                logger.debug(f"[AUDIO] Progress update: {progress}% - {message}")
-                progress_callback(progress, message, data)
-
         # Import transcription service when available
         try:
             logger.info("[AUDIO] Importing TranscriptionService")
@@ -812,6 +949,110 @@ class LocalAudioProcessor:
                 )
             else:
                 logger.error("[AUDIO] Transcription service returned None")
+
+            if (
+                result
+                and kwargs.get("provider") == "faster-whisper"
+                and isinstance(kwargs.get("attempt_id"), str)
+            ):
+                from tldw_chatbook.STT.contracts import (
+                    ExecutionDevice,
+                    ProducedCapabilities,
+                    TimestampGranularity,
+                    TranscriptionProvenance,
+                    TranscriptionResult,
+                    TranscriptionSegment,
+                    TranscriptionTask,
+                    TranscriptionTimings,
+                )
+                from tldw_chatbook.STT.persistence import (
+                    build_transcription_provenance_document,
+                )
+
+                requested_language = str(kwargs.get("language") or "en").lower()
+                observed_language = str(result.get("language") or "").lower() or None
+                detected_language = (
+                    observed_language if requested_language == "auto" else None
+                )
+                effective_language = (
+                    detected_language or "auto"
+                    if requested_language == "auto"
+                    else requested_language
+                )
+                configured_device = str(service.config.get("device") or "auto").lower()
+                try:
+                    effective_device = ExecutionDevice(configured_device)
+                except ValueError:
+                    effective_device = ExecutionDevice.AUTO
+                is_translation = result.get("task") == "translation" or (
+                    str(kwargs.get("target_lang") or "").lower() == "en"
+                    and requested_language != "en"
+                )
+                timestamps_requested = bool(kwargs.get("timestamps", True))
+                normalized_segments = (
+                    tuple(
+                        TranscriptionSegment(
+                            float(segment.get("start") or 0.0),
+                            float(segment.get("end") or 0.0),
+                            str(segment.get("text") or ""),
+                            speaker=segment.get("speaker"),
+                        )
+                        for segment in result.get("segments") or []
+                    )
+                    if timestamps_requested
+                    else ()
+                )
+                normalized = TranscriptionResult(
+                    text=str(result.get("text") or ""),
+                    segments=normalized_segments,
+                    provenance=TranscriptionProvenance(
+                        schema_version=1,
+                        attempt_id=kwargs["attempt_id"],
+                        batch_id=kwargs.get("batch_id"),
+                        job_id=kwargs.get("job_id"),
+                        retry_of_attempt_id=kwargs.get("retry_of_attempt_id"),
+                        retry_of_job_id=kwargs.get("retry_of_job_id"),
+                        provider_id="faster-whisper",
+                        model_id=str(result.get("model") or kwargs.get("model") or "base"),
+                        artifact_root=None,
+                        artifact_dependencies=(),
+                        precision=str(
+                            kwargs.get("compute_type")
+                            or service.config.get("compute_type")
+                            or "int8"
+                        ),
+                        requested_device=effective_device,
+                        effective_device=effective_device,
+                        requested_language=requested_language,
+                        effective_language=effective_language,
+                        detected_language=detected_language,
+                        task=(
+                            TranscriptionTask.TRANSLATE
+                            if is_translation
+                            else TranscriptionTask.TRANSCRIBE
+                        ),
+                    ),
+                    produced_capabilities=ProducedCapabilities(
+                        timestamps=(
+                            TimestampGranularity.SEGMENT
+                            if normalized_segments
+                            else TimestampGranularity.NONE
+                        ),
+                        punctuation=True,
+                        capitalization=True,
+                        vad=bool(kwargs.get("vad_filter", False)),
+                        diarization=bool(result.get("diarization_performed", False)),
+                    ),
+                    duration_seconds=float(result.get("duration") or 0.0),
+                    timings=TranscriptionTimings(),
+                )
+                result["transcription_model"] = normalized.provenance.model_id
+                result["transcription_provenance"] = (
+                    build_transcription_provenance_document(
+                        normalized,
+                        failed_attempt=kwargs.get("retry_source_failure_provenance"),
+                    )
+                )
 
             return result
         except ImportError as e:
@@ -838,6 +1079,7 @@ class LocalAudioProcessor:
         max_size: int = 500,
         overlap: int = 200,
         language: str = "en",
+        template: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Chunk text using the chunking service."""
         # ChunkingService.chunk_text takes flat keyword arguments
@@ -845,12 +1087,19 @@ class LocalAudioProcessor:
         # Passing one positionally put a dict where chunk_size is expected and
         # every audio/video ingest died in chunking with
         # "'<=' not supported between instances of 'dict' and 'int'" (task-840).
-        chunks = self.chunking_service.chunk_text(
-            text,
-            chunk_size=max_size,
-            chunk_overlap=overlap,
-            method=method,
-        )
+        # (task 10) The ``template`` kwarg is forwarded ONLY when set: the
+        # no-template call stays byte-identical to today's four-kwarg shape,
+        # so any duck-typed chunking service predating the kwarg (and the
+        # task-840 characterization pin) keeps working when no template is
+        # in play.
+        chunk_kwargs: Dict[str, Any] = {
+            "chunk_size": max_size,
+            "chunk_overlap": overlap,
+            "method": method,
+        }
+        if template is not None:
+            chunk_kwargs["template"] = template
+        chunks = self.chunking_service.chunk_text(text, **chunk_kwargs)
         # It returns dicts carrying 'text' plus real character offsets, not bare
         # strings; the previous wrapping nested the whole dict under another
         # "text" key. Carry the offsets through rather than dropping them: the
@@ -1058,21 +1307,11 @@ class LocalAudioProcessor:
         suffix = f"_trim_{start_time or '0'}_{end_time or 'end'}".replace(":", "-")
         output_path = os.path.join(output_dir, f"{base_name}{suffix}.mp3")
 
-        # Build ffmpeg command
-        command = [ffmpeg_cmd, "-i", audio_path]
-
-        # Add start time if specified
-        if start_time:
-            command.extend(["-ss", start_time])
-
-        # Add duration if end time is specified
-        if end_time:
-            if start_time:
-                # Calculate duration from start to end
-                # This is a simplified approach - ideally we'd parse the times properly
-                command.extend(["-to", end_time])
-            else:
-                command.extend(["-t", end_time])
+        # Build ffmpeg command. The trim arguments come from the shared
+        # builder so this path and the video path cannot mean different
+        # windows for the same Start/Stop pair (task-3306 review round).
+        pre_input, post_input = build_ffmpeg_trim_args(start_time, end_time)
+        command = [ffmpeg_cmd, *pre_input, "-i", audio_path, *post_input]
 
         # Output options
         command.extend(

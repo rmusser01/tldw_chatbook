@@ -19,7 +19,29 @@ on:
 # so its history stays complete.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # TASK-22250: cancel superseded PUSH runs, never a pull_request run.
+  #
+  # This suite is the slowest in the repo (12 UI shards + 6 core shards, ~35
+  # min each). Cancelling pull_request runs on every push to the branch meant
+  # an actively-worked PR effectively never produced a verdict: measured on
+  # #2078, each push cancelled the previous batch wholesale -- 20 checks killed
+  # at once -- and the cancellation timestamp of each batch matched the
+  # creation timestamp of the next. That is why `Tests` has reported nothing
+  # since 2026-06-26 while short workflows report fine.
+  #
+  # The exception proves it: `derived-artifacts.yml` already scopes
+  # cancellation to `push` only, and it is the one required check that
+  # consistently survives to report. This adopts that same rule.
+  #
+  # Scope, precisely: this protects a RUNNING pull_request batch. GitHub
+  # concurrency keeps one running plus one PENDING member per group, and a
+  # third arrival still replaces the pending one -- `cancel-in-progress`
+  # cannot prevent that. Only a per-run group (e.g. including `github.run_id`)
+  # would, and that would also stop superseding obsolete commits while
+  # multiplying queue pressure that is already the bottleneck here. Killing a
+  # QUEUED run costs nothing and yields the newer commit's verdict; killing a
+  # RUNNING batch throws away up to 35 minutes per shard for nothing.
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -42,25 +64,40 @@ jobs:
     # task-1465: full coverage on every PR replaces `-m unit` (which selected
     # 27 of ~950 files while ~590 files ran in no PR-triggered job). The UI
     # shard is its own job below; OS/Python breadth lives in nightly-deep.
-    name: Core Tests (all but UI) - Python ${{ matrix.python-version }} - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    #
+    # TASK-21411: sharded, because the 120-minute budget stopped being the
+    # question. Read from a killed run's own log: the ubuntu leg started
+    # pytest at 15:44:55 and was still emitting progress steadily -- no
+    # stall -- when the cap killed it at 17:39 having reached **60%**. So the
+    # suite needs ~190 minutes on a 4-vCPU runner, and no timeout this side
+    # of GitHub's 6-hour ceiling makes a single job a sane place to put it.
+    # Six deterministic pytest-shard slices are ~32 min each, roughly a
+    # quarter of the budget, and xdist still parallelizes within each slice.
+    #
+    # ubuntu only, on purpose. macOS runners are the scarce ones -- queue
+    # waits of 42-90 minutes are routine here -- and multiplying the scarcest
+    # pool by six would cost more in queueing than it buys in coverage. macOS
+    # breadth already lives in nightly-deep, which is where it belongs.
+    name: Core Tests (all but UI) - shard ${{ matrix.shard }}/${{ strategy.job-total }}
+    runs-on: ubuntu-latest
+    # Kept at 120 as headroom: the per-shard estimate is ~32 min, so this is
+    # ~4x margin rather than a target. A shard that approaches it is a signal
+    # to resize the matrix, not to raise the cap again.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: macos-latest
-            python-version: "3.12"
+        shard: [0, 1, 2, 3, 4, 5]
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: "3.12"
         cache: 'pip'
 
     - name: Install all dependencies
@@ -81,18 +118,23 @@ jobs:
         python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 
     - name: Run core tests in parallel
+      # pytest-shard slices the collected list deterministically, so the union
+      # of the six shards is exactly the set one unsharded job would have run
+      # -- the same contract the UI job below relies on.
       run: |
         pytest Tests --ignore=Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
+          --shard-id=${{ matrix.shard }} --num-shards=6 \
           --timeout=300 \
-          --json-report \
-          --json-report-file=core-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json
+          --json-report --json-report-omit log \
+          --json-report-file=core-test-results-${{ matrix.shard }}.json
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: core-test-results-${{ matrix.os }}-${{ matrix.python-version }}
+        # Per-shard, so matrix siblings cannot overwrite each other's report.
+        name: core-test-results-${{ matrix.shard }}
         path: |
           core-test-results-*.json
 
@@ -162,19 +204,29 @@ jobs:
         fi
 
   ui-tests:
-    name: UI Tests
+    # TASK-18608: the UI suite (~13.5k tests) needs ~5.8 hours on one
+    # 4-worker job -- it was cancelled by the 45-minute job cap at ~11%
+    # on every run, on every branch, so this job had not been green in
+    # 100+ runs. Sharded 12 ways via pytest-shard (deterministic split of
+    # the collected list): each shard runs ~30 min inside the same 45-min
+    # budget, with xdist parallelism retained WITHIN each shard.
+    name: UI Tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
         cache: 'pip'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
@@ -183,25 +235,29 @@ jobs:
         pip install pytest-json-report
         # Install textual dev tools for better debugging
         pip install textual-dev
-    
+
     - name: Run UI tests in parallel
       # The full Tests/UI directory (not just ui-marked tests), sharded with
-      # xdist (task-1465). ui-marked tests OUTSIDE Tests/UI are covered by
-      # core-tests, which runs everything but this directory.
+      # xdist (task-1465) and across this matrix (TASK-18608). ui-marked
+      # tests OUTSIDE Tests/UI are covered by core-tests, which runs
+      # everything but this directory. pytest-shard slices the collected
+      # test list deterministically, so the union of the shards is exactly
+      # the suite and re-runs are stable.
       run: |
         pytest Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
+          --shard-id=${{ matrix.shard }} --num-shards=12 \
           --timeout=180 \
-          --json-report \
-          --json-report-file=ui-test-results.json
+          --json-report --json-report-omit log \
+          --json-report-file=ui-test-results-${{ matrix.shard }}.json
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ui-test-results
+        name: ui-test-results-${{ matrix.shard }}
         path: |
-          ui-test-results.json
+          ui-test-results-${{ matrix.shard }}.json
 
   textual-minimum:
     name: MCP - Minimum Textual 8.2.8
@@ -242,6 +298,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
@@ -269,7 +327,7 @@ jobs:
     - name: Run all tests
       run: |
         pytest ./Tests/ \
-          --json-report \
+          --json-report --json-report-omit log \
           --json-report-file=all-test-results.json \
           --cov=tldw_chatbook \
           --cov-report=xml:coverage-all.xml \
@@ -324,6 +382,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         ref: dev
+        fetch-depth: 0
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -356,7 +415,7 @@ jobs:
         pytest ./Tests/ \
           --run-slow \
           --timeout=600 \
-          --json-report \
+          --json-report --json-report-omit log \
           --json-report-file=nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
           --cov=tldw_chatbook \
           --cov-report=xml:coverage-nightly-${{ matrix.os }}-${{ matrix.python-version }}.xml
@@ -410,3 +469,26 @@ jobs:
             repo: context.repo.repo,
             body: summary
           });
+
+    # TASK-21411: this job declares `needs:` and `if: always()`, which makes it
+    # RUN after those jobs whatever they did -- it never inspected what they
+    # did. On run 32647831275 it reported `success` while all twelve UI shards
+    # were red. A summary that cannot go red is not a gate, and this is the
+    # check most likely to be marked required.
+    #
+    # `always()` stays: the summary is worth publishing on failure too. The
+    # verdict is the LAST step, after the comment is posted above,
+    # so a red suite still leaves a readable PR comment behind.
+    - name: Require every gated job to have succeeded
+      if: >-
+        needs.core-tests.result != 'success' ||
+        needs.ui-tests.result != 'success' ||
+        needs.textual-minimum.result != 'success' ||
+        needs.artifact-lease-gate.result != 'success'
+      run: |
+        echo "core-tests:          ${{ needs.core-tests.result }}"
+        echo "ui-tests:            ${{ needs.ui-tests.result }}"
+        echo "textual-minimum:     ${{ needs.textual-minimum.result }}"
+        echo "artifact-lease-gate: ${{ needs.artifact-lease-gate.result }}"
+        echo "::error::A gated test job did not succeed; see the results above."
+        exit 1

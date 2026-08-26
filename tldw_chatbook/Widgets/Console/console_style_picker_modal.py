@@ -12,8 +12,7 @@ inserts the token. `/generate-image @<id> ...` is what later resolves
 (`console_generate_image.resolve_style_token`) and applies the style at
 generation time.
 
-Keyboard/focus discipline mirrors ``ConsoleSkillPickerModal`` exactly (see
-that module's docstring for the full rationale): the filter ``Input`` keeps
+Keyboard/focus discipline mirrors ``ConsolePromptPickerModal``: the filter ``Input`` keeps
 focus for the whole session; Up/Down move a synthetic highlighted-row index
 via a raw-key ``on_key`` intercept (``Input`` has no arrow-key bindings in
 this Textual version); Enter activates the highlighted row via the bubbled
@@ -23,11 +22,16 @@ real DOM focus can never land on a row.
 
 The searched set is a small, static, in-memory list -- `get_all_templates`
 is cached for the process lifetime (see that function's docstring) -- so
-there is no injected async search callable, no debounce timer, and no
-search-token race to guard against (nothing here ever awaits I/O). Filtering
-runs synchronously on every keystroke; only the row mount/unmount itself is
-awaited (Textual's ``VerticalScroll.remove_children``/``mount_all`` are
-coroutines regardless of where the data came from).
+there is no injected async search callable and no search-token race to
+guard against (nothing here ever awaits I/O). Filtering itself is
+synchronous; what is NOT free is the row mount/unmount that follows it
+(``VerticalScroll.remove_children``/``mount_all`` tear down and rebuild
+every result ``Button``). task-15476: this modal used to run that rebuild
+on every keystroke -- its sibling Console pickers
+(``ConsolePromptPickerModal`` and ``ConsoleCharacterPickerModal``) already
+debounced theirs, and this one now
+matches: a 0.2 s timer (`SEARCH_DEBOUNCE_SECONDS`) re-arms on every
+keystroke and only the settled query is applied.
 
 Task-559 AC3 adds a template preview: a detail line below the results list
 that shows the highlighted template's base-prompt/negative-prompt snippet
@@ -39,8 +43,7 @@ since it makes bracket-looking content (e.g. a base prompt containing
 ``[red]``) render literally with no escaping step to forget.
 
 Note: this screen only dismisses; the CALLER is responsible for returning
-focus to the Console composer afterwards (mirrors every sibling Console
-modal, including ``ConsoleSkillPickerModal``).
+focus to the Console composer afterwards (mirrors the prompt picker).
 """
 
 from __future__ import annotations
@@ -54,12 +57,14 @@ from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Media_Creation.generation_templates import (
     GenerationTemplate,
     get_all_templates,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 FILTER_INPUT_ID = "console-style-picker-filter"
 MODAL_ID = "console-style-picker-modal"
@@ -74,6 +79,10 @@ EMPTY_STORE_COPY = "No matching styles."
 DETAIL_EMPTY_COPY = "Highlight a style to preview its prompt."
 
 MODAL_TITLE = "Insert image style"
+
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`, task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 _PREVIEW_SNIPPET_MAX_CHARS = 90
 """Max rendered length of each of the base-prompt/negative-prompt snippets
@@ -151,10 +160,13 @@ def format_style_preview(template: GenerationTemplate) -> str:
     return "\n".join(lines)
 
 
-class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
+class ConsoleStylePickerModal(
+    SafeModalDismissMixin, ModalScreen[Optional[Mapping[str, object]]]
+):
     """Search and pick a `/generate-image` style template (built-in or user-defined)."""
 
-    BINDINGS = [("escape", "dismiss_picker", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-style-picker-modal"
 
     def __init__(self, *, initial_query: str = "") -> None:
         """Initialize the picker.
@@ -170,10 +182,10 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         # for the current render. Template ids are static, unique,
         # lowercase-with-underscore identifiers (see
         # `generation_templates.BUILTIN_TEMPLATES`), always a legal Textual
-        # id suffix -- unlike the skill picker's user-controllable `name`
-        # field, no duplicate/malformed-id fallback is needed here.
+        # id suffix, so no duplicate/malformed-id fallback is needed here.
         self._row_ids: list[str] = []
         self._highlighted_index = 0
+        self._search_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id=MODAL_ID):
@@ -190,7 +202,7 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
             # text is untrusted; see module docstring.
             yield Static(DETAIL_EMPTY_COPY, id=DETAIL_STATIC_ID, markup=False)
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         self._focus_filter_input()
         await self._apply_filter(self._initial_query)
 
@@ -204,13 +216,36 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         except (NoMatches, QueryError):
             pass
 
-    def action_dismiss_picker(self) -> None:
-        self.dismiss(None)
+    async def action_dismiss_picker(self) -> None:
+        await self.request_safe_cancel(source="visible")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+
+        async def cancel_debounce() -> None:
+            self._cancel_search_debounce()
+
+        await self.run_cancel_effect_once(cancel_debounce)
+        self.dismiss_safe_once(None)
 
     @on(Input.Changed, f"#{FILTER_INPUT_ID}")
-    async def _filter_changed(self, event: Input.Changed) -> None:
+    def _filter_changed(self, event: Input.Changed) -> None:
         event.stop()
-        await self._apply_filter(event.value)
+        self._cancel_search_debounce()
+        query = event.value
+        self._search_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS,
+            lambda: self.run_worker(
+                self._apply_filter(query),
+                exclusive=True,
+                group="console-style-picker-search",
+            ),
+        )
+
+    def _cancel_search_debounce(self) -> None:
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
 
     @on(Input.Submitted, f"#{FILTER_INPUT_ID}")
     def _filter_submitted(self, event: Input.Submitted) -> None:
@@ -256,7 +291,7 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
             container = self.query_one(f"#{RESULTS_CONTAINER_ID}", VerticalScroll)
         except (NoMatches, QueryError):
             return  # Modal was dismissed/unmounted mid-render.
-        # Awaited (mirrors ConsoleSkillPickerModal): the removal must
+        # Awaited (mirrors ConsolePromptPickerModal): the removal must
         # complete before mounting a same-id replacement, or a DuplicateIds
         # error can fire if the message pump hasn't caught up.
         await container.remove_children()
@@ -322,4 +357,5 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         self._select_record(self._results[self._highlighted_index])
 
     def _select_record(self, template: GenerationTemplate) -> None:
+        self._cancel_search_debounce()
         self.dismiss({"id": template.id, "name": template.name})

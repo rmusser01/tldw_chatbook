@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -15,6 +16,7 @@ from typing import Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import UUID
 
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReferenceSummary
 
 # JSON boundaries deliberately admit only exact built-in scalar types. Caller
 # arrays are mutable lists; validated arrays are immutable tuples.
@@ -54,6 +56,7 @@ _MAX_OPTIONS_BYTES = 16 * 1024
 _MAX_OPTIONS_CONTAINER_LEVELS = 4
 _PROVIDER_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _RESPONSE_FORMAT_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
+_OPTIONS_FINGERPRINT_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _UNSAFE_NAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _T = TypeVar("_T")
 
@@ -273,6 +276,13 @@ def canonical_json_options(options: JsonOptions) -> str:
         raise ProfileValidationError("options") from None
 
 
+def profile_options_fingerprint(options: JsonOptions) -> str:
+    """Return a bounded digest of canonical profile options."""
+
+    payload = canonical_json_options(options).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
 def _validate_provider_contract(
     provider_id: str,
     voice_id: str | None,
@@ -364,6 +374,58 @@ class TTSProfileDraft:
 
 
 @dataclass(frozen=True, slots=True)
+class TTSProfileVerificationEvidence:
+    """Process-scoped proof that one exact profile produced valid audio."""
+
+    profile_id: UUID
+    profile_revision: int
+    provider_id: str
+    model_id: str
+    voice_id: str | None
+    response_format: str
+    speed: float
+    options_fingerprint: str
+    provider_configuration_revision: int
+
+    def __post_init__(self) -> None:
+        profile_id = _validate_uuid(self.profile_id, "profile_id")
+        profile_revision = _validate_revision(self.profile_revision)
+        provider_id = _validate_provider_id(self.provider_id)
+        model_id = _validate_opaque_id(self.model_id, "model_id")
+        voice_id = _validate_opaque_id(self.voice_id, "voice_id", nullable=True)
+        response_format = _validate_response_format(self.response_format)
+        speed = _validate_speed(self.speed)
+        _validate_provider_contract(
+            provider_id,
+            voice_id,
+            response_format,
+            speed,
+            MappingProxyType({}),
+        )
+        if (
+            type(self.options_fingerprint) is not str
+            or not _OPTIONS_FINGERPRINT_PATTERN.fullmatch(self.options_fingerprint)
+        ):
+            raise ProfileValidationError("options_fingerprint")
+        provider_revision = _validate_nonnegative_integer(
+            self.provider_configuration_revision,
+            "configuration_revision",
+        )
+        object.__setattr__(self, "profile_id", profile_id)
+        object.__setattr__(self, "profile_revision", profile_revision)
+        object.__setattr__(self, "provider_id", provider_id)
+        object.__setattr__(self, "model_id", model_id)
+        object.__setattr__(self, "voice_id", voice_id)
+        object.__setattr__(self, "response_format", response_format)
+        object.__setattr__(self, "speed", speed)
+        object.__setattr__(
+            self,
+            "provider_configuration_revision",
+            provider_revision,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TTSGenerationProfile:
     """An immutable persisted TTS generation profile."""
 
@@ -379,6 +441,7 @@ class TTSGenerationProfile:
     revision: int
     created_at: datetime
     updated_at: datetime
+    reference: TTSCloneReferenceSummary | None = None
 
     def __post_init__(self) -> None:
         profile_id = _validate_uuid(self.profile_id, "profile_id")
@@ -405,6 +468,17 @@ class TTSGenerationProfile:
         updated_at = _validate_utc_timestamp(self.updated_at, "updated_at")
         if created_at > updated_at:
             raise ProfileValidationError("timestamps")
+        if (
+            self.reference is not None
+            and type(self.reference) is not TTSCloneReferenceSummary
+        ):
+            raise ProfileValidationError("reference_invalid")
+        if (
+            self.reference is not None
+            and self.reference.recipe_requirement is not None
+            and self.reference.recipe_requirement.model_id != model_id
+        ):
+            raise ProfileValidationError("reference_invalid")
         object.__setattr__(self, "profile_id", profile_id)
         object.__setattr__(self, "display_name", display_name)
         object.__setattr__(self, "normalized_name", expected_normalized_name)

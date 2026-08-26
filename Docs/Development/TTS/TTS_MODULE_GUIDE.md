@@ -35,21 +35,32 @@ tldw_chatbook/TTS/
 ├── adapter_registry.py      # Sealed app-scoped provider registry
 ├── adapter_bootstrap.py     # Application service construction
 ├── legacy_bridge.py         # Temporary provider-scoped compatibility adapters
-├── audio_cpp_config.py      # Immutable external-server configuration
+├── audio_cpp_config.py      # Immutable active-mode audio.cpp configuration
+├── audio_cpp_guided_config.py # Full guided/user-JSON/external Settings state
+├── audio_cpp_recipes.py     # Sealed release-0.5.1 package recipes
+├── audio_cpp_package_scanner.py # Bounded explicit-root package discovery
+├── audio_cpp_guided_launch.py # Private generated POSIX launch snapshot
+├── audio_cpp_managed_config.py # Managed launch validation and child environment
+├── audio_cpp_supervisor.py  # One app-scoped managed audio.cpp child
 ├── audio_cpp_contract.py    # Pinned JSON and PCM16 WAV validation
 ├── preferences.py           # Immutable global defaults and config mutations
 ├── request_admission.py     # Atomic preference/revision/lease admission
 ├── profile_errors.py        # Value-independent profile/store failures
 ├── profile_types.py         # Immutable profiles, assignments, and receipts
+├── profile_reference_types.py # Private clone-reference values and quotas
+├── profile_reference_audio.py # Bounded WAV admission/canonicalization
+├── profile_reference_storage.py # Metadata projections and streamed BLOB I/O
 ├── profile_schema.py        # Dedicated SQLite validation and codecs
 ├── migrations/
-│   └── v0_to_v1.py         # Versioned profile-store schema migration
+│   ├── v0_to_v1.py         # Initial profile-store schema migration
+│   ├── v1_to_v2.py         # Version-two profile-store migration
+│   └── v2_to_v3.py         # Private clone-reference table migration
 ├── profile_store_lock.py    # Cooperative shared/exclusive process locking
 ├── profile_repository.py    # Serialized CRUD, backup, and restore lifecycle
 ├── profile_service.py       # Native profile validation and capability overlay
 ├── playground_types.py      # Immutable Playground request/artifact contracts
 ├── adapters/
-│   └── audio_cpp.py         # Native external audio.cpp adapter
+│   └── audio_cpp.py         # Native audio.cpp HTTP adapter
 ├── audio_schemas.py         # Pydantic schemas for requests/responses
 ├── TTS_Generation.py        # Main TTS service orchestration
 ├── TTS_Backends.py          # Legacy bridge manager and base class
@@ -103,9 +114,10 @@ tts_profiles_db_path = "/absolute/path/to/tts-profiles.db"
 ```
 
 The store is local-only and separate from character cards, provider
-configuration, and conversation storage. Schema version 1 holds complete,
-immutable profile snapshots and authority-scoped assignment records. Profile
-display names are trimmed and have a unique key derived as
+configuration, and conversation storage. Current schema version 3 retains the
+complete, immutable profile snapshots and authority-scoped assignment records
+introduced by earlier versions and adds an optional profile-owned clone
+reference row. Profile display names are trimmed and have a unique key derived as
 `NFKC(display_name).casefold()`. Creates begin at revision 1; updates require
 the exact revision read by the editor and increment it atomically. A stale
 revision or normalized-name collision reports a conflict without overwriting
@@ -155,6 +167,142 @@ boundaries so the exclusive lease is released promptly on expiry.
 An individual kernel call such as `fsync`, `replace`, `stat`, `read`, or
 `write` cannot be interrupted after it starts, so one such in-flight call may
 finish just beyond the requested timeout before cleanup releases ownership.
+
+#### Profile v3 private clone-reference storage
+
+Schema v3 can store one canonical clone reference per generation profile: a
+bounded PCM16 WAV BLOB, bounded reference transcript, digest, validated audio
+metadata, immutable reference UUID, and timestamps. The source path is never
+persisted. Ordinary profile reads project only the reference metadata summary.
+The WAV BLOB is chunk-streamed, while the bounded transcript and digest are
+selected as scalar fields; all three are revalidated for an exact reference
+read, mutation, backup qualification, or restore qualification.
+
+Reference audio and transcript are local plaintext. Owner-only filesystem
+controls protect the profile database, retained migration backup, recovery
+copies, and temporary backup files, but that protection is not encryption.
+Profile database backups contain the same sensitive reference audio and
+transcript. Deletion and SQLite/WAL cleanup are best-effort deletion, not
+forensic erasure, especially on copy-on-write filesystems, backups, and storage
+media. The Windows privacy posture remains unverified until TASK-13208; do not
+infer a Windows ACL guarantee from the POSIX owner-private implementation.
+
+The repository schema is version 4. Opening any supported older store advances
+a private candidate through each migration step and retains validated downgrade
+siblings at the applicable boundaries: `<profile-db>.pre-v3.sqlite3` and
+`<profile-db>.pre-v4.sqlite3`. Version 3 reference rows receive null recipe
+provenance; migration never infers it from current Settings. Publication is a
+journaled, non-cancellable complete-or-restore protocol after replacement. To
+downgrade to a version-3-capable build, close Chatbook completely, restore the
+stable pre-v4 sibling as the configured database, and only then start the older
+build. This loses every post-migration change and all v4 provenance.
+For a version-2-capable build, restore the retained v2 pre-migration backup
+instead; that downgrade causes loss of post-migration profile changes.
+
+Ordinary portability remains sanitized: reference-free profiles retain exact
+wire version 1; reference-bearing profiles use exact wire version 2 with only
+`{"reference":{"status":"omitted"}}` added. The v2 decoder returns a bounded
+skip/no-mutation result. Explicit clone transfer uses a separate warning-gated
+voice-bundle portability path containing only `manifest.json`, `profile.json`,
+canonical `reference.wav`, and canonical `reference.txt`. The deterministic
+writer uses
+fixed metadata; the hostile reader validates archive layout before bounded
+streaming decompression and never invokes general extraction.
+
+`TTSVoiceBundlePortabilityService` owns source/destination authority, at most
+four expiring single-use inspection sessions, deterministic no-overwrite
+publication, and retained cleanup. UI receives only an opaque handle plus safe
+review facts. Commit repeats source validation and pure dependency inspection,
+then delegates Create/Reuse/Copy to one serialized repository transaction.
+Missing exact dependencies may be stored only as explicitly accepted inactive
+profiles. Import never assigns or changes a default. The app closes and joins
+the portability service before the profile repository and TTS service.
+
+#### Guided clone execution and materialization
+
+Character and default-profile resolution read the exact reference under the
+same repository generation and profile revision fences as the profile. A
+reference is eligible only when that one profile owns both the effective
+audio.cpp provider and exact model. Admission then freezes the registry's
+configuration revision and applied generation separately from the adapter's
+accepted recipe revision and managed process generation. A later saved or
+staged configuration cannot contaminate the admitted operation.
+
+Local reference paths are authorized only for a reviewed Guided Managed recipe
+running in the application-owned audio.cpp child. The source-authority
+preflight runs before readiness, catalog HTTP, or launch work, so External mode
+and Managed user-provided `server.json` fail closed without receiving or
+materializing the reference. After readiness, the adapter admits the exact
+model, optional native voice, reference policy, recipe, and process generation.
+There is no model, voice, provider, or non-clone fallback.
+
+Only after that admission does the service create an opaque owner-private
+operation directory below the Chatbook user-data
+`tts_clone_materializations` child. The internal adapter request carries a
+typed `voice_ref` path and `reference_text`; those fields never enter public
+`TTSRequest`, selection provenance, profile options, catalog state, or
+`server.json`. The response owns the materialization until underlying
+stream/adapter cleanup completes, after which the exact directory is removed
+before the provider lease and operation capacity are released.
+
+The materializer is lazy and POSIX-only. It retains a no-follow descriptor and
+nonblocking ownership lock, serializes publication and startup sweep with a
+root-scoped cross-instance lock, verifies effective-user ownership and
+owner-only modes, and removes only exact recognized unlocked directories.
+Unknown entries, links, substituted objects, and live owners are preserved.
+Service shutdown seals new materializations and
+`wait_closed()` retains all creation and cleanup work to a terminal result.
+The adapter repeats those retained-versus-lexical identity checks immediately
+before sending the path. Because audio.cpp opens a pathname rather than a file
+descriptor, this boundary does not claim to defend against a malicious process
+running as the same OS user racing the child after that check; owner-only
+runtime-root access is the operating-system isolation boundary.
+
+Reference audio, transcript, and the short-lived operation file are local
+plaintext, not encrypted. Once a clone request is admitted, child-output
+content is suppressed for that exact managed process generation so chunked or
+delayed echoes cannot retain the path or transcript in diagnostics. Public
+errors and response metadata remain value-independent. The next process
+generation starts with normal bounded sanitized diagnostics.
+
+#### Speech Lab clone setup, save, and Roleplay assignment
+
+When the selected ready Guided model exposes a reviewed reference-required
+recipe, Speech Lab replaces ordinary generation with one **Create Voice &
+Generate** path. The pane accepts a bounded PCM16 WAV and required bounded
+transcript, canonicalizes them off the UI loop, and retains that canonical
+value only as the current setup draft. Picker cancellation is inert; validation
+focuses the invalid field without discarding the other field. The interface
+states that the reference, transcript, profile database, and short-lived
+materialization are local plaintext rather than encrypted data.
+
+Starting clone generation captures the provider/model/applied-generation and
+draft revision. The admitted service owns the reference below the public
+request boundary, materializes it only after the exact Guided capability is
+accepted, and returns clone evidence only with a structurally valid complete
+WAV. A failed or stale operation leaves the setup draft available for retry and
+cannot replace the last playable result. A successful matching operation
+transfers exact canonical authority to the handler-owned current result and
+clears the pane draft; the pane receives only a playback-safe projection.
+
+**Save as Voice Profile** is offered only for that handler-owned successful
+result. The profile service atomically creates the generation profile and its
+reference from the admitted evidence, without reopening the source WAV or
+reading mutable selectors. The review can save unassigned or navigate to
+Roleplay with a non-authoritative profile identity suggestion. It never changes
+the app default or a character assignment. Roleplay validates that suggestion
+against a fresh repository generation/profile revision, marks it as suggested,
+and persists an assignment only when the user explicitly selects it.
+
+Console **Speak** then resolves the exact character assignment and stored
+reference before provider readiness work. The first Speak lazily starts or
+joins the one compatible Guided Managed child and uses the assigned model and
+reference; global defaults cannot override it. Profile/character browsing is
+passive. Message, assignment, profile/reference, configuration, recipe, or
+process-generation changes at an admission boundary fail stale rather than
+switching identity. Result replacement, discard, pane/app close, and response
+cleanup release their respective canonical, artifact, materialization, and
+lease ownership in order.
 
 Profiles persist generation selections, not connection or process
 configuration. Provider origins, credentials, API keys, custom headers, binary
@@ -371,6 +519,247 @@ run was unavailable because the installed `audio-cpp 0.4` binary had no
 running process, listener, or healthy endpoint. Chatbook intentionally did not
 launch it; external-process ownership remains with the user.
 
+### Managed audio.cpp runtime and UI (Slices 4–5)
+
+External mode remains the default and owns no server process. Managed mode is
+an explicit alternative in canonical Global Settings. Its manual source uses a
+trusted prebuilt executable and existing `server.json`; its Guided source uses
+a separately installed executable plus explicitly reviewed package identities
+and defers private configuration materialization to a deliberate runtime
+operation. Settings preserves dormant fields across External, manual, and
+Guided sources but validates and projects only the selected source. Save is
+passive and performs no launch, probe, discovery, synthesis, or generated-
+artifact creation.
+
+The application constructs one provider-specific `AudioCppSupervisor` beside
+the sealed registry and service. A Managed configuration carries one absolute
+user-supplied executable path, one absolute user-supplied `server.json` path,
+and bounded startup, health-interval, and termination-grace values. Validation
+requires an executable file, a readable strict UTF-8 JSON object no larger than
+1 MiB, no duplicate keys or non-finite constants, `host` exactly
+`127.0.0.1`, and an integer port from 1 through 65,535. Validation and passive
+snapshots do not launch, probe, discover, or adopt a process.
+
+Only a deliberate audio.cpp service operation may start Managed mode. Native
+synthesis admission, an explicit catalog or voice refresh, and
+`start_and_test_audio_cpp()` all pass through the same preparation seam.
+`restart_audio_cpp()` drains and stops the current generation, applies the
+latest eligible staged settings, and starts only when the resulting mode is
+Managed. `shutdown_audio_cpp()` drains and stops without itself launching a
+replacement. Passive process/capability snapshots, descriptor reads, and
+non-refresh cache reads never launch a child.
+
+Launch is always the exact argv
+`<user executable> --config <user server.json>`, without a shell, with the JSON
+directory as the working directory. A fail-closed loopback-port preflight runs
+immediately before spawn. The child receives a fixed runtime/platform
+environment allowlist after known provider credential names and secret-like
+names are removed. Chatbook never scans for an existing server, attaches to an
+unowned PID, appends arbitrary arguments, or runs an automatic restart loop.
+
+Concurrent first use shares one shielded startup. Publication and admission
+gates order configuration saves and applications against startup; lifecycle
+epochs and process generations fence stop, restart, shutdown, and stale work.
+One exit monitor is the sole reaper for each exact child. Process generations
+bind the child, health work, output drains, and generation-local adapter HTTP
+client together. Only one health probe may run for a generation; periodic and
+on-demand callers share it. Adapter retirement closes that generation's HTTP
+resources before a replacement generation can be published.
+
+Configuration and runtime identity use separate monotonic values:
+
+- **Saved generation** identifies the latest durably published settings.
+- **Applied generation** identifies the settings currently owned by the
+  registry slot; a save may be staged while speech is still using the prior
+  generation, and each newer save atomically supersedes or clears the older
+  stage.
+- **Process generation** identifies one exact app-owned child. An observation
+  version may advance as that same child changes state or health.
+
+All deliberate operations acquire the registry/admission side before entering
+the supervisor. Explicit transitions publish Draining, reject new leases, wait
+for admitted work, stop and reap only the owned child, and then retire the
+generation-local adapter before promoting a replacement. Applying External
+uses the same transition and cannot allow an older staged Managed mapping to
+reappear. Terminal service shutdown uses one outer deadline: registry
+admission seals immediately, leases/adapters drain first, and the running
+child's terminate/kill grace is capped by that shared deadline. `close()` is
+bounded; definitive cleanup remains retained after the foreground budget when
+necessary, and `wait_closed()` cannot succeed while a child, startup, health,
+reaper, output-drain, or generation-client task remains.
+
+The immutable process snapshot reports `stopped`, `starting`, `running`,
+`unhealthy`, `draining`, `stopping`, or `unavailable`, along with safe failure
+metadata. Stable managed failure codes are `configuration_invalid`,
+`port_in_use`, `process_spawn_failed`, `process_startup_timeout`,
+`process_exited`, `contract_incompatible`, `runtime_unhealthy`, and
+`cleanup_failed`. Health or exit failure never triggers a restart. Cleanup
+uncertainty seals further launches when exact generated-artifact retirement
+cannot be proved. A later deliberate operation may retry from the latest
+eligible saved mode after ordinary runtime failure, and a successful
+replacement clears the sealed Unavailable failure.
+
+Stdout and stderr are continuously drained into a memory-only ring bounded by
+line count, retained bytes, and bytes per line. ANSI/control sequences and
+recognizable credential assignments are best-effort sanitized, home paths are
+abbreviated, Rich markup is escaped, and an eviction count makes truncation
+truthful. Raw output is not copied into general logs, configuration, or
+persistence. Cleanup has bounded drain joining and closes only the parent's
+pipe transports when a descendant retains inherited descriptors; it never
+signals or adopts that descendant.
+
+Managed mode reuses the existing native HTTP adapter and multi-model catalog.
+It still validates and returns one complete PCM16 WAV item through the
+asynchronous response interface; Managed mode does not add incremental
+streaming or change playback behavior.
+
+Speech Lab observes this state through one coherent, passive
+`AudioCppRuntimeObservation`. Its single runtime card shows saved, applied, and
+process generations; process/capability/endpoint state; catalog freshness; and
+pending configuration. It links back to Global Settings rather than duplicating
+durable fields. Start/Test, Restart/Apply, External Apply/Stop, and Shutdown are
+retained asynchronous service actions; incompatible catalog/generation actions
+are disabled while a transition is active, while an existing complete WAV
+remains playable. Playback Stop and managed-process Shutdown are separate
+controls.
+
+The runtime card's details and recent diagnostics disclosures are collapsed by
+default. Full configured paths appear only in the explicit read-only details
+disclosure and are excluded from observation/projection reprs. Diagnostics use
+only the supervisor's bounded, sanitized, memory-only snapshot, identify the
+process generation and stream, and warn that output can still be sensitive.
+Expanding either disclosure is inert: it cannot persist settings, acquire a
+registry lease, or launch a child.
+
+Managed mode must not be exposed on Windows until native Windows CI proves
+direct execution of a user-supplied binary, graceful termination and
+force-kill, sole child reaping, and bounded parent-pipe closure. External
+audio.cpp remains available on Windows, and injected supervisor coverage
+remains mandatory on every platform.
+
+### Guided Managed audio.cpp launch (POSIX)
+
+Curated Model Library packages are joined to recipes at the exact reviewed
+audio.cpp inventory commit
+`597048d9a920592808d7d4e2acd7b9c4596a143a`. The join keeps three states
+distinct: downloadable, local-only, and unsupported. Provisioning always uses
+the shared artifact service with `activate=False`; installing bytes does not
+select a model, publish Settings, install the server binary, or launch a child.
+The Settings handoff leases the exact inactive root while it rescans and merges
+one non-stale result into the detached draft.
+
+Lease ownership follows the artifact, not the screen: the shared service owns
+installed roots, the unsaved Settings draft holds exact roots while reviewing
+and saving, a staged generation holds them until cancellation/transfer, and an
+owned child retains its immutable runtime handle until the child has stopped.
+Removal goes through the public artifact-service deletion boundary only after
+an ordered dependency preview and a final fingerprint recheck. Contention,
+interruption, or changed source state leaves the registry and package
+recoverable for a fresh preview; private clone-reference assets are separate
+owners and are never deleted implicitly.
+
+Guided setup is a structured Managed source alongside the existing advanced
+user-provided `server.json` source. The pinned release accounting covers all 21
+families and 67 package variants: 45 reviewed variants are downloadable in
+Model Library, 8 approved variants are local-only, and 14 are explicitly
+unsupported. Model Library shows only the downloadable set; local-only
+variants enter through the same bounded **Add local package…** scanner and do
+not become a parallel installer path. Each accepted package freezes its recipe
+revision, canonical root and file identities, safe model projection, public
+model ID, speech capabilities, and backend posture. A scan that finds multiple
+exact candidates never chooses one silently; explicitly reviewed candidates
+remain individually identifiable even when they share one selected root.
+
+The exact recipe, not the family task label alone, determines first-sample
+readiness. Supertonic is text-ready. PocketTTS standalone GGUF recipes are
+revision 2 with `Reference: Required`: release-0.5.1 registers them, but the
+GGUF file does not contain the separate voice embedding required by real
+synthesis. The PocketTTS Safetensors layout includes reviewed embeddings and
+remains `Reference: Optional`. A voice-required default is still registered in
+the one child, but Settings hands off to **Test Connection** rather than
+promising **Hear a Sample**.
+
+Inflect Micro v2 also depends on eSpeak-ng and its English data. The pinned
+upstream 0.5.1 guide documents explicit `inflect_v2.espeak_library_path` and
+`inflect_v2.espeak_data_path` session options only when eSpeak-ng is outside
+the dynamic-loader/data search locations. An installed library or data package
+is not sufficient evidence that the server process can resolve its default
+names. Guided configuration intentionally does not discover or persist private
+host paths. Verify loader/data discoverability before testing Inflect; when the
+defaults are not discoverable, provide the explicit options through the
+advanced user-owned `server.json` flow.
+
+Saving Guided Settings remains passive. The first deliberate Test, Start,
+Restart & Apply, catalog refresh, voice refresh, or synthesis revalidates the
+exact accepted package identities off the event loop, validates the selected
+binary, resolves only a backend tuple carried by every recipe, selects a
+bounded private loopback port, and creates one owner-private generation-local
+`server.json`. `Auto` currently resolves to the reviewed CPU baseline on POSIX;
+an accelerated backend is not inferred from installation or hardware alone.
+
+Generated JSON is an immutable launch artifact, not another settings file. It
+contains only the reviewed top-level and per-model fields: loopback host and
+selected port, backend/device/thread limits, lazy loading, disabled request-body
+logging, bounded body/busy limits, and absolute model paths plus recipe-owned
+options. It omits CORS and arbitrary extensions. The supervisor launches the
+same direct no-shell `audiocpp_server --config <generated server.json>` argv and
+owns the artifact with the exact process generation.
+
+All accepted models share that one child. The native catalog admits only exact
+lowercase upstream `tts` and `clone` tasks, cross-checks the complete returned
+model set against the generation snapshot, and preserves typed capabilities
+such as PocketTTS `("tts", "clone")`. Unrelated ASR, voice-conversion, music,
+and other task types cannot enter the TTS catalog. The Running generation keeps
+its immutable launch snapshot if source files later change; the next deliberate
+replacement must revalidate before stopping or replacing it.
+
+Pre-spawn failure, failed startup, unexpected exit, replacement, explicit
+shutdown, and app close all retire the exact generated artifact after owned
+generation clients and tasks. Artifact identity or cleanup uncertainty fails
+closed with sanitized, path-independent errors. The user-provided JSON source
+retains its existing JSON-parent working directory and ownership semantics.
+Windows guided launch remains out of scope until native handle, ACL, lifecycle,
+and real-process parity are implemented and evidenced.
+
+The canonical Settings panel exposes Guided as a first-class source rather
+than another connection mode. Its bounded asynchronous scanner projects exact
+recipe family/variant, speech tasks, evidence state, public model ID, path-safe
+package identity, and lazy/resident-memory truth. The draft owns its accepted
+candidate identities; a newer scan, source switch, or unmount fences late
+results. Save revalidates those identities off the Textual message loop before
+publishing settings. A changed or deleted package blocks persistence and asks
+the user to scan again, while a successful save announces
+`Configuration saved — ready to test` and offers a no-work navigation handoff
+to Speech Lab's current primary action. It does not mutate separate Studio
+preferences.
+
+For a saved Guided configuration, the immutable runtime observation carries
+only the path-safe facts needed to project the one primary action. A first-use
+state yields **Start & Generate Sample**; pending live settings yield the
+existing exact apply/restart action; a failed combined sample yields **Retry
+Sample**. The click retains that displayed projection, so provider switches or
+late observations cannot turn the visible action into another lifecycle
+operation. The combined action composes existing service seams: prepare/start,
+refresh and verify the exact saved default catalog entry, recheck provider,
+configuration, catalog, and process fences, then issue the ordinary complete-
+WAV synthesis request. It does not introduce a second adapter, player, or
+streaming protocol.
+
+The current-result region retains the complete validated WAV independently of
+later discovery failures. It reports duration and safe provider/model/voice,
+configuration-revision, and process-generation provenance, and exposes the
+existing Play/Pause/Stop behavior plus **Generate again** and **Save WAV**.
+Optional autoplay is read only from the persisted Studio preference and never
+changed by Global Settings or Guided setup. All result and lifecycle controls
+derive their disabled reason and tooltip from the same current state; live
+announcements cover meaningful state transitions rather than progress ticks.
+
+Accepted Guided models stay registered in one lazy multi-model child. Exact
+model changes reuse its process generation, and the UI warns that audio.cpp may
+retain a loaded model until explicit shutdown. Console continues to capture
+the exact global selection and Roleplay the exact character-profile selection;
+passive browsing and observation do not launch Guided mode.
+
 ### Catalog-driven STTS Playground (Slice 3)
 
 TASK-569 implements the external audio.cpp Playground vertical. Opening the
@@ -411,8 +800,10 @@ do not expose submitted text, configured origins or values, credentials, raw
 remote bodies, or unsafe remote identifiers.
 
 Slice 3 connects only to an existing externally managed `audiocpp_server`.
-User-provided binary and user-provided `server.json` launch, supervision, and
-managed Playground controls remain deferred to Slices 4–5.
+Slice 4 adds the managed runtime core described above. Slice 5 exposes its
+passive configuration in global Settings and its deliberate lifecycle,
+capability, catalog, diagnostics, generation, and playback controls in Speech
+Lab.
 
 #### 3. Audio Service (`audio_service.py`)
 Handles audio format conversion with:
@@ -1026,6 +1417,10 @@ pytest Tests/TTS/
    - Chatterbox adds watermarks to generated audio
    - Store voice metadata securely
 7. **Reference Audio**: Validate file formats and sizes
+8. **Clone Voice Bundles**: Ordinary export is sanitized. Explicit bundle
+   import/export is POSIX-only until Windows ACL parity is verified, requires
+   plaintext warnings, treats archives as hostile, and never describes SHA-256
+   as authenticity, identity, signature, or consent proof.
 
 ## License
 

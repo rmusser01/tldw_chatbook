@@ -14,7 +14,9 @@ from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_runtime_delegate import LocalMCPRuntimeDelegate
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
 from tldw_chatbook.MCP.server import (
+    _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION,
     _signature_to_input_schema,
+    _signature_to_prompt_arguments,
     describe_local_mcp_capabilities,
 )
 
@@ -455,7 +457,7 @@ class FakeJSONRPCProcess:
                                 {
                                     "name": f"remote_tool_{self.process_id}",
                                     "description": "Remote tool",
-                                    "inputSchema": {},
+                                    "inputSchema": {"type": "object"},
                                 }
                             ]
                         },
@@ -621,10 +623,12 @@ def test_local_control_service_uses_real_local_manifest_helper_by_default():
     manifest = describe_local_mcp_capabilities()
 
     assert inventory == manifest
-    assert any(tool["name"] == "search_rag" for tool in inventory["tools"])
-    assert any(
-        tool["description"] == "Search the RAG database for relevant content."
-        for tool in inventory["tools"]
+    search_rag = next(
+        tool for tool in inventory["tools"] if tool["name"] == "search_rag"
+    )
+    assert (
+        search_rag["description"]
+        == "Search media using the active RAG profile unless keyword search is forced."
     )
     assert any(
         resource["uri"] == "note://{note_id}" for resource in inventory["resources"]
@@ -642,12 +646,12 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
 
     def _registered_entries(
         method_name: str, decorator_name: str
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, object]]:
         for node in module_node.body:
             if isinstance(node, ast.ClassDef) and node.name == "TldwMCPServer":
                 for child in node.body:
                     if isinstance(child, ast.FunctionDef) and child.name == method_name:
-                        entries: list[dict[str, str]] = []
+                        entries: list[dict[str, object]] = []
                         for nested in child.body:
                             if not isinstance(nested, ast.AsyncFunctionDef):
                                 continue
@@ -660,7 +664,7 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
                                     or func.attr != decorator_name
                                 ):
                                     continue
-                                entry = {
+                                entry: dict[str, object] = {
                                     "name": nested.name,
                                     "description": (ast.get_docstring(nested) or "")
                                     .strip()
@@ -676,7 +680,14 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
                                     # functions/decorators), not
                                     # re-deriving the schema mapping rules a
                                     # second time.
-                                    entry["inputSchema"] = _signature_to_input_schema(
+                                    input_schema = _signature_to_input_schema(nested)
+                                    if nested.name == "search_rag":
+                                        input_schema["properties"]["use_semantic"][
+                                            "description"
+                                        ] = _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION
+                                    entry["inputSchema"] = input_schema
+                                elif decorator_name == "prompt":
+                                    entry["arguments"] = _signature_to_prompt_arguments(
                                         nested
                                     )
                                 entries.append(entry)
@@ -689,7 +700,12 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
     expected_resources = _registered_entries("_register_resources", "resource")
     expected_prompts = _registered_entries("_register_prompts", "prompt")
 
-    assert helper_manifest["tools"] == expected_tools
+    # task-1337 (plan Task 9): the manifest now appends the 18
+    # descriptor-backed Library tools after the AST-derived legacy entries.
+    # This mirror keeps owning the legacy AST-walk alignment (first N tools,
+    # resources, prompts); Tests/MCP/test_library_tools.py owns the
+    # descriptor tail.
+    assert helper_manifest["tools"][: len(expected_tools)] == expected_tools
     assert helper_manifest["resources"] == expected_resources
     assert helper_manifest["prompts"] == expected_prompts
     assert any(
@@ -1890,6 +1906,7 @@ async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(
         "uri": "remote://resource/1",
         "content": "resource-body",
         "mimeType": "text/plain",
+        "_meta": {},
     }
     assert prompt_result == [{"role": "assistant", "content": "prompt-body"}]
 
@@ -1901,3 +1918,177 @@ async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(
     assert "tools/call" in methods
     assert "resources/read" in methods
     assert "prompts/get" in methods
+
+
+# -- task-1337 (plan Task 9): Library tool policy mapping ----------------------
+#
+# Each of the 18 descriptor-backed ``library_*`` tools resolves to a read
+# action owned by its Library item type (list/search -> the type's ``list``
+# action, get -> its ``detail`` action). Collections get the dedicated
+# local-only ``library.collections`` resource -- never
+# ``collections.reading_list.*``. Both ``tool.execute`` previews and
+# ``tools/call`` runtime requests resolve through the same mapping, with the
+# generic MCP trigger retained as the fallback seam for unknown names.
+
+_LIBRARY_TOOL_POLICY_EXPECTATIONS = {
+    "library_list_media": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_get_media": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_search_media": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_list_notes": ("notes.list.local", "notes_workspaces"),
+    "library_get_note": ("notes.detail.local", "notes_workspaces"),
+    "library_search_notes": ("notes.list.local", "notes_workspaces"),
+    "library_list_prompts": ("prompts.list.local", "prompts_chatbooks"),
+    "library_get_prompt": ("prompts.detail.local", "prompts_chatbooks"),
+    "library_search_prompts": ("prompts.list.local", "prompts_chatbooks"),
+    "library_list_skills": ("skills.list.local", "server_skills"),
+    "library_get_skill": ("skills.detail.local", "server_skills"),
+    "library_search_skills": ("skills.list.local", "server_skills"),
+    "library_list_conversations": ("chat.list.local", "chat"),
+    "library_get_conversation": ("chat.detail.local", "chat"),
+    "library_search_conversations": ("chat.list.local", "chat"),
+    "library_list_collections": (
+        "library.collections.list.local",
+        "library_collections",
+    ),
+    "library_get_collection": (
+        "library.collections.detail.local",
+        "library_collections",
+    ),
+    "library_search_collections": (
+        "library.collections.list.local",
+        "library_collections",
+    ),
+    # chunking-agent-tools siblings: the read tools ride the existing media
+    # read path (spec §6 "no new verbs") at the matching LEVEL -- structure
+    # and chunk fetch are single-item detail reads (by id, like get), spec
+    # list is a browse-level listing. spec_save resolves to its OWN write
+    # action (Task 4's deadline carry: the moment the save handler went
+    # live, the provisional derived READ mapping had to stop -- a live
+    # write must never resolve to a read action under policy).
+    "library_get_media_structure": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_get_media_chunk": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_list_chunk_specs": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_save_chunk_spec": ("library.templates.save.local", "library_collections"),
+    "library_rechunk_media": ("library.media.rechunk.local", "library_collections"),
+    # student-workflow (Task 1, spec §4): the note write resolves to its OWN
+    # local Library write action -- never the derived notes read a note-typed
+    # tool would otherwise fall to.
+    "library_save_note": ("library.notes.save.local", "library_collections"),
+}
+
+
+def _library_policy_control_service() -> LocalMCPControlService:
+    return LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=FakeLocalRuntimeDelegate(),
+    )
+
+
+@pytest.mark.parametrize(
+    "tool_name,expected",
+    sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS.items()),
+    ids=sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS),
+)
+def test_library_tools_resolve_to_type_owned_read_actions(tool_name, expected):
+    service = _library_policy_control_service()
+    expected_action_id, expected_capability_id = expected
+
+    preview = service.preview_runtime_access(
+        "tool.execute", {"tool_name": tool_name, "arguments": {}}
+    )
+
+    assert preview["resolved_action_id"] == expected_action_id
+    assert preview["registry_capability_id"] == expected_capability_id
+    assert preview["decision"] == "inherit"
+
+
+@pytest.mark.parametrize(
+    "tool_name,expected",
+    sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS.items()),
+    ids=sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS),
+)
+def test_library_tools_call_requests_use_the_same_mapping(tool_name, expected):
+    service = _library_policy_control_service()
+    expected_action_id, expected_capability_id = expected
+
+    preview = service.preview_runtime_access(
+        "runtime.request",
+        {
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": {}},
+        },
+    )
+
+    assert preview["resolved_action_id"] == expected_action_id
+    assert preview["registry_capability_id"] == expected_capability_id
+
+
+def test_unknown_tools_keep_the_generic_mcp_trigger_fallback():
+    service = _library_policy_control_service()
+
+    preview = service.preview_runtime_access(
+        "tool.execute", {"tool_name": "not_a_real_tool", "arguments": {}}
+    )
+
+    assert preview["resolved_action_id"] == "mcp.runtime.trigger.local"
+    assert preview["registry_capability_id"] == "local_mcp_runtime"
+
+
+@pytest.mark.asyncio
+async def test_library_collections_deny_rule_blocks_execute_and_tools_call():
+    service = _library_policy_control_service()
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-deny-library-collections",
+            "capability_id": "library.collections.list.local",
+            "decision": "deny",
+            "notes": "Library collection listing is blocked.",
+        }
+    )
+
+    with pytest.raises(PermissionError, match="library.collections.list.local"):
+        await service.execute_tool("library_list_collections", {})
+
+    with pytest.raises(PermissionError, match="library.collections.list.local"):
+        await service.run_runtime_request(
+            "tools/call",
+            {"name": "library_search_collections", "arguments": {"query": "x"}},
+        )
+
+
+def test_control_service_forwards_its_policy_enforcer_to_the_default_delegate():
+    """Task 5 (chunking-agent-tools, spec §6): the control service's
+    enforcer rides into the runtime delegate it builds by default, so the
+    lazily-composed shared Library service (and through it the chunk tools)
+    is gated on the local MCP surface."""
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
+    enforcer = object()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        policy_enforcer=enforcer,
+    )
+
+    assert service.runtime_delegate._policy_enforcer is enforcer

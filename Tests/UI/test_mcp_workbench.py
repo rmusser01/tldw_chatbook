@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, Select, Static, TextArea
 
@@ -60,6 +64,18 @@ def _default_advanced_open(monkeypatch):
     """
     monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
     monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
+    # Keep this broad workbench fake's historical, deliberately small tool
+    # inventory stable. Tests for the production default override this seam
+    # explicitly; config/controller tests cover the shipped missing-key
+    # default independently.
+    original_workbench_get = mcp_workbench_module.get_cli_setting
+
+    def workbench_setting(section, key=None, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return False
+        return original_workbench_get(section, key, default)
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", workbench_setting)
 
 
 class FakeTarget:
@@ -138,7 +154,7 @@ class FakeHubService:
         return {"ok": True}
 
 
-class WorkbenchApp(App):
+class WorkbenchApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = FakeHubService()
@@ -151,6 +167,8 @@ class WorkbenchApp(App):
 async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         assert workbench.active_mode == "servers"
@@ -209,6 +227,50 @@ async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
         assert "..." in str(rows[1].label)
 
 
+@pytest.mark.asyncio
+async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypatch):
+    """Paint may shorten the label, but its semantics and interaction remain."""
+    _, save_calls = _fake_tool_gate_config_seam(monkeypatch)
+    app = WorkbenchAppWithBundledCSS()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
+        await pilot.pause()
+
+        checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert str(checkbox.label) == (
+            "Local workspace, web, and Watchlists tools (master switch)"
+        )
+        checkbox.scroll_visible(animate=False, force=True, immediate=True)
+        checkbox.focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert checkbox.is_on_screen
+        assert app.focused is checkbox
+
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in app.screen._compositor.render_strips()
+        )
+        assert "Local workspace, web, and Watchlists tools" in rendered
+
+        original = checkbox.value
+        assert await pilot.click(checkbox, offset=(1, 0))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", not original) in save_calls
+
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        title = app.query_one("#mcp-tools-local-config-title", Static)
+        title.scroll_visible(animate=False)
+        await pilot.pause()
+        assert title.is_on_screen
+        assert str(title.renderable) == "Local workspace, web, and Watchlists tools"
+
+
 class ProblemRecordsService(FakeHubService):
     """FakeHubService whose local catalog is a caller-supplied record list,
     so a test can control exactly how many problem servers load (F-054)."""
@@ -235,7 +297,7 @@ def _missing_env_record(profile_id: str) -> dict:
     }
 
 
-class ProblemRecordsApp(App):
+class ProblemRecordsApp(ConsolidatedCSSApp):
     def __init__(self, records: list[dict]) -> None:
         super().__init__()
         self.unified_mcp_service = ProblemRecordsService(records)
@@ -562,7 +624,7 @@ class MutationsAvailableHubService:
         return {"ok": True}
 
 
-class MutationsAvailableApp(App):
+class MutationsAvailableApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = MutationsAvailableHubService()
@@ -846,6 +908,247 @@ async def test_builtin_expose_flag_toggle_saves_matching_key(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monkeypatch):
+    """task-3240 round-trip, sibling of test_builtin_flag_toggle_saves_
+    setting_and_reloads_catalog: toggling a `[tools]`/`[console]` gate
+    Checkbox must call `save_setting_to_cli_config(section, key, value)`
+    with the checkbox's OWN section (not a hardcoded "mcp"), then reload so
+    the checkbox -- rebuilt fresh from `all_tool_gates()` -- reflects the
+    real write, not an optimistic local flip.
+
+    Seam namespace (spec review, Minor 6): the write goes through
+    `workbench_module.save_setting_to_cli_config` (same seam
+    `_save_builtin_flag`'s own test patches), but the RELOAD reads through
+    `all_tool_gates()`'s function-local `from ..config import
+    get_cli_setting` -- that resolves `tldw_chatbook.config.get_cli_setting`
+    at call time, a DIFFERENT name than `workbench_module`'s own imported
+    one, so both must be patched here (backed by the SAME `flags` dict) or
+    the reload assertion would read real disk config instead of this
+    test's fake.
+
+    Fix round 1 (Minor 3): bidirectional -- off->on->off -- rather than
+    stopping after the first flip, so a fix that only round-trips ONE
+    direction (e.g. an inverted default somewhere in the reload path)
+    cannot pass by accident.
+
+    Fix round 1 (Important 1) reorders this test: web_deep_search is a
+    LOCAL-group dependent, so its checkbox renders `disabled=True` (a
+    click is a no-op) while the master switch is off -- which it is by
+    this test's own `flags` default. The master is toggled ON first here
+    specifically to exercise web_deep_search's own click/toggle; it is
+    toggled back off at the end, mirroring the original bidirectional
+    coverage for the master switch itself.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    # TASK-14807 changed the product default to enabled. This test exercises
+    # the explicit off -> on persistence path, so seed that starting state
+    # instead of inheriting the new default from ``default``.
+    flags: dict[tuple[str, str], Any] = {
+        ("console", "local_tools_enabled"): False
+    }
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        return flags.get((section, key), default)
+
+    def fake_save_setting_to_cli_config(section, key, value):
+        save_calls.append((section, key, value))
+        flags[(section, key)] = value
+        return True
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        mcp_workbench_module, "save_setting_to_cli_config", fake_save_setting_to_cli_config
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        await pilot.pause()
+
+        # The [console]-section master switch must save under ITS OWN
+        # section too -- not "tools", proving `section` really is threaded
+        # through end to end rather than hardcoded anywhere on the path.
+        # Turned ON first (Important 1): web_deep_search is disabled below
+        # it until this happens.
+        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert master_checkbox.value is False
+        await pilot.click("#mcp-gate-local_tools_enabled")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", True) in save_calls
+        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert master_checkbox.value is True
+
+        checkbox_id = f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}"
+        checkbox = app.query_one(checkbox_id, Checkbox)
+        assert checkbox.value is False  # nothing overridden yet -> default off
+        assert checkbox.disabled is False  # master is now on
+
+        await pilot.click(checkbox_id)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("tools", WEB_DEEP_SEARCH_GATE_KEY, True) in save_calls
+        reloaded_checkbox = app.query_one(checkbox_id, Checkbox)
+        assert reloaded_checkbox.value is True
+
+        # Bidirectional (Minor 3): flip it back OFF and confirm the reload
+        # reflects that too -- not just the off->on direction.
+        await pilot.click(checkbox_id)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("tools", WEB_DEEP_SEARCH_GATE_KEY, False) in save_calls
+        reloaded_again = app.query_one(checkbox_id, Checkbox)
+        assert reloaded_again.value is False
+
+        # Bidirectional for the master switch too.
+        await pilot.click("#mcp-gate-local_tools_enabled")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", False) in save_calls
+        master_checkbox_again = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert master_checkbox_again.value is False
+
+
+def _fake_tool_gate_config_seam(monkeypatch):
+    """Shared fake config/save seam for the fix-round-1 focus tests below.
+
+    Same shape as `test_tool_gate_checkbox_toggle_saves_setting_and_
+    reloads_catalog`'s own fakes: an in-memory `(section, key) -> value`
+    dict backs BOTH the enumerator's read (`tldw_chatbook.config.
+    get_cli_setting`, the seam `all_tool_gates()` actually resolves at
+    call time) and the write (`workbench_module.save_setting_to_cli_
+    config`), so a real save + real reload are exercised end to end.
+
+    Returns:
+        `(flags, save_calls)` -- the two lists/dicts the caller inspects.
+    """
+    import tldw_chatbook.config as config_module
+
+    flags: dict[tuple[str, str], Any] = {}
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        return flags.get((section, key), default)
+
+    def fake_save_setting_to_cli_config(section, key, value):
+        save_calls.append((section, key, value))
+        flags[(section, key)] = value
+        return True
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        mcp_workbench_module, "save_setting_to_cli_config", fake_save_setting_to_cli_config
+    )
+    return flags, save_calls
+
+
+@pytest.mark.asyncio
+async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypatch):
+    """Fix round 1 (Critical 1). A gate toggle's save triggers a real,
+    full resync (`MCPWorkbench._save_tool_gate` -> `_collect_snapshots` ->
+    `_sync_children` -> `_show_selected_detail` -> `MCPServersMode.
+    show_detail`), which destroys and remounts every toggle-group
+    Checkbox. Before the fix, focus fell back to whatever DOM sibling
+    happened to survive that remount -- for the FIRST gate checkbox
+    (`_GATEABLE_BUILTINS[0]`), that is `#mcp-builtin-expose-prompts` (the
+    LAST `[mcp]` toggle, immediately preceding it in the DOM): a live,
+    actionable Checkbox belonging to a completely different settings
+    group. Driven with a real keyboard Space (`pilot.press`), matching how
+    the reviewer measured the regression -- not `pilot.click`.
+    """
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    _fake_tool_gate_config_seam(monkeypatch)
+
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        await pilot.pause()
+
+        first_gate_id = f"mcp-gate-{_GATEABLE_BUILTINS[0].gate_key}"
+        checkbox = app.query_one(f"#{first_gate_id}", Checkbox)
+        checkbox.focus()
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == first_gate_id
+
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        # `Widget.focus()` only SCHEDULES the change (`app.call_later`) --
+        # give it extra pumps to actually land before asserting on it.
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = app.focused
+        assert focused is not None, "focus must not be dropped by the resync"
+        assert focused.id == first_gate_id, (
+            f"focus drifted to {focused.id!r} instead of staying on the "
+            "toggled gate checkbox"
+        )
+
+
+@pytest.mark.asyncio
+async def test_double_space_on_a_gate_checkbox_never_writes_an_mcp_key(monkeypatch):
+    """Fix round 1 (Critical 1), the reviewer's exact repro: Space on a
+    gate checkbox, then Space again. Before the fix, the SECOND Space hit
+    whatever checkbox focus had drifted to post-resync -- for the first
+    gate checkbox, `#mcp-builtin-expose-prompts` -- silently writing
+    `[mcp] expose_prompts = false` instead of toggling the gate a second
+    time. Asserts against the REAL persisted config (`flags`) and the
+    save-call list: only the gate's own `[tools]` key is ever written,
+    twice (toggle then untoggle), and no `"mcp"`-section key is written at
+    all.
+    """
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    flags, save_calls = _fake_tool_gate_config_seam(monkeypatch)
+
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        await pilot.pause()
+
+        gate_key = _GATEABLE_BUILTINS[0].gate_key
+        first_gate_id = f"mcp-gate-{gate_key}"
+        checkbox = app.query_one(f"#{first_gate_id}", Checkbox)
+        checkbox.focus()
+        await pilot.pause()
+
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert save_calls == [
+            ("tools", gate_key, True),
+            ("tools", gate_key, False),
+        ], save_calls
+        assert all(section != "mcp" for section, _, _ in save_calls), (
+            "a second Space wrote an unrelated [mcp] key -- focus drifted "
+            f"off the gate checkbox: {save_calls}"
+        )
+        assert flags[("tools", gate_key)] is False
+
+
+@pytest.mark.asyncio
 async def test_restore_tolerates_legacy_and_garbage_state():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
@@ -1109,7 +1412,7 @@ class ScopeTrackingHubService:
         return {"ok": True}
 
 
-class ScopeTrackingApp(App):
+class ScopeTrackingApp(ConsolidatedCSSApp):
     def __init__(self, *, selected_scope: str) -> None:
         super().__init__()
         self.unified_mcp_service = ScopeTrackingHubService(selected_scope=selected_scope)
@@ -1263,7 +1566,7 @@ class SecretLeakHubService:
         return {"ok": True}
 
 
-class SecretLeakApp(App):
+class SecretLeakApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = SecretLeakHubService()
@@ -1349,7 +1652,7 @@ class LifecycleFakeHubService(FakeHubService):
         return True
 
 
-class LifecycleApp(App):
+class LifecycleApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = LifecycleFakeHubService()
@@ -1383,6 +1686,8 @@ async def test_in_flight_shows_checking_and_cancel_then_completes():
     app = LifecycleApp()
     app.unified_mcp_service.connect_gate = asyncio.Event()
     async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
@@ -1421,6 +1726,8 @@ async def test_in_flight_checking_message_includes_time_bound(monkeypatch):
     app.unified_mcp_service.connect_gate = asyncio.Event()
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
         workbench._start_lifecycle("local:docs", "docs", "connect")
@@ -1450,6 +1757,8 @@ async def test_in_flight_checking_message_time_bound_honors_config_override(monk
     app = LifecycleApp()
     app.unified_mcp_service.connect_gate = asyncio.Event()
     async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
@@ -1481,6 +1790,8 @@ async def test_in_flight_checking_message_time_bound_survives_malformed_config(m
     app = LifecycleApp()
     app.unified_mcp_service.connect_gate = asyncio.Event()
     async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
@@ -1675,7 +1986,7 @@ class ProfileFormHubService(FakeHubService):
         return True
 
 
-class ProfileFormApp(App):
+class ProfileFormApp(ConsolidatedCSSApp):
     def __init__(self, *, fail_next: bool = False) -> None:
         super().__init__()
         self.unified_mcp_service = ProfileFormHubService(fail_next=fail_next)
@@ -2232,7 +2543,7 @@ class ImportHubService(FakeHubService):
         return dict(payload)
 
 
-class ImportApp(App):
+class ImportApp(ConsolidatedCSSApp):
     def __init__(self, *, fail_ids: set[str] | None = None) -> None:
         super().__init__()
         self.unified_mcp_service = ImportHubService(fail_ids=fail_ids)
@@ -2748,7 +3059,7 @@ class NoServersHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": "external_servers"}
 
 
-class NoServersApp(App):
+class NoServersApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = NoServersHubService()
@@ -2769,7 +3080,68 @@ async def test_empty_diagnosis_no_servers_shows_add_server_and_button_opens_form
         empty = canvas.query_one("#mcp-tools-empty")
         assert empty.display is True
         message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        # task-3240: a trailing "N tool gate(s) are off ..." breadcrumb may
+        # follow (the isolated test config's [tools]/[console] gates all
+        # default off) -- startswith isolates this test's own concern from
+        # that unrelated, separately-tested addition.
+        assert message.startswith("No servers configured — add one to see its tools.")
+
+        # Fix round 1 (Minor 1): this test's own NAME promises the
+        # click-opens-form behavior -- restored here (it had drifted onto
+        # a differently-named breadcrumb test below when the message
+        # assertion above was loosened to `.startswith`).
+        await pilot.click("#mcp-tools-empty-action")
+        await pilot.pause()
+        form = app.query_one(MCPProfileForm)
+        assert not form.is_edit
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_names_the_gate_off_count_when_gates_are_off():
+    """task-3240 SECONDARY breadcrumb: `_empty_tools_diagnosis()` appends
+    "N tool gate(s) are off ..." whenever `all_tool_gates()` finds any --
+    TASK-14807 defaults the local master gate on, leaving every other gate
+    off. N is DERIVED (TASK-16174): a new gateable built-in changes the
+    count, and this test is about the breadcrumb, not the arity."""
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
+    app = NoServersApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        assert f"{off_count} tool gate(s) are off" in message
+        assert "Tools mode" in message
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_omits_gate_breadcrumb_when_all_gates_are_on(monkeypatch):
+    """Mirror of the test above: no breadcrumb at all once every gate is on."""
+    import tldw_chatbook.config as config_module
+
+    real_get_cli_setting = config_module.get_cli_setting
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section in ("tools", "console"):
+            return True
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = NoServersApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
         assert message == "No servers configured — add one to see its tools."
+        assert "tool gate" not in message
 
         await pilot.click("#mcp-tools-empty-action")
         await pilot.pause()
@@ -2793,7 +3165,9 @@ async def test_empty_diagnosis_connect_routes_to_servers_mode_with_notify():
         await pilot.pause()
         canvas = app.query_one(MCPToolsMode)
         message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
-        assert message == "No tools discovered yet — connect or refresh a server."
+        # task-3240: see the sibling comment above -- a trailing gate
+        # breadcrumb may follow.
+        assert message.startswith("No tools discovered yet — connect or refresh a server.")
 
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-tools-empty-action")
@@ -2834,7 +3208,7 @@ class ServerToolsHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": effective_section}
 
 
-class ServerToolsApp(App):
+class ServerToolsApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = ServerToolsHubService()
@@ -2889,7 +3263,7 @@ class DuplicateNameToolsHubService(FakeHubService):
         return await self.load_section("external_servers")
 
 
-class DuplicateNameToolsApp(App):
+class DuplicateNameToolsApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = DuplicateNameToolsHubService()
@@ -3046,7 +3420,7 @@ class ToolTestHubService(FakeHubService):
         return self.test_result
 
 
-class ToolTestApp(App):
+class ToolTestApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = ToolTestHubService()
@@ -3263,10 +3637,9 @@ def test_is_permission_refusal_bare_permission_error_from_tool_body_is_not_a_ref
     reach the tool; the tool itself is what failed. Before this item, ANY
     `PermissionError` (the bare base class) classified as a refusal, which
     would have misrendered a genuine per-tool failure as `Blocked · not
-    run`, falsely claiming the call never reached the tool. Latent today
-    only because the one file-shaped built-in (`ingest_media`) is
-    currently a stub that never raises from its own body -- a latent lie
-    is still a lie."""
+    run`, falsely claiming the call never reached the tool. This contract
+    remains necessary even though the retired `ingest_media` placeholder
+    is absent from the standalone inventory."""
     assert (
         mcp_workbench_module._is_permission_refusal(
             PermissionError("EACCES: permission denied")
@@ -4012,7 +4385,7 @@ class NoGateToolTestHubService(FakeHubService):
         return {"ok": True}
 
 
-class NoGateToolTestApp(App):
+class NoGateToolTestApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = NoGateToolTestHubService()
@@ -4904,7 +5277,7 @@ class PermissionsHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": "external_servers"}
 
 
-class PermissionsApp(App):
+class PermissionsApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = PermissionsHubService(store_path)
@@ -5038,7 +5411,7 @@ class EmptyCatalogHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": "external_servers"}
 
 
-class EmptyCatalogApp(App):
+class EmptyCatalogApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = EmptyCatalogHubService()
@@ -5100,7 +5473,7 @@ class BuiltinDistinctHubService(PermissionsHubService):
         self.local_service = _FakeLocalServiceWithInventory()
 
 
-class BuiltinDistinctApp(App):
+class BuiltinDistinctApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = BuiltinDistinctHubService(store_path)
@@ -5451,7 +5824,7 @@ class GuardedEffectiveStatesHubService(PermissionsHubService):
         return super().effective_tool_states(tools)
 
 
-class GuardedEffectiveStatesApp(App):
+class GuardedEffectiveStatesApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = GuardedEffectiveStatesHubService(store_path)
@@ -6736,7 +7109,7 @@ class CountingEffectiveStatesHubService(PermissionsHubService):
         return super().effective_tool_states(tools)
 
 
-class CountingEffectiveStatesApp(App):
+class CountingEffectiveStatesApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = CountingEffectiveStatesHubService(store_path)
@@ -6794,7 +7167,7 @@ class GovernanceHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": effective_section}
 
 
-class GovernanceApp(App):
+class GovernanceApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceHubService()
@@ -6848,7 +7221,7 @@ class GovernanceFetchFailsHubService(GovernanceHubService):
         return await super().load_section(section)
 
 
-class GovernanceFetchFailsApp(App):
+class GovernanceFetchFailsApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceFetchFailsHubService()
@@ -6937,7 +7310,7 @@ class GovernanceCachingHubService(FakeHubService):
         return await super().load_section(section)
 
 
-class GovernanceCachingApp(App):
+class GovernanceCachingApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceCachingHubService(store_path)
@@ -7029,7 +7402,7 @@ class GovernanceNonMappingHubService(GovernanceHubService):
         return await super().load_section(section)
 
 
-class GovernanceNonMappingApp(App):
+class GovernanceNonMappingApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceNonMappingHubService()
@@ -7066,7 +7439,7 @@ class GovernanceProfilesNotListHubService(GovernanceHubService):
         return await super().load_section(section)
 
 
-class GovernanceProfilesNotListApp(App):
+class GovernanceProfilesNotListApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceProfilesNotListHubService()
@@ -7170,7 +7543,7 @@ class AuditHubService(ToolTestHubService):
         self.execution_log = FakeExecutionLog(records)
 
 
-class AuditApp(App):
+class AuditApp(ConsolidatedCSSApp):
     def __init__(self, records: list[dict] | None = None) -> None:
         super().__init__()
         self.unified_mcp_service = AuditHubService(records)
@@ -7224,7 +7597,7 @@ class AuditRunAppendsHubService(AuditHubService):
         return result
 
 
-class AuditRunAppendsApp(App):
+class AuditRunAppendsApp(ConsolidatedCSSApp):
     def __init__(self, records: list[dict] | None = None) -> None:
         super().__init__()
         self.unified_mcp_service = AuditRunAppendsHubService(records)
@@ -7313,7 +7686,7 @@ class RaisingExecutionLogHubService(FakeHubService):
         raise RuntimeError("boom")
 
 
-class RaisingExecutionLogApp(App):
+class RaisingExecutionLogApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = RaisingExecutionLogHubService()
@@ -7544,7 +7917,7 @@ class MultiTargetAuditFindingsHubService(AuditFindingsHubService):
         return await super().load_section(section)
 
 
-class AuditFindingsApp(App):
+class AuditFindingsApp(ConsolidatedCSSApp):
     def __init__(
         self,
         records: list[dict] | None = None,
@@ -7637,7 +8010,7 @@ class RaisingAdvancedSectionHubService(AuditFindingsHubService):
         return await super().load_section(section)
 
 
-class RaisingAdvancedSectionApp(App):
+class RaisingAdvancedSectionApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = RaisingAdvancedSectionHubService()
@@ -7933,7 +8306,7 @@ class TargetSwitchTrackingHubService(FakeHubService):
         return await super().load_section(section)
 
 
-class TargetSwitchTrackingApp(App):
+class TargetSwitchTrackingApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = TargetSwitchTrackingHubService()
@@ -8008,7 +8381,12 @@ async def test_server_source_empty_tools_diagnosis_uses_refresh_not_disabled_act
         await pilot.pause()
         canvas = app.query_one(MCPToolsMode)
         message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
-        assert message == "No tools visible from this server — refresh or check the server."
+        # task-3240: see the sibling comment in test_empty_diagnosis_no_
+        # servers_shows_add_server_and_button_opens_form -- a trailing gate
+        # breadcrumb may follow.
+        assert message.startswith(
+            "No tools visible from this server — refresh or check the server."
+        )
 
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-tools-empty-action")
@@ -8346,4 +8724,346 @@ async def test_stale_server_key_action_under_local_source_is_harmless():
         assert len(managed_toasts) == 2, (
             f"Expected 2 'Managed on the server.' toasts, got {len(managed_toasts)}: "
             f"{notifications!r}"
+        )
+
+
+# -- task-2838: local agent tool catalog in the Hub -----------------------------
+
+TASK_TOOL_NAMES = {"todo_create", "todo_update", "todo_get", "todo_list"}
+_LOCAL_AGENT_TOOL_NAMES = {
+    "fs_list", "fs_read", "fs_write", "fs_edit", "fs_patch", "fs_glob",
+    "fs_grep", "git_status", "git_diff", "git_log", "git_blame",
+    "git_branches", "web_fetch", "web_search", "web_crawl",
+    "watchlists_search_items", "watchlists_get_item",
+}
+
+
+def _enable_local_tools(monkeypatch):
+    """Flip the workbench's `[console] local_tools_enabled` read on, leaving
+    every other config key routed to the real `get_cli_setting`."""
+    original = mcp_workbench_module.get_cli_setting
+
+    def _patched(section, key, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return True
+        return original(section, key, default)
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", _patched)
+
+
+def _missing_local_master_uses_default(monkeypatch):
+    """Leave the master key absent so the production fallback is exercised."""
+    original = mcp_workbench_module.get_cli_setting
+
+    def _patched(section, key=None, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return default
+        return original(section, key, default)
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", _patched)
+
+
+@pytest.mark.asyncio
+async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch):
+    _enable_local_tools(monkeypatch)
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+
+        local = [
+            t for t in workbench._last_hub_tools
+            if t.server_key == "local:__local__"
+        ]
+        names = {t.name for t in local}
+        assert _LOCAL_AGENT_TOOL_NAMES <= names
+        # No Console SessionTodoStore exists at the Hub catalog layer.
+        assert "todo_write" not in names
+        assert TASK_TOOL_NAMES.isdisjoint(names)
+        # One coherent group, honestly non-executable until Hub-side
+        # execution is wired (inspector renders "not_executable" from this).
+        assert all(
+            t.server_label == "Local workspace, web, and Watchlists" for t in local
+        )
+        assert all(t.source == "local" for t in local)
+        assert all(t.executable is False for t in local)
+        assert all(t.stale is False for t in local)
+        # Schemas and risk tags ride along for the inspector and the
+        # permission risk floor.
+        assert all(t.input_schema for t in local)
+        assert {t.name: t.tags for t in local}["fs_write"] == ("mutates",)
+        permission_rows = app.query_one(MCPPermissionsMode)._all_rows
+        local_server_row = next(
+            row
+            for row in permission_rows
+            if row.kind == "server" and row.server_key == "local:__local__"
+        )
+        assert local_server_row.server_label == "Local workspace, web, and Watchlists"
+        labels_by_tool = {
+            row.tool_name: row.server_label
+            for row in permission_rows
+            if row.kind == "tool" and row.server_key == "local:__local__"
+        }
+        assert {
+            labels_by_tool["fs_list"],
+            labels_by_tool["web_fetch"],
+            labels_by_tool["watchlists_search_items"],
+        } == {"Local workspace, web, and Watchlists"}
+        # The pre-existing sources are untouched: the fake's "docs" profile
+        # tool still lists under its own key.
+        assert any(
+            t.server_key == "local:docs" for t in workbench._last_hub_tools
+        )
+
+
+@pytest.mark.asyncio
+async def test_local_agent_group_absent_when_master_flag_explicitly_off():
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+        assert [
+            t for t in workbench._last_hub_tools
+            if t.server_key == "local:__local__"
+        ] == []
+        assert app.query_one("#mcp-tools-local-config").display is True
+        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
+
+
+@pytest.mark.asyncio
+async def test_local_agent_group_present_when_master_key_is_missing(monkeypatch):
+    _missing_local_master_uses_default(monkeypatch)
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+
+        names = {
+            tool.name
+            for tool in workbench._last_hub_tools
+            if tool.server_key == "local:__local__"
+        }
+        assert _LOCAL_AGENT_TOOL_NAMES <= names
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_local_controls_round_trip_master_and_workspace(
+    monkeypatch, tmp_path
+):
+    values: dict[tuple[str, str], Any] = {}
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_get(section, key=None, default=None):
+        return values.get((section, key), default)
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        values[(section, key)] = value
+        return True
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
+    monkeypatch.setattr(mcp_workbench_module, "save_setting_to_cli_config", fake_save)
+
+    notes_root = tmp_path / "notes-workspace"
+    notes_root.mkdir()
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+
+        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
+        assert checkbox.value is True
+        checkbox.value = False
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", False) in save_calls
+        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
+
+        checkbox.value = True
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", True) in save_calls
+        local_names = {
+            tool.name
+            for tool in workbench._last_hub_tools
+            if tool.server_key == "local:__local__"
+        }
+        assert _LOCAL_AGENT_TOOL_NAMES <= local_names
+
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        root_input.value = str(notes_root)
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("console", "workspace_root", str(notes_root.resolve())) in save_calls
+        assert app.query_one("#mcp-tools-workspace-root", Input).value == str(
+            notes_root.resolve()
+        )
+        status = app.query_one("#mcp-tools-local-config-status", Static)
+        assert "next Console agent run" in str(status.renderable)
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatch):
+    def fake_get(section, key=None, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
+    monkeypatch.setattr(
+        mcp_workbench_module, "save_setting_to_cli_config", lambda *args: False
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
+        assert checkbox.value is True
+        checkbox.value = False
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is True
+        status = app.query_one("#mcp-tools-local-config-status", Static)
+        assert "persisted setting is shown" in str(status.renderable)
+        assert status.has_class("is-error")
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_rejects_non_directory_workspace_root(
+    monkeypatch, tmp_path
+):
+    save_calls: list[tuple[str, str, Any]] = []
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: save_calls.append((section, key, value)) or True,
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        root_input.value = str(tmp_path / "missing")
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert not [call for call in save_calls if call[1] == "workspace_root"]
+        status = app.query_one("#mcp-tools-local-config-status", Static)
+        assert "not saved" in str(status.renderable)
+        assert status.has_class("is-error")
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_workspace_root_uses_shared_path_validator(
+    monkeypatch, tmp_path
+):
+    validated_root = tmp_path / "validated-workspace"
+    validated_root.mkdir()
+    validation_calls: list[tuple[Path, Path, bool, bool]] = []
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_validate_path(
+        user_path,
+        base_directory,
+        *,
+        redact_paths=False,
+        allow_hidden=False,
+    ):
+        validation_calls.append(
+            (
+                Path(user_path),
+                Path(base_directory),
+                redact_paths,
+                allow_hidden,
+            )
+        )
+        return validated_root.resolve()
+
+    monkeypatch.setattr(mcp_workbench_module, "validate_path", fake_validate_path)
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: save_calls.append((section, key, value)) or True,
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        root_input.value = "relative-workspace"
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(validation_calls) == 1
+        candidate, validation_root, redact_paths, allow_hidden = validation_calls[0]
+        assert candidate == Path.cwd() / "relative-workspace"
+        assert validation_root == candidate.parent
+        assert redact_paths is True
+        assert allow_hidden is True
+        assert (
+            "console",
+            "workspace_root",
+            str(validated_root.resolve()),
+        ) in save_calls
+
+
+@pytest.mark.asyncio
+async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatch):
+    _enable_local_tools(monkeypatch)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("provider construction exploded")
+
+    monkeypatch.setattr(mcp_workbench_module, "LocalToolProvider", _boom)
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._mount_deferred_canvases()
+        await workbench._sync_children()
+
+        # The local group is simply absent...
+        assert [
+            t for t in workbench._last_hub_tools
+            if t.server_key == "local:__local__"
+        ] == []
+        # ...and the rest of the catalog was neither broken nor emptied.
+        assert any(
+            t.server_key == "local:docs" for t in workbench._last_hub_tools
         )

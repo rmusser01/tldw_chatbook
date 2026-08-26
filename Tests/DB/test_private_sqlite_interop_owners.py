@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -14,6 +15,11 @@ from tldw_chatbook.Kanban_Interop import local_kanban_db
 from tldw_chatbook.Notifications import (
     client_notifications_db,
     event_state_repository,
+)
+from tldw_chatbook.Notes import note_import_receipts
+from tldw_chatbook.Notes import notes_device_state_store
+from tldw_chatbook.Notes.notes_device_state_schema import (
+    LATEST_NOTES_DEVICE_SCHEMA_VERSION,
 )
 from tldw_chatbook.Research_Interop import local_research_service
 from tldw_chatbook.Sync_Interop import notes_mirror, sync_state_repository
@@ -30,11 +36,23 @@ def _kanban_owner(path: Path) -> tuple[object, Callable[[], None]]:
 
 
 def _writing_owner(path: Path) -> tuple[object, Callable[[], None]]:
-    return local_writing_service.LocalWritingService(path), lambda: None
+    # TASK-21105: file-backed stores open on FIRST USE, not construction,
+    # so the factory performs one operation -- the seam/rejection contracts
+    # under test now apply at that moment.
+    service = local_writing_service.LocalWritingService(path)
+    service.list_projects()
+    # TASK-21125: the connection opened above is now HELD, so the owner has a
+    # real closer to hand back.
+    return service, service.close
 
 
 def _research_owner(path: Path) -> tuple[object, Callable[[], None]]:
-    return local_research_service.LocalResearchService(path), lambda: None
+    # TASK-21105: see _writing_owner.
+    service = local_research_service.LocalResearchService(path)
+    service.list_runs()
+    # TASK-21127: the connection opened above is now HELD, so the owner has a
+    # real closer to hand back.
+    return service, service.close
 
 
 def _notes_mirror_owner(path: Path) -> tuple[object, Callable[[], None]]:
@@ -42,11 +60,22 @@ def _notes_mirror_owner(path: Path) -> tuple[object, Callable[[], None]]:
     return owner, owner.close
 
 
+def _event_state_owner(path: Path) -> tuple[object, Callable[[], None]]:
+    # TASK-21105: see _writing_owner -- the file opens on first use.
+    # TASK-21131: the file branch now names this module's own registered
+    # owner instead of borrowing `db.base`, so the file contracts below
+    # (private seam, 0600, unsafe/missing parent rejection) apply to it.
+    repository = event_state_repository.EventStateRepository(path)
+    repository.list_events(limit=1)
+    return repository, repository.close
+
+
 FILE_OWNER_CASES: tuple[tuple[ModuleType, str, FileOwnerFactory], ...] = (
     (local_kanban_db, "kanban.local", _kanban_owner),
     (local_writing_service, "writing.local", _writing_owner),
     (local_research_service, "research.local", _research_owner),
     (notes_mirror, "sync.notes_mirror", _notes_mirror_owner),
+    (event_state_repository, "notifications.event_state", _event_state_owner),
 )
 
 
@@ -291,3 +320,51 @@ def test_research_path_memory_reuses_connection_and_supports_crud() -> None:
         assert [row["id"] for row in service.list_sessions()] == [session["id"]]
     finally:
         service.close()
+
+
+def test_notes_device_owner_routes_receipt_write_and_read_only_modes_through_one_seam(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object, bool, bool]] = []
+    real_connect = private_sqlite.connect_private_sqlite
+
+    def tracking_connect(
+        owner_id: str,
+        database: object,
+        *,
+        read_only: bool = False,
+        must_exist: bool = False,
+        **kwargs: object,
+    ) -> sqlite3.Connection:
+        calls.append((owner_id, database, read_only, must_exist))
+        return real_connect(
+            owner_id,
+            database,
+            read_only=read_only,
+            must_exist=must_exist,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        notes_device_state_store, "connect_private_sqlite", tracking_connect
+    )
+    database = tmp_path / "notes-sync.sqlite3"
+    repository = note_import_receipts.NoteImportReceiptRepository(database)
+
+    with repository.transaction() as writable:
+        assert writable.execute("PRAGMA user_version").fetchone() == (
+            LATEST_NOTES_DEVICE_SCHEMA_VERSION,
+        )
+    read_only = repository._connect(read_only=True, must_exist=True)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            read_only.execute("CREATE TABLE forbidden (value INTEGER)")
+    finally:
+        read_only.close()
+
+    assert calls == [
+        ("notes.sync_state", database, False, False),
+        ("notes.sync_state", database, True, True),
+    ]
+    assert not hasattr(note_import_receipts, "connect_private_sqlite")

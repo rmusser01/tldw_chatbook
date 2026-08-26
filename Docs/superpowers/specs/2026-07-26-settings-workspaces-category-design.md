@@ -10,6 +10,11 @@ ADR-027).
 
 ## 1. Goal and decisions (locked with the user)
 
+> **Superseded in part (2026-08-17):** workspace creation on every surface now
+> runs through the shared creation modal — see
+> `2026-08-17-workspace-create-modal-and-project-skills-design.md` §4. The
+> management-home split below otherwise stands.
+
 A dedicated **Settings ▸ Workspaces** category that hosts workspace
 management outright — create, rename, archive/unarchive, set active — and
 lets users modify existing workspaces by **adding/removing folders**.

@@ -70,8 +70,22 @@ import ast
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+
+@pytest.fixture()
+def offline_mcp_rag_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep FTS-only MCPTools tests off the optional embedding path."""
+    import tldw_chatbook.MCP.tools as tools_module
+
+    monkeypatch.setattr(
+        tools_module,
+        "SimplifiedRAGSearchService",
+        lambda _media_db: object(),
+    )
 
 
 def _real_dbs(tmp_path: Path) -> tuple[CharactersRAGDB, MediaDatabase]:
@@ -294,7 +308,133 @@ def test_generate_document_prompt_executes_against_real_db(tmp_path):
     assert "Hello there" in result[0]["content"]
 
 
-def test_search_conversations_uses_a_real_content_search_accessor(tmp_path):
+def test_gateway_runtime_maps_all_five_real_prompt_handlers(tmp_path, monkeypatch):
+    """All prompt registrations dispatch through the adapter to real SQLite."""
+    from mcp_unified.gateway import GatewayRequestContext
+
+    from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime
+    from tldw_chatbook.MCP.prompts import MCPPrompts
+    from tldw_chatbook.MCP.server import TldwMCPServer
+    from tldw_chatbook.RAG_Search.simplified import search_service
+
+    chachanotes_db, media_db = _real_dbs(tmp_path)
+    conversation_id = chachanotes_db.add_conversation(
+        {"id": "7", "title": "Gateway Conversation"}
+    )
+    assert conversation_id is not None
+    chachanotes_db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "Gateway conversation content",
+            "role": "user",
+        }
+    )
+    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+        title="Gateway Media", media_type="document", content="fallback content"
+    )
+    _seed_transcript(media_db, media_id, "Gateway transcript content")
+    character_id = chachanotes_db.add_character_card(
+        {
+            "name": "Gateway Character",
+            "description": "A deterministic character.",
+            "personality": "Precise",
+        }
+    )
+    assert character_id is not None
+
+    search_calls: list[tuple[str, int, object]] = []
+
+    class DeterministicSearch:
+        def __init__(self, supplied_media_db: object) -> None:
+            assert supplied_media_db is media_db
+
+        async def keyword_search(
+            self, query: str, limit: int = 10, media_types=None
+        ) -> list[dict[str, str]]:
+            search_calls.append((query, limit, media_types))
+            return [
+                {
+                    "title": "Gateway Search Result",
+                    "media_type": "document",
+                    "content": "Gateway search content",
+                }
+            ]
+
+    monkeypatch.setattr(
+        search_service, "SimplifiedRAGSearchService", DeterministicSearch
+    )
+    prompts = MCPPrompts(chachanotes_db, media_db)
+    runtime = ChatbookGatewayRuntime(
+        name="tldw_chatbook", version="0.1.0", tool_descriptors=[]
+    )
+    server = TldwMCPServer.__new__(TldwMCPServer)
+    server.mcp = runtime
+    server.prompts = prompts
+    server._register_prompts()
+    runtime.finalize()
+    context = GatewayRequestContext(request_id="real-prompt-test")
+
+    async def exercise() -> None:
+        direct_character = await prompts.character_writing_prompt(
+            character_id=character_id,
+            context="A test scene",
+        )
+        assert [message["role"] for message in direct_character] == ["system", "user"]
+
+        arguments_by_name = {
+            "summarize_conversation": {"conversation_id": int(conversation_id)},
+            "generate_document": {"conversation_id": int(conversation_id)},
+            "analyze_media": {"media_id": media_id},
+            "search_and_synthesize": {"query": "gateway", "num_sources": 2},
+            "character_writing": {
+                "character_id": character_id,
+                "context": "A test scene",
+            },
+        }
+        descriptors = await runtime.list_prompts(context)
+        assert [descriptor["name"] for descriptor in descriptors] == [
+            "summarize_conversation",
+            "generate_document",
+            "analyze_media",
+            "search_and_synthesize",
+            "character_writing",
+        ]
+
+        results = {
+            name: await runtime.get_prompt(name, arguments, context)
+            for name, arguments in arguments_by_name.items()
+        }
+        assert all(result["messages"] for result in results.values())
+        assert all(
+            message["content"]["type"] == "text"
+            for result in results.values()
+            for message in result["messages"]
+        )
+        assert (
+            "Gateway conversation content"
+            in results["summarize_conversation"]["messages"][0]["content"]["text"]
+        )
+        assert (
+            "Gateway transcript content"
+            in results["analyze_media"]["messages"][0]["content"]["text"]
+        )
+        assert (
+            "Gateway search content"
+            in results["search_and_synthesize"]["messages"][0]["content"]["text"]
+        )
+        assert results["character_writing"]["messages"][0]["role"] == "user"
+        assert results["character_writing"]["messages"][0]["content"][
+            "text"
+        ].startswith("System instructions:\nYou are Gateway Character.")
+
+    asyncio.run(exercise())
+    assert search_calls == [("gateway", 2, None)]
+
+
+def test_search_conversations_uses_a_real_content_search_accessor(
+    tmp_path, offline_mcp_rag_service
+):
     """TASK-985: `search_all_content` never existed on `CharactersRAGDB`.
     The real accessor, `search_conversations_by_content`, returns
     conversation rows with no content column, so `preview` must be sourced
@@ -324,7 +464,9 @@ def test_search_conversations_uses_a_real_content_search_accessor(tmp_path):
     assert results[0]["message_count"] == 1
 
 
-def test_search_conversations_filters_by_character_id(tmp_path):
+def test_search_conversations_filters_by_character_id(
+    tmp_path, offline_mcp_rag_service
+):
     """The character_id filter reads `result.get("character_id")` off the
     conversation row returned by `search_conversations_by_content` -- a
     real `conversations.character_id` column -- so a non-matching filter
@@ -395,3 +537,99 @@ def test_get_rag_chunk_resource_reports_not_found_for_unknown_uuid(tmp_path):
     result = asyncio.run(resources.get_rag_chunk_resource("does-not-exist"))
 
     assert result["name"] == "Not Found"
+
+
+def test_gateway_runtime_maps_all_real_resources_and_continues_large_text(tmp_path):
+    """All five server registrations dispatch through the adapter to real SQLite."""
+    from mcp_unified.gateway import GatewayRequestContext
+
+    from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime
+    from tldw_chatbook.MCP.resources import MCPResources
+    from tldw_chatbook.MCP.server import TldwMCPServer
+
+    chachanotes_db, media_db = _real_dbs(tmp_path)
+    resources = MCPResources(chachanotes_db, media_db)
+    conversation_text = "Conversation body 😀\n" * 16_000
+    media_text = "Media transcript é😀\n" * 16_000
+
+    conversation_id = chachanotes_db.add_conversation({"title": "Large Conversation"})
+    assert conversation_id is not None
+    chachanotes_db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": conversation_text,
+            "role": "user",
+        }
+    )
+    note_id = chachanotes_db.add_note("Gateway Note", "Note body")
+    assert note_id is not None
+    character_id = chachanotes_db.add_character_card(
+        {"name": "Gateway Character", "first_message": "Hello from SQLite"}
+    )
+    assert character_id is not None
+    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+        title="Large Media", media_type="video", content="fallback content"
+    )
+    _seed_transcript(media_db, media_id, media_text)
+    chunk_uuid = "gateway/real?chunk#é"
+    canonical_chunk_uri = "rag-chunk://gateway%2Freal%3Fchunk%23%C3%A9"
+    _seed_chunk(
+        media_db,
+        media_id,
+        chunk_uuid,
+        "A real RAG chunk from SQLite.",
+        end_char=29,
+    )
+
+    runtime = ChatbookGatewayRuntime(
+        name="tldw_chatbook",
+        version="0.1.0",
+        tool_descriptors=[],
+    )
+    server = TldwMCPServer.__new__(TldwMCPServer)
+    server.mcp = runtime
+    server.resources = resources
+    server._register_resources()
+    runtime.finalize()
+    context = GatewayRequestContext(request_id="real-resource-test")
+
+    async def exercise() -> None:
+        expected_by_uri = {
+            f"conversation://{conversation_id}": await resources.get_conversation_resource(
+                conversation_id
+            ),
+            f"note://{note_id}": await resources.get_note_resource(note_id),
+            f"character://{character_id}": await resources.get_character_resource(
+                str(character_id)
+            ),
+            f"media://{media_id}": await resources.get_media_resource(str(media_id)),
+            canonical_chunk_uri: await resources.get_rag_chunk_resource(chunk_uuid),
+        }
+        read_counts: dict[str, int] = {}
+
+        for base_uri, expected in expected_by_uri.items():
+            uri: str | None = base_uri
+            chunks: list[str] = []
+            reads = 0
+            while uri is not None:
+                result = await runtime.read_resource(uri, context)
+                assert len(result["contents"]) == 1
+                assert result["contents"][0]["uri"] == base_uri
+                assert result["contents"][0]["mimeType"] == expected["mimeType"]
+                chunks.append(result["contents"][0]["text"])
+                reads += 1
+                uri = result["_meta"]["tldw.chatbook/continuation"]["nextUri"]
+            read_counts[base_uri] = reads
+            assert "".join(chunks) == expected["content"]
+
+        assert read_counts[f"conversation://{conversation_id}"] >= 2
+        assert read_counts[f"media://{media_id}"] >= 2
+
+        catalog = await runtime.list_resources(context)
+        assert any(
+            item["uri"] == f"conversation://{conversation_id}" for item in catalog
+        )
+        assert any(item["uri"] == f"note://{note_id}" for item in catalog)
+
+    asyncio.run(exercise())

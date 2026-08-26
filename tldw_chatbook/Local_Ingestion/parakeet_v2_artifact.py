@@ -45,7 +45,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from . import parakeet_v2_installer as _installer
-from .stt_batch_routing import PARAKEET_V2_MODEL as _PARAKEET_V2_MODEL_ID
+from .stt_batch_routing import (
+    PARAKEET_V2_MODEL as _PARAKEET_V2_MODEL_ID,
+    PARAKEET_V3_MODEL as _PARAKEET_V3_MODEL_ID,
+)
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDescriptor,
     ArtifactError,
@@ -70,14 +73,101 @@ if TYPE_CHECKING:
 #: Canonical identity components for the managed Parakeet v2 artifact.
 PARAKEET_V2_ARTIFACT_ID = "parakeet-v2"
 PARAKEET_V2_VARIANT = "int8"
+PARAKEET_V3_ARTIFACT_ID = "parakeet-v3"
+PARAKEET_PRECISIONS = ("int8", "f32")
+
+PARAKEET_V3_REPOSITORY = "istupakov/parakeet-tdt-0.6b-v3-onnx"
+PARAKEET_V3_REVISION = "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce"
+
+PARAKEET_VAD_ARTIFACT_ID = "silero-vad"
+PARAKEET_VAD_REPOSITORY = "istupakov/silero-vad-onnx"
+PARAKEET_VAD_REVISION = "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6"
+PARAKEET_VAD_VARIANT = "f32"
+
+_V2_F32_FILES = (
+    _installer.BundleFile("config.json", 97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
+    _installer.BundleFile("vocab.txt", 9384, "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"),
+    _installer.BundleFile("encoder-model.onnx", 41770866, "3987bcd28175d829d12888a996a84e8f62a0e374d9ffd640662c1515adc679d3"),
+    _installer.BundleFile("encoder-model.onnx.data", 2435420160, "4dab7362d4874d85965045b1e41b2d61dd2cc0fb25671a7f6b3dc47bf120cc41"),
+    _installer.BundleFile("decoder_joint-model.onnx", 35792059, "cbb52a07bd70ab5b67f8439d4b3cd8704b18467b4430bcacb5adabe154b8d191"),
+)
+_V3_INT8_FILES = (
+    _installer.BundleFile("config.json", 97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
+    _installer.BundleFile("vocab.txt", 93939, "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
+    _installer.BundleFile("encoder-model.int8.onnx", 652183999, "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09"),
+    _installer.BundleFile("decoder_joint-model.int8.onnx", 18202004, "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70"),
+)
+_V3_F32_FILES = (
+    _installer.BundleFile("config.json", 97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
+    _installer.BundleFile("vocab.txt", 93939, "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
+    _installer.BundleFile("encoder-model.onnx", 41770866, "98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1"),
+    _installer.BundleFile("encoder-model.onnx.data", 2435420160, "9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36"),
+    _installer.BundleFile("decoder_joint-model.onnx", 72520893, "e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1"),
+)
+_VAD_FILES = (
+    _installer.BundleFile(
+        "silero_vad.onnx",
+        2327524,
+        "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+    ),
+)
 
 _PARAKEET_V2_LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
 _PARAKEET_V2_USAGE_NOTICE = (
-    "Curated INT8 ONNX export of istupakov's Parakeet TDT v2 conversion, "
-    "pinned to one immutable upstream revision and verified against the "
-    "sizes and SHA-256 digests recorded in "
-    "Local_Ingestion.parakeet_v2_installer."
+    "Curated Parakeet TDT ONNX export pinned to one immutable upstream "
+    "revision and verified against the sizes and SHA-256 digests recorded "
+    "by TASK-593."
 )
+
+
+def _model_metadata(model: str) -> tuple[str, str, str]:
+    if model == _PARAKEET_V2_MODEL_ID:
+        return (
+            PARAKEET_V2_ARTIFACT_ID,
+            _installer.PARAKEET_V2_REPOSITORY,
+            _installer.PARAKEET_V2_REVISION,
+        )
+    if model == _PARAKEET_V3_MODEL_ID:
+        return PARAKEET_V3_ARTIFACT_ID, PARAKEET_V3_REPOSITORY, PARAKEET_V3_REVISION
+    raise ValueError(f"unsupported managed Parakeet model: {model}")
+
+
+def _bundle_files(model: str, precision: str) -> tuple[_installer.BundleFile, ...]:
+    if precision not in PARAKEET_PRECISIONS:
+        raise ValueError(f"unsupported Parakeet precision: {precision}")
+    if model == _PARAKEET_V2_MODEL_ID:
+        return _installer.PARAKEET_V2_FILES if precision == "int8" else _V2_F32_FILES
+    if model == _PARAKEET_V3_MODEL_ID:
+        return _V3_INT8_FILES if precision == "int8" else _V3_F32_FILES
+    raise ValueError(f"unsupported managed Parakeet model: {model}")
+
+
+def parakeet_vad_reference() -> ArtifactRef:
+    """Return the exact managed Silero VAD dependency reference."""
+    return ArtifactRef(
+        PARAKEET_VAD_ARTIFACT_ID,
+        PARAKEET_VAD_REVISION,
+        PARAKEET_VAD_VARIANT,
+    )
+
+
+def parakeet_reference(model: str, precision: str = "int8") -> ArtifactRef:
+    """Return one exact closure-bearing managed Parakeet root reference.
+
+    Args:
+        model: Exact supported Parakeet v2 or v3 model identifier.
+        precision: Exact ``int8`` or ``f32`` artifact variant.
+
+    Returns:
+        The immutable managed root reference for the selection.
+
+    Raises:
+        ValueError: If the model or precision is unsupported.
+    """
+    artifact_id, _repository, upstream_revision = _model_metadata(model)
+    _bundle_files(model, precision)
+    closure_revision = f"{upstream_revision}-vad-{PARAKEET_VAD_REVISION[:12]}"
+    return ArtifactRef(artifact_id, closure_revision, precision)
 
 
 def parakeet_v2_reference() -> ArtifactRef:
@@ -88,14 +178,10 @@ def parakeet_v2_reference() -> ArtifactRef:
         (artifact id, pinned revision, and variant).
     """
 
-    return ArtifactRef(
-        PARAKEET_V2_ARTIFACT_ID,
-        _installer.PARAKEET_V2_REVISION,
-        PARAKEET_V2_VARIANT,
-    )
+    return parakeet_reference(_PARAKEET_V2_MODEL_ID, PARAKEET_V2_VARIANT)
 
 
-def _artifact_files() -> tuple[ArtifactFile, ...]:
+def _artifact_files(model: str, precision: str) -> tuple[ArtifactFile, ...]:
     """Build ``ArtifactFile`` entries from the installer's pinned bundle files.
 
     Reads ``_installer.PARAKEET_V2_FILES`` as a module attribute (not a
@@ -112,12 +198,56 @@ def _artifact_files() -> tuple[ArtifactFile, ...]:
             size_bytes=bundle_file.size_bytes,
             sha256=bundle_file.sha256,
         )
-        for bundle_file in _installer.PARAKEET_V2_FILES
+        for bundle_file in _bundle_files(model, precision)
     )
 
 
-def parakeet_v2_descriptor() -> ArtifactDescriptor:
-    """Build the exact, immutable descriptor for the curated Parakeet v2 bundle.
+def _source_url(repository: str, revision: str, filename: str) -> str:
+    return f"https://huggingface.co/{repository}/resolve/{revision}/{filename}"
+
+
+def parakeet_vad_descriptor() -> ArtifactDescriptor:
+    """Build the exact Silero VAD dependency descriptor."""
+    files = tuple(
+        ArtifactFile(item.filename, item.size_bytes, item.sha256) for item in _VAD_FILES
+    )
+    return ArtifactDescriptor(
+        reference=parakeet_vad_reference(),
+        model_id="silero-vad-onnx",
+        role=ArtifactRole.DEPENDENCY,
+        format=ArtifactFormat.ONNX,
+        consumer="stt",
+        model_family="silero-vad",
+        upstream_repository=PARAKEET_VAD_REPOSITORY,
+        upstream_revision=PARAKEET_VAD_REVISION,
+        source_url=_source_url(
+            PARAKEET_VAD_REPOSITORY,
+            PARAKEET_VAD_REVISION,
+            _VAD_FILES[0].filename,
+        ),
+        precision=PARAKEET_VAD_VARIANT,
+        expected_installed_bytes=sum(file.size_bytes for file in files),
+        license_id="mit",
+        license_url="https://opensource.org/license/mit",
+        usage_notice="Pinned Silero VAD ONNX model used for offline long-form segmentation.",
+        runtime_name="onnx-asr",
+        runtime_version_constraint="==0.12.0",
+        supported_os=("linux", "darwin", "windows"),
+        supported_architectures=("x86-64", "arm64"),
+        provenance=(
+            ProvenanceClass.CHATBOOK_CURATED,
+            ProvenanceClass.LOCAL_INTEGRITY_RECORDED,
+        ),
+        files=files,
+        dependencies=(),
+    )
+
+
+def parakeet_descriptor(
+    model: str,
+    precision: str = "int8",
+) -> ArtifactDescriptor:
+    """Build one exact managed Parakeet root descriptor.
 
     Every size and digest comes from ``parakeet_v2_installer.PARAKEET_V2_FILES``
     -- this is the single source of truth the shared managed-download layer
@@ -150,35 +280,42 @@ def parakeet_v2_descriptor() -> ArtifactDescriptor:
         INT8 bundle.
     """
 
-    files = _artifact_files()
+    _artifact_id, repository, upstream_revision = _model_metadata(model)
+    files = _artifact_files(model, precision)
+    bundle_files = _bundle_files(model, precision)
     return ArtifactDescriptor(
-        reference=parakeet_v2_reference(),
-        model_id=_PARAKEET_V2_MODEL_ID,
+        reference=parakeet_reference(model, precision),
+        model_id=model,
         role=ArtifactRole.ROOT,
         format=ArtifactFormat.ONNX,
         consumer="stt",
         model_family="parakeet",
-        upstream_repository=_installer.PARAKEET_V2_REPOSITORY,
-        upstream_revision=_installer.PARAKEET_V2_REVISION,
+        upstream_repository=repository,
+        upstream_revision=upstream_revision,
         # Used only as the single-file fallback source (irrelevant here --
         # this descriptor always declares more than one file, so
         # ``parakeet_v2_source_map()`` below is always consulted instead)
         # and for display; pointed at one real, individually-verifiable
         # declared file rather than a bare repository URL.
-        source_url=_installer._source_url(_installer.PARAKEET_V2_FILES[0].filename),
-        precision=PARAKEET_V2_VARIANT,
+        source_url=_source_url(repository, upstream_revision, bundle_files[0].filename),
+        precision=precision,
         expected_installed_bytes=sum(file.size_bytes for file in files),
         license_id=_installer.PARAKEET_V2_LICENSE,
         license_url=_PARAKEET_V2_LICENSE_URL,
         usage_notice=_PARAKEET_V2_USAGE_NOTICE,
         runtime_name="onnx-asr",
-        runtime_version_constraint=">=0.12.0",
+        runtime_version_constraint="==0.12.0",
         supported_os=("linux", "darwin", "windows"),
         supported_architectures=("x86-64", "arm64"),
         provenance=(ProvenanceClass.CHATBOOK_CURATED, ProvenanceClass.LOCAL_INTEGRITY_RECORDED),
         files=files,
-        dependencies=(),
+        dependencies=(parakeet_vad_reference(),),
     )
+
+
+def parakeet_v2_descriptor() -> ArtifactDescriptor:
+    """Compatibility wrapper for the managed v2 INT8 root descriptor."""
+    return parakeet_descriptor(_PARAKEET_V2_MODEL_ID, PARAKEET_V2_VARIANT)
 
 
 def parakeet_v2_source_map() -> "ArtifactSourceMap":
@@ -195,13 +332,57 @@ def parakeet_v2_source_map() -> "ArtifactSourceMap":
         covering every file the descriptor declares.
     """
 
-    ref = parakeet_v2_reference()
-    return {
-        ref: {
-            bundle_file.filename: _installer._source_url(bundle_file.filename)
-            for bundle_file in _installer.PARAKEET_V2_FILES
-        }
+    source_map = parakeet_source_map()
+    root = parakeet_v2_reference()
+    dependency = parakeet_vad_reference()
+    return {root: source_map[root], dependency: source_map[dependency]}
+
+
+def parakeet_source_map() -> "ArtifactSourceMap":
+    """Return credential-free sources for every admitted Parakeet closure."""
+    result: dict[ArtifactRef, dict[str, str]] = {}
+    for model in (_PARAKEET_V2_MODEL_ID, _PARAKEET_V3_MODEL_ID):
+        _artifact_id, repository, revision = _model_metadata(model)
+        for precision in PARAKEET_PRECISIONS:
+            ref = parakeet_reference(model, precision)
+            result[ref] = {
+                item.filename: _source_url(repository, revision, item.filename)
+                for item in _bundle_files(model, precision)
+            }
+    vad_ref = parakeet_vad_reference()
+    result[vad_ref] = {
+        item.filename: _source_url(
+            PARAKEET_VAD_REPOSITORY,
+            PARAKEET_VAD_REVISION,
+            item.filename,
+        )
+        for item in _VAD_FILES
     }
+    return result
+
+
+class ParakeetCatalog:
+    """Catalog for all exact managed Parakeet roots and their VAD dependency."""
+
+    def descriptor(self, ref: ArtifactRef) -> ArtifactDescriptor:
+        if ref == parakeet_vad_reference():
+            return parakeet_vad_descriptor()
+        for model in (_PARAKEET_V2_MODEL_ID, _PARAKEET_V3_MODEL_ID):
+            for precision in PARAKEET_PRECISIONS:
+                if ref == parakeet_reference(model, precision):
+                    return parakeet_descriptor(model, precision)
+        raise KeyError(ref)
+
+
+class ParakeetVadCatalog:
+    """Catalog exposing only the exact managed Silero VAD dependency."""
+
+    def descriptor(self, ref: ArtifactRef) -> ArtifactDescriptor:
+        """Return only the exact VAD dependency descriptor."""
+
+        if ref != parakeet_vad_reference():
+            raise KeyError(ref)
+        return parakeet_vad_descriptor()
 
 
 class ParakeetV2Catalog:
@@ -225,9 +406,7 @@ class ParakeetV2Catalog:
             KeyError: ``ref`` is not the Parakeet v2 root reference.
         """
 
-        if ref != parakeet_v2_reference():
-            raise KeyError(ref)
-        return parakeet_v2_descriptor()
+        return ParakeetCatalog().descriptor(ref)
 
 
 def parakeet_v2_managed_service() -> ModelArtifactService:
@@ -266,7 +445,21 @@ def active_managed_parakeet_v2_dir(
         has a further fallback (the verified legacy bundle).
     """
 
-    expected_ref = parakeet_v2_reference()
+    return active_managed_parakeet_dir(
+        _PARAKEET_V2_MODEL_ID,
+        PARAKEET_V2_VARIANT,
+        service=service,
+    )
+
+
+def active_managed_parakeet_dir(
+    model: str,
+    precision: str = "int8",
+    *,
+    service: ModelArtifactService | None = None,
+) -> Path | None:
+    """Return an exact ready/active managed Parakeet root, when installed."""
+    expected_ref = parakeet_reference(model, precision)
     try:
         core = service if service is not None else parakeet_v2_managed_service()
         for item in core.list_installed():
@@ -289,6 +482,154 @@ def active_managed_parakeet_v2_dir(
     except (ArtifactError, TypeError, ValueError, OSError):
         return None
     return None
+
+
+async def run_parakeet_preflight(
+    model: str,
+    precision: str = "int8",
+    *,
+    core: ModelArtifactService | None = None,
+    credential_resolver: "CredentialResolver | None" = None,
+    free_bytes_probe: Callable[[Path], int] | None = None,
+    trusted_origins: frozenset[str] = frozenset(),
+) -> "PreflightReport":
+    """Resolve an exact Parakeet root plus its pinned VAD dependency."""
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactAcquisitionService,
+        EnvConfigCredentialResolver,
+    )
+
+    service = core if core is not None else parakeet_v2_managed_service()
+    resolver = (
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
+    )
+    acquisition = ArtifactAcquisitionService(
+        service,
+        credential_resolver=resolver,
+        free_bytes_probe=free_bytes_probe,
+        trusted_origins=trusted_origins,
+    )
+    return await acquisition.preflight(
+        parakeet_reference(model, precision),
+        ParakeetCatalog(),
+        sources=parakeet_source_map(),
+    )
+
+
+async def run_parakeet_vad_preflight(
+    *,
+    core: ModelArtifactService | None = None,
+    credential_resolver: "CredentialResolver | None" = None,
+    free_bytes_probe: Callable[[Path], int] | None = None,
+    trusted_origins: frozenset[str] = frozenset(),
+) -> "PreflightReport":
+    """Preflight only the exact managed Silero VAD dependency."""
+
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactAcquisitionService,
+        EnvConfigCredentialResolver,
+    )
+
+    service = core if core is not None else parakeet_v2_managed_service()
+    resolver = (
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
+    )
+    acquisition = ArtifactAcquisitionService(
+        service,
+        credential_resolver=resolver,
+        free_bytes_probe=free_bytes_probe,
+        trusted_origins=trusted_origins,
+    )
+    reference = parakeet_vad_reference()
+    return await acquisition.preflight(
+        reference,
+        ParakeetVadCatalog(),
+        sources={reference: parakeet_source_map()[reference]},
+    )
+
+
+async def run_parakeet_vad_provision(
+    report: "PreflightReport",
+    *,
+    core: ModelArtifactService | None = None,
+    credential_resolver: "CredentialResolver | None" = None,
+    free_bytes_probe: Callable[[Path], int] | None = None,
+    trusted_origins: frozenset[str] = frozenset(),
+    progress: "Callable[[AcquisitionProgress], None] | None" = None,
+) -> Path:
+    """Provision only the exact VAD dependency without activating a root."""
+
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactAcquisitionService,
+        EnvConfigCredentialResolver,
+    )
+
+    service = core if core is not None else parakeet_v2_managed_service()
+    resolver = (
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
+    )
+    acquisition = ArtifactAcquisitionService(
+        service,
+        credential_resolver=resolver,
+        free_bytes_probe=free_bytes_probe,
+        trusted_origins=trusted_origins,
+    )
+    reference = parakeet_vad_reference()
+    installed = await acquisition.provision(
+        reference,
+        report.grant(),
+        ParakeetVadCatalog(),
+        sources={reference: parakeet_source_map()[reference]},
+        progress=progress,
+        activate=False,
+    )
+    return service.artifact_path(installed)
+
+
+async def run_parakeet_provision(
+    model: str,
+    precision: str,
+    report: "PreflightReport",
+    *,
+    core: ModelArtifactService | None = None,
+    credential_resolver: "CredentialResolver | None" = None,
+    free_bytes_probe: Callable[[Path], int] | None = None,
+    trusted_origins: frozenset[str] = frozenset(),
+    progress: "Callable[[AcquisitionProgress], None] | None" = None,
+) -> Path:
+    """Provision and activate one exact Parakeet root closure."""
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactAcquisitionService,
+        EnvConfigCredentialResolver,
+    )
+
+    service = core if core is not None else parakeet_v2_managed_service()
+    resolver = (
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
+    )
+    acquisition = ArtifactAcquisitionService(
+        service,
+        credential_resolver=resolver,
+        free_bytes_probe=free_bytes_probe,
+        trusted_origins=trusted_origins,
+    )
+    consent = report.grant()
+    activated = await acquisition.provision(
+        parakeet_reference(model, precision),
+        consent,
+        ParakeetCatalog(),
+        sources=parakeet_source_map(),
+        progress=progress,
+    )
+    return service.artifact_path(activated)
 
 
 async def run_parakeet_v2_preflight(

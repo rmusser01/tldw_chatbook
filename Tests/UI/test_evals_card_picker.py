@@ -38,7 +38,7 @@ from textual.app import App, ComposeResult
 from textual.errors import NoWidget
 from textual.widgets import Button, Input
 
-from tldw_chatbook.UI.Evals.card_picker import CardPicker
+from tldw_chatbook.UI.Evals.card_picker import SEARCH_DEBOUNCE_SECONDS, CardPicker
 from tldw_chatbook.UI.Evals.evals_state import _LIST_LIMIT, EvalsViewModel
 
 CARDS = [
@@ -191,7 +191,9 @@ async def test_search_filters_rows_case_insensitively():
         picker = pilot.app.query_one(CardPicker)
         await pilot.click("#evals-card-search")
         await pilot.press(*"vex")
-        await pilot.pause()
+        # Debounced (task-15476): the row list only rebuilds once the
+        # filter settles, not on every keystroke.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         shown = [w.card_name for w in picker.query(".evals-card-row")]
         assert shown == ["Vex", "vexing puzzle"]
 
@@ -263,7 +265,9 @@ async def test_a_search_with_no_matches_renders_an_explicit_empty_state():
         picker = pilot.app.query_one(CardPicker)
         await pilot.click("#evals-card-search")
         await pilot.press(*"zzz-no-such-card")
-        await pilot.pause()
+        # Debounced (task-15476): the empty state only appears once the
+        # filter settles.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         assert len(picker.query(".evals-card-row")) == 0
         assert picker.query_one("#evals-card-picker-no-matches") is not None
 
@@ -305,7 +309,10 @@ async def test_control_below_the_picker_stays_hit_testable_after_search(size):
         await pilot.pause()
         await pilot.click("#evals-card-search")
         await pilot.press(*"Card 1")
-        await pilot.pause()
+        # Debounced (task-15476): the row list only rebuilds once the
+        # filter settles -- wait for it so this actually exercises the
+        # post-rebuild geometry the test's docstring describes.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         screen = pilot.app.screen
         control = screen.query_one("#picker-host-done", Button)
         hit = _hit_widget(screen, control)

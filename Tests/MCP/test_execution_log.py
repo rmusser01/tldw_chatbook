@@ -307,3 +307,182 @@ def test_shared_writable_ancestor_is_rejected_without_creating_log(tmp_path):
         execution_log.append(_record("blocked"))
 
     assert not active.parent.exists()
+
+
+# ---------------------------------------------------------------------------
+# TASK-21134: the legacy scrub must not re-run on an unchanged generation
+# ---------------------------------------------------------------------------
+
+
+def _count_parses(monkeypatch) -> dict[str, int]:
+    """Count full-line JSON decodes inside the execution-log module."""
+    from tldw_chatbook.MCP import execution_log as module
+
+    counter = {"loads": 0}
+    real_loads = json.loads
+
+    def counting_loads(payload, *args, **kwargs):
+        counter["loads"] += 1
+        return real_loads(payload, *args, **kwargs)
+
+    monkeypatch.setattr(module.json, "loads", counting_loads)
+    return counter
+
+
+def test_steady_state_appends_do_not_reparse_the_whole_log(tmp_path, monkeypatch):
+    """A scrub already applied to bytes we wrote must not be applied again.
+
+    Before TASK-21134 each append re-read and re-parsed every line of both
+    generations: 499 json.loads and 4.6 ms of wall time per tool invocation at
+    the 500-record cap, purely to re-derive bytes identical to the ones the
+    previous append had just written.
+    """
+    execution_log = MCPExecutionLog(
+        tmp_path / "mcp_execution_log.jsonl", max_records_per_file=200
+    )
+    for index in range(60):
+        execution_log.append(_record(f"warm-{index}"))
+
+    counter = _count_parses(monkeypatch)
+    for index in range(5):
+        execution_log.append(_record(f"hot-{index}"))
+
+    assert counter["loads"] == 0, (
+        f"appends re-parsed the log {counter['loads']} times"
+    )
+
+
+def test_appends_after_a_rotation_do_not_reparse_either_generation(
+    tmp_path, monkeypatch
+):
+    """Both generations are cached, so a rotated file is scrubbed once."""
+    execution_log = MCPExecutionLog(
+        tmp_path / "mcp_execution_log.jsonl", max_records_per_file=20
+    )
+    for index in range(45):  # forces at least two rotations
+        execution_log.append(_record(f"warm-{index}"))
+    assert (tmp_path / "mcp_execution_log.jsonl.1").exists()
+
+    counter = _count_parses(monkeypatch)
+    for index in range(5):
+        execution_log.append(_record(f"hot-{index}"))
+
+    assert counter["loads"] == 0
+
+
+def test_a_generation_changed_behind_our_back_is_still_scrubbed(tmp_path):
+    """The cache is a staleness check, never a licence to trust stale bytes."""
+    private = "MCP-CACHE-LEGACY-SENTINEL-sk-not-a-real-key"
+    active = tmp_path / "mcp_execution_log.jsonl"
+    execution_log = MCPExecutionLog(active, max_records_per_file=200)
+    execution_log.append(_record("warm"))  # primes the cache
+
+    # Another writer (or an older build) appends a legacy payload row.
+    with active.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "tool_name": "old",
+                    "arguments": {"query": private},
+                    "result_excerpt": private,
+                }
+            )
+            + "\n"
+        )
+
+    execution_log.append(_record("after"))
+
+    raw = active.read_text(encoding="utf-8")
+    assert private not in raw
+    assert "result_excerpt" not in raw
+    assert [row["tool_name"] for row in execution_log.read_recent()] == [
+        "after",
+        "old",
+        "warm",
+    ]
+
+
+def test_a_byte_for_byte_same_size_replacement_misses_the_cache(tmp_path):
+    """Neither size nor mtime alone can decide staleness.
+
+    The replacement below is padded to the EXACT byte length of the file it
+    displaces AND has its mtime restored to the displaced file's (what an
+    mtime-preserving restore or ``rsync -t`` does), so a fingerprint built on
+    either field alone would report a hit and hand back the stale, unscrubbed
+    bytes. Only the inode tells these two files apart.
+    """
+    private = "MCP-REPLACED-SENTINEL-sk-not-a-real-key"
+    active = tmp_path / "mcp_execution_log.jsonl"
+    execution_log = MCPExecutionLog(active, max_records_per_file=200)
+    for index in range(4):
+        execution_log.append(_record(f"warm-{index}"))
+
+    original = active.stat()
+    target = original.st_size
+    legacy = {"tool_name": "old", "result_excerpt": private, "pad": ""}
+    padding = target - len((json.dumps(legacy) + "\n").encode("utf-8"))
+    assert padding >= 0, "widen the warm-up above"
+    legacy["pad"] = "x" * padding
+    line = json.dumps(legacy) + "\n"
+    assert len(line.encode("utf-8")) == target
+
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_text(line, encoding="utf-8")
+    replacement.replace(active)
+    os.utime(active, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert active.stat().st_size == original.st_size
+    assert active.stat().st_mtime_ns == original.st_mtime_ns
+    assert active.stat().st_ino != original.st_ino
+
+    execution_log.append(_record("after"))
+
+    raw = active.read_text(encoding="utf-8")
+    assert private not in raw
+    assert [row["tool_name"] for row in execution_log.read_recent()] == [
+        "after",
+        "old",
+    ]
+
+
+def test_a_concurrent_append_is_not_pinned_by_the_cache(tmp_path, monkeypatch):
+    """Another writer landing inside our own append window must not be cached.
+
+    A second process can append between the bytes we compute and the stat we
+    fingerprint them with. Caching then would pin content already short of the
+    file, under a fingerprint claiming it is current.
+    """
+    from tldw_chatbook.MCP import execution_log as module
+
+    private = "MCP-CONCURRENT-SENTINEL-sk-not-a-real-key"
+    active = tmp_path / "mcp_execution_log.jsonl"
+    execution_log = MCPExecutionLog(active, max_records_per_file=200)
+    execution_log.append(_record("warm"))
+
+    real_identity = module.MCPExecutionLog._identity
+    seen = {"active_calls": 0}
+
+    def intruding_identity(path):
+        # One append makes two _identity calls on the active generation: the
+        # staleness check, then the one that fingerprints what we just wrote.
+        # The window this guards is between them, so intrude before the second.
+        if Path(path) == active:
+            seen["active_calls"] += 1
+            if seen["active_calls"] == 2:
+                with active.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps({"tool_name": "other", "result_excerpt": private})
+                        + "\n"
+                    )
+        return real_identity(path)
+
+    monkeypatch.setattr(
+        module.MCPExecutionLog, "_identity", staticmethod(intruding_identity)
+    )
+    execution_log.append(_record("ours"))
+    monkeypatch.undo()
+
+    # The intruder's row must be visible and scrubbed, not overwritten by a
+    # stale cached copy of the log.
+    names = [row["tool_name"] for row in execution_log.read_recent()]
+    assert names == ["other", "ours", "warm"], names
+    assert private not in active.read_text(encoding="utf-8")

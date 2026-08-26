@@ -23,6 +23,7 @@ from loguru import logger
 import tldw_chatbook.Chat.Chat_Functions as chat_functions
 import tldw_chatbook.LLM_Calls.LLM_API_Calls as cloud_adapters
 import tldw_chatbook.LLM_Calls.LLM_API_Calls_Local as local_adapters
+import tldw_chatbook.LLM_Calls.hosted_chat as hosted_chat
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.Chat_Functions import SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
@@ -30,6 +31,11 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationValidationError,
+    parse_provider_continuation_json,
+    read_provider_continuation_json,
 )
 from tldw_chatbook.config import RuntimeConfigSnapshot
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -64,6 +70,10 @@ CANARIES = (
     "GOOGLE-SYSTEM-INSTRUCTION-CANARY",
     "UNKNOWN-PAYLOAD-FIELD-CANARY",
     "TOOL-SCHEMA-DESCRIPTION-CANARY",
+    "TOOL-SCHEMA-ENUM-CANARY",
+    "HUGGINGFACE-USER-CANARY",
+    "CONTINUATION-CREDENTIAL-CANARY",
+    "CONTINUATION-RAW-BODY-CANARY",
 )
 
 
@@ -104,6 +114,31 @@ def _assert_canaries_absent(*values: object) -> None:
     rendered = "\n".join(str(value) for value in values)
     for canary in CANARIES:
         assert canary not in rendered
+
+
+def test_sensitive_continuation_validation_never_logs_or_chains_private_data() -> None:
+    private_value = {
+        "schema_version": 1,
+        "checkpoint_revision": 1,
+        "provider": "deepseek",
+        "protocol": "responses",
+        "model": "deepseek-test",
+        "api_base_url": "https://api.deepseek.example.test/v1",
+        "state": "active",
+        "rounds": [],
+        "credential": "CONTINUATION-CREDENTIAL-CANARY",
+        "raw_provider_body": "CONTINUATION-RAW-BODY-CANARY",
+    }
+
+    with _captured_logs() as logs, pytest.raises(ContinuationValidationError) as caught:
+        parse_provider_continuation_json(private_value)
+
+    tolerant = read_provider_continuation_json(private_value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert tolerant.checkpoint is None
+    assert tolerant.warning == "Exact tool continuation was discarded."
+    _assert_canaries_absent(caught.value, repr(caught.value), logs, tolerant)
 
 
 def _transport_logger_state() -> dict[str, dict[str, object]]:
@@ -365,7 +400,7 @@ def test_sensitive_anthropic_error_body_and_exception_are_not_exposed(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
@@ -384,7 +419,7 @@ def test_sensitive_shared_local_transport_redacts_endpoint_body_and_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _FakeSession(_FakeResponse({}, status_code=500, text="ERROR-BODY-CANARY"))
-    monkeypatch.setattr(local_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(local_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
@@ -415,7 +450,7 @@ def test_sensitive_openai_http_error_log_and_exception_are_metadata_only(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(requests.exceptions.HTTPError) as exc_info:
@@ -458,7 +493,7 @@ def test_sensitive_cohere_request_and_response_logs_are_metadata_only(
             },
         ),
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         result = cloud_adapters.chat_with_cohere(
@@ -485,7 +520,7 @@ def test_sensitive_google_request_content_and_error_body_are_not_logged(
         "get_runtime_config_snapshot",
         lambda: _runtime_config("google", {"api_key": "key", "api_retries": 0}),
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
@@ -547,7 +582,7 @@ def test_openai_responses_api_input_field_is_never_logged(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     def _invoke() -> None:
         with pytest.raises(Exception):
@@ -597,7 +632,7 @@ def test_anthropic_system_field_is_never_logged(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     def _invoke() -> None:
         with pytest.raises(Exception):
@@ -638,7 +673,7 @@ def test_google_system_instruction_field_is_never_logged(
         "get_runtime_config_snapshot",
         lambda: _runtime_config("google", {"api_key": "key", "api_retries": 0}),
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     def _invoke() -> None:
         with pytest.raises(Exception):
@@ -703,7 +738,7 @@ def test_tool_definitions_log_names_only_never_schema_or_description(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs:
         with pytest.raises(Exception):
@@ -729,6 +764,80 @@ def test_tool_definitions_log_names_only_never_schema_or_description(
     assert "lookup_weather" in rendered
 
 
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_huggingface_tool_logs_are_names_only(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: bool,
+) -> None:
+    """Confirm HuggingFace logs only tool names outside sensitive requests.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub config loading and the
+            outgoing HTTP session.
+        sensitive: Whether to exercise the sensitive-request logging policy.
+    """
+    response_data = {"id": "hf-test", "choices": [{"message": {"content": "ok"}}]}
+    session = _FakeSession(_FakeResponse(response_data))
+    monkeypatch.setattr(
+        cloud_adapters,
+        "load_settings",
+        lambda: {
+            "huggingface_api": {
+                "api_base_url": "https://hf.test/v1",
+                "api_chat_path": "chat/completions",
+                "api_retries": 0,
+            }
+        },
+    )
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
+
+    context = sensitive_llm_request() if sensitive else nullcontext()
+    with _captured_logs() as logs, context:
+        cloud_adapters.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "hello"}],
+            api_key="key",
+            model="org/model",
+            streaming=False,
+            user="HUGGINGFACE-USER-CANARY",
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup_hf_weather",
+                        "description": "TOOL-SCHEMA-DESCRIPTION-CANARY",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "unit": {
+                                    "type": "string",
+                                    "enum": ["TOOL-SCHEMA-ENUM-CANARY"],
+                                }
+                            },
+                        },
+                    },
+                }
+            ],
+        )
+
+    _assert_canaries_absent(logs)
+    final_payload_label = "HuggingFace Final Payload (safe fields only):"
+    final_payload_logs = [entry for entry in logs if final_payload_label in entry]
+    tool_logs = [entry for entry in logs if "HuggingFace Tools:" in entry]
+    if sensitive:
+        assert final_payload_logs == []
+        assert tool_logs == []
+    else:
+        assert len(final_payload_logs) == 1
+        final_payload_summary = ast.literal_eval(
+            final_payload_logs[0].split(final_payload_label, 1)[1].strip()
+        )
+        assert final_payload_summary["model"] == "org/model"
+        assert final_payload_summary["message_count"] == 1
+        assert len(tool_logs) == 1
+        tools_summary = tool_logs[0].split("HuggingFace Tools: ", 1)[1].strip()
+        assert tools_summary == "{'tool_names': ['lookup_hf_weather']}"
+
+
 def test_sensitive_huggingface_error_body_endpoint_and_exception_are_not_logged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -745,7 +854,7 @@ def test_sensitive_huggingface_error_body_endpoint_and_exception_are_not_logged(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
@@ -766,27 +875,10 @@ def test_sensitive_openai_compatible_error_bodies_are_not_logged(
     provider: str,
 ) -> None:
     session = _FakeSession(_FakeResponse({}, status_code=500, text="ERROR-BODY-CANARY"))
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: session)
     if provider == "moonshot":
-        monkeypatch.setattr(
-            cloud_adapters,
-            "load_settings",
-            lambda: {
-                "moonshot_api": {
-                    "api_key": "key",
-                    "api_base_url": "https://moonshot.test",
-                }
-            },
-        )
         call: Callable[..., object] = cloud_adapters.chat_with_moonshot
     else:
-        monkeypatch.setattr(
-            cloud_adapters,
-            "get_runtime_config_snapshot",
-            lambda: _runtime_config(
-                "zai", {"api_key": "key", "api_base_url": "https://zai.test"}
-            ),
-        )
         call = cloud_adapters.chat_with_zai
 
     with _captured_logs() as logs, sensitive_llm_request():
@@ -820,7 +912,7 @@ def test_sensitive_native_kobold_prompt_response_and_errors_are_not_logged(
             },
         ),
     )
-    monkeypatch.setattr(local_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(local_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(ChatProviderError) as exc_info:
@@ -943,7 +1035,7 @@ async def test_auxiliary_pins_configured_endpoint_when_selection_url_is_empty(
     }
     session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
     monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
     gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(
@@ -982,7 +1074,7 @@ async def test_auxiliary_pins_default_openai_endpoint_before_config_changes(
     adapter_config = {"openai_api": {"api_retries": 3}}
     session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
     monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
     gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider="openai", explicit_model="gpt-test")
@@ -1024,7 +1116,7 @@ async def test_auxiliary_pins_default_anthropic_endpoint_before_config_changes(
         )
     )
     monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
     gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider="anthropic", explicit_model="claude-test")
@@ -1074,7 +1166,7 @@ async def test_auxiliary_huggingface_router_url_matches_ordinary_adapter_after_d
     }
     session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
     monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     ordinary = cloud_adapters.chat_with_huggingface(
         input_data=[{"role": "user", "content": "ordinary"}],
@@ -1192,6 +1284,7 @@ def _plant_sentinel_openai_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("sensitive", [False, True])
+@pytest.mark.allow_network
 def test_sentinel_api_key_never_reaches_diagnose_false_sink_on_request_exception(
     monkeypatch: pytest.MonkeyPatch,
     sensitive: bool,
@@ -1229,6 +1322,7 @@ def test_sentinel_api_key_never_reaches_diagnose_false_sink_on_request_exception
     assert SENTINEL_API_KEY not in rendered
 
 
+@pytest.mark.allow_network
 def test_sentinel_api_key_leaks_via_diagnose_true_sink_confirming_mechanism_is_real(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1402,9 +1496,7 @@ def test_fresh_process_incident_shape_leaks_only_without_package_import(
 
     project_root = Path(__file__).resolve().parents[2]
     child_env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("LOGURU_")
+        key: value for key, value in os.environ.items() if not key.startswith("LOGURU_")
     }
     child_env["LEAK_SENTINEL"] = SENTINEL_API_KEY
     child_env["PYTHONPATH"] = str(project_root) + (
@@ -1470,9 +1562,7 @@ def test_package_import_preserves_host_configured_loguru_sinks(
 
     project_root = Path(__file__).resolve().parents[2]
     child_env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("LOGURU_")
+        key: value for key, value in os.environ.items() if not key.startswith("LOGURU_")
     }
     child_env["PYTHONPATH"] = str(project_root) + (
         os.pathsep + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""

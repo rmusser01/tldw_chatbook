@@ -45,6 +45,13 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
 )
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 
+# Network opt-in (task-15111): this module fetches from
+# `FixtureArtifactServer`, an in-process HTTP server on an ephemeral
+# loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
+
 
 def _forbid_client() -> httpx.AsyncClient:
     """``client_factory`` stub that fails any test proving "no network yet".

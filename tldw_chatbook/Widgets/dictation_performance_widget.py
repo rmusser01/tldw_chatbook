@@ -78,8 +78,11 @@ class DictationPerformanceWidget(Widget):
         padding: 1;
     }
     
+    /* TASK-15450: `margin-bottom: 0.5` is not a valid Textual value (integers
+       only), and one invalid declaration fails the WHOLE stylesheet -- mounting
+       this widget raised StylesheetParseError. Removed rather than rounded: no
+       rule in this block has ever applied, so removal is the inert repair. */
     .session-item {
-        margin-bottom: 0.5;
         color: $text-muted;
     }
     
@@ -103,7 +106,7 @@ class DictationPerformanceWidget(Widget):
     """
 
     # Reactive data
-    metrics_data = reactive({})
+    metrics_data = reactive(dict)
 
     def compose(self) -> ComposeResult:
         """Compose performance dashboard."""
@@ -159,7 +162,7 @@ class DictationPerformanceWidget(Widget):
         """Load metrics on mount."""
         self.refresh_metrics()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="dictation-performance-refresh-metrics")
     async def refresh_metrics(self):
         """Refresh performance metrics."""
         monitor = get_performance_monitor()

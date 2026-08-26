@@ -66,11 +66,7 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
-    BriefingSelected,
     CastScriptRequested,
-    CitationActivated,
-    ExportBriefingRequested,
-    ExportFeedRequested,
     GenerateBriefingRequested,
     KeepBriefingRequested,
     KeptBriefingsRequested,
@@ -171,13 +167,37 @@ async def _open_artifacts(app, watchlist_id, *, size=(180, 50), visual=False):
         else DestinationHarness(app, "watchlists_collections")
     )
     async with host.run_test(size=size) as pilot:
-        await pilot.pause(0.1)
+        await pilot.pause()
         screen = host.screen_stack[-1]
         assert isinstance(screen, WatchlistsCollectionsScreen)
         if watchlist_id is not None:
             screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
         screen.active_section = "artifacts"
-        await pilot.pause(0.2)
+
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            await pilot.pause(0.01)
+            if screen.query("#watchlists-artifacts-pane #artifacts-table"):
+                break
+        else:
+            raise AssertionError("Artifacts table did not mount within 10 seconds")
+
+        remaining = max(0.01, deadline - time.monotonic())
+        await asyncio.wait_for(host.workers.wait_for_complete(), timeout=remaining)
+        expected_rows = (
+            len(app.watchlist_bundle_service.db.list_briefings(watchlist_id))
+            if watchlist_id is not None
+            else 0
+        )
+        while time.monotonic() < deadline:
+            await pilot.pause(0.01)
+            tables = screen.query("#watchlists-artifacts-pane #artifacts-table")
+            if tables and tables.first(DataTable).row_count == expected_rows:
+                break
+        else:
+            raise AssertionError(
+                "Artifacts table did not reach its loaded row count within 10 seconds"
+            )
         yield screen, pilot, host
 
 
@@ -1361,8 +1381,14 @@ async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypa
         # `max-width` on the pane, would show up as a difference.
         artifacts_width = pane.region.width  # before the section switch
         screen.active_section = "sources"
-        await pilot.pause(0.2)
-        sources_width = screen.query_one("#watchlists-sources-pane").region.width
+        deadline = time.monotonic() + 10.0
+        sources_width = 0
+        while time.monotonic() < deadline:
+            sources_panes = list(screen.query("#watchlists-sources-pane"))
+            if sources_panes and sources_panes[0].region.width > 0:
+                sources_width = sources_panes[0].region.width
+                break
+            await pilot.pause(0.05)
         assert artifacts_width == sources_width > size[0] // 2, (
             f"Artifacts is {artifacts_width} columns wide where Sources gets "
             f"{sources_width} on the same {size[0]}x{size[1]} terminal"
@@ -2496,7 +2522,7 @@ async def test_the_cast_guard_is_claimed_before_the_worker_runs(monkeypatch):
     _use_fake_chat(monkeypatch, _FakeChat())
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
-        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        await _prepare_cast(screen, pilot, app, watchlist_id)
         cast_chat = _FakeChat(
             reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])
         )
@@ -2835,9 +2861,18 @@ async def test_switching_the_selected_briefing_clears_stale_scripts_before_the_r
         # IMMEDIATELY after it returns -- before `run_worker` has let the
         # reload do anything at all -- proves the clearing itself, not
         # merely that it finishes "soon".
-        screen.handle_briefing_selected(BriefingSelected(second_row))
-
+        # task-15461 moved the clearing from the screen's message handler
+        # into `ArtifactsPane.watch_selected_briefing`, so that the
+        # select->clear->reload pipeline costs ONE pane recompose instead of
+        # two. The selection is therefore what has to be driven here, not the
+        # handler -- and it is still a fully synchronous route: a reactive
+        # assignment runs its watcher inline, so state read on the very next
+        # line is state that was set before `run_worker` could schedule
+        # anything. (Driving the handler directly would now assert nothing:
+        # it no longer touches the pane.)
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.selected_briefing = second_row
+
         assert pane.selected_script is None, (
             "the stale script selection must clear synchronously, before "
             "the reload worker is even dispatched"
@@ -4706,7 +4741,7 @@ async def test_write_briefing_export_file_writes_the_document_and_toasts_success
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id, body="Body text")
+    _seed_complete_briefing(app, watchlist_id, body="Body text")
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4733,7 +4768,7 @@ async def test_write_briefing_export_file_cancelled_writes_nothing():
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4755,7 +4790,7 @@ async def test_write_briefing_export_file_rejects_an_invalid_path(monkeypatch, t
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4787,7 +4822,7 @@ async def test_write_briefing_export_file_write_failure_toasts_the_exception_typ
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4823,7 +4858,7 @@ async def test_write_briefing_export_file_unicode_encode_error_toasts_the_except
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4856,7 +4891,7 @@ async def test_write_briefing_export_file_cancelled_error_propagates_uncaught(
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -5526,6 +5561,10 @@ async def test_serve_enables_once_a_feed_has_been_exported(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
+# task-15111 network guard: this test starts a REAL local server and
+# round-trips through a genuine socket — exactly the case the guard's
+# escape hatch exists for.
+@pytest.mark.allow_network
 async def test_pressing_serve_then_stop_round_trips_through_a_real_server(
     monkeypatch, tmp_path
 ):
@@ -5589,6 +5628,7 @@ async def test_pressing_serve_then_stop_round_trips_through_a_real_server(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_screen_teardown_stops_a_still_running_feed_server(monkeypatch, tmp_path):
     """A user who navigates away (or closes the app) without pressing Stop
     must not leave a listening socket behind -- `on_unmount` closes it.

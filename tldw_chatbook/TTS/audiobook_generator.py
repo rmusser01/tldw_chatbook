@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS import get_tts_service
+from tldw_chatbook.TTS.legacy_bridge import openai_internal_model_id
 from tldw_chatbook.TTS.audio_service import get_audio_service
 
 # Text processing is handled by AdvancedTextProcessor
@@ -149,6 +150,15 @@ class ChapterDetector:
         """
         lines = content.split("\n")
         chapters = []
+        # Exactly ONE chapter is "open" at a time: either the most recent
+        # titled heading (current_title is its title) or, before any heading
+        # has been seen, the untitled preamble (current_title is None). A new
+        # heading closes the open chapter with the body accumulated since it;
+        # EOF closes the last one the same way. (Task-16850: the previous
+        # shape appended an empty "placeholder" per heading AND the body as a
+        # separate chapter, back-filling only the final placeholder — a
+        # 13-header book came out as ~25 alternating empty/full rows.)
+        current_title: Optional[str] = None
         current_chapter_content = []
         current_chapter_start = 0
         chapter_number = 0
@@ -164,57 +174,68 @@ class ChapterDetector:
             chapter_match = cls._match_chapter_pattern(line)
 
             if chapter_match:
-                # Save previous chapter if exists
-                if current_chapter_content:
-                    chapter_text = "\n".join(current_chapter_content)
-                    if chapter_text.strip():
-                        chapters.append(
-                            Chapter(
-                                number=chapter_number,
-                                title=f"Chapter {chapter_number}",
-                                content=chapter_text,
-                                start_position=current_chapter_start,
-                                end_position=i - 1,
-                            )
-                        )
-
-                # Start new chapter
-                chapter_number += 1
-                current_chapter_content = []
-                current_chapter_start = i
-
-                # Extract chapter title if present
-                if chapter_match.get("title"):
+                chapter_text = "\n".join(current_chapter_content)
+                if current_title is not None:
+                    # Close the pending titled chapter with its own body. A
+                    # bodiless heading (back-to-back headings) keeps its
+                    # (empty) chapter: dropping it would silently eat a title
+                    # the user pasted.
                     chapters.append(
                         Chapter(
                             number=chapter_number,
-                            title=chapter_match["title"],
-                            content="",  # Will be filled later
-                            start_position=i,
-                            end_position=i,
+                            title=current_title,
+                            content=chapter_text if chapter_text.strip() else "",
+                            start_position=current_chapter_start,
+                            end_position=i - 1,
                         )
                     )
+                elif chapter_text.strip():
+                    # Preamble text before the first heading keeps its
+                    # historical shape: an untitled number=0 / "Chapter 0" row.
+                    chapters.append(
+                        Chapter(
+                            number=chapter_number,
+                            title=f"Chapter {chapter_number}",
+                            content=chapter_text,
+                            start_position=current_chapter_start,
+                            end_position=i - 1,
+                        )
+                    )
+
+                # Open the new chapter for this heading
+                chapter_number += 1
+                current_title = (
+                    chapter_match.get("title") or f"Chapter {chapter_number}"
+                )
+                current_chapter_content = []
+                current_chapter_start = i
             else:
                 current_chapter_content.append(line)
 
-        # Don't forget the last chapter
-        if current_chapter_content:
-            chapter_text = "\n".join(current_chapter_content)
-            if chapter_text.strip():
-                if chapters and not chapters[-1].content:
-                    # Fill the last chapter's content
-                    chapters[-1].content = chapter_text
-                    chapters[-1].end_position = len(lines) - 1
-                else:
-                    chapters.append(
-                        Chapter(
-                            number=chapter_number + 1,
-                            title=f"Chapter {chapter_number + 1}",
-                            content=chapter_text,
-                            start_position=current_chapter_start,
-                            end_position=len(lines) - 1,
-                        )
-                    )
+        # Close the last open chapter at EOF
+        chapter_text = "\n".join(current_chapter_content)
+        if current_title is not None:
+            chapters.append(
+                Chapter(
+                    number=chapter_number,
+                    title=current_title,
+                    content=chapter_text if chapter_text.strip() else "",
+                    start_position=current_chapter_start,
+                    end_position=len(lines) - 1,
+                )
+            )
+        elif chapter_text.strip():
+            # Headerless document: one chapter holding everything (historical
+            # numbering from the old EOF branch: number=1 / "Chapter 1").
+            chapters.append(
+                Chapter(
+                    number=chapter_number + 1,
+                    title=f"Chapter {chapter_number + 1}",
+                    content=chapter_text,
+                    start_position=current_chapter_start,
+                    end_position=len(lines) - 1,
+                )
+            )
 
         # If no chapters detected, treat entire content as one chapter
         if not chapters:
@@ -896,7 +917,7 @@ class AudioBookGenerator:
     def _get_internal_model_id(self, provider: str, model: str) -> str:
         """Map provider and model to internal model ID"""
         if provider == "openai":
-            return f"openai_official_{model}"
+            return openai_internal_model_id(model)
         elif provider == "elevenlabs":
             return f"elevenlabs_{model}"
         elif provider == "kokoro":

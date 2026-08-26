@@ -35,6 +35,7 @@ def _default_local_mcp_store_path() -> Path:
 
     return get_user_data_dir() / _LOCAL_MCP_STORE_FILENAME
 
+
 _ENV_PLACEHOLDER_PATTERN = re.compile(
     r"^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$"
 )
@@ -102,6 +103,7 @@ def _require_non_empty_field(value: str, field_name: str, record_type: str) -> s
 
 
 _PROFILE_ID_INVALID_CHARS_RE = re.compile(r"[:\s]")
+_RESERVED_EXTERNAL_PROFILE_ID = "__local__"
 
 
 def _validate_profile_id(value: str) -> str:
@@ -122,6 +124,8 @@ def _validate_profile_id(value: str) -> str:
     discouraged.
     """
     normalized = _require_non_empty_field(value, "profile_id", "Local MCP profile")
+    if normalized == _RESERVED_EXTERNAL_PROFILE_ID:
+        raise ValueError("Local MCP profile profile_id is reserved")
     if _PROFILE_ID_INVALID_CHARS_RE.search(normalized):
         raise ValueError(
             "Local MCP profile profile_id must not contain ':' or whitespace"
@@ -645,7 +649,9 @@ class LocalMCPStoreState:
                 LocalExternalMCPProfile.from_storage_dict(item)
                 for item in (profiles_raw if isinstance(profiles_raw, list) else [])
             )
-            if profile.profile_id and profile.command
+            if profile.profile_id
+            and profile.profile_id != _RESERVED_EXTERNAL_PROFILE_ID
+            and profile.command
         )
         governance_rules = tuple(
             rule
@@ -678,7 +684,9 @@ class LocalMCPStoreState:
             {
                 str(server_id): dict(snapshot)
                 for server_id, snapshot in snapshots_raw.items()
-                if str(server_id).strip() and isinstance(snapshot, Mapping)
+                if str(server_id).strip()
+                and _text(server_id) != _RESERVED_EXTERNAL_PROFILE_ID
+                and isinstance(snapshot, Mapping)
             }
             if isinstance(snapshots_raw, Mapping)
             else {}
@@ -688,7 +696,9 @@ class LocalMCPStoreState:
             {
                 str(profile_id): dict(record)
                 for profile_id, record in runtime_state_raw.items()
-                if str(profile_id).strip() and isinstance(record, Mapping)
+                if str(profile_id).strip()
+                and _text(profile_id) != _RESERVED_EXTERNAL_PROFILE_ID
+                and isinstance(record, Mapping)
             }
             if isinstance(runtime_state_raw, Mapping)
             else {}

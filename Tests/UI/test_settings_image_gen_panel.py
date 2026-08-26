@@ -12,6 +12,7 @@ from ``Tests/Internal_Prompts/conftest.py``).
 from __future__ import annotations
 
 import threading
+import time
 import tomllib
 
 import pytest
@@ -34,6 +35,7 @@ from tldw_chatbook.Image_Generation.config import (
     get_image_generation_config,
     reset_image_generation_config_cache,
 )
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
@@ -63,6 +65,58 @@ def _reset_image_gen_cache():
 
 async def _open_image_gen(pilot) -> None:
     await _open_settings_category(pilot, "#settings-category-image_generation")
+
+
+async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if getattr(app, "_initial_screen_pushed", False):
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError("app never finished pushing its initial destination")
+
+    await app.handle_screen_navigation(NavigateToScreen("settings"))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if type(screen).__name__ == "SettingsScreen" and list(
+            screen.query("#settings-category-image_generation")
+        ):
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError("Settings destination never mounted its Image Gen category")
+
+    button = screen.query_one("#settings-category-image_generation")
+    if not button.display:
+        groups = screen.query("#settings-category-group-domain-defaults")
+        if groups:
+            groups.first().press()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            candidates = screen.query("#settings-category-image_generation")
+            if candidates and candidates.first().display:
+                button = candidates.first()
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Image Gen category never became visible")
+    category_list = screen.query_one("#settings-category-list")
+    category_list.scroll_to_widget(button, animate=False)
+    await pilot.pause()
+    screen.handle_category_button_pressed(Button.Pressed(button))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if (
+            type(screen).__name__ == "SettingsScreen"
+            and screen.active_category == SettingsCategoryId.IMAGE_GENERATION.value
+            and list(screen.query("#settings-imagegen-panel"))
+        ):
+            return screen
+        await pilot.pause(0.02)
+    raise AssertionError("Settings never activated and mounted the Image Gen panel")
 
 
 @pytest.mark.asyncio
@@ -1204,16 +1258,7 @@ enabled_backends = ["openrouter", "swarmui"]
     )
     app = _build_test_app()
     async with app.run_test(size=size) as pilot:
-        # The splash screen (1.5s) must close before handle_screen_
-        # navigation's switch_screen call is valid -- calling it while the
-        # splash is still the top screen raises IndexError from Textual's
-        # own result-callback bookkeeping.
-        await pilot.pause(2.0)
-        await app.handle_screen_navigation(NavigateToScreen("settings"))
-        await pilot.pause(0.3)
-        screen = app.screen
-        screen._select_category("image_generation")
-        await pilot.pause(0.2)
+        screen = await _open_real_settings_destination(app, pilot)
 
         for backend_id in BACKEND_IDS:
             row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
@@ -1430,3 +1475,301 @@ enabled_backends = ["openrouter"]
         assert screen._image_gen_raw_section_cache != sentinel, (
             "re-entering the category must invalidate the cache"
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-3402: ComfyUI H3 image settings and runtime refresh.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_comfyui_panel_fields_disclosure_and_narrow_geometry(scratch_config):
+    scratch_config("")
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(90, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        await pilot.pause()
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        assert "ComfyUI (H3 image edit)" in _visible_text(screen)
+        for toml_key in (
+            "base_url",
+            "request_timeout_seconds",
+            "connect_timeout_seconds",
+            "poll_interval_seconds",
+            "total_deadline_seconds",
+            "default_seed",
+            "default_steps",
+            "default_sampler",
+        ):
+            panel.query_one(f"#settings-imagegen-field-comfyui-{toml_key}", Input)
+        assert not list(panel.query("#settings-imagegen-field-comfyui-workflow"))
+        assert not list(panel.query("#settings-imagegen-field-comfyui-model"))
+
+        disclosure = screen.query_one("#settings-imagegen-comfyui-disclosure", Static)
+        disclosure_text = str(disclosure.renderable)
+        assert "source image and instruction" in disclosure_text
+        assert "retains inputs and saved outputs" in disclosure_text
+        assert disclosure.display and disclosure.region.height > 0
+        assert disclosure.region.y < 24
+
+        title = screen.query_one(".settings-column-title", Static)
+        for widget in (title, disclosure):
+            assert widget.region.x >= 0
+            assert widget.region.x + widget.region.width <= 90
+            assert widget.region.y >= 0
+            assert widget.region.y + widget.region.height <= 24
+
+
+@pytest.mark.asyncio
+async def test_comfyui_optional_fields_render_packaged_placeholder_and_clear_on_save(
+    scratch_config, tmp_path
+):
+    scratch_config(
+        """
+[image_generation]
+default_backend = "comfyui"
+enabled_backends = ["comfyui"]
+
+[image_generation.comfyui]
+default_seed = 4
+default_steps = 30
+default_sampler = "euler"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        for key in ("default_seed", "default_steps", "default_sampler"):
+            field = panel.query_one(
+                f"#settings-imagegen-field-comfyui-{key}", Input
+            )
+            field.value = ""
+        await pilot.pause()
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        for key in ("default_seed", "default_steps", "default_sampler"):
+            field = panel.query_one(
+                f"#settings-imagegen-field-comfyui-{key}", Input
+            )
+            assert field.value == ""
+            assert field.placeholder == "Use packaged workflow"
+
+    with open(tmp_path / "config.toml", "rb") as stream:
+        saved = tomllib.load(stream)
+    comfyui = saved["image_generation"].get("comfyui", {})
+    assert "default_seed" not in comfyui
+    assert "default_steps" not in comfyui
+    assert "default_sampler" not in comfyui
+
+
+@pytest.mark.asyncio
+async def test_failed_image_gen_persistence_does_not_reset_runtime(
+    scratch_config, monkeypatch
+):
+    scratch_config("")
+    resets: list[None] = []
+    monkeypatch.setattr(
+        settings_screen_module,
+        "reset_image_generation_runtime",
+        lambda: resets.append(None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda section_values, *, delete_keys=None: ConfigMutationResult(
+            False, False, "before_replace"
+        ),
+        raising=False,
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        field = screen.query_one(
+            "#settings-imagegen-field-comfyui-base_url", Input
+        )
+        field.value = "http://127.0.0.1:8288"
+        await pilot.pause()
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Failed to save Image Gen defaults.")
+
+    assert resets == []
+
+
+@pytest.mark.asyncio
+async def test_mixed_image_gen_write_delete_failure_is_atomic_and_does_not_reset(
+    scratch_config, monkeypatch, tmp_path
+):
+    scratch_config(
+        """
+[image_generation]
+default_backend = "comfyui"
+enabled_backends = ["comfyui"]
+
+[image_generation.comfyui]
+base_url = "http://127.0.0.1:8188"
+default_seed = 7
+"""
+    )
+    resets: list[None] = []
+    atomic_calls = []
+    from tldw_chatbook.config import save_settings_to_cli_config as real_atomic_save
+
+    def fail_atomic_mutation(section_values, *, delete_keys=None):
+        atomic_calls.append((section_values, delete_keys))
+        return ConfigMutationResult(False, False, "before_replace")
+
+    def old_split_write(_self, section_values):
+        return real_atomic_save(section_values)
+
+    monkeypatch.setattr(
+        settings_screen_module,
+        "reset_image_generation_runtime",
+        lambda: resets.append(None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        settings_screen_module.SettingsConfigAdapter,
+        "save_sections",
+        old_split_write,
+    )
+    monkeypatch.setattr(
+        settings_screen_module.SettingsConfigAdapter,
+        "delete_values",
+        lambda _self, _section, _keys: False,
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "apply_settings_mutation_to_cli_config",
+        fail_atomic_mutation,
+        raising=False,
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        panel.query_one(
+            "#settings-imagegen-field-comfyui-base_url", Input
+        ).value = "http://127.0.0.1:8288"
+        panel.query_one(
+            "#settings-imagegen-field-comfyui-default_seed", Input
+        ).value = ""
+        await pilot.pause()
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(
+            screen, pilot, "Failed to save Image Gen defaults."
+        )
+
+    with open(tmp_path / "config.toml", "rb") as stream:
+        saved = tomllib.load(stream)
+    comfyui = saved["image_generation"]["comfyui"]
+    assert comfyui == {
+        "base_url": "http://127.0.0.1:8188",
+        "default_seed": 7,
+    }
+    assert atomic_calls == [
+        (
+            {
+                "image_generation.comfyui": {
+                    "base_url": "http://127.0.0.1:8288"
+                }
+            },
+            {"image_generation.comfyui": ["default_seed"]},
+        )
+    ]
+    assert resets == []
+
+
+@pytest.mark.asyncio
+async def test_post_replace_cache_failure_refreshes_image_runtime_and_reports_failure(
+    scratch_config, monkeypatch, tmp_path
+):
+    import tldw_chatbook.config as app_config
+
+    scratch_config(
+        """
+[image_generation]
+default_backend = "comfyui"
+enabled_backends = ["comfyui"]
+
+[image_generation.comfyui]
+base_url = "http://127.0.0.1:8188"
+"""
+    )
+    before = get_image_generation_config(reload=True)
+
+    def fail_cache_publication():
+        raise RuntimeError("synthetic cache publication failure")
+
+    monkeypatch.setattr(
+        app_config, "_publish_runtime_config_unlocked", fail_cache_publication
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        screen.query_one(
+            "#settings-imagegen-field-comfyui-base_url", Input
+        ).value = "http://127.0.0.1:8288"
+        await pilot.pause()
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(
+            screen, pilot, "Failed to save Image Gen defaults."
+        )
+        after = get_image_generation_config()
+        assert after is not before
+        assert after.comfyui_image_base_url == "http://127.0.0.1:8288"
+
+    with open(tmp_path / "config.toml", "rb") as stream:
+        saved = tomllib.load(stream)
+    assert saved["image_generation"]["comfyui"]["base_url"] == (
+        "http://127.0.0.1:8288"
+    )
+
+
+@pytest.mark.asyncio
+async def test_successful_image_gen_persistence_resets_runtime_exactly_once(
+    scratch_config, monkeypatch
+):
+    scratch_config("")
+    resets: list[None] = []
+    monkeypatch.setattr(
+        settings_screen_module,
+        "reset_image_generation_runtime",
+        lambda: resets.append(None),
+        raising=False,
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        field = screen.query_one(
+            "#settings-imagegen-field-comfyui-base_url", Input
+        )
+        field.value = "http://127.0.0.1:8288"
+        await pilot.pause()
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+    assert resets == [None]

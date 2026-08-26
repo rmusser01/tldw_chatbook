@@ -90,6 +90,10 @@ class FakeCatalogService:
             ),
         )
 
+    async def has_discovered_model_snapshot(self, **kwargs):
+        self.calls.append(("has_discovered_model_snapshot", kwargs))
+        return True
+
     async def persist_discovered_models_to_settings(self, **kwargs):
         self.calls.append(("persist_discovered_models_to_settings", kwargs))
         return PersistenceResult(
@@ -339,6 +343,36 @@ async def test_llm_provider_catalog_scope_service_routes_local_model_discovery_a
 
 
 @pytest.mark.asyncio
+async def test_llm_provider_catalog_scope_service_forwards_shared_cache_opt_out():
+    local = FakeCatalogService("local")
+    scope = LLMProviderCatalogScopeService(
+        local_service=local,
+        server_service=None,
+    )
+
+    result = await scope.discover_models(
+        mode="local",
+        provider="Custom",
+        staged_settings={"api_settings": {"custom": {"api_key": ""}}},
+        use_shared_cache=False,
+    )
+
+    assert result.status == "success"
+    assert local.calls == [
+        (
+            "discover_models",
+            {
+                "provider": "Custom",
+                "staged_settings": {
+                    "api_settings": {"custom": {"api_key": ""}}
+                },
+                "use_shared_cache": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_llm_provider_catalog_scope_service_routes_local_discovered_model_cache_contract():
     local = FakeCatalogService("local")
     server = FakeCatalogService("server")
@@ -362,6 +396,11 @@ async def test_llm_provider_catalog_scope_service_routes_local_discovered_model_
         provider="Custom",
         staged_settings=staged_settings,
     )
+    has_snapshot = await scope.has_discovered_model_snapshot(
+        mode="local",
+        provider="Custom",
+        staged_settings=staged_settings,
+    )
     persisted = await scope.persist_discovered_models_to_settings(
         mode="local",
         provider="Custom",
@@ -371,14 +410,19 @@ async def test_llm_provider_catalog_scope_service_routes_local_discovered_model_
 
     assert [model.model_id for model in discovered] == ["runtime-a"]
     assert [entry.model_id for entry in merged] == ["runtime-a"]
+    assert has_snapshot is True
     assert persisted.status == "saved"
-    assert local.calls[-4:] == [
+    assert local.calls[-5:] == [
         (
             "list_discovered_models",
             {"provider": "Custom", "staged_settings": staged_settings},
         ),
         (
             "merge_saved_and_discovered_models",
+            {"provider": "Custom", "staged_settings": staged_settings},
+        ),
+        (
+            "has_discovered_model_snapshot",
             {"provider": "Custom", "staged_settings": staged_settings},
         ),
         (
@@ -389,6 +433,7 @@ async def test_llm_provider_catalog_scope_service_routes_local_discovered_model_
     ]
     assert server.calls == []
     assert policy.calls == [
+        "llm.catalog.models.list.local",
         "llm.catalog.models.list.local",
         "llm.catalog.models.list.local",
         "llm.catalog.models.persist.local",

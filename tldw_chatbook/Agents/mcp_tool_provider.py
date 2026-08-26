@@ -26,6 +26,13 @@ cross-thread round trip for each one.
 documented to run ON the main loop at registration time (T6 awaits it
 directly, before spawning the worker thread), so it is declared ``async def``
 and does not need any cross-thread submission of its own.
+
+PR2a Task 8: with the fleet, this ONE provider instance's ``invoke()`` can
+now be called from several worker threads at once (a parent run and its
+live children). ``invoke()`` serializes every call to this provider
+instance behind ``self._invoke_lock`` -- see its docstring (and
+``_invoke_locked``'s) for exactly what that protects and what would let a
+future task remove it.
 """
 
 from __future__ import annotations
@@ -34,12 +41,14 @@ import asyncio
 import concurrent.futures
 import contextlib
 import json
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -51,6 +60,7 @@ from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.tool_naming import dedupe_names, llm_tool_name
 
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
+from .run_context import current_run_id
 
 SOURCE = "mcp"
 
@@ -167,6 +177,7 @@ class MCPToolProvider:
         main_loop: asyncio.AbstractEventLoop,
         approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]]
         | None = None,
+        builtin_raw_name_exclusions: Any = None,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -180,10 +191,22 @@ class MCPToolProvider:
                 an `"ask"`-state tool with no batch-review stamp (e.g. no
                 `review_tool_calls` hook was wired for this run). `None`
                 fails closed to deny.
+            builtin_raw_name_exclusions: task-1337 (plan Task 8): optional
+                iterable of raw tool names dropped during `compose_catalog()`
+                when (and only when) they arrive from the
+                `builtin:tldw_chatbook` source -- the Console uses this to
+                keep its own Library provider from being bypassed by the
+                built-in MCP copies. Same-named tools on local/server
+                sources are unaffected. Stored as an immutable frozenset;
+                `None` (default) preserves current behavior for every
+                non-Console caller.
         """
         self._service = service
         self._main_loop = main_loop
         self._approval_callback = approval_callback
+        self._builtin_raw_name_exclusions = frozenset(
+            builtin_raw_name_exclusions or ()
+        )
         self._catalog: list[ToolCatalogEntry] = []
         # llm_name -> (HubTool, EffectiveToolState as resolved at composition
         # time). Built ONCE by compose_catalog() so list_catalog()/
@@ -191,14 +214,48 @@ class MCPToolProvider:
         # lookup (task-201's don't-re-list-per-lookup note).
         self._entry_by_llm_name: dict[str, tuple[HubTool, EffectiveToolState]] = {}
         self._not_connected_count = 0
-        # Per-turn verdict stamps set by T6's batch-review closure via
-        # apply_batch_decisions(). PEEKED (not popped) by invoke() via
-        # stamped_decision() so every call sharing an llm_name within the
-        # SAME turn sees the same verdict (Finding F1) -- apply_batch_
-        # decisions() itself is what clears the previous turn's stamps
-        # (REPLACE semantics, called every turn including with `{}` by
-        # build_mcp_review_hook), not a per-read pop.
-        self._stamped_decisions: dict[str, str] = {}
+        self._init_decision_state()
+
+    def _init_decision_state(self) -> None:
+        """Initialize the per-turn verdict stamps, their lock, and the
+        provider-wide execution lock.
+
+        Called from ``__init__``. Factored out so a test can build a bare
+        instance (``MCPToolProvider.__new__``) and exercise the stamp
+        contract without a service or a running event loop -- see
+        ``Tests/Agents/test_gate_run_scoping.py``.
+
+        Stamps are set by the batch-review closure via
+        ``apply_batch_decisions()`` and PEEKED (not popped) by ``invoke()``
+        via ``stamped_decision()``, so every call sharing an llm_name
+        within the SAME turn of the SAME run sees the same verdict
+        (Finding F1) -- ``apply_batch_decisions()`` itself is what clears
+        that run's previous turn (REPLACE-within-the-run semantics, called
+        every turn including with ``{}`` by ``build_mcp_review_hook``),
+        not a per-read pop.
+
+        PR2a Task 5: the dict is keyed ``(run_id, llm_name)``, not
+        ``llm_name``. It is shared by every run in a tree (parent and all
+        sub-agents use ONE provider), and the old whole-dict REPLACE meant
+        any run's turn destroyed every other run's verdicts.
+        """
+        self._stamped_decisions: dict[tuple[str, str], str] = {}
+        # Lock, not RLock: every critical section below is a short,
+        # self-contained mutation of this one dict, and no locked method
+        # calls another locked method (`stamp_scope` explicitly does NOT
+        # hold the lock across its `yield` -- a nested run must never
+        # block on it). A plain Lock makes an accidental future nesting
+        # deadlock loudly instead of silently permitting a non-atomic
+        # critical section.
+        self._decisions_lock = threading.Lock()
+        # PR2a Task 8 (provider thread-safety audit): a SEPARATE lock,
+        # entirely unrelated to `_decisions_lock` above -- see `invoke()`'s
+        # own docstring for what it protects and why. Defined here (not
+        # only in `__init__`) for the same bare-instance-test reason
+        # `_decisions_lock` is: a double it constructs via
+        # `MCPToolProvider.__new__` + `_init_decision_state()` must not
+        # `AttributeError` if it goes on to call `invoke()`.
+        self._invoke_lock = threading.Lock()
 
     # -- composition (main loop, once per registration) -------------------
 
@@ -218,8 +275,11 @@ class MCPToolProvider:
         `{llm_name: (HubTool, EffectiveToolState)}` lookup table.
         """
         # Clear stale stamped decisions from prior catalogs to prevent
-        # auto-approval of tools not in the new catalog (Finding 3).
-        self._stamped_decisions.clear()
+        # auto-approval of tools not in the new catalog (Finding 3). Every
+        # run's slice, deliberately: this runs at registration time, before
+        # any run of the new catalog exists, so there is nothing to keep.
+        with self._decisions_lock:
+            self._stamped_decisions.clear()
 
         if self._service.get_kill_switch():
             self._catalog = []
@@ -243,7 +303,21 @@ class MCPToolProvider:
                 )
                 inventory = None
             if isinstance(inventory, Mapping):
-                hub_tools.extend(builtin_tools_from_inventory(inventory))
+                builtin_tools = builtin_tools_from_inventory(inventory)
+                if self._builtin_raw_name_exclusions:
+                    # task-1337 (plan Task 8): drop the Console-shadowed raw
+                    # names from the built-in source ONLY -- same-named tools
+                    # on local/server sources are unaffected (the raw-name
+                    # match alone must never reach them).
+                    builtin_tools = [
+                        tool
+                        for tool in builtin_tools
+                        if not (
+                            tool.server_key == "builtin:tldw_chatbook"
+                            and tool.name in self._builtin_raw_name_exclusions
+                        )
+                    ]
+                hub_tools.extend(builtin_tools)
 
         effective = self._service.effective_tool_states(hub_tools)
         eligible = [
@@ -335,31 +409,53 @@ class MCPToolProvider:
             parameters=parameters,
         )
 
-    # -- per-turn verdict stamps (set/read same-thread by T6's closure) ----
+    # -- per-turn verdict stamps, keyed (run_id, llm_name) -----------------
+    #
+    # No longer same-thread: PR2a Task 6 runs sub-agents on their own
+    # threads against this one shared provider, so every access below goes
+    # through `_decisions_lock` and every entry is scoped to the run that
+    # wrote it.
 
-    def apply_batch_decisions(self, decisions: dict[str, str]) -> None:
-        """Replace this turn's verdict stamps with `decisions`.
+    def apply_batch_decisions(self, run_id: str, decisions: dict[str, str]) -> None:
+        """Replace `run_id`'s turn verdict stamps with `decisions`.
 
-        REPLACE, not merge: any stamp left over from a prior turn is
-        always cleared first (Finding F1) -- `build_mcp_review_hook` calls
-        this exactly once per turn that has any tool calls at all,
-        including with `{}` when none of them needed gating, specifically
-        so a stale stamp can never survive into a later turn and be
-        misread by `invoke()`'s `stamped_decision()` peek as this turn's
-        verdict. Also cleared wholesale by `compose_catalog()` at
-        registration time (a different, coarser-grained clear for stale
-        catalogs, not a substitute for this per-turn one).
+        REPLACE **within that run's slice**, not merge: any stamp `run_id`
+        left over from a PRIOR turn is always cleared first (Finding F1) --
+        `build_mcp_review_hook` calls this exactly once per turn that has
+        any tool calls at all, including with `{}` when none of them needed
+        gating, specifically so a stale stamp can never survive into a
+        later turn and be misread by `invoke()`'s `stamped_decision()` peek
+        as this turn's verdict. Passing `{}` therefore still CLEARS; that
+        is what makes the clear-at-entry (I3) discipline work.
+
+        What it no longer does is clear OTHER runs' slices (PR2a Task 5).
+        The whole dict is shared by a parent and every sub-agent it spawns,
+        so the old whole-dict replace meant any run's routine clear
+        destroyed verdicts a concurrent sibling -- or the parent -- had
+        already been granted and not yet consumed. Also cleared wholesale
+        by `compose_catalog()` at registration time (a different,
+        coarser-grained clear for stale catalogs, not a substitute for this
+        per-turn one).
 
         Args:
+            run_id: The run whose turn these decisions belong to. Only
+                that run's own `invoke()` can consume them.
             decisions: This turn's `{llm_name: verdict}` map, as returned
                 by the batch-approval round trip
                 (`ConsoleChatController.request_mcp_approvals`). Falsy
-                clears without setting anything new.
+                clears this run's slice without setting anything new.
         """
-        self._stamped_decisions = dict(decisions or {})
+        with self._decisions_lock:
+            self._stamped_decisions = {
+                key: value
+                for key, value in self._stamped_decisions.items()
+                if key[0] != run_id
+            }
+            for llm_name, verdict in (decisions or {}).items():
+                self._stamped_decisions[(run_id, llm_name)] = verdict
 
-    def stamped_decision(self, llm_name: str) -> str | None:
-        """Peek at this turn's stamped verdict for `llm_name`, if any.
+    def stamped_decision(self, run_id: str, llm_name: str) -> str | None:
+        """Peek at `run_id`'s stamped verdict for `llm_name`, if any.
 
         Non-destructive on purpose (Finding F1): multiple calls to the
         same tool within one turn must ALL observe the identical stamped
@@ -368,43 +464,69 @@ class MCPToolProvider:
         stamp.
 
         Args:
+            run_id: The run consuming the verdict. A verdict stamped by a
+                different run in the same tree is invisible here -- that
+                isolation is the point of the per-run key.
             llm_name: The LLM-facing tool id to look up.
 
         Returns:
             The stamped verdict string for `llm_name` this turn, or
             `None` if it has no stamp.
         """
-        return self._stamped_decisions.get(llm_name)
+        with self._decisions_lock:
+            return self._stamped_decisions.get((run_id, llm_name))
 
     @contextlib.contextmanager
-    def stamp_scope(self):
-        """Snapshot `_stamped_decisions` on enter; RESTORE (not merge) on exit.
+    def stamp_scope(self, run_id: str):
+        """Snapshot `run_id`'s stamps on enter; RESTORE (not merge) on exit.
 
-        C1 (probe-verified security regression): wired as `AgentService`'s
-        `review_state_scope` (see that class's own docstring comment) by
+        C1 (probe-verified security regression), re-scoped by PR2a Task 5:
+        wired as `AgentService`'s `review_state_scope` (see that class's
+        own docstring comment) by
         `console_agent_bridge.ConsoleAgentBridge.run_reply`, wrapping every
         NESTED sub-agent run this provider's turn spawns. `spawn_subagent`
         runs the child's entire loop INLINE, synchronously, before the
         parent's own remaining same-batch tool calls are dispatched
         (`agent_service.AgentService._run_one`'s `spawn` closure, called
-        from `agent_runtime.run_agent_loop`'s per-call dispatch loop). Since
-        `apply_batch_decisions` REPLACES `_stamped_decisions` every turn
-        (Finding F1 -- never merges), the child's OWN turn(s) would
-        otherwise silently clobber whatever the PARENT's turn had already
-        stamped for a same-named tool before the parent gets to consume it
-        -- letting a call the user just denied execute anyway (the child
-        happens to approve the same tool name), or wiping a genuine parent
-        approval (the child's own routine `apply_batch_decisions({})` clear
-        for an unrelated, non-MCP tool call). Snapshotting on enter and
-        unconditionally restoring that exact snapshot on exit (regardless of
-        what the child did in between) undoes every mutation the child made
-        to this shared dict the instant it returns control to the parent.
+        from `agent_runtime.run_agent_loop`'s per-call dispatch loop).
+        `apply_batch_decisions` used to REPLACE the WHOLE dict every turn
+        (Finding F1 -- never merged), so the child's OWN turn(s) silently
+        clobbered whatever the PARENT's turn had already stamped for a
+        same-named tool before the parent got to consume it -- letting a
+        call the user just denied execute anyway (the child happens to
+        approve the same tool name), or wiping a genuine parent approval
+        (the child's own routine `apply_batch_decisions({})` clear for an
+        unrelated, non-MCP tool call).
+
+        **Per-run keying is now the real mechanism**: a child's own turn
+        only ever rewrites its own `(child_run_id, ...)` keys, which is
+        also the only thing that works once children run CONCURRENTLY --
+        snapshot/restore is sound only for a strictly nested (LIFO) inline
+        child. This is kept as belt-and-braces for that inline path, and
+        because the seam is public (`_combine_state_scopes` composes this
+        with the built-in gate's and the local provider's).
+
+        Args:
+            run_id: The run whose slice is snapshotted and restored --
+                normally the PARENT's, whose verdicts a nested run must
+                not disturb.
         """
-        snapshot = dict(self._stamped_decisions)
+        with self._decisions_lock:
+            snapshot = {
+                key: value
+                for key, value in self._stamped_decisions.items()
+                if key[0] == run_id
+            }
         try:
             yield
         finally:
-            self._stamped_decisions = snapshot
+            with self._decisions_lock:
+                self._stamped_decisions = {
+                    key: value
+                    for key, value in self._stamped_decisions.items()
+                    if key[0] != run_id
+                }
+                self._stamped_decisions.update(snapshot)
 
     # -- gate resolution for the batch-review hook (worker thread) --------
 
@@ -486,9 +608,14 @@ class MCPToolProvider:
         wins outright; absent a stamp, this resolves a fresh gate itself
         (direct `gate_tool_test` call -- see module docstring), a live
         session approval short-circuits an `"ask"` state to execute
-        (decision="approved"), and otherwise an `"ask"` verdict falls back
-        to `self._approval_callback` as a single-call list (no callback ->
-        fail closed to deny).
+        (decision="approved-session"), and otherwise an `"ask"` verdict
+        falls back to `self._approval_callback` as a single-call list (no
+        callback -> fail closed to deny).
+
+        PR2a Task 8 (provider thread-safety audit): this whole call runs
+        under `self._invoke_lock`, so at most ONE call into this provider
+        instance executes at a time, fleet-wide -- see `_invoke_locked`
+        (just below) for why.
 
         Args:
             tool_id: The LLM-facing tool id to invoke (a
@@ -500,6 +627,51 @@ class MCPToolProvider:
             length-capped result content on success; `ok=False` with a
             length-capped, always-non-empty `error` on refusal or
             failure. Never raises.
+        """
+        with self._invoke_lock:
+            return self._invoke_locked(tool_id, args)
+
+    def _invoke_locked(self, tool_id: str, args: dict) -> ToolResult:
+        """``invoke()``'s actual body -- entered ONLY while holding
+        `self._invoke_lock`. Do not call this directly; call `invoke()`.
+
+        Per spec (Docs/superpowers/specs/2026-08-08-supervisor-agent-fleet-
+        design.md) §5's corrections table: "Tool providers were written
+        under one-run-at-a-time dispatch ... Phase-2 thread-safety audit
+        (MCP control-plane client, local tools, gated builtins). Unaudited
+        provider => per-provider execution lock on invoke (throttle, not
+        break). MCP starts locked until proven otherwise." PR2a Task 8's
+        audit (see that task's report) found `BuiltinToolProvider` and
+        `LocalToolProvider` safe under concurrent `invoke()` by inspection
+        (read-only/immutable per-instance state, or state already guarded
+        by its own lock) and left them unlocked; THIS provider is the one
+        the spec calls out by name, for a reason the audit could not rule
+        out by reading Python alone: `_execute()` below hands off to
+        `self._service.execute_hub_tool(...)`, which for a LOCAL external
+        MCP server ultimately reads/writes that server's own stdio pipe
+        through an `MCPClient` session -- a request/response protocol this
+        codebase has never exercised with two requests in flight on the
+        same session at once (server-source tools are explicitly out of
+        scope per this module's own docstring, i.e. genuinely unaudited,
+        not merely unlikely to be a problem). Two concurrent fleet agents
+        both calling an MCP tool is exactly the scenario the fleet makes
+        routine.
+
+        This lock SERIALIZES every call into this ONE provider instance
+        across the whole fleet -- a throughput throttle on MCP tool calls
+        specifically (a call blocks for up to the provider's own timeout
+        plus its result-wait slack while holding the lock), not a break in
+        concurrency: builtin, local, and Library tool calls from the same
+        fleet turn have their own provider instances and are unaffected,
+        and a queued MCP call still eventually runs rather than failing.
+
+        What would let a future task remove this: proving (not assuming)
+        that `MCPClient`'s local-server transport safely multiplexes
+        concurrent request/response pairs on one session -- e.g. a
+        request-id-keyed reader loop in `MCPClient` itself -- or giving
+        each concurrently-live run its own subprocess/session instead of
+        sharing this provider's one `self._service`. Absent either, this
+        lock is the correctness boundary, not merely a performance choice.
         """
         entry = self._entry_by_llm_name.get(tool_id)
         if entry is None:
@@ -516,9 +688,16 @@ class MCPToolProvider:
         # approval cannot bypass it.
         if self._kill_switch_engaged():
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult(ok=False, error=KILL_SWITCH_REFUSAL)
+            return ToolResult.blocked(KILL_SWITCH_REFUSAL)
 
-        stamped = self.stamped_decision(tool_id)
+        # PR2a Task 5: only THIS run's own stamp may resolve this call. The
+        # `ToolProvider.invoke` Protocol has no run parameter, so the
+        # dispatching run id rides `run_context` (bound by `AgentService`
+        # around each invocation -- see that module's docstring). Outside
+        # any run this is `""`, which matches no stamp a review hook ever
+        # writes, so such a call falls through to the fresh gate below --
+        # the same path it took before batch review existed.
+        stamped = self.stamped_decision(current_run_id(), tool_id)
         if stamped is not None:
             return self._apply_verdict(stamped, tool, call_args)
 
@@ -529,7 +708,7 @@ class MCPToolProvider:
 
         if state.state == "deny":
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult(ok=False, error=DENY_REFUSAL)
+            return ToolResult.blocked(DENY_REFUSAL)
 
         if state.state == "allow":
             return self._execute(tool, call_args, decision="allowed")
@@ -540,12 +719,14 @@ class MCPToolProvider:
             # (and the model-facing execution record) distinct so Findings
             # mode can tell "server default was allow" apart from "the
             # user approved this session".
-            return self._execute(tool, call_args, decision="approved")
+            return self._execute(
+                tool, call_args, decision=APPROVED_SESSION_DECISION
+            )
 
         # state == "ask"
         if self._approval_callback is None:
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult(ok=False, error=DENY_REFUSAL)
+            return ToolResult.blocked(DENY_REFUSAL)
 
         pending = MCPPendingCall(
             llm_name=tool_id,
@@ -622,12 +803,16 @@ class MCPToolProvider:
         if verdict == "approve_once":
             return self._execute(tool, args, decision="approved")
         if verdict == "approve_session":
+            already_approved = self._is_session_approved_safe(tool)
             self._safe_side_effect(
                 lambda: self._service.approve_for_session(tool.server_key, tool.name),
                 tool,
                 what="approve_for_session",
             )
-            return self._execute(tool, args, decision="approved")
+            decision = (
+                APPROVED_SESSION_DECISION if already_approved else "approved"
+            )
+            return self._execute(tool, args, decision=decision)
         if verdict == "always_allow":
             self._safe_side_effect(
                 lambda: self._service.set_tool_state(
@@ -639,12 +824,12 @@ class MCPToolProvider:
             return self._execute(tool, args, decision="approved")
         if verdict == "timeout":
             self._record_decision_safe(tool, decision="denied-timeout")
-            return ToolResult(ok=False, error=TIMEOUT_REFUSAL)
+            return ToolResult.blocked(TIMEOUT_REFUSAL)
         if verdict == "deny":
             # TASK-294: an explicit card "Deny" gets USER provenance -- a
             # person said no to this call; the permissions were not Off.
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult(ok=False, error=USER_DENY_REFUSAL)
+            return ToolResult.blocked(USER_DENY_REFUSAL)
         # An unrecognized or MISSING verdict fails closed -- but blaming the
         # user here would be the same provenance lie in the other direction:
         # nobody decided anything. Neutral copy, still a refusal -- and the
@@ -653,7 +838,7 @@ class MCPToolProvider:
         # views reported an explicit denial nobody made). Mirrors the
         # existing "denied-timeout" vocabulary.
         self._record_decision_safe(tool, decision="denied-unresolved")
-        return ToolResult(ok=False, error=UNRESOLVED_REFUSAL)
+        return ToolResult.blocked(UNRESOLVED_REFUSAL)
 
     def _safe_side_effect(
         self, fn: Callable[[], None], tool: HubTool, *, what: str
@@ -697,10 +882,10 @@ class MCPToolProvider:
             tool: The resolved `HubTool` to execute.
             args: The call's arguments, passed through unchanged.
             decision: The audit decision string this call was authorized
-                under (e.g. `"allowed"`/`"approved"`), forwarded to
-                `execute_hub_tool` and, on a bridge failure this method
-                itself must record (see the discriminator comment below),
-                to the best-effort audit record below.
+                under (e.g. `"allowed"`/`"approved"`/`"approved-session"`),
+                forwarded to `execute_hub_tool` and, on a bridge failure
+                this method itself must record (see the discriminator
+                comment below), to the best-effort audit record below.
 
         Returns:
             A `ToolResult`: `ok=True` with the formatted result on

@@ -9,19 +9,23 @@ Regression coverage for UX-review findings LY-08/LY-09/LY-10
 - LY-09: at 60x18 the screen was an empty frame; the ready empty-state line
   never rendered. Single-pane mode waives the main column's min-width so
   the transcript always renders.
-- LY-10: compact-height mode (<35 rows) hides the header -- and with it the
-  Ready/Running/Blocked badge. A control-bar marker now mirrors that badge
-  for exactly as long as the header is hidden.
+- TASK-21201: compact-height mode keeps the header and its speech controls,
+  while the normal control bar gives back the row those controls used to own.
 """
 
 from __future__ import annotations
 
+from html import unescape
+import re
 import time
+from dataclasses import replace
+from unittest.mock import MagicMock
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Button, Static, Switch
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from Tests.UI.test_console_internals_decomposition import (
     _configure_native_ready_console,
 )
@@ -30,6 +34,12 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+
+class ConsoleLayoutHarness(ConsoleHarness):
+    """Mount the real Console with the same app bundle production loads."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
 
 
 async def _wait_for_condition(pilot, predicate, *, timeout: float = 4.0) -> None:
@@ -45,6 +55,12 @@ async def _wait_for_condition(pilot, predicate, *, timeout: float = 4.0) -> None
 def _static_text(widget: Static) -> str:
     renderable = widget.renderable
     return getattr(renderable, "plain", str(renderable))
+
+
+def _compositor_text(svg: str) -> str:
+    """Return only glyphs painted into an exported Textual frame."""
+    joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
+    return unescape(joined).replace("\xa0", " ")
 
 
 @pytest.mark.asyncio
@@ -121,75 +137,203 @@ async def test_console_narrow_60x18_renders_ready_empty_state():
 
 
 @pytest.mark.asyncio
-async def test_console_compact_height_status_marker_mirrors_header_badge():
-    """LY-10: below 35 rows the header badge hides; the control-bar marker
-    shows the same status label instead."""
+@pytest.mark.parametrize("size", [(60, 18), (80, 24)])
+async def test_console_compact_height_keeps_header_controls_and_row_budget(
+    size: tuple[int, int],
+) -> None:
+    """TASK-21201 keeps the header while reclaiming the old speech row."""
     app = _build_test_app()
-    host = ConsoleHarness(app)
+    _configure_native_ready_console(app)
+    host = ConsoleLayoutHarness(app)
 
-    async with host.run_test(size=(140, 24)) as pilot:
+    async with host.run_test(size=size) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-compact-status-marker")
+        await _wait_for_selector(console, pilot, "#console-auto-speak")
         shell = console.query_one("#console-shell")
-        marker = console.query_one("#console-compact-status-marker", Static)
         header = console.query_one("#console-workbench-header")
+        bar = console.query_one("#console-control-bar")
         badge = header.query_one("#workbench-header-status", Static)
+        auto_speak = console.query_one("#console-auto-speak", Switch)
+        hands_free = console.query_one("#console-hands-free-switch", Switch)
 
-        await _wait_for_condition(
-            pilot, lambda: shell.has_class("-console-compact") and marker.display
-        )
-
-        badge_text = _static_text(badge)
-        assert badge_text
-        assert _static_text(marker) == badge_text
-
-
-@pytest.mark.asyncio
-async def test_console_status_marker_hidden_at_normal_height():
-    """The marker is a compact-height stand-in only; at normal heights the
-    header badge is visible and the marker stays hidden."""
-    app = _build_test_app()
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-compact-status-marker")
         await pilot.pause(0.3)
+        assert shell.has_class("-console-compact")
+        assert header.display is True
+        assert header.region.height == 1, {
+            "header": header.region,
+            "header_height": header.styles.height,
+            "speech_controls": console.query_one("#console-speech-controls").region,
+            "speech_height": console.query_one(
+                "#console-speech-controls"
+            ).styles.height,
+            "auto_control": console.query_one("#console-auto-speak-control").region,
+            "hands_control": console.query_one("#console-hands-free-control").region,
+            "badge": badge.region,
+        }
+        assert bar.region.height == 1
+        assert header.region.height + bar.region.height == 2
+        assert auto_speak.region.y == badge.region.y == hands_free.region.y
+        assert badge.region.x + badge.region.width == size[0] - 1
 
-        shell = console.query_one("#console-shell")
-        marker = console.query_one("#console-compact-status-marker", Static)
-        assert not shell.has_class("-console-compact")
-        assert marker.display is False
+        painted = _compositor_text(host.export_screenshot(simplify=True))
+        for copy in ("Console", "Speak replies", "Hands-free", _static_text(badge)):
+            assert copy in painted
 
 
 @pytest.mark.asyncio
-async def test_console_compact_marker_keeps_control_actions_on_screen():
-    """Regression: the marker must hug its content width. A bare Static
-    defaults to 1fr and claimed the whole action row at 80x24 during UAT,
-    pushing every control button off the right edge of the screen."""
+@pytest.mark.parametrize("width", [60, 90, 140, 235])
+@pytest.mark.parametrize("status", ["ready", "running", "blocked"])
+async def test_console_header_speech_controls_stay_left_of_status(
+    width: int,
+    status: str,
+) -> None:
+    """The subtitle yields first while fixed header controls stay on one row."""
+    app = _build_test_app()
+    host = ConsoleLayoutHarness(app)
+
+    async with host.run_test(size=(width, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-auto-speak")
+        await pilot.pause(0.2)
+
+        header = console.query_one("#console-workbench-header")
+        header.sync_state(replace(header.state, status=status, status_label=""))
+        await pilot.pause()
+
+        bar = console.query_one("#console-control-bar")
+        title = console.query_one("#workbench-header-title", Static)
+        subtitle = console.query_one("#workbench-header-subtitle", Static)
+        auto_speak_label = console.query_one("#console-auto-speak-label", Static)
+        auto_speak = console.query_one("#console-auto-speak", Switch)
+        hands_free_label = console.query_one("#console-hands-free-label", Static)
+        hands_free = console.query_one("#console-hands-free-switch", Switch)
+        badge = console.query_one("#workbench-header-status", Static)
+        retry = console.query_one("#console-auto-speak-retry", Button)
+        resume = console.query_one("#console-auto-speak-resume", Button)
+
+        assert bar.region.height == 1
+        row_y = badge.region.y
+        assert all(
+            widget.region.y == row_y
+            for widget in (
+                title,
+                subtitle,
+                auto_speak_label,
+                auto_speak,
+                hands_free_label,
+                hands_free,
+            )
+        )
+        assert title.region.width > 0
+        assert auto_speak.region.width >= 4
+        assert hands_free.region.width >= 4
+        assert subtitle.region.x + subtitle.region.width <= auto_speak_label.region.x
+        assert (
+            auto_speak.region.x + auto_speak.region.width <= hands_free_label.region.x
+        )
+        assert hands_free.region.x + hands_free.region.width + 2 <= badge.region.x
+        assert badge.region.x + badge.region.width == width - 1
+        assert retry.display is False
+        assert resume.display is False
+
+
+@pytest.mark.asyncio
+async def test_console_header_subtitle_yields_width_before_fixed_controls() -> None:
+    """Only the descriptive subtitle shrinks as the terminal narrows."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleLayoutHarness(app)
+
+    async with host.run_test(size=(140, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-auto-speak")
+        subtitle = console.query_one("#workbench-header-subtitle", Static)
+        fixed = tuple(
+            console.query_one(selector)
+            for selector in (
+                "#workbench-header-title",
+                "#console-auto-speak-label",
+                "#console-auto-speak",
+                "#console-hands-free-label",
+                "#console-hands-free-switch",
+                "#workbench-header-status",
+            )
+        )
+        await pilot.pause()
+        wide_subtitle_width = subtitle.region.width
+        wide_fixed_widths = tuple(widget.region.width for widget in fixed)
+
+        await pilot.resize_terminal(60, 30)
+        await pilot.pause(0.2)
+
+        assert subtitle.region.width < wide_subtitle_width
+        assert tuple(widget.region.width for widget in fixed) == wide_fixed_widths
+        assert str(subtitle.styles.text_overflow) == "ellipsis"
+        painted = _compositor_text(host.export_screenshot(simplify=True))
+        assert "Speak replies" in painted
+        assert "Hands-free" in painted
+
+
+@pytest.mark.asyncio
+async def test_console_recovery_controls_resize_bar_one_two_one() -> None:
+    """Recovery visibility and bar height change atomically without a blank row."""
+    app = _build_test_app()
+    host = ConsoleLayoutHarness(app)
+
+    async with host.run_test(size=(90, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-auto-speak-retry")
+        bar = console.query_one("#console-control-bar")
+        retry = console.query_one("#console-auto-speak-retry", Button)
+        resume = console.query_one("#console-auto-speak-resume", Button)
+
+        assert bar.region.height == 1
+        bar.sync_auto_speak(
+            enabled=True,
+            paused=True,
+            retry_available=True,
+        )
+        await pilot.pause()
+
+        assert bar.region.height == 2
+        assert retry.display is True
+        assert resume.display is True
+        assert retry.region.width > 0
+        assert resume.region.width > 0
+
+        bar.sync_auto_speak(enabled=True, paused=False)
+        await pilot.pause()
+
+        assert bar.region.height == 1
+        assert retry.display is False
+        assert resume.display is False
+
+
+@pytest.mark.asyncio
+async def test_console_retry_speech_button_routes_without_resuming() -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(90, 24)) as pilot:
+    async with host.run_test(size=(90, 30)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-compact-status-marker")
-        shell = console.query_one("#console-shell")
-        marker = console.query_one("#console-compact-status-marker", Static)
-        await _wait_for_condition(
-            pilot, lambda: shell.has_class("-console-compact") and marker.display
+        await _wait_for_selector(console, pilot, "#console-auto-speak-retry")
+        retry = MagicMock()
+        resume = MagicMock()
+        console._console_auto_speak.request_retry = retry
+        console._console_auto_speak.request_resume = resume
+        bar = console.query_one("#console-control-bar")
+        bar.sync_auto_speak(
+            enabled=True,
+            paused=True,
+            retry_available=True,
         )
+        await pilot.pause()
 
-        row = console.query_one("#console-control-action-row")
-        buttons = [
-            child
-            for child in row.children
-            if getattr(child, "_workbench_action_id", "")
-        ]
-        assert buttons, "control actions must stay mounted next to the marker"
-        for button in buttons:
-            assert button.display is True
-            assert button.region.y == marker.region.y
-            assert button.region.x + button.region.width <= 90
+        await pilot.click("#console-auto-speak-retry")
+        await pilot.pause()
+
+        retry.assert_called_once_with()
+        resume.assert_not_called()
 
 
 @pytest.mark.asyncio

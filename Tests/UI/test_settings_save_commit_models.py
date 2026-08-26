@@ -90,6 +90,26 @@ async def test_staged_fields_document_staged_save_in_the_inspector():
 
 
 @pytest.mark.asyncio
+async def test_console_display_name_documents_staged_save_in_the_inspector():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(160, 50)) as pilot:
+        await _click_settings_category(pilot, "console-behavior")
+        screen = _active_destination_screen(host)
+        screen.query_one(
+            "#settings-console-default-user-display-name", Input
+        ).focus()
+        await pilot.pause()
+
+        text = _visible_text(screen)
+        assert "Purpose: Default speaker label for chats without a per-chat override." in text
+        assert "Saved as: chat_defaults." in text
+        assert "user_display_name" in text
+        assert STAGED_SAVE_ROW in text
+
+
+@pytest.mark.asyncio
 async def test_model_catalog_fields_document_instant_apply_in_the_inspector():
     """AC3: focusing an auto-refresh toggle says it applies immediately."""
     app = _build_test_app()
@@ -151,6 +171,7 @@ def test_guidance_row_builders_keep_a_uniform_row_count():
         "settings-provider-manual-value",
         "settings-model-value",
         "settings-provider-endpoint-value",
+        "settings-provider-api-mode",
         "settings-provider-api-key",
         "settings-provider-credential-env-var",
         "settings-model-profile-temperature",

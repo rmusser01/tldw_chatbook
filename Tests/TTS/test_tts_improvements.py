@@ -30,7 +30,6 @@ try:
         TTSCompleteEvent,
         TTSPlaybackEvent,
         TTSProgressEvent,
-        TTSExportEvent,
         play_audio_file,
         CostTracker,
     )
@@ -41,7 +40,6 @@ except ImportError:
     TTSCompleteEvent = None
     TTSPlaybackEvent = None
     TTSProgressEvent = None
-    TTSExportEvent = None
     play_audio_file = None
     CostTracker = None
 try:
@@ -382,29 +380,28 @@ class TestTTSEventHandler:
         assert artifact is not None
         assert not artifact.exists()
 
-    @pytest.mark.asyncio
-    async def test_export_functionality(self, handler, tmp_path):
-        """Test audio export with custom naming"""
-        # Create a mock audio file
-        test_audio = tmp_path / "test_audio.mp3"
-        test_audio.write_bytes(b"fake audio data")
+    def test_per_message_export_surface_stays_retired(self, handler):
+        """The TTSExportEvent path was retired, not just left unwired.
 
-        # Add to handler's audio files
-        handler._audio_files["test_msg"] = test_audio
-
-        # Export to custom location
-        export_path = tmp_path / "exports" / "my_audio.mp3"
-        event = TTSExportEvent("test_msg", export_path, include_metadata=True)
-
-        await handler.handle_tts_export(event)
-
-        # Check file was exported
-        assert export_path.exists()
-        assert export_path.read_bytes() == b"fake audio data"
-
-        # Check metadata was created
-        metadata_path = export_path.with_suffix(".mp3.json")
-        assert metadata_path.exists()
+        task-16837: `TTSExportEvent` was never constructed or posted in
+        production, and `TTSEventHandler` is a plain class (no MessagePump
+        name-dispatch), so `on_tts_export_event` was unreachable by
+        construction. The export half -- event, both handlers, the
+        `_exporting_audio_refcounts` claim machinery, and the shutdown
+        sweep's claim snapshot/union -- was deleted. The user-reachable
+        audio export lives on the Speech playground path
+        (`UI/Speech/speech_playback_mixin.py::_export_audio` /
+        `_handle_audio_export`, driven by `#audio-export-btn`); the
+        `STTSEventHandler` export method this docstring once cited was
+        itself orphaned and removed in task-19043. This pin keeps the dead
+        surface from being reintroduced without a real dispatch path and
+        the concurrency review (F6/F4 of the task-16199 review) it would
+        then owe.
+        """
+        assert not hasattr(tts_events_module, "TTSExportEvent")
+        assert not hasattr(handler, "handle_tts_export")
+        assert not hasattr(handler, "on_tts_export_event")
+        assert not hasattr(handler, "_exporting_audio_refcounts")
 
     @pytest.mark.asyncio
     async def test_audio_cleanup_keeps_ownership_until_secure_delete_succeeds(
@@ -613,6 +610,32 @@ class TestTTSEventHandler:
         # (message_id, path) pair, always the most recently played one.
         assert not hasattr(handler, "_last_played_audio_files")
         assert handler._last_played == ("msg-4", last_audio)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_sweep_still_deletes_cached_and_retry_artifacts(
+        self, handler, tmp_path
+    ):
+        """Retiring the export claims must not soften the sweep itself.
+
+        task-16837 removed the claim snapshot/union/skip branches from
+        `cleanup_tts_resources` (they guarded exports that could never be
+        posted). This pins the surviving contract: the sweep still
+        secure-deletes every cached artifact and every retry-set path.
+        """
+        cached_audio = tmp_path / "cached.mp3"
+        cached_audio.write_bytes(b"cached audio")
+        handler._audio_files["msg-cached"] = cached_audio
+
+        retry_audio = tmp_path / "retry.mp3"
+        retry_audio.write_bytes(b"retry audio")
+        handler._artifact_cleanup_retry.add(retry_audio)
+
+        await asyncio.wait_for(handler.cleanup_tts_resources(), timeout=10)
+
+        assert not cached_audio.exists()
+        assert not retry_audio.exists()
+        assert handler._audio_files == {}
+        assert handler._artifact_cleanup_retry == set()
 
 
 class TestAudioPlayer:

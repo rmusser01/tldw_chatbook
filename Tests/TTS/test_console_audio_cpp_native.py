@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import stat
 import struct
 import threading
@@ -26,15 +27,20 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
 )
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapter_types import (
+    AudioCppCloneCapabilityAdmission,
     ProgressSink,
     ProviderHealth,
     TTSAudioResponse,
     TTSModelInfo,
+    TTSNativeCapabilitySnapshot,
+    TTSOperationError,
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderSpec,
     TTSRequest,
     TTSVoiceDiscoveryResult,
+    _AdmittedAudioCppCloneRequest,
+    _new_audio_cpp_clone_capability,
 )
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
@@ -44,7 +50,18 @@ from tldw_chatbook.TTS.effective_settings import (
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
-from tldw_chatbook.TTS.profile_service import LoadedCharacterTTSAssignment
+from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneReferenceMaterializer,
+)
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneRecipeRequirement,
+)
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_service import (
+    LoadedCharacterTTSAssignment,
+    TTSProfileService,
+)
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -52,7 +69,10 @@ from tldw_chatbook.TTS.profile_types import (
     TTSGenerationProfile,
     TTSProfileDraft,
 )
-from tldw_chatbook.TTS.TTS_Generation import TTSService
+from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppGuidedDependencySnapshot,
+    TTSService,
+)
 
 from Tests.TTS_Events.test_spoken_feedback_streaming import _RecordingSink
 
@@ -74,6 +94,20 @@ _WAV_CHUNKS = (
     b"\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x40\x00\x00\x00"
     + bytes((i * 7 + 3) % 256 for i in range(64)),
 )
+
+
+def test_cleanup_failure_uses_non_retrying_console_recovery_copy() -> None:
+    error = TTSOperationError(
+        code="cleanup_failed",
+        message="Managed audio.cpp cleanup did not complete",
+        retryable=False,
+        operation_id="audio_cpp_managed",
+        recovery_action="open_diagnostics",
+    )
+
+    assert TTSEventHandler._tts_error_copy(error) == (
+        "TTS cleanup did not complete; restart Chatbook before retrying"
+    )
 
 
 def _valid_wav_body(
@@ -240,6 +274,78 @@ class _CapturingAdapter:
 
     async def close(self) -> None:
         return
+
+
+class _CloneCapturingAdapter(_CapturingAdapter):
+    """Native clone fake that records the exact admitted private owner."""
+
+    def __init__(self, timeline: list[str]) -> None:
+        super().__init__(timeline)
+        self._identity = object()
+        self._capability: AudioCppCloneCapabilityAdmission | None = None
+        self.clone_requests: list[_AdmittedAudioCppCloneRequest] = []
+        self.clone_reference_bytes: list[bytes] = []
+        self.clone_reference_texts: list[str] = []
+        self.ensure_ready_calls = 0
+
+    async def ensure_ready(self) -> None:
+        self.ensure_ready_calls += 1
+
+    def preflight_clone_source(self) -> None:
+        return
+
+    def preflight_clone_dependency(
+        self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        assert requirement == TTSCloneRecipeRequirement(
+            recipe_id="pocket_tts",
+            recipe_revision=1,
+            model_id="clone-model",
+        )
+
+    def preflight_clone_request_dependency(
+        self,
+        request: TTSRequest,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        assert request.model_id == requirement.model_id
+        self.preflight_clone_dependency(requirement)
+
+    def admit_clone_capability(
+        self,
+        request: TTSRequest,
+    ) -> AudioCppCloneCapabilityAdmission:
+        capability = _new_audio_cpp_clone_capability(
+            adapter_identity=self._identity,
+            capability_token=object(),
+            model_id=request.model_id,
+            recipe_id="pocket_tts",
+            recipe_revision=1,
+            process_generation=7,
+            request=request,
+        )
+        self._capability = capability
+        return capability
+
+    def release_clone_capability(
+        self,
+        capability: AudioCppCloneCapabilityAdmission,
+    ) -> None:
+        if self._capability is capability:
+            self._capability = None
+
+    async def synthesize_clone(
+        self,
+        request: _AdmittedAudioCppCloneRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        self.clone_requests.append(request)
+        self.clone_reference_bytes.append(
+            request.materialization.voice_ref.read_bytes()
+        )
+        self.clone_reference_texts.append(request.materialization.reference_text)
+        return await super().synthesize(request.request, progress_sink)
 
 
 class _Handler(TTSEventHandler):
@@ -478,6 +584,41 @@ def _external_preferences() -> dict[str, Any]:
             },
         }
     }
+
+
+def _canonical_clone_reference() -> CanonicalTTSCloneReference:
+    frames = 32
+    sample_rate = 16_000
+    pcm = struct.pack("<h", 3) * frames
+    fmt = struct.pack(
+        "<HHIIHH",
+        1,
+        1,
+        sample_rate,
+        sample_rate * 2,
+        2,
+        16,
+    )
+    body = (
+        b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
+    wav = b"RIFF" + struct.pack("<I", len(body)) + body
+    return CanonicalTTSCloneReference(
+        wav_bytes=wav,
+        reference_text="Mira speaks one private reference sentence.",
+        sha256=hashlib.sha256(wav).hexdigest(),
+        byte_length=len(wav),
+        duration_ms=2,
+        sample_rate_hz=sample_rate,
+        channels=1,
+        sample_encoding="pcm_s16le",
+    )
 
 
 class _StaticProfileService:
@@ -778,6 +919,10 @@ async def test_assigned_console_snapshot_uses_exact_profile_and_complete_wav(
         assert character_profile.selection.voice_id == "assigned-voice"
         assert character_profile.repository_generation == 3
         assert character_profile.profile_revision == 5
+        assert character_profile.profile_id == UUID(
+            "11111111-1111-4111-8111-111111111111"
+        )
+        assert character_profile.reference is None
         assert callable(progress_sink)
         assert profile_service.calls == [snapshot.character_ref]
         assert artifact is not None
@@ -802,6 +947,219 @@ async def test_assigned_console_snapshot_uses_exact_profile_and_complete_wav(
 
     assert artifact is not None
     assert not artifact.exists()
+
+
+@pytest.mark.asyncio
+async def test_assigned_clone_profile_stays_passive_until_console_speak(
+    tmp_path: Path,
+) -> None:
+    """The user-facing Speak path owns the first clone provider operation."""
+
+    timeline: list[str] = []
+    adapter = _CloneCapturingAdapter(timeline)
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={"mode": "managed", "managed_setup_source": "guided"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+
+    async def native_capability(
+        provider_id: str,
+        model_id: str,
+        voice_id: str | None,
+    ) -> TTSNativeCapabilitySnapshot:
+        assert (provider_id, model_id, voice_id) == (
+            "audio_cpp",
+            "clone-model",
+            None,
+        )
+        catalog = TTSProviderCatalog(
+            provider_id="audio_cpp",
+            revision=19,
+            health=ProviderHealth(state="available", fresh=True),
+            models=(
+                TTSModelInfo(
+                    model_id="clone-model",
+                    display_name="Pocket TTS",
+                    family="pocket_tts",
+                    upstream_mode="offline",
+                    formats=("wav",),
+                    voices=(),
+                    supports_speed=False,
+                    speech_capabilities=("tts", "clone"),
+                    omit_voice_uses_server_default=True,
+                ),
+            ),
+        )
+        return TTSNativeCapabilitySnapshot(
+            provider_id="audio_cpp",
+            configuration_revision=registry.configuration_revision("audio_cpp"),
+            state="complete",
+            catalog=catalog,
+            voice_results={},
+        )
+
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="global-model-must-not-win",
+            voice_mode="exact",
+            voice_id="global-voice-must-not-win",
+            response_format="wav",
+            speed=1.0,
+        ),
+        native_capability_reader=native_capability,
+        clone_materializer=TTSCloneReferenceMaterializer(tmp_path / "clone-runtime"),
+    )
+    repository = TTSProfileRepository(tmp_path / "voice-profiles.sqlite3")
+    await repository.open()
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-authority",
+        character_id="7",
+    )
+    profile_id = UUID("11111111-1111-4111-8111-111111111111")
+    draft = TTSProfileDraft(
+        display_name="Mira clone voice",
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+    generation = repository.generation
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        model_id="clone-model",
+    )
+    created = await repository.create_profile_with_reference(
+        draft,
+        profile_id,
+        _canonical_clone_reference(),
+        requirement,
+        expected_generation=generation,
+    )
+    await repository.set_assignment(
+        character_ref,
+        profile_id,
+        expected_generation=generation,
+        expected_profile_revision=created.value.revision,
+        expected_current_profile_id=None,
+        expected_profile=created.value,
+    )
+    profile_service = TTSProfileService(repository, service)
+
+    async def exact_dependency(
+        current: TTSCloneRecipeRequirement,
+    ) -> AudioCppGuidedDependencySnapshot:
+        assert current == requirement
+        return AudioCppGuidedDependencySnapshot(
+            state="exact",
+            provider_configuration_revision=registry.configuration_revision(
+                "audio_cpp"
+            ),
+            saved_generation=1,
+            applied_generation=1,
+            pending_configuration=False,
+            saved_requirement=current,
+            applied_requirement=current,
+        )
+
+    service.audio_cpp_guided_dependency_snapshot = exact_dependency  # type: ignore[method-assign]
+
+    # Profile-library and Roleplay assignment reads are deliberately passive.
+    page = await profile_service.list_profiles(offset=0)
+    assigned = await profile_service.get_assigned_profile(character_ref)
+    assert [profile.profile_id for profile in page.profiles] == [profile_id]
+    assert assigned.snapshot is not None
+    assert assigned.snapshot.profile.profile_id == profile_id
+    assert adapter.ensure_ready_calls == 0
+    assert adapter.clone_requests == []
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id=character_ref.authority_id,
+        character_id=7,
+        character_name="Mira",
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Mira answers using her assigned clone voice.",
+    )
+    snapshot = store.issue_tts_message_speech_snapshot(message.id)
+    assert snapshot.character_ref == character_ref
+
+    async def load_profile_service() -> TTSProfileService:
+        return profile_service
+
+    handler = _Handler(timeline, load_profile_service)
+    handler._request_cooldown = {}
+    handler._tts_service = service
+    artifact: Path | None = None
+    materialized_path: Path | None = None
+    try:
+        await handler.handle_tts_request(
+            TTSMessageSpeechRequestEvent(
+                snapshot,
+                store.validate_tts_message_speech_snapshot,
+            )
+        )
+        await asyncio.wait_for(handler.completion_posted.wait(), timeout=_WAIT_SECONDS)
+        completion = next(
+            event for event in handler.messages if isinstance(event, TTSCompleteEvent)
+        )
+        artifact = completion.audio_file
+
+        assert completion.error is None
+        assert adapter.ensure_ready_calls == 1
+        assert len(adapter.clone_requests) == 1
+        admitted = adapter.clone_requests[0]
+        materialized_path = admitted.materialization.voice_ref
+        assert admitted.request == TTSRequest(
+            provider_id="audio_cpp",
+            model_id="clone-model",
+            text="Mira answers using her assigned clone voice.",
+            voice=None,
+            response_format="wav",
+            speed=1.0,
+            options={},
+        )
+        assert adapter.clone_reference_texts == [
+            "Mira speaks one private reference sentence."
+        ]
+        assert adapter.clone_reference_bytes == [_canonical_clone_reference().wav_bytes]
+        assert not admitted.materialization.voice_ref.exists()
+        assert artifact is not None
+        assert artifact.read_bytes() == b"".join(_WAV_CHUNKS)
+        assert timeline == ["stream-drained", "completion-posted"]
+    finally:
+        await handler.cleanup_tts_resources()
+        await service.close()
+        await service.wait_closed()
+        await repository.close()
+
+    assert artifact is not None
+    assert not artifact.exists()
+    assert materialized_path is not None
+    assert not materialized_path.exists()
 
 
 @pytest.mark.asyncio

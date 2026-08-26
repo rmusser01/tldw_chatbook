@@ -87,11 +87,12 @@ def test_run_git_timeout() -> None:
 
 def test_run_git_output_cap(tmp_git_repo: Path) -> None:
     result = run_git(["git", "--version"], max_output_bytes=4)
+    combined_output = result.stdout + result.stderr
     assert result.truncated is True
-    assert result.stdout.startswith("git ")
-    assert "truncated" in result.stdout
+    assert result.stdout.startswith("git ") or result.stderr.startswith("git:")
+    assert "truncated" in combined_output
     # The bounded read killed the process at the cap instead of buffering it.
-    assert len(result.stdout) < 100
+    assert len(combined_output) < 100
 
 
 def test_run_git_env_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:

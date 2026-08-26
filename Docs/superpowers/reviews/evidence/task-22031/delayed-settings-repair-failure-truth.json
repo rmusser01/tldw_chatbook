@@ -1,0 +1,23 @@
+{
+  "config_library_open": false,
+  "conversation_preference_open": false,
+  "disk_library_open": false,
+  "durable_library_open": false,
+  "last_notice_severity": "warning",
+  "media_preference_open": false,
+  "mounted_effective_open": false,
+  "physical_toml": "[library.reader]\nlibrary_open = false\n",
+  "svg": "delayed-settings-repair-failure-truth.svg",
+  "writes": [
+    [
+      "library.reader",
+      "library_open",
+      false
+    ],
+    [
+      "library.reader",
+      "library_open",
+      true
+    ]
+  ]
+}

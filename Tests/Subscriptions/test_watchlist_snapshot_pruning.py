@@ -25,7 +25,6 @@ import pytest
 
 from Tests.Subscriptions.test_watchlist_content_kind_producer import (
     _check,
-    _serve,
     _site_source,
     _stored_items,
 )
@@ -591,3 +590,49 @@ async def test_the_tie_break_decides_which_tied_row_is_pruned(monkeypatch):
     assert all(row["id"] > min(seeded) for row in survivors), (
         "the oldest tied rows are the ones pruned"
     )
+
+
+@pytest.mark.asyncio
+async def test_prune_diagnostic_omits_the_monitored_url(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Subscriptions import monitoring_engine
+
+    db, _service, source_id = await _site_source(monkeypatch, [_page("seed")])
+    private_url = (
+        "https://PRIVATE_USER:PRIVATE_PASSWORD@example.test/PRIVATE_PATH"
+        "?api_key=PRIVATE_QUERY#PRIVATE_FRAGMENT"
+    )
+    captured: list[str] = []
+
+    def capture(message: str, *args) -> None:
+        captured.append(message.format(*args))
+
+    monkeypatch.setattr(
+        monitoring_engine,
+        "logger",
+        SimpleNamespace(debug=capture),
+    )
+    monitor = monitoring_engine.URLMonitor(db)
+    for index in range(_cap() + 1):
+        await monitor._store_snapshot(
+            source_id,
+            private_url,
+            {"text": f"revision {index}", "html": "", "headers": {}},
+            fingerprint="fp",
+        )
+
+    message = next(text for text in captured if text.startswith("Pruned "))
+    assert message == (
+        f"Pruned 1 snapshot(s) for subscription {source_id}, "
+        f"keeping the newest {_cap()}"
+    )
+    for forbidden in (
+        private_url,
+        "PRIVATE_USER",
+        "PRIVATE_PASSWORD",
+        "PRIVATE_PATH",
+        "PRIVATE_QUERY",
+        "PRIVATE_FRAGMENT",
+    ):
+        assert forbidden not in message

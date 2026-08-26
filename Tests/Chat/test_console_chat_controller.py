@@ -1,5 +1,7 @@
 import asyncio
 import json
+import threading
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +14,8 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents import run_log as run_log_module
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat import console_history_budget
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -19,6 +23,12 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_mcp_review_hook,
 )
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleProviderSelection,
@@ -29,8 +39,44 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDispatchCheckpointState,
+    ConsoleDispatchResultStatus,
+    ConsoleDispatchWriteResult,
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnExecutionContext,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 class BlockedGateway:
@@ -61,12 +107,92 @@ class StreamingGateway:
                 "model": "test-model",
                 "base_url": "http://127.0.0.1:9099",
                 "visible_copy": "",
+                "resolved_destination": ConsoleResolvedDestination(
+                    provider="llama_cpp",
+                    model="test-model",
+                    endpoint_identity="http://127.0.0.1:9099",
+                    egress_class=ConsoleEgressClass.ON_DEVICE,
+                ),
             },
         )()
 
     async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):
             yield chunk
+
+
+def _library_authority(attempt_id: str) -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=1,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "model-a", None),
+        attempt_id=attempt_id,
+    )
+
+
+def _begin_controller_disclosure(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    content: str = "",
+) -> tuple[object, ConsoleTurnExecutionContext]:
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    baseline = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority("attempt-baseline"),
+        local,
+        baseline.id,
+    )
+    store.append_stream_chunk(baseline.id, "baseline")
+    store.mark_message_complete(baseline.id)
+    placeholder = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content=content,
+    )
+    active_authority = _library_authority("attempt-active")
+    store.begin_session_library_destination_attempt(
+        session_id,
+        active_authority,
+        external,
+        placeholder.id,
+    )
+    context = ConsoleTurnExecutionContext(
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session_id,
+            provider_selection=ConsoleProviderSelection(
+                provider="openai",
+                explicit_model="model-a",
+            ),
+            tool_configuration={"agent_runtime_enabled": True},
+        ),
+        library_authority=active_authority,
+        resolved_destination=external,
+    )
+    return placeholder, context
 
 
 class RecordingStreamingGateway(StreamingGateway):
@@ -78,6 +204,57 @@ class RecordingStreamingGateway(StreamingGateway):
         yield "ok"
 
 
+class CharacterEmoteStreamingGateway(StreamingGateway):
+    def __init__(self, *chunks: str):
+        self.chunks = chunks
+        self.messages_seen = None
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.messages_seen = messages
+        for chunk in self.chunks:
+            yield chunk
+
+
+def _activate_character_emote_pack(
+    db: CharactersRAGDB,
+    character_id: int,
+) -> dict:
+    assets = []
+    for index, (expression_key, label) in enumerate(
+        (("happy", "Never expose this label"), ("custom:smug", "Nor this one")),
+        start=1,
+    ):
+        assets.append(
+            {
+                "expression_key": expression_key,
+                "original_expression_key": expression_key,
+                "display_label": label,
+                "source_filename": f"asset-{index}.webp",
+                "storage_relpath": f"fixture/asset-{index}.webp",
+                "content_type": "image/webp",
+                "bytes": index,
+                "sha256": f"{index:064x}",
+                "width": 8,
+                "height": 8,
+                "source_context": {"fixture": True},
+                "is_animated": False,
+                "frame_count": 1,
+            }
+        )
+    return VisualIdentityRepository(db).activate_pack(
+        pack={
+            "title": "Controller emote fixture",
+            "default_expression_key": "happy",
+            "source_kind": "manual",
+            "source_context": {"source_id": "controller.emote.fixture"},
+        },
+        manifest={"schema_id": "fixture/v1"},
+        assets=assets,
+        actor_kind="character",
+        actor_id=character_id,
+    )
+
+
 class CapturingGateway(StreamingGateway):
     def __init__(self):
         self.selection = None
@@ -85,6 +262,46 @@ class CapturingGateway(StreamingGateway):
     async def resolve_for_send(self, selection):
         self.selection = selection
         return await super().resolve_for_send(selection)
+
+
+class ContinuationHistoryGateway(ConsoleProviderGateway):
+    """Real preparation with an in-process dispatch sink."""
+
+    def __init__(self):
+        super().__init__(environ={})
+        self.prepared = None
+        self.prepare_kwargs = None
+
+    async def resolve_for_send(self, selection):
+        return ConsoleProviderResolution(
+            provider="deepseek",
+            base_url="https://api.deepseek.com/v1",
+            model="deepseek-v4-flash",
+            ready=True,
+            readiness_key="deepseek",
+            execution_key="deepseek",
+            max_tokens=10,
+            continuation_protocol="responses",
+            resolved_destination=ConsoleResolvedDestination(
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                endpoint_identity="https://api.deepseek.com/v1",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    def prepare_chat_request(self, resolution, messages, **kwargs):
+        self.prepare_kwargs = kwargs
+        return super().prepare_chat_request(
+            resolution,
+            messages,
+            context_window_override_tokens=600,
+            **kwargs,
+        )
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.prepared = messages
+        yield "ok"
 
 
 class WipBlockedGateway:
@@ -138,10 +355,111 @@ class FakePersistence:
         self.created_conversations = []
         self.created_messages = []
         self.updated_messages = []
+        self.console_library_policy_repository = SimpleNamespace(read=self._read_policy)
+        self.console_dispatch_repository = self
+        self._policy_snapshot = None
+        self._checkpoint = None
+
+    def _read_policy(self, conversation_id):
+        del conversation_id
+        return SimpleNamespace(durable_policy=object(), snapshot=self._policy_snapshot)
+
+    def _cas_state(self, transition):
+        checkpoint = self._checkpoint
+        if checkpoint is None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.NOT_FOUND, None, None, None
+            )
+        checkpoint = replace(
+            checkpoint,
+            state=transition.new_state,
+            checkpoint_revision=checkpoint.checkpoint_revision + 1,
+            assistant_message_version=checkpoint.assistant_message_version + 1,
+            attempt_id=transition.new_attempt_id,
+        )
+        self._checkpoint = checkpoint
+        return ConsoleDispatchWriteResult(
+            ConsoleDispatchResultStatus.COMMITTED,
+            checkpoint,
+            checkpoint.assistant_message_version,
+            "fake-payload-hash",
+        )
+
+    cas_state = _cas_state
+
+    def settle_with_assistant(self, settlement):
+        checkpoint = self._checkpoint
+        if checkpoint is None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.NOT_FOUND, None, None, None
+            )
+        self.updated_messages.append(
+            {
+                "message_id": settlement.assistant_message_id,
+                "content": settlement.content,
+                "image_data": None,
+                "image_mime_type": None,
+                "parent_message_id": None,
+                "feedback": None,
+                "update_parent": False,
+                "update_feedback": False,
+            }
+        )
+        self._checkpoint = None
+        return ConsoleDispatchWriteResult(
+            ConsoleDispatchResultStatus.COMMITTED,
+            None,
+            checkpoint.assistant_message_version + 1,
+            "fake-terminal-hash",
+        )
 
     def create_conversation(self, **kwargs):
         self.created_conversations.append(kwargs)
         return "conv-1"
+
+    def commit_durable_turn(self, *, acceptance, policy_candidate, conversation_kwargs):
+        """Model the atomic adapter contract for durable controller tests."""
+        self._policy_snapshot = ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy_candidate.auto_retrieve,
+            assistant_access=policy_candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
+        self.created_conversations.append(dict(conversation_kwargs))
+        self.created_messages.extend(
+            (
+                {
+                    "conversation_id": acceptance.conversation_id,
+                    "sender": "user",
+                    "content": acceptance.user_content,
+                    "message_id": acceptance.user_message_id,
+                },
+                {
+                    "conversation_id": acceptance.conversation_id,
+                    "sender": "assistant",
+                    "content": "",
+                    "message_id": acceptance.assistant_message_id,
+                },
+            )
+        )
+        checkpoint = ConsoleDispatchCheckpoint(
+            assistant_message_id=acceptance.assistant_message_id,
+            user_message_id=acceptance.user_message_id,
+            conversation_id=acceptance.conversation_id,
+            preparation_id=acceptance.preparation_id,
+            attempt_id=acceptance.attempt_id,
+            state=ConsoleDispatchCheckpointState.ACCEPTED,
+            checkpoint_revision=1,
+            user_message_version=1,
+            assistant_message_version=1,
+            origin=acceptance.origin,
+            queue_entry_id=acceptance.queue_entry_id,
+            frozen_authority=acceptance.frozen_authority,
+            resolved_destination=acceptance.resolved_destination,
+            reconstructability=acceptance.reconstructability,
+        )
+        self._checkpoint = checkpoint
+        return checkpoint
 
     def create_message(
         self,
@@ -193,6 +511,79 @@ class FakePersistence:
             }
         )
         return True
+
+
+def _roleplay_controller_fixture() -> tuple[
+    ConsoleChatController, ConsoleChatStore, object
+]:
+    """Build a character chat whose trusted projections still say User."""
+    store = ConsoleChatStore()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", system_prompt="Speak with User."
+    )
+    session = store.create_session(
+        settings=settings,
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.character_system_template = "Speak with {{user}}."
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Hello User.",
+        metadata=MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{user}}.",
+        ),
+    )
+    session.user_display_name_override = "Captain Rowan"
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        system_prompt="Speak with User.",
+        global_user_display_name=lambda: "User",
+    )
+    return controller, store, session
+
+
+def test_roleplay_provider_messages_use_live_system_and_greeting_projection():
+    controller, store, session = _roleplay_controller_fixture()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Say {{user}} literally",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Generated {{user}} literally",
+    )
+
+    payload = controller._provider_messages_for_session(session.id)
+
+    assert payload[0]["role"] == "system"
+    assert payload[0]["content"].startswith("Speak with Captain Rowan.\n\n")
+    assert payload[0]["content"].endswith("Hello Captain Rowan.")
+    assert payload[1]["content"] == "Say {{user}} literally"
+    assert payload[2]["content"] == "Generated {{user}} literally"
+    assert all("Hello User" not in row["content"] for row in payload)
+
+
+@pytest.mark.asyncio
+async def test_roleplay_context_snapshot_matches_live_send_projection():
+    controller, store, session = _roleplay_controller_fixture()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Continue",
+    )
+
+    expected = controller._provider_messages_for_session(session.id)
+    snapshot = await controller.build_context_snapshot(draft="")
+
+    assert snapshot.next_send_payload["messages"] == expected
+    assert snapshot.next_send_payload["system"] == [expected[0]]
+    assert snapshot.current_messages[0].content == "Hello Captain Rowan."
 
 
 def test_controller_creates_and_switches_sessions():
@@ -413,8 +804,6 @@ async def test_blocked_send_persists_no_durable_record():
     durable record (no conversation, no message), so it cannot re-enter the next
     send's context after a resume/restart and leaves no orphan row. The in-memory
     echo is still shown (feedback) and failed (in-session context exclusion)."""
-    from Tests.Chat.test_console_chat_store import FakePersistence
-
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
     controller = ConsoleChatController(store=store, provider_gateway=BlockedGateway())
@@ -434,8 +823,6 @@ async def test_accepted_send_persists_the_deferred_user_echo():
     """TASK-485: once a send is accepted the deferred USER echo is flushed to the
     durable conversation, so a reload shows the user's prompt (not just the
     assistant reply) — the successful path must not regress to a missing echo."""
-    from Tests.Chat.test_console_chat_store import FakePersistence
-
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
@@ -448,11 +835,8 @@ async def test_accepted_send_persists_the_deferred_user_echo():
 
 
 @pytest.mark.asyncio
-async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
-    """TASK-457(a) (code-review finding 1): a skill-substitution refusal after
-    the optimistic echo is a block outcome like the not-ready / probe-raise
-    paths — the echoed USER row must be failed so the refused command cannot
-    leak into the next send's provider context (skip_failed only drops failed)."""
+async def test_skill_refuse_after_preparation_removes_transient_echo():
+    """A preaccept refusal removes only the preparation's transient USER echo."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
@@ -465,15 +849,13 @@ async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
 
     assert result.accepted is False
     messages = store.messages_for_session(store.active_session_id)
-    assert messages[0].role.value == "user"
-    assert messages[0].status == "failed"
+    assert all(message.role.value != "user" for message in messages)
+    assert store.preparation_for_session(store.active_session_id) is None
 
 
 @pytest.mark.asyncio
-async def test_dictionary_apply_raise_after_optimistic_echo_marks_row_blocked():
-    """TASK-457(a) (code-review finding 1): a raise from chat-dictionary / world-
-    info application (or prefill) after the optimistic echo must also fail the
-    echoed row so a never-sent message cannot leak into the next send."""
+async def test_dictionary_apply_raise_after_preparation_removes_transient_echo():
+    """A composition error removes its volatile preparation and transient echo."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
@@ -486,8 +868,8 @@ async def test_dictionary_apply_raise_after_optimistic_echo_marks_row_blocked():
         await controller.submit_draft("hello")
 
     messages = store.messages_for_session(store.active_session_id)
-    assert messages[0].role.value == "user"
-    assert messages[0].status == "failed"
+    assert all(message.role.value != "user" for message in messages)
+    assert store.preparation_for_session(store.active_session_id) is None
 
 
 @pytest.mark.asyncio
@@ -610,6 +992,217 @@ async def test_submit_draft_preserves_system_prompt_formatting_verbatim():
         {"role": "system", "content": formatted_prompt},
         {"role": "user", "content": "hello"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_character_dispatch_shares_active_pack_prompt_and_capture_snapshot(
+    tmp_path,
+):
+    db = CharactersRAGDB(tmp_path / "controller-emote.db", "controller-emote")
+    try:
+        character_id = int(db.add_character_card({"name": "Emote actor"}))
+        graph = _activate_character_emote_pack(db, character_id)
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp",
+                system_prompt="Stay in character.",
+            ),
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            character_id=character_id,
+        )
+        gateway = CharacterEmoteStreamingGateway(
+            "Emote: sm",
+            "ug\nVisible answer",
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            system_prompt="Stay in character.",
+        )
+
+        result = await controller.submit_draft("hello", session_id=session.id)
+
+        assert result.accepted is True
+        assert gateway.messages_seen[0]["role"] == "system"
+        prompt = gateway.messages_seen[0]["content"]
+        assert prompt.startswith("Stay in character.\n\n")
+        assert "Prefer these available states: smug, happy." in prompt
+        assert "Never expose this label" not in prompt
+        assert "Nor this one" not in prompt
+        assert session.settings.system_prompt == "Stay in character."
+        completed = store.messages_for_session(session.id)[-1]
+        assert completed.content == "Visible answer"
+        assert completed.metadata.character_emote.pack_id == graph["pack"]["id"]
+        assert (
+            completed.metadata.character_emote.pack_version_id
+            == graph["version"]["id"]
+        )
+        assert completed.metadata.character_emote.expression_key == "custom:smug"
+        smug_asset = next(
+            asset for asset in graph["assets"] if asset["expression_key"] == "custom:smug"
+        )
+        assert completed.metadata.character_emote.asset_id == smug_asset["id"]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_server_character_without_local_pack_still_sanitizes_controls():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", system_prompt=""),
+        runtime_backend="server",
+        assistant_kind="character",
+        assistant_id="server-character-id",
+        assistant_authority_id="server-profile",
+    )
+    gateway = CharacterEmoteStreamingGateway("Emote: happy\nHello")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    await controller.submit_draft("hello", session_id=session.id)
+
+    assert gateway.messages_seen[0]["role"] == "system"
+    assert gateway.messages_seen[0]["content"].startswith(
+        "When the character expression should change"
+    )
+    completed = store.messages_for_session(session.id)[-1]
+    assert completed.content == "Hello"
+    assert completed.metadata.character_emote.mood_label == "happy"
+    assert completed.metadata.character_emote.fallback_reason == "no_active_pack"
+
+
+@pytest.mark.asyncio
+async def test_generic_dispatch_does_not_arm_character_emote_protocol():
+    store = ConsoleChatStore()
+    gateway = CharacterEmoteStreamingGateway("Emote: happy\nHello")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    await controller.submit_draft("hello")
+
+    assert gateway.messages_seen == [{"role": "user", "content": "hello"}]
+    completed = store.messages_for_session(store.active_session_id)[-1]
+    assert completed.content == "Emote: happy\nHello"
+    assert completed.metadata is None
+
+
+@pytest.mark.asyncio
+async def test_character_pack_read_failure_is_content_free_and_fail_soft():
+    class RaisingRepository:
+        def get_active_actor_pack(self, actor_kind, actor_id):
+            raise RuntimeError("secret repository detail")
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+    )
+    gateway = CharacterEmoteStreamingGateway("Emote: happy\nHello")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller._visual_identity_repository = RaisingRepository()
+
+    result = await controller.submit_draft("hello", session_id=session.id)
+
+    assert result.accepted is True
+    completed = store.messages_for_session(session.id)[-1]
+    assert completed.content == "Hello"
+    assert completed.metadata.character_emote.actor_id == 7
+    assert completed.metadata.character_emote.fallback_reason == "resolver_error"
+
+
+@pytest.mark.asyncio
+async def test_character_retry_without_chunks_preserves_prior_emote_metadata():
+    class FailingCharacterEmoteGateway(StreamingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            yield "Emote: sad\nPartial"
+            raise RuntimeError("provider failed after one chunk")
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        runtime_backend="server",
+        assistant_kind="character",
+        assistant_id="server-character-id",
+        assistant_authority_id="server-profile",
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=FailingCharacterEmoteGateway(),
+    )
+    await controller.submit_draft("hello", session_id=session.id)
+    failed = _last_failed_assistant(store, session.id)
+    prior_metadata = failed.metadata
+
+    controller.provider_gateway = EmptyStreamingGateway()
+    await controller.retry_message(failed.id)
+
+    after = store.get_message(failed.id)
+    assert after.content == "Partial"
+    assert after.metadata == prior_metadata
+
+
+@pytest.mark.asyncio
+async def test_character_snapshot_retries_when_actor_changes_during_pack_read():
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingRepository:
+        def get_active_actor_pack(self, actor_kind, actor_id):
+            assert actor_kind == "character"
+            if actor_id == 7:
+                started.set()
+                assert release.wait(2)
+                state = "old_state"
+                identity = 70
+            else:
+                state = "new_state"
+                identity = 80
+            return {
+                "pack": {"id": identity},
+                "version": {"id": identity + 1},
+                "assets": [
+                    {
+                        "id": identity + 2,
+                        "expression_key": f"custom:{state}",
+                    }
+                ],
+            }
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+    )
+    gateway = CharacterEmoteStreamingGateway("Emote: new_state\nHello")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller._visual_identity_repository = BlockingRepository()
+
+    task = asyncio.create_task(controller.submit_draft("hello", session_id=session.id))
+    for _attempt in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0)
+    assert started.is_set()
+    session.assistant_id = "8"
+    session.character_id = 8
+    session.identity_revision += 1
+    release.set()
+
+    result = await task
+
+    assert result.accepted is True
+    prompt = gateway.messages_seen[0]["content"]
+    assert "new_state" in prompt
+    assert "old_state" not in prompt
+    completed = store.messages_for_session(session.id)[-1]
+    assert completed.content == "Hello"
+    assert completed.metadata.character_emote.actor_id == 8
+    assert completed.metadata.character_emote.pack_id == 80
 
 
 @pytest.mark.asyncio
@@ -982,6 +1575,7 @@ async def test_close_streaming_session_result_does_not_set_dispatch_gap_toast_fl
     own dispatch-gap call site (the DISPATCHED session closing before the
     worker got a chance to run at all -- no other signal exists there) sets
     it."""
+
     class WaitingGateway(StreamingGateway):
         def __init__(self):
             self.started = asyncio.Event()
@@ -1032,7 +1626,9 @@ async def test_submit_draft_dispatch_gap_session_closed_sets_toast_flag_with_inf
 
     assert result.accepted is True
     assert result.session_closed is True
-    assert result.visible_copy == "Console session closed before your message could send."
+    assert (
+        result.visible_copy == "Console session closed before your message could send."
+    )
 
 
 @pytest.mark.asyncio
@@ -1465,9 +2061,7 @@ async def test_leading_greeting_folds_into_system_row_not_message_array():
     # The message array itself stays user-first with no assistant greeting.
     rest = sent[1:]
     assert rest[0]["role"] == "user"
-    assert all(
-        "Greetings, traveler." not in (m.get("content") or "") for m in rest
-    )
+    assert all("Greetings, traveler." not in (m.get("content") or "") for m in rest)
 
 
 @pytest.mark.asyncio
@@ -1559,7 +2153,7 @@ def _auto_title_controller() -> ConsoleChatController:
 @pytest.mark.asyncio
 async def test_submit_draft_auto_titles_default_session_from_first_message():
     controller = _auto_title_controller()
-    session = controller.new_session()
+    session = controller.new_session(ephemeral=True)
     assert session.title == "Chat 1"
 
     await controller.submit_draft("fix the login bug in the auth flow")
@@ -1570,7 +2164,7 @@ async def test_submit_draft_auto_titles_default_session_from_first_message():
 @pytest.mark.asyncio
 async def test_submit_draft_preserves_user_renamed_session_title():
     controller = _auto_title_controller()
-    session = controller.new_session()
+    session = controller.new_session(ephemeral=True)
     controller.store.rename_session(session.id, "My research thread")
 
     await controller.submit_draft("hello there")
@@ -1581,7 +2175,7 @@ async def test_submit_draft_preserves_user_renamed_session_title():
 @pytest.mark.asyncio
 async def test_submit_draft_does_not_retitle_after_first_send():
     controller = _auto_title_controller()
-    controller.new_session()
+    controller.new_session(ephemeral=True)
 
     await controller.submit_draft("first message decides the title")
     first_title = controller.store.sessions()[0].title
@@ -1622,7 +2216,9 @@ def test_describe_stream_failure_never_leaks_exception_class_names():
         """Stand-in for a provider SDK's own error type."""
 
     for exc in (
-        RuntimeError("Connection refused: llama.cpp server not reachable at http://127.0.0.1:9099"),
+        RuntimeError(
+            "Connection refused: llama.cpp server not reachable at http://127.0.0.1:9099"
+        ),
         ValueError("bad chunk encoding"),
         LlamaCppSDKError("weird sdk state"),
     ):
@@ -1682,9 +2278,7 @@ async def test_active_session_success_stays_silent():
     """FB-05 scope: only failures toast on the viewed session (FB-07's
     positive-feedback gap is task-2154.17, not this one)."""
     store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=StreamingGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     toasts: list[str] = []
     controller.notify_run_failure = toasts.append
 
@@ -2194,13 +2788,21 @@ def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypat
 # ---------------------------------------------------------------------------
 
 
+#: PR2a Task 5: the review hooks take the id of the run whose batch they
+#: are reviewing, and every gate mutation they make is scoped to it. These
+#: hook-level tests each drive ONE run, so they name it once here -- their
+#: assertions are unchanged (what a run stamps is what that run reads);
+#: cross-run isolation is pinned by `Tests/Agents/test_gate_run_scoping.py`.
+RUN = "run-1"
+
+
 class _FakeReviewProvider:
     """Stands in for `MCPToolProvider` in `build_mcp_review_hook` unit tests."""
 
     def __init__(self, gated_names: set[str]) -> None:
         self._gated_names = gated_names
         self.apply_batch_decisions_calls: list[dict[str, str]] = []
-        self._stamped: dict[str, str] = {}
+        self._stamped: dict[tuple[str, str], str] = {}
 
     def pending_gate_for(
         self, name: str, args: dict, call_id: str = ""
@@ -2220,14 +2822,20 @@ class _FakeReviewProvider:
             reason="ask",
         )
 
-    def apply_batch_decisions(self, decisions: dict[str, str]) -> None:
+    def apply_batch_decisions(self, run_id: str, decisions: dict[str, str]) -> None:
         self.apply_batch_decisions_calls.append(dict(decisions))
         # Mirrors MCPToolProvider.apply_batch_decisions' REPLACE semantics
-        # (not merge) -- see that method's own docstring (Finding F1).
-        self._stamped = dict(decisions or {})
+        # (not merge) -- see that method's own docstring (Finding F1) --
+        # and, since PR2a Task 5, that the replace is scoped to ONE run:
+        # other runs' slices survive.
+        self._stamped = {
+            key: value for key, value in self._stamped.items() if key[0] != run_id
+        }
+        for name, verdict in (decisions or {}).items():
+            self._stamped[(run_id, name)] = verdict
 
-    def stamped_decision(self, name: str) -> str | None:
-        return self._stamped.get(name)
+    def stamped_decision(self, run_id: str, name: str) -> str | None:
+        return self._stamped.get((run_id, name))
 
 
 def test_build_mcp_review_hook_clears_stamps_even_when_nothing_needs_gating():
@@ -2242,7 +2850,7 @@ def test_build_mcp_review_hook_clears_stamps_even_when_nothing_needs_gating():
     hook = build_mcp_review_hook(provider, lambda pending: {})
 
     calls = [ToolCall(name="local_only_tool", args={}, call_id="1")]
-    verdicts = hook(calls)
+    verdicts = hook(calls, RUN)
 
     assert verdicts == {}
     assert provider.apply_batch_decisions_calls == [{}]
@@ -2259,7 +2867,7 @@ def test_build_mcp_review_hook_stamps_decisions_when_gating_needed():
     hook = build_mcp_review_hook(provider, _approve)
     calls = [ToolCall(name="mcp__srv__run", args={"x": 1}, call_id="1")]
 
-    verdicts = hook(calls)
+    verdicts = hook(calls, RUN)
 
     assert verdicts == {"mcp__srv__run": "proceed"}
     # I3: the hook clears at ENTRY (unconditionally, before the round trip)
@@ -2290,7 +2898,7 @@ def test_build_mcp_review_hook_shares_one_verdict_for_same_name_calls_this_turn(
         ToolCall(name="mcp__srv__run", args={"x": 2}, call_id="2"),
     ]
 
-    verdicts = hook(calls)
+    verdicts = hook(calls, RUN)
 
     assert verdicts == {"mcp__srv__run": "proceed"}
     assert len(round_trips) == 1  # ONE request_mcp_approvals round trip
@@ -2320,8 +2928,8 @@ def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip
     hook = build_mcp_review_hook(
         provider, lambda pending: {"mcp__srv__run": "approve_once"}
     )
-    hook([ToolCall(name="mcp__srv__run", args={}, call_id="1")])
-    assert provider.stamped_decision("mcp__srv__run") == "approve_once"
+    hook([ToolCall(name="mcp__srv__run", args={}, call_id="1")], RUN)
+    assert provider.stamped_decision(RUN, "mcp__srv__run") == "approve_once"
 
     # Turn 2: same tool, but request_mcp_approvals now raises mid-round-trip.
     def _raise(pending):
@@ -2329,10 +2937,10 @@ def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip
 
     hook2 = build_mcp_review_hook(provider, _raise)
     with pytest.raises(RuntimeError):
-        hook2([ToolCall(name="mcp__srv__run", args={}, call_id="2")])
+        hook2([ToolCall(name="mcp__srv__run", args={}, call_id="2")], RUN)
 
     # No stale stamp from turn 1 must survive the raise for invoke() to peek.
-    assert provider.stamped_decision("mcp__srv__run") is None
+    assert provider.stamped_decision(RUN, "mcp__srv__run") is None
 
 
 # ---------------------------------------------------------------------------
@@ -2350,7 +2958,7 @@ class _FakeBuiltinGate:
         self.turns = 0
         self.stamped: list[tuple[str, str]] = []
 
-    def begin_turn(self) -> None:
+    def begin_turn(self, run_id: str) -> None:
         self.turns += 1
 
     def resolve(self, tool) -> EffectiveToolState:
@@ -2360,7 +2968,7 @@ class _FakeBuiltinGate:
             risk_floored=self._floored,
         )
 
-    def stamp(self, name: str, decision: str) -> None:
+    def stamp(self, run_id: str, name: str, decision: str) -> None:
         self.stamped.append((name, decision))
 
     def is_session_approved(self, name: str) -> bool:
@@ -2412,7 +3020,7 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     hook = build_tool_review_hook(
         gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, request_approvals
     )
-    verdicts = hook([_builtin_call("write_thing")])
+    verdicts = hook([_builtin_call("write_thing")], RUN)
 
     assert gate.turns == 1  # begin_turn ran first
     assert gate.stamped == [("write_thing", "approve_once")]
@@ -2470,9 +3078,7 @@ def test_review_hook_flags_read_file_path_outside_roots(monkeypatch, tmp_path):
     hook = build_tool_review_hook(
         gate, _FakeBuiltinProvider(_file_tool("read_file")), None, request_approvals
     )
-    verdicts = hook(
-        [ToolCall(name="read_file", args={"file_path": str(outside)})]
-    )
+    verdicts = hook([ToolCall(name="read_file", args={"file_path": str(outside)})], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is True
@@ -2511,7 +3117,7 @@ def test_review_hook_does_not_flag_read_file_path_inside_roots(monkeypatch, tmp_
     hook = build_tool_review_hook(
         gate, _FakeBuiltinProvider(_file_tool("read_file")), None, request_approvals
     )
-    hook([ToolCall(name="read_file", args={"file_path": str(inside)})])
+    hook([ToolCall(name="read_file", args={"file_path": str(inside)})], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is False
@@ -2533,7 +3139,7 @@ def test_review_hook_leaves_non_file_builtins_unflagged():
     hook = build_tool_review_hook(
         gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, request_approvals
     )
-    hook([_builtin_call("write_thing")])
+    hook([_builtin_call("write_thing")], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is False
@@ -2608,7 +3214,7 @@ def test_review_hook_precheck_uses_the_runs_workspace_not_the_active_one(
         request_approvals,
         workspace_id="ws-a",
     )
-    hook([ToolCall(name="read_file", args={"file_path": str(target_in_a)})])
+    hook([ToolCall(name="read_file", args={"file_path": str(target_in_a)})], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is False
@@ -2652,7 +3258,7 @@ def test_review_hook_precheck_does_not_fall_back_to_the_active_workspace(
         request_approvals,
         workspace_id="ws-a",
     )
-    hook([ToolCall(name="read_file", args={"file_path": str(target_in_b)})])
+    hook([ToolCall(name="read_file", args={"file_path": str(target_in_b)})], RUN)
 
     row = asked["pending"][0]
     assert row.path_precheck_failed is True
@@ -2668,7 +3274,7 @@ def test_allow_resolved_builtin_never_prompts():
         None,
         lambda pending: calls.append(pending) or {},
     )
-    assert hook([_builtin_call("write_thing")]) == {}
+    assert hook([_builtin_call("write_thing")], RUN) == {}
     assert calls == []  # no card shown
 
 
@@ -2682,7 +3288,7 @@ def test_deny_resolved_builtin_is_not_offered_to_the_user():
         None,
         lambda pending: calls.append(pending) or {},
     )
-    hook([_builtin_call("write_thing")])
+    hook([_builtin_call("write_thing")], RUN)
     assert calls == []  # a tool that is Off gets no approval card
 
 
@@ -2699,7 +3305,7 @@ def test_begin_turn_runs_even_when_approvals_raise():
         gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, boom
     )
     with pytest.raises(RuntimeError):
-        hook([_builtin_call("write_thing")])
+        hook([_builtin_call("write_thing")], RUN)
     assert gate.turns == 1
 
 
@@ -2713,7 +3319,7 @@ def test_unknown_names_are_returned_unreviewed():
         None,
         lambda pending: {},
     )
-    assert hook([_builtin_call("some_skill")]) == {}
+    assert hook([_builtin_call("some_skill")], RUN) == {}
 
 
 def test_mcp_and_builtin_share_one_round_trip():
@@ -2737,7 +3343,7 @@ def test_mcp_and_builtin_share_one_round_trip():
         _builtin_call("write_thing"),
     ]
 
-    verdicts = hook(calls)
+    verdicts = hook(calls, RUN)
 
     assert len(round_trips) == 1
     names_asked = {row.llm_name for row in round_trips[0]}
@@ -2811,7 +3417,7 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
 
     # Turn 1: no session approval yet -- a card IS shown, and the user
     # approves for session.
-    verdict1 = hook([_builtin_call("write_thing")])
+    verdict1 = hook([_builtin_call("write_thing")], RUN)
     assert len(round_trips) == 1
     assert round_trips[0][0].llm_name == "write_thing"
     assert verdict1 == {"write_thing": "proceed"}
@@ -2819,7 +3425,7 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
     # Turn 2: `begin_turn()` clears the turn-scoped `_stamps` dict, but the
     # SESSION approval lives on the fake service, not in `_stamps` -- no
     # second round trip.
-    verdict2 = hook([_builtin_call("write_thing")])
+    verdict2 = hook([_builtin_call("write_thing")], RUN)
     assert len(round_trips) == 1  # still just the one round trip
     # Nothing needed gating this turn, so the call is absent from the
     # returned map entirely -- purely documentary, exactly like an
@@ -2829,7 +3435,7 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
     assert verdict2 == {}
     # And the call genuinely still proceeds: this is the EXACT verdict
     # `BuiltinToolProvider.invoke()` consults on dispatch.
-    assert gate.check(tool) is None
+    assert gate.check(tool, RUN) is None
 
 
 # ---------------------------------------------------------------------------
@@ -2921,6 +3527,142 @@ async def test_finalize_agent_reply_missing_placeholder_appends_message():
 
 
 @pytest.mark.asyncio
+async def test_stream_wrapper_settles_missing_placeholder_append_fallback(monkeypatch):
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    placeholder, turn_context = _begin_controller_disclosure(store, session.id)
+    assert session.library_destination_runtime.disclosure is not None
+
+    async def missing_placeholder_inner(**_kwargs):
+        return await controller._finalize_agent_reply(
+            placeholder.id,
+            session.id,
+            RunOutcome(status=RUN_DONE, steps=[], final_text="completed fallback"),
+            variant_mode=False,
+        )
+
+    monkeypatch.setattr(
+        controller,
+        "_stream_assistant_response_inner",
+        missing_placeholder_inner,
+    )
+    monkeypatch.setattr(controller, "_ensure_assistant_placeholder", lambda *_: None)
+    monkeypatch.setattr(controller, "_find_runtime_written_assistant", lambda *_: None)
+
+    result = await controller._stream_assistant_response(
+        resolution=SimpleNamespace(),
+        provider_messages=[],
+        assistant_message_id=placeholder.id,
+        turn_context=turn_context,
+    )
+
+    assert result.accepted is True
+    assert session.library_destination_runtime.disclosure is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal",
+    ["success", "failure", "cancelled", "stopped", "variant_success"],
+)
+async def test_agent_terminal_paths_settle_the_bound_destination_attempt(
+    terminal: str,
+) -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    placeholder, _turn_context = _begin_controller_disclosure(
+        store,
+        session.id,
+        content="original" if terminal == "variant_success" else "",
+    )
+    cancel_event = threading.Event()
+    variant_mode = terminal == "variant_success"
+    if variant_mode:
+        store.begin_variant_stream(placeholder.id)
+        store.append_stream_chunk(placeholder.id, "replacement")
+    elif terminal in {"success", "failure"}:
+        store.append_stream_chunk(placeholder.id, "reply")
+    if terminal == "stopped":
+        store.mark_message_stopped(placeholder.id)
+        cancel_event.set()
+    outcome = RunOutcome(
+        status=(
+            RUN_DONE
+            if terminal in {"success", "variant_success", "stopped"}
+            else RUN_CANCELLED
+            if terminal == "cancelled"
+            else RUN_ERROR
+        ),
+        steps=[],
+        final_text=(
+            "replacement"
+            if terminal == "variant_success"
+            else "reply"
+            if terminal == "success"
+            else ""
+        ),
+    )
+
+    result = await controller._finalize_agent_reply(
+        placeholder.id,
+        session.id,
+        outcome,
+        variant_mode=variant_mode,
+        cancel_event=cancel_event,
+    )
+
+    assert result.accepted is True
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
+    assert session.library_destination_runtime.owner_message_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["refused", "cancelled"])
+async def test_stream_wrapper_exactly_settles_predispatch_exit(
+    monkeypatch,
+    outcome: str,
+) -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    placeholder, turn_context = _begin_controller_disclosure(store, session.id)
+
+    async def predispatch_exit(**_kwargs):
+        if outcome == "cancelled":
+            raise asyncio.CancelledError
+        return controller._block(session.id, "Provider request was not sent.")
+
+    monkeypatch.setattr(
+        controller,
+        "_stream_assistant_response_inner",
+        predispatch_exit,
+    )
+
+    if outcome == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            await controller._stream_assistant_response(
+                resolution=SimpleNamespace(),
+                provider_messages=[],
+                assistant_message_id=placeholder.id,
+                turn_context=turn_context,
+            )
+    else:
+        result = await controller._stream_assistant_response(
+            resolution=SimpleNamespace(),
+            provider_messages=[],
+            assistant_message_id=placeholder.id,
+            turn_context=turn_context,
+        )
+        assert result.accepted is False
+
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
+
+
+@pytest.mark.asyncio
 async def test_finalize_agent_reply_error_marks_failed():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
@@ -2995,13 +3737,17 @@ async def test_build_context_snapshot_returns_current_and_next_send():
     session = store.ensure_session(title="Chat 1")
 
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
-    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="Hi there")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Hi there"
+    )
 
     snapshot = await controller.build_context_snapshot(draft="Explain tools")
 
     assert len(snapshot.current_messages) == 2
     assert snapshot.current_messages[0].role == ConsoleMessageRole.USER
-    assert snapshot.next_send_payload["messages"][-1]["content"].startswith("Explain tools")
+    assert snapshot.next_send_payload["messages"][-1]["content"].startswith(
+        "Explain tools"
+    )
 
 
 @pytest.mark.asyncio
@@ -3024,8 +3770,12 @@ async def test_build_context_snapshot_empty_draft_does_not_annotate_historical_s
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session(title="Chat 1")
 
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="/search tools")
-    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="Here are some tools.")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="/search tools"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Here are some tools."
+    )
 
     snapshot = await controller.build_context_snapshot(draft="")
     historical_user_content = snapshot.next_send_payload["messages"][0]["content"]
@@ -3098,7 +3848,9 @@ async def test_build_context_snapshot_messages_are_independent_of_store():
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session(title="Chat 1")
 
-    msg = store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+    msg = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="Hello"
+    )
 
     snapshot = await controller.build_context_snapshot(draft="Follow up")
     original_content = snapshot.current_messages[0].content
@@ -3126,7 +3878,9 @@ async def test_build_context_snapshot_attachment_only_preview():
         position=0,
     )
 
-    snapshot = await controller.build_context_snapshot(draft="", attachments=[attachment])
+    snapshot = await controller.build_context_snapshot(
+        draft="", attachments=[attachment]
+    )
 
     messages = snapshot.next_send_payload["messages"]
     assert len(messages) == 1
@@ -3300,7 +4054,9 @@ async def test_build_context_snapshot_includes_staged_sources():
         ),
     ]
 
-    snapshot = await controller.build_context_snapshot(draft="Summarize", staged_sources=sources)
+    snapshot = await controller.build_context_snapshot(
+        draft="Summarize", staged_sources=sources
+    )
 
     staged = snapshot.next_send_payload["staged_sources"]
     assert len(staged) == 2
@@ -3355,7 +4111,10 @@ def test_annotate_skill_commands_multimodal_text_part():
             "role": "user",
             "content": [
                 {"type": "text", "text": "$search tools"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,abc"},
+                },
             ],
         }
     ]
@@ -3416,7 +4175,11 @@ def test_build_tools_info_for_snapshot_with_native_schemas():
     )
     controller._agent_bridge = SimpleNamespace(
         native_tool_schemas=lambda: [
-            {"name": "calculator", "description": "Compute arithmetic.", "parameters": {}},
+            {
+                "name": "calculator",
+                "description": "Compute arithmetic.",
+                "parameters": {},
+            },
         ]
     )
 
@@ -3469,9 +4232,255 @@ def _arm_session(store):
     session = store.ensure_session(
         workspace_id=store.workspace_context.active_workspace_id
     )
+    session.project_instruction_state = ProjectInstructionControlState.legacy_disabled()
     if session.settings is None:
         session.settings = ConsoleSessionSettings(provider="llama_cpp")
     return session
+
+
+def _controller_history_checkpoint(canary: str):
+    return parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": [canary * 80],
+                    "calls": [
+                        {
+                            "call_id": "joined-call",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def _controller_active_history_checkpoint(call_state: str):
+    return parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 2,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["ACTIVE-SWITCH-PRIVATE-CANARY"],
+                    "calls": [
+                        {
+                            "call_id": "active-switch-call",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": call_state,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_controller_real_gateway_budgets_active_continuation_owner_atomically():
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    old_user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="old"
+    )
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    checkpoint = _controller_history_checkpoint("CONTROLLER-PRIVATE-CANARY ")
+    store._message_or_raise(owner.id).provider_continuation = checkpoint
+    gateway = ContinuationHistoryGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    source_snapshot = store.messages_for_session(session.id)
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepared is not None
+    assert [row["content"] for row in gateway.prepared.messages_payload] == ["current"]
+    assert (
+        gateway.prepare_kwargs["continuation_sidecar"][0].owner_message_id == owner.id
+    )
+    assert "CONTROLLER-PRIVATE-CANARY" not in repr(gateway.prepared)
+    assert store.get_message(old_user.id).content == "old"
+    assert store.get_message(owner.id).content == "old answer"
+    assert source_snapshot[1].provider_continuation == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_controller_bridge_agent_service_bound_private_history_on_real_send(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TLDW_AGENTS_RUN_LOG_EVICT_ENABLED", "true")
+    monkeypatch.setenv("TLDW_AGENTS_RUN_LOG_EVICT_MIN_RECENT_ROUNDS", "1")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        console_history_budget, "get_model_token_limit", lambda *a, **k: 650
+    )
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    store._message_or_raise(
+        owner.id
+    ).provider_continuation = _controller_history_checkpoint("JOINED-PRIVATE-CANARY ")
+    gateway = ContinuationHistoryGateway()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="task6"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepared is not None
+    prepared = gateway.prepared.messages_payload
+    assert not any(row.get("content") == "old answer" for row in prepared)
+    assert any(row.get("content") == "current" for row in prepared)
+    assert all("_native_message_id" not in row for row in prepared)
+    assert "JOINED-PRIVATE-CANARY" not in repr(gateway.prepared)
+
+
+@pytest.mark.asyncio
+async def test_provider_switch_ignores_unrelated_completed_continuation_history():
+    class OpenAIGateway(ContinuationHistoryGateway):
+        async def resolve_for_send(self, selection):
+            return ConsoleProviderResolution(
+                provider="openai",
+                base_url="https://api.openai.com/v1",
+                model="gpt-4.1",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=10,
+                resolved_destination=ConsoleResolvedDestination(
+                    provider="openai",
+                    model="gpt-4.1",
+                    endpoint_identity="https://api.openai.com/v1",
+                    egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+                ),
+            )
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    store._message_or_raise(
+        owner.id
+    ).provider_continuation = _controller_history_checkpoint(
+        "PROVIDER-SWITCH-PRIVATE-CANARY "
+    )
+    gateway = OpenAIGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepared is not None
+    assert any(
+        row.get("content") == "old answer" for row in gateway.prepared.messages_payload
+    )
+    assert gateway.prepare_kwargs["continuation_sidecar"] == ()
+    assert "PROVIDER-SWITCH-PRIVATE-CANARY" not in repr(gateway.prepared)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call_state", ["pending", "executing"])
+async def test_provider_switch_race_blocks_active_continuation_before_dispatch(
+    call_state: str,
+):
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    store._message_or_raise(
+        owner.id
+    ).provider_continuation = _controller_history_checkpoint(
+        "COMPLETE-BEFORE-RESOLUTION "
+    )
+
+    class SwitchingGateway(ContinuationHistoryGateway):
+        provider_calls = 0
+
+        async def resolve_for_send(self, selection):
+            store._message_or_raise(
+                owner.id
+            ).provider_continuation = _controller_active_history_checkpoint(call_state)
+            return ConsoleProviderResolution(
+                provider="openai",
+                base_url="https://api.openai.com/v1",
+                model="gpt-4.1",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=10,
+                resolved_destination=ConsoleResolvedDestination(
+                    provider="openai",
+                    model="gpt-4.1",
+                    endpoint_identity="https://api.openai.com/v1",
+                    egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+                ),
+            )
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.provider_calls += 1
+            yield "must not dispatch"
+
+    gateway = SwitchingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.visible_copy == (
+        "Recover the interrupted tool run before sending a new message: "
+        "Resume or Discard it first."
+    )
+    assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
+    assert gateway.provider_calls == 0
+    assert "ACTIVE-SWITCH-PRIVATE-CANARY" not in repr(result)
 
 
 @pytest.mark.asyncio
@@ -3490,7 +4499,9 @@ async def test_submit_with_one_shot_prefill_appends_trailing_assistant_and_seeds
     }
     assert gateway.messages_seen[-2]["role"] == "user"
     messages = store.messages_for_session(session.id)
-    assert messages[-1].content == "Sure thing:ok"  # seed + RecordingStreamingGateway's "ok"
+    assert (
+        messages[-1].content == "Sure thing:ok"
+    )  # seed + RecordingStreamingGateway's "ok"
     assert messages[-1].status == "complete"
     # one-shot consumed on complete
     assert store.session_one_shot_prefill(session.id) is None
@@ -3766,7 +4777,9 @@ class _SpyAgentBridge:
 
     def run_reply(self, **kwargs):
         self.calls += 1
-        raise AssertionError("agent bridge should not be called for a character session")
+        raise AssertionError(
+            "agent bridge should not be called for a character session"
+        )
 
 
 @pytest.mark.asyncio
@@ -3875,9 +4888,7 @@ async def test_agent_path_applies_dictionary_before_bridge_sees_messages():
     # And the bridge must have RECEIVED the substituted content, not the
     # raw draft -- proving the substitution landed on the payload the
     # bridge actually sees, not merely that the applier was called.
-    final_user = [
-        m for m in captured["agent_messages"] if m.get("role") == "user"
-    ][-1]
+    final_user = [m for m in captured["agent_messages"] if m.get("role") == "user"][-1]
     assert final_user["content"] == "The grim jailer nods."
 
 
@@ -4061,11 +5072,21 @@ async def test_send_trims_history_and_appends_note(monkeypatch):
             max_tokens=0,
         )
     )
-    session = controller.new_session(title="Chat 1")  # creates + activates
+    session = controller.new_session(
+        title="Chat 1", ephemeral=True
+    )  # creates + activates
     # Seed an over-budget history before the current turn.
     for i in range(6):
-        store.append_message(session.id, role=ConsoleMessageRole.USER, content=f"old user {i} aa bb cc dd")
-        store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content=f"old asst {i} aa bb cc dd")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content=f"old user {i} aa bb cc dd",
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=f"old asst {i} aa bb cc dd",
+        )
 
     await controller.submit_draft("current question here")
 
@@ -4095,11 +5116,15 @@ async def test_send_that_fits_does_not_trim_or_note(monkeypatch):
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     controller.update_provider_selection(
         ConsoleProviderSelection(
-            provider="llama_cpp", explicit_model="test-model", configured_model="test-model"
+            provider="llama_cpp",
+            explicit_model="test-model",
+            configured_model="test-model",
         )
     )
-    session = controller.new_session(title="Chat 1")
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="one small turn")
+    session = controller.new_session(title="Chat 1", ephemeral=True)
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="one small turn"
+    )
     store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="ok")
 
     await controller.submit_draft("next question")
@@ -4142,8 +5167,12 @@ async def test_trim_budgets_against_resolution_model_not_controller_state(monkey
     )
     provider_messages = []
     for i in range(6):
-        provider_messages.append({"role": "user", "content": f"old user {i} aa bb cc dd"})
-        provider_messages.append({"role": "assistant", "content": f"old asst {i} aa bb cc dd"})
+        provider_messages.append(
+            {"role": "user", "content": f"old user {i} aa bb cc dd"}
+        )
+        provider_messages.append(
+            {"role": "assistant", "content": f"old asst {i} aa bb cc dd"}
+        )
     provider_messages.append({"role": "user", "content": "current question here"})
 
     # ...but the captured resolution (what actually dispatches) is the tiny model.
@@ -4154,12 +5183,26 @@ async def test_trim_budgets_against_resolution_model_not_controller_state(monkey
         model="small-window",
         max_tokens=0,
         visible_copy="",
+        resolved_destination=ConsoleResolvedDestination(
+            provider="llama_cpp",
+            model="small-window",
+            endpoint_identity="http://127.0.0.1:9099",
+            egress_class=ConsoleEgressClass.ON_DEVICE,
+        ),
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    authority = await controller._capture_turn_library_authority(
+        session.id, configuration
+    )
+    turn_context = controller._finalize_turn_execution_context(
+        configuration, authority, resolution
     )
 
     await controller._stream_assistant_response(
         resolution=resolution,
         provider_messages=provider_messages,
         assistant_message_id=assistant.id,
+        turn_context=turn_context,
     )
 
     # Budgeted against the 520-token resolution window (not the 1M self.model),
@@ -4198,16 +5241,24 @@ def test_kill_switch_refuses_unclaimed_tool_calls_at_the_review_hook():
     )
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): pass
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            pass
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return None  # claims nothing
+        def tool_for(self, name):
+            return None  # claims nothing
 
     prompted = []
 
@@ -4216,15 +5267,21 @@ def test_kill_switch_refuses_unclaimed_tool_calls_at_the_review_hook():
         return {}
 
     hook = build_tool_review_hook(
-        _Gate(), _Provider(), None, request_approvals,
+        _Gate(),
+        _Provider(),
+        None,
+        request_approvals,
         workspace_id=None,
         kill_switch=lambda: True,
     )
-    verdicts = hook([
-        ToolCall(name="spawn_subagent", args={"task": "x"}, call_id="c1"),
-        ToolCall(name="skill__notes__summarize", args={}, call_id="c2"),
-        ToolCall(name="find_tools", args={"query": "q"}),
-    ])
+    verdicts = hook(
+        [
+            ToolCall(name="spawn_subagent", args={"task": "x"}, call_id="c1"),
+            ToolCall(name="skill__notes__summarize", args={}, call_id="c2"),
+            ToolCall(name="find_tools", args={"query": "q"}),
+        ],
+        RUN,
+    )
 
     assert not prompted, "the kill switch must refuse, not prompt"
     assert verdicts.get("c1") == KILL_SWITCH_REFUSAL
@@ -4244,28 +5301,39 @@ def test_kill_switch_off_changes_nothing():
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): pass
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            pass
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return SimpleNamespace(name=name)
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
 
     def request_approvals(pending):
         return {row.call_id: "approve_once" for row in pending}
 
     for switch in (None, lambda: False):
         hook = build_tool_review_hook(
-            _Gate(), _Provider(), None, request_approvals,
+            _Gate(),
+            _Provider(),
+            None,
+            request_approvals,
             workspace_id=None,
             kill_switch=switch,
         )
         verdicts = hook(
-            [ToolCall(name="read_file", args={"path": "a"}, call_id="c1")]
+            [ToolCall(name="read_file", args={"path": "a"}, call_id="c1")], RUN
         )
         assert verdicts.get("c1", "proceed") == "proceed", (switch, verdicts)
 
@@ -4289,16 +5357,24 @@ def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
 
     class _Gate:
-        def begin_turn(self): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, name, decision): pass
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            pass
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return None  # claims nothing
+        def tool_for(self, name):
+            return None  # claims nothing
 
     prompted: list = []
 
@@ -4307,17 +5383,22 @@ def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
         return {}
 
     hook = build_tool_review_hook(_Gate(), _Provider(), None, request_approvals)
-    verdicts = hook([
-        ToolCall(name="spawn_subagent", args={"task": "x"}, call_id="c1"),
-        ToolCall(name="find_tools", args={"query": "q"}, call_id="c2"),
-        ToolCall(name="load_tools", args={"names": []}, call_id="c3"),
-        ToolCall(name="skill__notes__summarize", args={}, call_id="c4"),
-    ])
+    verdicts = hook(
+        [
+            ToolCall(name="spawn_subagent", args={"task": "x"}, call_id="c1"),
+            ToolCall(name="find_tools", args={"query": "q"}, call_id="c2"),
+            ToolCall(name="load_tools", args={"names": []}, call_id="c3"),
+            ToolCall(name="skill__notes__summarize", args={}, call_id="c4"),
+        ],
+        RUN,
+    )
 
     assert not prompted, "unclaimed names must not be offered a card"
     assert verdicts == {}, (
         f"unclaimed names must pass through unreviewed, got: {verdicts}"
     )
+
+
 class UsageEmittingGateway(StreamingGateway):
     """Mirrors the real gateway's usage seam.
 
@@ -4344,9 +5425,7 @@ class UsageEmittingGateway(StreamingGateway):
             if signals is not None and index < len(self.payloads_per_call):
                 payload = self.payloads_per_call[index]
                 # A payload may itself arrive split across chunks (Anthropic).
-                for fragment in (
-                    payload if isinstance(payload, tuple) else (payload,)
-                ):
+                for fragment in payload if isinstance(payload, tuple) else (payload,):
                     signals.record_usage_payload(fragment)
         finally:
             if signals is not None:
@@ -4384,9 +5463,105 @@ class _UsageRecordingPersistence:
         self.created = []
         self.updated = []
         self._counter = 0
+        self.console_library_policy_repository = SimpleNamespace(read=self._read_policy)
+        self.console_dispatch_repository = self
+        self._policy_snapshot = None
+        self._checkpoint = None
+
+    def _read_policy(self, conversation_id):
+        del conversation_id
+        return SimpleNamespace(durable_policy=object(), snapshot=self._policy_snapshot)
+
+    def _cas_state(self, transition):
+        checkpoint = self._checkpoint
+        if checkpoint is None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.NOT_FOUND, None, None, None
+            )
+        checkpoint = replace(
+            checkpoint,
+            state=transition.new_state,
+            checkpoint_revision=checkpoint.checkpoint_revision + 1,
+            assistant_message_version=checkpoint.assistant_message_version + 1,
+            attempt_id=transition.new_attempt_id,
+        )
+        self._checkpoint = checkpoint
+        return ConsoleDispatchWriteResult(
+            ConsoleDispatchResultStatus.COMMITTED,
+            checkpoint,
+            checkpoint.assistant_message_version,
+            "fake-payload-hash",
+        )
+
+    cas_state = _cas_state
+
+    def settle_with_assistant(self, settlement):
+        checkpoint = self._checkpoint
+        if checkpoint is None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.NOT_FOUND, None, None, None
+            )
+        self.updated.append(
+            {
+                "message_id": settlement.assistant_message_id,
+                "content": settlement.content,
+                "usage_json": settlement.usage_json,
+            }
+        )
+        self._checkpoint = None
+        return ConsoleDispatchWriteResult(
+            ConsoleDispatchResultStatus.COMMITTED,
+            None,
+            checkpoint.assistant_message_version + 1,
+            "fake-terminal-hash",
+        )
 
     def create_conversation(self, **kwargs):
         return "conv-usage"
+
+    def commit_durable_turn(self, *, acceptance, policy_candidate, conversation_kwargs):
+        """Model atomic acceptance while retaining usage-write observations."""
+        del conversation_kwargs
+        self._policy_snapshot = ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy_candidate.auto_retrieve,
+            assistant_access=policy_candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
+        self.created.extend(
+            (
+                {
+                    "conversation_id": acceptance.conversation_id,
+                    "sender": "user",
+                    "content": acceptance.user_content,
+                    "message_id": acceptance.user_message_id,
+                },
+                {
+                    "conversation_id": acceptance.conversation_id,
+                    "sender": "assistant",
+                    "content": "",
+                    "message_id": acceptance.assistant_message_id,
+                },
+            )
+        )
+        checkpoint = ConsoleDispatchCheckpoint(
+            assistant_message_id=acceptance.assistant_message_id,
+            user_message_id=acceptance.user_message_id,
+            conversation_id=acceptance.conversation_id,
+            preparation_id=acceptance.preparation_id,
+            attempt_id=acceptance.attempt_id,
+            state=ConsoleDispatchCheckpointState.ACCEPTED,
+            checkpoint_revision=1,
+            user_message_version=1,
+            assistant_message_version=1,
+            origin=acceptance.origin,
+            queue_entry_id=acceptance.queue_entry_id,
+            frozen_authority=acceptance.frozen_authority,
+            resolved_destination=acceptance.resolved_destination,
+            reconstructability=acceptance.reconstructability,
+        )
+        self._checkpoint = checkpoint
+        return checkpoint
 
     def create_message(self, **kwargs):
         self.created.append(kwargs)
@@ -4439,9 +5614,7 @@ class _GatewayDrivingBridge:
             return text
 
         final_text = asyncio.run(_drain())
-        return "run-usage", RunOutcome(
-            status=RUN_DONE, steps=[], final_text=final_text
-        )
+        return "run-usage", RunOutcome(status=RUN_DONE, steps=[], final_text=final_text)
 
 
 @pytest.mark.asyncio
@@ -4681,14 +5854,13 @@ async def test_billed_turn_without_visible_content_still_records_usage():
     assert assistant.usage.uncached_input == 812
     assert assistant.usage.partial is True
 
-    # Documented boundary, NOT an oversight: the store never persists an
-    # empty-content message at all (`_persist_pending_message_if_ready`
-    # requires content), so this turn has no DB row for usage to ride on and
-    # `usage_values()` stays empty. The record still exists on the in-store
-    # message, which is what the live per-session ticker reads. Persisting
-    # contentless rows is a store-wide semantics change, out of scope here.
-    assert persistence.usage_values() == []
-    assert [entry["sender"] for entry in persistence.created] == ["user"]
+    # Durable acceptance creates the intentionally empty assistant owner row;
+    # terminal usage is then written onto that exact row even without content.
+    assert any('"uncached_input": 812' in value for value in persistence.usage_values())
+    assert [entry["sender"] for entry in persistence.created] == [
+        "user",
+        "assistant",
+    ]
 
 
 # --- Cost-ticker PR3: payload-fingerprint baseline + cache TTL --------------
@@ -4708,8 +5880,11 @@ async def test_dispatch_records_fingerprint_baseline_and_cache_snapshot():
             yield "hi"
             if signals is not None:
                 signals.record_usage_payload(
-                    {"input_tokens": 10, "output_tokens": 2,
-                     "cache_creation_input_tokens": 900}
+                    {
+                        "input_tokens": 10,
+                        "output_tokens": 2,
+                        "cache_creation_input_tokens": 900,
+                    }
                 )
 
     store = ConsoleChatStore()
@@ -4742,6 +5917,7 @@ async def test_dispatch_records_fingerprint_baseline_and_cache_snapshot():
 
     current = controller.compute_current_fingerprint(session.id)
     from tldw_chatbook.Chat.console_cost_tracker import fingerprint_break_reason
+
     assert fingerprint_break_reason(baseline, current) is None
 
 
@@ -4917,3 +6093,346 @@ async def test_submit_without_prompt_history_configured_is_a_noop():
     assert controller.prompt_history is None
     result = await controller.submit_draft("hello")
     assert result.accepted
+
+
+# -- task-1337: per-run Library/RAG provider factory seam --
+
+
+class _AllowedLibraryCoordinator:
+    def register_holder(self, *_args, **_kwargs):
+        return None
+
+    def unregister_holder(self, *_args, **_kwargs):
+        return None
+
+    async def capture_for_execution(self, _session_id):
+        return ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+            policy_revision=1,
+            source="durable",
+        )
+
+
+class _ControllerLibraryService:
+    def invoke(self, _name, _arguments):
+        return {"items": [], "total": 0}
+
+
+@pytest.mark.asyncio
+async def test_run_agent_reply_threads_library_provider_from_factory():
+    """The controller resolves the injected `library_provider_factory` exactly
+    once per run, on the main loop, and hands the resulting provider to the
+    bridge's run_reply alongside the other per-run providers."""
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _AllowedLibraryCoordinator()
+    gateway = RecordingStreamingGateway()
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    provider = LibraryToolProvider(_ControllerLibraryService())
+    factory_calls = []
+
+    def factory(context):
+        factory_calls.append(context)
+        return provider
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        library_provider_factory=factory,
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    _arm_session(store)
+
+    await controller.submit_draft("hello")
+
+    assert len(factory_calls) == 1
+    assert len(bridge_calls) == 1
+    assert bridge_calls[0]["library_provider"] is provider
+    assert provider.authenticates_builtin_authority(
+        bridge_calls[0]["library_authority"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_reply_without_factory_passes_no_library_provider():
+    """Default construction (no factory) keeps the pre-task-1337 handoff:
+    run_reply receives `library_provider=None`."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    _arm_session(store)
+
+    await controller.submit_draft("hello")
+
+    assert len(bridge_calls) == 1
+    assert bridge_calls[0]["library_provider"] is None
+
+
+@pytest.mark.asyncio
+async def test_library_provider_factory_refreshes_per_run_without_rebuilding_bridge():
+    """Per-run freshness issues a new provider/authority on the cached bridge."""
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _AllowedLibraryCoordinator()
+    gateway = RecordingStreamingGateway()
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    first_provider = LibraryToolProvider(_ControllerLibraryService())
+    second_provider = LibraryToolProvider(_ControllerLibraryService())
+    offerings = [first_provider, second_provider]
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        library_provider_factory=lambda _context: offerings.pop(0),
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    cached_bridge = SimpleNamespace(run_reply=run_reply)
+    controller._agent_bridge = cached_bridge
+    _arm_session(store)
+
+    await controller.submit_draft("first")
+    await controller.submit_draft("second")
+
+    assert len(bridge_calls) == 2
+    assert bridge_calls[0]["library_provider"] is first_provider
+    assert bridge_calls[1]["library_provider"] is second_provider
+    assert first_provider.authenticates_builtin_authority(
+        bridge_calls[0]["library_authority"]
+    )
+    assert second_provider.authenticates_builtin_authority(
+        bridge_calls[1]["library_authority"]
+    )
+    assert controller._agent_bridge is cached_bridge
+
+
+@pytest.mark.asyncio
+async def test_library_provider_factory_failure_degrades_to_no_provider():
+    """A raising factory must never break a send: the run proceeds with
+    `library_provider=None` (no Library tools that run)."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+
+    def factory(_context):
+        raise RuntimeError("config exploded")
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        library_provider_factory=factory,
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    _arm_session(store)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted
+    assert bridge_calls[0]["library_provider"] is None
+
+
+# ---------------------------------------------------------------------------
+# task-1337, plan Task 8: Console MCP bypass prevention
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
+    """The Console-composed MCP provider drops exactly the 29 shadowed raw
+    names (24 descriptor tools + 5 legacy readers) from the
+    `builtin:tldw_chatbook` source -- the Console serves Library retrieval
+    through its own direct/RAG provider (either mode), so the MCP copies
+    would be an ungoverned duplicate. Same-named external/local profile
+    tools stay; the unrelated built-in stays; the exclusion set is
+    mode-independent (`_compose_mcp_provider` takes no mode argument)."""
+    from Tests.Agents.test_mcp_tool_provider import (
+        FakeMCPService,
+        _catalog_record,
+        _tool_dict,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import (
+        CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+    )
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    # The exclusion set is exactly descriptor names + the five legacy names;
+    # the legacy names must NEVER join the shared descriptor table.
+    assert CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS == frozenset(
+        set(LIBRARY_TOOL_DESCRIPTORS)
+        | {
+            "search_rag",
+            "search_notes",
+            "search_conversations",
+            "get_conversation_history",
+            "export_conversation",
+        }
+    )
+    assert len(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS) == 29
+    assert "search_rag" not in LIBRARY_TOOL_DESCRIPTORS
+
+    inventory = {
+        "tools": [
+            *(
+                _tool_dict(name)
+                for name in sorted(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS)
+            ),
+            _tool_dict("chat_with_llm"),
+        ]
+    }
+    service = FakeMCPService(
+        inventory=inventory,
+        catalog_records=[_catalog_record("docs", [_tool_dict("library_list_media")])],
+    )
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+
+    provider = await controller._compose_mcp_provider()
+
+    assert provider is not None
+    names = {entry.name for entry in provider.list_catalog()}
+    assert names == {
+        "mcp__tldw_chatbook__chat_with_llm",
+        "mcp__docs__library_list_media",
+    }
+
+
+# -----------------------------------------------------------------------------
+# PR3a-1 Task 6b (audit F3): a surviving child's spend must not vanish silently
+# -----------------------------------------------------------------------------
+#
+# The agent path attaches usage exactly ONCE, the instant `run_reply` returns.
+# A fleet child that outlives its turn keeps streaming into the SAME
+# `ConsoleProviderStreamSignals`, so every payload it closes out afterwards is
+# appended to an object nobody reads again: the user is billed, and the chip
+# and the message row never show it. Re-attaching needs a "last child done"
+# signal the bridge does not emit (PR 3a-2 builds it for auto-wake), so 3a-1's
+# job is to make the loss OBSERVABLE, not to fix it.
+
+
+@pytest.mark.asyncio
+async def test_a_survivors_post_turn_spend_is_readable_not_silently_dropped():
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderStreamSignals,
+    )
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    signals = ConsoleProviderStreamSignals()
+    signals.record_usage_payload({"prompt_tokens": 100, "completion_tokens": 20})
+    signals.close_usage_call()
+    resolution = SimpleNamespace(provider="openai", model="gpt-4o")
+
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+    await controller._finalize_agent_reply(
+        placeholder.id,
+        session.id,
+        outcome,
+        variant_mode=False,
+        stream_signals=signals,
+        resolution=resolution,
+    )
+
+    assert store.get_message(placeholder.id).usage.total_tokens == 120
+    assert controller.unattributed_fleet_tokens(session.id) == 0
+
+    # The turn is over. The survivor makes one more provider call.
+    signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
+    signals.close_usage_call()
+
+    # Pinned as the KNOWN 3a-1 limitation, not as desirable: the message
+    # row is deliberately not re-attached here (that is 3a-2's signal).
+    assert store.get_message(placeholder.id).usage.total_tokens == 120
+
+    assert controller.unattributed_fleet_tokens(session.id) == 45, (
+        "the survivor's spend was billed and is visible nowhere"
+    )
+
+
+@pytest.mark.asyncio
+async def test_re_attaching_the_same_signals_is_idempotent():
+    """Recorded for PR 3a-2, which will do exactly this on last-child-done.
+
+    `_attach_stream_usage` recomputes the TOTAL from every payload and
+    `set_message_usage` REPLACES -- so a second attach is a replace, not an
+    add. 3a-2 inherits a safe path; this pins it so a later refactor to
+    accumulate-in-place cannot quietly double-bill.
+    """
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderStreamSignals,
+    )
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    signals = ConsoleProviderStreamSignals()
+    signals.record_usage_payload({"prompt_tokens": 100, "completion_tokens": 20})
+    signals.close_usage_call()
+    resolution = SimpleNamespace(provider="openai", model="gpt-4o")
+
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+    await controller._finalize_agent_reply(
+        placeholder.id,
+        session.id,
+        outcome,
+        variant_mode=False,
+        stream_signals=signals,
+        resolution=resolution,
+    )
+    assert store.get_message(placeholder.id).usage.total_tokens == 120
+
+    signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
+    signals.close_usage_call()
+    controller._attach_stream_usage(placeholder.id, signals, resolution, partial=False)
+
+    assert store.get_message(placeholder.id).usage.total_tokens == 165, (
+        "a second attach must REPLACE with the recomputed total, not add"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unattributed_fleet_tokens_is_zero_for_an_unwatched_session():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    assert controller.unattributed_fleet_tokens(session.id) == 0
+    assert controller.unattributed_fleet_tokens("no-such-session") == 0

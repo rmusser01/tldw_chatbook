@@ -51,7 +51,7 @@ class LabModeStrip(DestinationModeStrip):
     # that mount LabModeStrip without loading the bundle. The two files have
     # already diverged (this one adds min-height; the app-tier copy adds
     # background/color) -- keep them in lockstep when either changes.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LabModeStrip {
         height: 1;
         min-height: 1;

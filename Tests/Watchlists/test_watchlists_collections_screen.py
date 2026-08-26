@@ -1,15 +1,21 @@
 """Tests for the Watchlists collections screen action handlers."""
 
 from contextlib import asynccontextmanager
+import threading
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, Mock
 
 from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.geometry import Size
 from textual.widgets import Button, Input, Static, TextArea
 
-from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_destination_shells import DestinationHarness, _static_text
+from tldw_chatbook.UI.Screens import watchlists_collections_screen as collections_module
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
@@ -17,8 +23,15 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     CheckNowRequested,
     InspectorPane,
     PreviewRequested,
+    ViewSnapshotRequested,
 )
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected, ItemsPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import (
+    ArticleListPane,
+    NextItemsPageRequested,
+    PreviousItemsPageRequested,
+)
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsFilterChanged
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
     OpmlExportDialog,
     OpmlImportDialog,
@@ -32,11 +45,43 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
     SourcesPane,
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+from tldw_chatbook.Utils.input_validation import validate_url as real_validate_url
+
+
+def _controller_double() -> AsyncMock:
+    """Return a controller double with the production sync/async API shape."""
+    controller = AsyncMock()
+    controller.create_form_source_types = Mock(
+        side_effect=lambda *, runtime_backend=None: (
+            ("rss", "site", "forum")
+            if runtime_backend == "server"
+            else ("rss", "atom", "url")
+        )
+    )
+    return controller
+
+
+def test_layout_intent_dataclasses_use_pascal_case_names() -> None:
+    assert hasattr(collections_module, "ManualLayoutRollback")
+    assert hasattr(collections_module, "ResponsivePriorityLease")
+    assert hasattr(collections_module, "SectionViewIntent")
+    assert not hasattr(collections_module, "_ManualLayoutRollback")
+    assert not hasattr(collections_module, "_ResponsivePriorityLease")
+    assert not hasattr(collections_module, "_SectionViewIntent")
+
+
+def test_layout_width_uses_only_positive_screen_allocation() -> None:
+    receiver = SimpleNamespace(size=Size(145, 50))
+
+    assert WatchlistsCollectionsScreen._available_layout_width(receiver) == 145
+
+    receiver.size = Size(0, 50)
+    assert WatchlistsCollectionsScreen._available_layout_width(receiver) is None
 
 
 @pytest.fixture
 def fake_controller():
-    controller = AsyncMock()
+    controller = _controller_double()
     controller.preview_source = AsyncMock(
         return_value={"items": [{"title": "Post"}], "log_text": "ok"}
     )
@@ -68,6 +113,122 @@ async def _open_screen(controller):
         assert isinstance(screen, WatchlistsCollectionsScreen)
         screen._controller = controller
         yield screen, pilot
+
+
+class _InspectorActionsApp(App[None]):
+    def __init__(self, entity: dict) -> None:
+        super().__init__()
+        self.entity = entity
+        self.snapshot_requests: list[ViewSnapshotRequested] = []
+
+    def compose(self) -> ComposeResult:
+        pane = InspectorPane(id="watchlists-entity-inspector")
+        pane.set_reactive(InspectorPane.selected_entity, self.entity)
+        yield pane
+
+    def on_view_snapshot_requested(self, message: ViewSnapshotRequested) -> None:
+        self.snapshot_requests.append(message)
+
+
+class _PreMountServerReadHarness(ConsolidatedCSSApp):
+    """Mount Watchlists after applying the Server Read deep link."""
+
+    def __init__(self, app_instance) -> None:
+        super().__init__()
+        self.app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        screen = WatchlistsCollectionsScreen(self.app_instance)
+        screen.apply_navigation_context({"section": "items", "backend": "server"})
+        await self.push_screen(screen)
+
+
+@pytest.mark.parametrize("content_kind", ["article", "change"])
+@pytest.mark.asyncio
+async def test_item_inspector_keeps_advanced_actions(content_kind: str) -> None:
+    app = _InspectorActionsApp(
+        {
+            "entity_kind": "watchlist_item",
+            "item_id": 7,
+            "title": "Selected item",
+            "content_kind": content_kind,
+            "queued_for_briefing": False,
+        }
+    )
+    async with app.run_test():
+        action_ids = [
+            button.id
+            for button in app.query_one("#inspector-actions").query(Button)
+        ]
+
+        assert "inspector-ingest-button" in action_ids
+        assert "inspector-queue-briefing-button" in action_ids
+        assert ("inspector-full-page-button" in action_ids) is (
+            content_kind == "change"
+        )
+        assert ("inspector-previous-snapshot-button" in action_ids) is (
+            content_kind == "change"
+        )
+
+
+@pytest.mark.parametrize(
+    ("button_id", "which"),
+    [
+        ("inspector-full-page-button", "full_page"),
+        ("inspector-previous-snapshot-button", "previous"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_inspector_snapshot_actions_post_existing_request(
+    button_id: str, which: str
+) -> None:
+    entity = {
+        "entity_kind": "watchlist_item",
+        "item_id": 7,
+        "title": "Changed page",
+        "content_kind": "change",
+    }
+    app = _InspectorActionsApp(entity)
+    async with app.run_test() as pilot:
+        await pilot.click(f"#{button_id}")
+        await pilot.pause()
+
+        assert len(app.snapshot_requests) == 1
+        request = app.snapshot_requests[0]
+        assert isinstance(request, ViewSnapshotRequested)
+        assert request.item is entity
+        assert request.which == which
+
+
+@pytest.mark.asyncio
+async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None:
+    app = _build_test_app()
+    app.local_watchlists_service.get_url_snapshots = AsyncMock(
+        return_value=[
+            {"created_at": "2026-08-23T10:00:00Z", "extracted_content": "now"},
+            {
+                "created_at": "2026-08-22T10:00:00Z",
+                "extracted_content": "before",
+            },
+        ]
+    )
+    host = DestinationHarness(app, "watchlists_collections")
+    pushed = AsyncMock(return_value=None)
+    monkeypatch.setattr(host, "push_screen_wait", pushed)
+    item = {"source_id": 11, "url": "https://example.com/changed"}
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.post_message(ViewSnapshotRequested(item, "previous"))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.local_watchlists_service.get_url_snapshots.assert_awaited_once_with(
+            11, "https://example.com/changed", limit=2
+        )
+        modal = pushed.await_args.args[0]
+        assert modal._url == "https://example.com/changed"
+        assert modal._content == "before"
 
 
 @pytest.mark.asyncio
@@ -142,6 +303,58 @@ async def test_the_read_tab_is_the_default_section():
 
 
 @pytest.mark.asyncio
+async def test_pre_mount_server_read_is_query_free_and_enters_recovery(
+    monkeypatch,
+) -> None:
+    """A cold Server Read deep link never starts local Reader navigation."""
+    app = _build_test_app()
+    scope_service = app.watchlist_scope_service
+    local_async_spies = {}
+    for name in ("list_watch_items", "list_items"):
+        spy = AsyncMock(wraps=getattr(scope_service, name))
+        monkeypatch.setattr(scope_service, name, spy)
+        local_async_spies[name] = spy
+
+    bundle = app.watchlist_bundle_service
+    local_sync_spies = {}
+    for name in (
+        "list_watchlists",
+        "list_source_rows",
+        "list_all_source_rows",
+        "list_unassigned_source_rows",
+        "get_watchlist_item_counts",
+        "get_flagged_items_count",
+        "get_unread_items_count_since",
+        "get_source_item_counts",
+    ):
+        spy = Mock(wraps=getattr(bundle, name))
+        monkeypatch.setattr(bundle, name, spy)
+        local_sync_spies[name] = spy
+
+    host = _PreMountServerReadHarness(app)
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        await host.workers.wait_for_complete()
+        screen = host.screen_stack[-1]
+
+        assert screen.active_section == "items"
+        assert screen.runtime_backend == "server"
+        assert screen._read_recovery_active is True
+        assert screen.query("#watchlists-read-local-only")
+        assert screen.query("#watchlists-read-recovery-status")
+        assert not screen.query("#watchlists-content-pane")
+        for name, spy in local_async_spies.items():
+            local_calls = [
+                call
+                for call in spy.await_args_list
+                if call.kwargs.get("runtime_backend") == "local"
+            ]
+            assert not local_calls, name
+        for name, spy in local_sync_spies.items():
+            assert spy.call_count == 0, name
+
+
+@pytest.mark.asyncio
 async def test_digit_1_switches_to_read_and_7_to_overview():
     """The digit bindings follow the new tab order: Read first, Overview last."""
     app = _build_test_app()
@@ -201,6 +414,548 @@ async def test_the_list_pane_is_gone_on_every_tab():
             assert not screen.query("#watchlists-list-pane"), section
             assert not screen.query("#wl-region-feeds"), section
             assert not screen.query("#wl-header-feeds"), section
+
+
+@pytest.mark.asyncio
+async def test_server_backed_read_recovers_through_the_normal_local_load_path(
+    monkeypatch,
+) -> None:
+    """Server-labelled Read never leaks local rows or local Reader queries."""
+    import asyncio
+
+    controller = _controller_double()
+    controller.get_overview_data = AsyncMock(return_value={})
+    local_rows = [
+        {
+            "id": "local:watchlist_item:7",
+            "item_id": 7,
+            "title": "Loaded after switching",
+            "status": "new",
+            "url": "https://example.com/7",
+            "created_at": "2026-08-23T12:00:00+00:00",
+        }
+    ]
+    local_load_entered = asyncio.Event()
+    release_local_load = asyncio.Event()
+
+    async def blocked_local_load(**_kwargs):
+        local_load_entered.set()
+        await release_local_load.wait()
+        return local_rows
+
+    controller.list_items = AsyncMock(side_effect=blocked_local_load)
+    controller.check_all = AsyncMock(return_value={"checked": 0, "failed": []})
+    app = _build_test_app()
+    bundle = app.watchlist_bundle_service
+    count_spies = []
+    for name in (
+        "get_watchlist_item_counts",
+        "get_flagged_items_count",
+        "get_unread_items_count_since",
+        "get_source_item_counts",
+    ):
+        spy = Mock(wraps=getattr(bundle, name))
+        monkeypatch.setattr(bundle, name, spy)
+        count_spies.append(spy)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        screen = host.screen_stack[-1]
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen._controller = controller
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        selector = screen.query_one("#watchlists-backend-select")
+        selector.value = "server"
+        await pilot.pause(0.3)
+        await host.workers.wait_for_complete()
+        controller.list_items.reset_mock()
+        controller.check_all.reset_mock()
+        for spy in count_spies:
+            spy.reset_mock()
+
+        screen.active_section = "items"
+        await pilot.pause(0.4)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.runtime_backend == "server"
+        assert selector.value == "server"
+        assert selector.disabled is True
+        assert screen.query("#wl-region-content"), "Reader centre stays mounted"
+        assert screen.query("#watchlists-read-local-only")
+        switch = screen.query_one("#watchlists-switch-local", Button)
+        assert switch.disabled is False
+        assert "Switch to Local" in str(switch.label)
+        assert "local" in _static_text(
+            screen.query_one("#watchlists-read-local-only-copy", Static)
+        ).lower()
+
+        screen.post_message(ItemsFilterChanged("unread", "server search"))
+        screen.action_refresh_all()
+        await screen._load_tree_data().wait()
+        await pilot.pause(0.5)
+        await host.workers.wait_for_complete()
+
+        controller.list_items.assert_not_awaited()
+        controller.check_all.assert_not_awaited()
+        for name, spy in zip(
+            (
+                "get_watchlist_item_counts",
+                "get_flagged_items_count",
+                "get_unread_items_count_since",
+                "get_source_item_counts",
+            ),
+            count_spies,
+        ):
+            assert spy.call_count == 0, name
+        assert not screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).items
+
+        switch.press()
+        assert await _wait_until(pilot, local_load_entered.is_set)
+
+        assert screen.runtime_backend == "local"
+        assert selector.value == "local"
+        assert screen.query("#watchlists-read-local-only"), (
+            "the recovery centre must remain until the normal load commits"
+        )
+        assert screen.query_one("#watchlists-switch-local", Button).disabled is False
+        assert screen.query("#watchlists-read-local-only-copy")
+        assert not screen.query("#watchlists-content-pane")
+        assert not screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).items
+
+        release_local_load.set()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.runtime_backend == "local"
+        assert selector.value == "local"
+        assert selector.disabled is True
+        assert controller.list_items.await_count == 1, (
+            screen._items_page_loading,
+            screen._items_inflight_page_load,
+            screen._items_load_generation,
+            screen._loaded_items,
+        )
+        assert "search" not in controller.list_items.await_args.kwargs
+        assert [
+            item["title"]
+            for item in screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            ).items
+        ] == ["Loaded after switching"]
+        assert screen.query("#watchlists-content-pane")
+        assert not screen.query("#watchlists-read-local-only")
+        assert screen._selected_content_item is None
+
+
+@pytest.mark.asyncio
+async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
+    controller = _controller_double()
+    controller.get_overview_data = AsyncMock(return_value={})
+    local_row = {
+        "id": "local:watchlist_item:9",
+        "item_id": 9,
+        "title": "Loaded by recovery retry",
+        "status": "new",
+        "url": "https://example.com/9",
+        "created_at": "2026-08-23T12:00:00+00:00",
+    }
+    controller.list_items = AsyncMock(
+        side_effect=[RuntimeError("local read failed"), [local_row]]
+    )
+    app = _build_test_app()
+    bundle = app.watchlist_bundle_service
+    source_id = bundle._db.add_subscription(
+        name="Recovery local source",
+        type="rss",
+        source="https://recovery.example/feed",
+    )
+    watchlist = bundle.create("Recovery local watchlist")
+    bundle.add_source(watchlist["id"], source_id)
+    app.notify = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        screen = host.screen_stack[-1]
+        await host.workers.wait_for_complete()
+        screen._controller = controller
+        await screen._load_tree_data().wait()
+        assert screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        selector = screen.query_one("#watchlists-backend-select")
+        selector.value = "server"
+        await pilot.pause(0.3)
+        screen.active_section = "items"
+        await pilot.pause(0.4)
+        await host.workers.wait_for_complete()
+        controller.list_items.assert_not_awaited()
+
+        screen.query_one("#watchlists-switch-local", Button).press()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.runtime_backend == "local"
+        assert selector.value == "local"
+        controller.list_items.assert_awaited_once()
+        assert screen.query("#watchlists-read-local-only")
+        assert screen.query_one("#watchlists-switch-local", Button).disabled is False
+        assert screen.query("#watchlists-read-local-only-copy")
+        assert not screen.query("#watchlists-content-pane")
+        assert not screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).items
+        assert screen._tree_watchlists[0]["name"] == "Recovery local watchlist"
+        failed_render = host.export_screenshot()
+        assert "Recovery local watchlist" not in failed_render
+        assert "Recovery local source" not in failed_render
+        assert "Failed to load watchlist items." in str(app.notify.call_args.args[0])
+
+        screen.query_one("#watchlists-switch-local", Button).press()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert controller.list_items.await_count == 2
+        assert not screen.query("#watchlists-read-local-only")
+        assert screen.query("#watchlists-content-pane")
+        assert [
+            item["title"]
+            for item in screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            ).items
+        ] == ["Loaded by recovery retry"]
+        assert screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        assert screen._selected_content_item is None
+
+
+@pytest.mark.asyncio
+async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
+    monkeypatch,
+) -> None:
+    controller = _controller_double()
+    controller.get_overview_data = AsyncMock(return_value={})
+    local_row = {
+        "id": "local:watchlist_item:8",
+        "item_id": 8,
+        "title": "Local row before server switch",
+        "status": "read",
+        "url": "https://example.com/8",
+        "created_at": "2026-08-23T12:00:00+00:00",
+    }
+    controller.list_items = AsyncMock(return_value=[local_row])
+    controller.get_item_content = AsyncMock(return_value="Local reader body")
+    controller.check_all = AsyncMock(return_value={"checked": 0, "failed": []})
+    app = _build_test_app()
+    bundle = app.watchlist_bundle_service
+    source_id = bundle._db.add_subscription(
+        name="Same-tab local source",
+        type="rss",
+        source="https://same-tab.example/feed",
+    )
+    watchlist = bundle.create("Same-tab local watchlist")
+    bundle.add_source(watchlist["id"], source_id)
+    local_spies = {}
+    for name in (
+        "list_watchlists",
+        "list_source_rows",
+        "list_all_source_rows",
+        "list_unassigned_source_rows",
+        "get_watchlist_item_counts",
+        "get_flagged_items_count",
+        "get_unread_items_count_since",
+        "get_source_item_counts",
+    ):
+        spy = Mock(wraps=getattr(bundle, name))
+        monkeypatch.setattr(bundle, name, spy)
+        local_spies[name] = spy
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        screen = host.screen_stack[-1]
+        await host.workers.wait_for_complete()
+        screen._controller = controller
+
+        assert screen.active_section == "items"
+        assert screen.runtime_backend == "local"
+        await screen._load_tree_data().wait()
+        assert screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        assert bundle.list_source_rows(watchlist["id"])[0]["name"] == (
+            "Same-tab local source"
+        )
+        await screen._load_items()
+        screen.post_message(ItemSelected(local_row))
+        assert await _wait_until(
+            pilot, lambda: screen._selected_content_item is local_row
+        )
+        await pilot.pause()
+
+        selector = screen.query_one("#watchlists-backend-select")
+        assert [
+            item["title"]
+            for item in screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            ).items
+        ] == ["Local row before server switch"]
+        assert screen.query("#watchlists-content-pane")
+        assert not screen.query("#watchlists-read-local-only")
+
+        controller.list_items.reset_mock()
+        controller.get_item_content.reset_mock()
+        controller.check_all.reset_mock()
+        for spy in local_spies.values():
+            spy.reset_mock()
+
+        selector.value = "server"
+        assert await _wait_until(
+            pilot, lambda: bool(screen.query("#watchlists-read-local-only"))
+        )
+
+        assert screen.active_section == "items"
+        assert screen.runtime_backend == "server"
+        assert selector.value == "server"
+        assert selector.disabled is True
+        assert not screen.query("#watchlists-content-pane")
+        assert not screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).items
+        assert screen._selected_content_item is None
+        assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        assert not screen.query(
+            f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
+        )
+        rendered = host.export_screenshot()
+        assert "Same-tab local watchlist" not in rendered
+        assert "Same-tab local source" not in rendered
+        assert "Local Watchlists snapshot" not in rendered
+
+        screen.post_message(ItemSelected(local_row))
+        screen.post_message(ItemsFilterChanged("unread", "server query"))
+        screen.post_message(PreviousItemsPageRequested())
+        screen.post_message(NextItemsPageRequested())
+        screen.action_refresh_all()
+        await screen._load_tree_data().wait()
+        await pilot.pause(0.5)
+        await host.workers.wait_for_complete()
+
+        controller.list_items.assert_not_awaited()
+        controller.get_item_content.assert_not_awaited()
+        controller.check_all.assert_not_awaited()
+        for name, spy in local_spies.items():
+            assert spy.call_count == 0, name
+        assert screen._items_page_loading is False
+        assert screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).page_loading is False
+
+
+@pytest.mark.asyncio
+async def test_entering_server_read_hides_local_reader_navigation_without_queries(
+    monkeypatch,
+) -> None:
+    """Sources -> Server -> Read cannot retain any local Reader state."""
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    db = service._db
+    source_id = db.add_subscription(
+        name="Local counted feed", type="rss", source="https://counted.example/feed"
+    )
+    watchlist = service.create("Cross-tab local watchlist")
+    service.add_source(watchlist["id"], source_id)
+    _seed_item(db, source_id, "Local row before cross-tab server switch")
+
+    local_spies = {}
+    for name in (
+        "list_watchlists",
+        "list_source_rows",
+        "list_all_source_rows",
+        "list_unassigned_source_rows",
+        "get_watchlist_item_counts",
+        "get_flagged_items_count",
+        "get_unread_items_count_since",
+        "get_source_item_counts",
+    ):
+        spy = Mock(wraps=getattr(service, name))
+        monkeypatch.setattr(service, name, spy)
+        local_spies[name] = spy
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        screen = host.screen_stack[-1]
+        await host.workers.wait_for_complete()
+        await screen._load_tree_data().wait()
+        assert screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        assert service.list_source_rows(watchlist["id"])[0]["name"] == (
+            "Local counted feed"
+        )
+        assert await screen._load_items()
+        local_row = screen._loaded_items[0]
+        screen.post_message(ItemSelected(local_row))
+        assert await _wait_until(
+            pilot, lambda: screen._selected_content_item is local_row
+        )
+
+        assert any(bucket.get("unread", 0) for bucket in screen._tree_counts.values())
+        assert screen._tree_source_counts[source_id]["unread"] == 1
+        assert "1" in str(screen.query_one("#wl-tree-node-all", Button).label)
+        assert screen.query("#watchlists-content-pane")
+        assert screen.query_one("#watchlists-items-pane", ArticleListPane).items
+        screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button).press()
+        screen.post_message(
+            TreeScopeChanged(
+                TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
+            )
+        )
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                screen.query(
+                    f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
+                )
+            ),
+        )
+        await host.workers.wait_for_complete()
+        assert screen._wc_loaded is True
+        assert screen._local_watchlist_count == 1
+
+        screen.post_message(ItemsFilterChanged("unread", "local query"))
+        await pilot.pause(0.4)
+        await host.workers.wait_for_complete()
+        screen._items_page_index = 2
+        screen._items_has_next = True
+        screen._push_items_pager_state()
+        parked_watchlists = list(screen._tree_watchlists)
+        parked_snapshot = screen._local_watchlist_records
+        parked_snapshot_count = screen._local_watchlist_count
+
+        list_items = AsyncMock(wraps=screen._controller.list_items)
+        get_item_content = AsyncMock(wraps=screen._controller.get_item_content)
+        check_all = AsyncMock(wraps=screen._controller.check_all)
+        screen._controller.list_items = list_items
+        screen._controller.get_item_content = get_item_content
+        screen._controller.check_all = check_all
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        selector = screen.query_one("#watchlists-backend-select")
+        selector.value = "server"
+        await pilot.pause(0.3)
+        await host.workers.wait_for_complete()
+        for spy in local_spies.values():
+            spy.reset_mock()
+
+        screen.active_section = "items"
+        assert await _wait_until(
+            pilot, lambda: bool(screen.query("#watchlists-read-local-only"))
+        )
+        await host.workers.wait_for_complete()
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert screen.runtime_backend == "server"
+        assert selector.value == "server"
+        assert selector.disabled is True
+        assert not pane.items
+        assert pane.status_filter == "all"
+        assert pane.search_query == ""
+        assert pane.page_number == 1
+        assert pane.has_previous is False
+        assert pane.has_next is False
+        assert pane.page_loading is False
+        assert pane.selected_item is None
+        assert screen._loaded_items == []
+        assert screen._selected_content_item is None
+        assert screen._tree_watchlists == parked_watchlists
+        assert screen._tree_counts
+        assert screen._tree_source_counts
+        assert screen._local_watchlist_records == parked_snapshot
+        assert screen._local_watchlist_count == parked_snapshot_count
+        assert screen._wc_loaded is True
+        assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        assert not screen.query(
+            f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
+        )
+        rendered = host.export_screenshot()
+        assert "Cross-tab local watchlist" not in rendered
+        assert "Local counted feed" not in rendered
+        assert "Local Watchlists snapshot" not in rendered
+        assert "All sources  0" in str(
+            screen.query_one("#wl-tree-node-all", Button).label
+        )
+
+        screen.post_message(ItemSelected(local_row))
+        screen.post_message(ItemsFilterChanged("unread", "server query"))
+        screen.post_message(NextItemsPageRequested())
+        screen.action_refresh_all()
+        await pilot.pause(0.5)
+        await host.workers.wait_for_complete()
+
+        list_items.assert_not_awaited()
+        get_item_content.assert_not_awaited()
+        check_all.assert_not_awaited()
+        for name, spy in local_spies.items():
+            assert spy.call_count == 0, name
+        assert screen._items_page_loading is False
+
+        screen.active_section = "sources"
+        assert await _wait_until(
+            pilot, lambda: bool(screen.query("#watchlists-sources-pane"))
+        )
+        await host.workers.wait_for_complete()
+        assert await _wait_until(
+            pilot,
+            lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}"))
+        )
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                screen.query(
+                    f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
+                )
+            ),
+        )
+        assert screen.query("#wc-watchlists-summary")
+
+        watchlist_node = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+        source_node = screen.query_one(
+            f"#wl-tree-node-source-{watchlist['id']}-{source_id}", Button
+        )
+        assert "Cross-tab local watchlist" in str(watchlist_node.label)
+        assert "Local counted feed" in str(source_node.label)
+        assert _static_text(screen.query_one("#wc-watchlists-summary", Static)) == (
+            "Local Watchlists snapshot: Cross-tab local watchlist (1 source)"
+        )
+        assert not screen.query("#wc-loading-state")
+        list_items.assert_not_awaited()
+        get_item_content.assert_not_awaited()
+
+        for spy in local_spies.values():
+            spy.reset_mock()
+        screen.active_section = "items"
+        assert await _wait_until(
+            pilot, lambda: bool(screen.query("#watchlists-read-local-only"))
+        )
+        await host.workers.wait_for_complete()
+
+        recovery_render = host.export_screenshot()
+        assert "Cross-tab local watchlist" not in recovery_render
+        assert "Local counted feed" not in recovery_render
+        assert "Local Watchlists snapshot" not in recovery_render
+        list_items.assert_not_awaited()
+        get_item_content.assert_not_awaited()
+        for name, spy in local_spies.items():
+            assert spy.call_count == 0, name
 
 
 # --- Task 7: scope-driven scoped rows, with real seeded data ---------------
@@ -450,6 +1205,134 @@ async def test_items_reload_scopes_to_source():
 
 
 @pytest.mark.asyncio
+async def test_items_reload_scopes_to_starred():
+    """TASK-3072 plan task 6: the Starred smart feed lists flagged items from
+    every source -- membership is irrelevant, the flag is global (ADR-018
+    semantics, same as the briefing queue)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        krebs = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        starred_a = _seed_item(db, arxiv, "Starred from ArXiv")
+        starred_b = _seed_item(db, krebs, "Starred from Krebs")
+        _seed_item(db, arxiv, "Plain ArXiv item")
+        db.set_item_flagged(starred_a, True)
+        db.set_item_flagged(starred_b, True)
+
+        screen._apply_tree_scope(TreeScope(kind="starred"))
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: two items are starred"
+        assert {item["title"] for item in screen._loaded_items} == {
+            "Starred from ArXiv",
+            "Starred from Krebs",
+        }
+
+
+# --- TASK-3791 plan task 4: All Unread + Today scopes --------------------------
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_all_unread():
+    """All Unread: every source's unread items, membership irrelevant."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        krebs = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        _seed_item(db, arxiv, "Unread from ArXiv")
+        read_id = _seed_item(db, krebs, "Read from Krebs")
+        _seed_item(db, krebs, "Unread from Krebs")
+        db.mark_item_status(read_id, "reviewed")
+
+        screen._apply_tree_scope(TreeScope(kind="unread"))
+        await screen._load_items()
+
+        assert {item["title"] for item in screen._loaded_items} == {
+            "Unread from ArXiv",
+            "Unread from Krebs",
+        }
+
+
+@pytest.mark.asyncio
+async def test_all_unread_scope_wins_over_the_all_filter():
+    """The node is the stronger statement: All Unread + the pane's "All"
+    filter must still show unread only -- and must never trip the
+    status-vs-statuses ValueError in `get_new_items`."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "Still unread")
+        read_id = _seed_item(db, source_id, "Already read")
+        db.mark_item_status(read_id, "reviewed")
+
+        screen._apply_tree_scope(TreeScope(kind="unread"))
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        # The pane's "All" filter would normally widen the query to the
+        # reader statuses; under the All Unread scope it must not.
+        pane.status_filter = "all"
+        await screen._load_items()
+
+        assert [item["title"] for item in screen._loaded_items] == ["Still unread"]
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_today():
+    """Today: effective date at/after local midnight, across every source."""
+    from datetime import datetime, timedelta, timezone
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        now = datetime.now(timezone.utc)
+        fresh = _seed_item(db, source_id, "Fresh today")
+        stale = _seed_item(db, source_id, "From yesterday")
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET published_date = ? WHERE id = ?",
+                (now.isoformat(), fresh),
+            )
+            conn.execute(
+                "UPDATE subscription_items SET published_date = ? WHERE id = ?",
+                ((now - timedelta(hours=25)).isoformat(), stale),
+            )
+
+        screen._apply_tree_scope(TreeScope(kind="today"))
+        await screen._load_items()
+
+        assert [item["title"] for item in screen._loaded_items] == ["Fresh today"]
+
+
+@pytest.mark.asyncio
 async def test_tree_move_triggers_items_reload_on_read_tab():
     """Moving the tree while on the Read tab re-fetches the items list.
 
@@ -508,7 +1391,7 @@ async def test_m_toggles_read_state_on_open_item():
         )
         item_id = _seed_item(db, source_id, "Toggle me")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert pane.items, "precondition: the seeded item reaches the pane"
 
@@ -556,7 +1439,7 @@ async def test_m_refuses_on_ingested_item():
         item_id = _seed_item(db, source_id, "Ingested one")
         db.mark_item_status(item_id, "ingested")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert pane.items, "precondition: the ingested item is listed (filter: all)"
 
@@ -578,6 +1461,547 @@ async def test_m_refuses_on_ingested_item():
         )
 
 
+# --- TASK-3072 plan task 7: `s` and the reader's Star button -------------------
+
+
+def _flagged_value(db, item_id: int) -> int:
+    row = db.conn.execute(
+        "SELECT is_flagged FROM subscription_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return int(row[0]) if row else -1
+
+
+@pytest.mark.asyncio
+async def test_s_toggles_star_on_the_open_item():
+    """`s` stars, then unstars, the open item through the service; the row's
+    star repaints in place and the Starred badge catches up through the
+    debounced counts path."""
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import STARRED_BUCKET
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Star me")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, "`s` must star the open item"
+
+        row_widget = pane._find_row(str(pane.items[0]["id"]))
+        assert pane._STAR_GLYPH in str(row_widget.render()), (
+            "the row's star repaints in place -- no recompose"
+        )
+
+        from textual.widgets import Button
+
+        assert str(screen.query_one("#content-star-button", Button).label) == (
+            "★ Starred"
+        ), "the reader's button flips on the success path, never optimistically"
+
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._tree_counts.get(STARRED_BUCKET, {}).get("unread") == 1:
+                break
+        assert screen._tree_counts[STARRED_BUCKET]["unread"] == 1, (
+            "the Starred badge must refresh through the debounced counts path"
+        )
+
+        # The open dict was patched, so the second press unstars rather than
+        # re-deriving from a stale flag.
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 0:
+                break
+        assert _flagged_value(db, item_id) == 0, "a second `s` must unstar"
+        assert str(screen.query_one("#content-star-button", Button).label) == "☆ Star"
+
+
+@pytest.mark.asyncio
+async def test_s_with_no_open_item_is_a_noop():
+    """`s` with nothing open writes nothing and raises nothing."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Never opened")
+        await screen._load_items()
+        assert screen._selected_content_item is None, "precondition: nothing open"
+
+        await pilot.press("s")
+        await pilot.pause(0.3)
+        assert _flagged_value(db, item_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_star_toggle_requested_toggles_the_same_path():
+    """The reader's Star button and the `s` key share one handler."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import StarToggleRequested
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Button-starred")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        screen.post_message(
+            StarToggleRequested(dict(screen._selected_content_item))
+        )
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, (
+            "the button's message must reach the same write the `s` key does"
+        )
+
+
+# --- TASK-3072 plan task 8: `o` opens the item in the browser -----------------
+
+
+async def _open_item_and_get_url(pilot, screen, db, title: str, url: str) -> int:
+    """Seed one item carrying exactly `url`, open it in the reader."""
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    item_id = _seed_item(db, source_id, title)
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET url = ? WHERE id = ?", (url, item_id)
+        )
+    await screen._load_items()
+    pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+    await _wait_for_items(pilot, pane)
+    pane.select_item_by_id(str(pane.items[0]["id"]))
+    await pilot.pause(0.3)
+    assert screen._selected_content_item is not None, "precondition: item open"
+    return item_id
+
+
+def _successful_browser_recorder(opened: list[str]):
+    """Return a browser stub that records its URL and reports success."""
+    def record(url: str) -> bool:
+        opened.append(url)
+        return True
+
+    return record
+
+
+@pytest.mark.asyncio
+async def test_o_opens_the_open_items_url(monkeypatch):
+    """`o` hands the open item's http URL to the system browser."""
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", _successful_browser_recorder(opened))
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Readable", "https://example.com/post"
+        )
+        app.notify = Mock()
+
+        await pilot.press("o")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert opened == ["https://example.com/post"]
+        app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_o_refuses_a_non_http_url(monkeypatch):
+    """A `javascript:`/`file:`/empty URL is a remote-derived string reaching
+    an OS primitive: it is refused with a notification, never passed on."""
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        app.notify = Mock()
+        await _open_item_and_get_url(
+            pilot, screen, db, "Hostile", "javascript:alert(1)"
+        )
+
+        await pilot.press("o")
+        for _ in range(20):
+            await pilot.pause()
+            if app.notify.called:
+                break
+
+        assert opened == [], "a non-http(s) scheme must never reach webbrowser"
+        assert app.notify.called, "a refusal must say so"
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
+    """A feed URL is remote-derived text: control bytes are stripped before
+    the (already scheme- and host-validated) string reaches the OS."""
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", _successful_browser_recorder(opened))
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Control bytes", "https://example.com/po\x07st"
+        )
+        app.notify = Mock()
+
+        await pilot.press("o")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert opened == ["https://example.com/post"]
+        app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_o_with_no_open_item_is_a_noop(monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "Never opened")
+        await screen._load_items()
+        assert screen._selected_content_item is None, "precondition: nothing open"
+
+        await pilot.press("o")
+        await pilot.pause(0.2)
+        assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
+    """The reader's Open button and the `o` key share one handler."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        OpenInBrowserRequested,
+    )
+
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", _successful_browser_recorder(opened))
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Button-opened", "https://example.com/via-button"
+        )
+        app.notify = Mock()
+
+        screen.post_message(
+            OpenInBrowserRequested(dict(screen._selected_content_item))
+        )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert opened == ["https://example.com/via-button"]
+        app.notify.assert_not_called()
+
+
+@pytest.mark.parametrize("activation", ["keyboard", "button"])
+@pytest.mark.asyncio
+async def test_open_validates_on_ui_thread_then_opens_in_worker(
+    monkeypatch, activation: str
+):
+    """Both entry points converge before the UI/worker thread boundary."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        OpenInBrowserRequested,
+    )
+
+    ui_thread = threading.get_ident()
+    validation_threads: list[int] = []
+    browser_threads: list[int] = []
+    def validate_on_recorded_thread(url: str) -> bool:
+        validation_threads.append(threading.get_ident())
+        return real_validate_url(url)
+
+    def open_on_recorded_thread(url: str) -> bool:
+        browser_threads.append(threading.get_ident())
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.validate_url",
+        validate_on_recorded_thread,
+    )
+    monkeypatch.setattr("webbrowser.open", open_on_recorded_thread)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Threaded open", "https://example.com/threaded"
+        )
+
+        if activation == "keyboard":
+            await pilot.press("o")
+        else:
+            screen.post_message(
+                OpenInBrowserRequested(dict(screen._selected_content_item))
+            )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert validation_threads == [ui_thread]
+        assert len(browser_threads) == 1
+        assert browser_threads[0] != ui_thread
+
+
+# --- TASK-3072 plan task 9: the reader's position footer ----------------------
+
+
+@pytest.mark.asyncio
+async def test_the_reader_footer_numbers_the_open_item():
+    """"N of M": M is the displayed list, N the open item's 1-based place in
+    it; `j` advances the reader and the footer together."""
+    from textual.widgets import Static
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        # Newest-first display: [c (09:02), b (09:01), a (09:00)].
+        _seed_item(db, source_id, "a", created_at="2026-08-06 09:00:00")
+        _seed_item(db, source_id, "b", created_at="2026-08-06 09:01:00")
+        _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 3, "precondition: all three listed"
+
+        pane.select_item_by_id(str(pane.displayed_items()[1]["id"]))
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item is not None:
+                break
+        assert screen._selected_content_item["title"] == "b", "precondition"
+        assert str(screen.query_one("#content-position", Static).renderable) == "2 of 3"
+
+        await pilot.press("j")
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item.get("title") == "a":
+                break
+        assert screen._selected_content_item["title"] == "a", "precondition: j moved"
+        assert str(screen.query_one("#content-position", Static).renderable) == "3 of 3", (
+            "the footer must walk with the reader"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_reader_footer_is_empty_with_nothing_open():
+    """Nothing open: no footer at all, and definitely not "0 of 0"."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen._selected_content_item is None, "precondition"
+        assert not screen.query("#content-position")
+
+
+@pytest.mark.asyncio
+async def test_the_next_unread_footer_button_opens_the_next_unread():
+    """The footer's Next Unread control drives the same handler `space` does."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "a", created_at="2026-08-06 09:00:00")
+        b_id = _seed_item(db, source_id, "b", created_at="2026-08-06 09:01:00")
+        _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
+        db.mark_item_status(b_id, "reviewed")
+        # Nothing open yet, so no footer exists -- open any item first.
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        pane.select_item_by_id(str(pane.displayed_items()[1]["id"]))
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item is not None:
+                break
+        assert screen._selected_content_item["title"] == "b", "precondition"
+
+        from textual.widgets import Button
+
+        screen.query_one("#content-next-unread-button", Button).press()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item.get("title") == "a":
+                break
+        assert screen._selected_content_item["title"] == "a", (
+            "from b, next unread walks the displayed sequence forward, "
+            "past nothing, to a -- the only unread item after it"
+        )
+
+
+# --- TASK-3072 plan task 10: the hostile-HTML end-to-end pin ------------------
+
+
+@pytest.mark.asyncio
+async def test_a_hostile_item_stars_queues_and_still_renders_inert():
+    """The phase-2 DoD, end to end: an item whose title and body carry
+    `<script>`, `[bold red]` and control bytes renders as INERT TEXT in the
+    row and the reader body while the star and queue verbs work on it --
+    and both flags survive a re-persist (Task 3's pin, at the surface)."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    hostile_title = "[bold red]x[/]<script>alert('TITLE_LITERAL')</script>\x1b[31m"
+    hostile_body = "<script>alert('BODY_PAYLOAD')</script> [bold red]injected[/]\x00\x07"
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="Evil Feed", type="rss", source="https://evil.example/f"
+        )
+        with db.transaction() as conn:
+            item_id = persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://evil.example/post",
+                    "title": hostile_title,
+                    "content": hostile_body,
+                    "content_hash": "hash-hostile",
+                },
+                run_id=None,
+                now="2026-08-06T09:00:00+00:00",
+            )
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        # The verbs work on the hostile item exactly as on any other.
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, "the star write must land"
+        db.set_item_briefing_queued(item_id, True)
+
+        # The row renders the attacks as literal characters, control-stripped.
+        row_widget = pane._find_row(str(pane.items[0]["id"]))
+        row_text = str(row_widget.render())
+        assert "[bold red]x[/]" in row_text, "markup-shaped text stays literal"
+        assert "\x1b" not in row_text, "no escape sequence survives into a row"
+
+        # The reader defends each field at its own layer. The TITLE is
+        # documented plain text (render_article appends, never parses), so
+        # its script-shaped characters render literally and inertly. The
+        # BODY goes through `readable_body_text`, which drops script tags
+        # AND their payloads. Bracket text stays literal; control bytes die.
+        body = screen.query_one("#content-body", Static).renderable
+        body_plain = getattr(body, "plain", str(body))
+        assert "[bold red]injected[/]" in body_plain
+        assert "TITLE_LITERAL" in body_plain, (
+            "the title renders -- as inert literal characters"
+        )
+        assert "BODY_PAYLOAD" not in body_plain, (
+            "the body's script payload is dropped, not shown"
+        )
+        assert "\x00" not in body_plain and "\x07" not in body_plain
+        assert "\x1b" not in body_plain
+
+        # Re-persist the same item (same url + content_hash, the re-fetch
+        # shape): neither flag is touched by the upsert.
+        with db.transaction() as conn:
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://evil.example/post",
+                    "title": hostile_title,
+                    "content": hostile_body,
+                    "content_hash": "hash-hostile",
+                },
+                run_id=None,
+                now="2026-08-06T09:05:00+00:00",
+            )
+        assert _flagged_value(db, item_id) == 1, "the star survives a re-persist"
+        queued = db.conn.execute(
+            "SELECT queued_for_briefing FROM subscription_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        assert int(queued[0]) == 1, "the queue flag survives a re-persist"
+
+
 @pytest.mark.asyncio
 async def test_space_opens_next_unread():
     """`space` walks to the next UNREAD item, skipping reviewed rows."""
@@ -596,7 +2020,7 @@ async def test_space_opens_next_unread():
         _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
         db.mark_item_status(b_id, "reviewed")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert len(pane.displayed_items()) == 3, "precondition: all three listed"
         displayed = pane.displayed_items()
@@ -636,7 +2060,7 @@ async def test_space_at_end_notifies_all_caught_up():
         )
         _seed_item(db, source_id, "only one")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         pane.select_item_by_id(str(pane.items[0]["id"]))
         await pilot.pause(0.3)
@@ -674,7 +2098,7 @@ async def test_space_with_rail_focused_does_not_navigate():
         )
         _seed_item(db, source_id, "unread one")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         screen.query_one("#wl-tree-node-all", Button).focus()
         await pilot.press("space")
@@ -706,7 +2130,7 @@ async def test_space_in_items_search_input_still_types():
         )
         _seed_item(db, source_id, "f o matcher")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         pane.query_one("#items-search-input", Input).focus()
         await pilot.press("f", "space", "o")
@@ -722,15 +2146,22 @@ async def test_space_in_items_search_input_still_types():
 
 @pytest.mark.asyncio
 async def test_typing_in_sources_search_survives_the_recompose():
-    """Typing in the sources search box keeps focus and value across recomposes.
+    """Typing in the sources search box keeps focus and value, end to end.
 
     task-3071: the SourcesPane sibling of the items-search bug pinned above.
-    `SourcesPane.search_query` is likewise `reactive(..., recompose=True)`,
-    so every keystroke rebuilt the pane and destroyed the focused input --
-    and its `recompose()` only re-homed CREATE-FORM focus, so the box was
-    lost (and with Textual's default `select_on_focus=True`, any
-    programmatic refocus would have selected-all, replacing the half-typed
-    query on the next keystroke).
+    `SourcesPane.search_query` was then `reactive(..., recompose=True)`, so
+    every keystroke rebuilt the pane and destroyed the focused input -- and
+    its `recompose()` only re-homed CREATE-FORM focus, so the box was lost
+    (and with Textual's default `select_on_focus=True`, any programmatic
+    refocus would have selected-all, replacing the half-typed query on the
+    next keystroke).
+
+    task-15460 removed that teardown entirely -- the filters are plain
+    reactives that re-populate the table in place -- so the property this
+    asserts now holds because nothing takes the focus rather than because
+    `recompose()` gives it back. The assertions are unchanged on purpose:
+    they are the user-facing outcome, and they must keep holding through
+    whichever mechanism is underneath.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -748,9 +2179,11 @@ async def test_typing_in_sources_search_survives_the_recompose():
         await pilot.press("k", "r", "e", "b", "s")
         await pilot.pause(0.2)
 
-        # Re-query: each keystroke recomposes the pane, so the input that
-        # was focused at the start was destroyed; this is the live
-        # replacement.
+        # Re-query rather than reusing the reference: before task-15460
+        # every keystroke recomposed the pane and destroyed the input that
+        # was focused at the start, so only a fresh query saw the live one.
+        # Nothing replaces it today, but reading the DOM is what makes this
+        # test agnostic about that.
         search = pane.query_one("#sources-search-input", Input)
         assert search.value == "krebs"
         assert search.has_focus, "typing must not lose the sources search box"
@@ -807,7 +2240,7 @@ async def test_mark_all_read_then_undo_roundtrip():
                 created_at=f"2026-08-06 09:0{minute}:00",
             )
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert len(pane.displayed_items()) == 3, "precondition"
 
@@ -849,7 +2282,7 @@ async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
         )
         _seed_item(db, source_id, "item 0", created_at="2026-08-06 09:00:00")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
 
         await pilot.press("a")
@@ -920,7 +2353,7 @@ async def test_mark_all_read_scoped_to_watchlist():
         _seed_item(db, outsider, "outsider", created_at="2026-08-06 09:02:00")
 
         screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(60):
             await pilot.pause()
             if len(pane.displayed_items()) == 2:
@@ -1933,6 +3366,12 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
                 and node.func.attr == "_watchlist_bundle_service"
             ):
                 return True
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "WatchlistBundleService"
+            ):
+                return True
             if isinstance(node, ast.Attribute) and node.attr == "watchlist_bundle_service":
                 return True
             return isinstance(node, ast.Name) and node.id in self.aliases
@@ -2022,3 +3461,536 @@ async def test_a_failed_tree_write_start_does_not_wedge_later_writes():
             if ran:
                 break
         assert ran, "the next write must still be able to start"
+
+
+# --- TASK-3791 plan task 3: `/` and the corpus-wide search --------------------
+
+
+@pytest.mark.asyncio
+async def test_slash_focuses_the_items_search_box():
+    """`/` on the Read tab puts the caret in the search input."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.active_section == "items", "precondition: lands on Read"
+
+        await pilot.press("/")
+        await pilot.pause()
+        focused = screen.focused
+        assert isinstance(focused, Input) and focused.id == "items-search-input"
+
+
+@pytest.mark.asyncio
+async def test_slash_types_literally_once_the_search_box_has_focus():
+    """The verb guard: once an Input has focus, `/` is text, not a verb."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        await pilot.press("/")
+        await pilot.pause()
+        search = screen.query_one("#items-search-input", Input)
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert search.value == "/", "a second `/` must type into the box"
+
+
+@pytest.mark.asyncio
+async def test_a_search_reaches_beyond_the_first_page():
+    """The corpus-wide path: an item past the newest-50 page still surfaces."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        # 105 items, newest-first by created_at; the unique-token item is the
+        # OLDEST, so the default page (limit 50) cannot contain it.
+        for index in range(105):
+            day = 1 + index // 24
+            hour = index % 24
+            _seed_item(
+                db, source_id, f"generic {index:03d}",
+                created_at=f"2026-08-0{day} {hour:02d}:00:00",
+            )
+        _seed_item(db, source_id, "zzqtoken oldest", created_at="2026-08-01 00:00:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 50, "precondition: page is capped"
+        assert all(
+            "zzqtoken" not in str(item.get("title")) for item in pane.displayed_items()
+        ), "precondition: the oldest item fell off the page"
+
+        search = screen.query_one("#items-search-input", Input)
+        search.value = "zzqtoken"
+        found = False
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if any(
+                "zzqtoken" in str(item.get("title"))
+                for item in pane.displayed_items()
+            ):
+                found = True
+                break
+        assert found, "a corpus-wide search must surface items beyond the page"
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_search_restores_the_unsearched_page():
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "alpha post")
+        _seed_item(db, source_id, "beta post")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 2, "precondition"
+
+        search = screen.query_one("#items-search-input", Input)
+        search.value = "no such token anywhere"
+        # Track `_loaded_items` (the SERVER page), not `displayed_items()`:
+        # the pane's client-side filter would answer instantly and race the
+        # debounced reload this test is actually about.
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._loaded_items == []:
+                break
+        assert screen._loaded_items == [], "the corpus query returned nothing"
+        assert pane.displayed_items() == []
+
+        # The empty-page reload recomposes the pane, rebuilding the Input --
+        # and the recompose lands asynchronously, so even a FRESH query can
+        # return the about-to-be-destroyed widget. Let it settle, re-query,
+        # and then prove propagation through the screen's mirror before
+        # waiting on the reload (a dead handle would stall every later
+        # wait with no signal).
+        await pilot.pause(0.5)
+        screen.query_one("#items-search-input", Input).value = ""
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._items_search_query == "":
+                break
+        assert screen._items_search_query == "", (
+            "the clear must reach the screen's mirror"
+        )
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if len(screen._loaded_items) == 2:
+                break
+        await pilot.pause(0.4)  # let any trailing debounce land
+        displayed = pane.displayed_items()
+        assert len(displayed) == 2, (
+            "clearing the box must restore the unsearched page "
+            f"(mirror={screen._items_search_query!r} pane.query={pane.search_query!r} "
+            f"loaded={len(screen._loaded_items)} pane.items={len(pane.items)} "
+            f"rendered={len(pane._rendered_items)})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_keeps_the_open_item_pinned():
+    """The pin is unconditional since TASK-3072: searching away from the open
+    item must not vanish the article being read."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "aaa keepme", created_at="2026-08-06 09:00:00")
+        _seed_item(db, source_id, "bbb findme", created_at="2026-08-06 09:01:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(
+            str(next(i["id"] for i in pane.items if "aaa" in str(i.get("title"))))
+        )
+        await pilot.pause(0.3)
+        assert "aaa" in str(screen._selected_content_item.get("title")), "precondition"
+
+        screen.query_one("#items-search-input", Input).value = "bbb"
+        for _ in range(80):
+            await pilot.pause(0.05)
+            titles = [str(i.get("title")) for i in pane.displayed_items()]
+            if any("bbb" in t for t in titles):
+                break
+        titles = [str(i.get("title")) for i in pane.displayed_items()]
+        assert any("bbb" in t for t in titles), "the match is listed"
+        assert any("aaa" in t for t in titles), "the open item stays pinned"
+
+
+# --- TASK-3791 plan task 5: `r` refresh-all ------------------------------------
+
+
+def _seed_checkable_sources(app):
+    """Two active sources and one auto-paused one (eligible = `active`)."""
+    db = app.local_watchlists_service._db()
+    active_a = db.add_subscription(
+        name="Active A", type="rss", source="https://a.example/f"
+    )
+    active_b = db.add_subscription(
+        name="Active B", type="rss", source="https://b.example/f"
+    )
+    paused = db.add_subscription(
+        name="Paused", type="rss", source="https://c.example/f"
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,)
+        )
+    return active_a, active_b, paused
+
+
+async def _screen_with_sources(pilot, host):
+    """The mounted screen with sources and tree data both loaded."""
+    await pilot.pause(0.1)
+    screen = host.screen_stack[-1]
+    for _ in range(40):
+        await pilot.pause()
+        if screen._tree_counts:
+            break
+    await screen._load_sources()
+    await pilot.pause()
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_r_checks_every_active_source_once_and_aggregates():
+    """`r` launches a check per ACTIVE source (paused are skipped), then
+    ONE aggregated toast with the unread delta, and the pill shows it."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    app = _build_test_app()
+    active_a, active_b, _paused = _seed_checkable_sources(app)
+    db = app.local_watchlists_service._db()
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+
+        calls: list[int] = []
+
+        async def _check(*, runtime_backend=None, source_id):
+            calls.append(source_id)
+            with db.transaction() as conn:
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        "url": f"https://feed.test/new-{source_id}/",
+                        "title": f"New from {source_id}",
+                        "content_hash": f"hash-r-{source_id}",
+                    },
+                    run_id=None,
+                    now="2026-08-08T09:00:00+00:00",
+                )
+            return {"status": "completed"}
+
+        screen._controller.check_now = _check
+        app.notify = Mock()
+
+        await pilot.press("r")
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if any(
+                "Checked" in str(call.args[0]) for call in app.notify.call_args_list
+            ):
+                break
+
+        assert sorted(calls) == sorted([active_a, active_b]), (
+            "every active source exactly once; the paused one never"
+        )
+        toasts = [
+            str(call.args[0]) for call in app.notify.call_args_list
+            if "Checked" in str(call.args[0])
+        ]
+        assert len(toasts) == 1, "one aggregated toast, never one per source"
+        assert "2" in toasts[0] and "new items" in toasts[0]
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert pane.new_items_note == "2 new items"
+
+
+@pytest.mark.asyncio
+async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
+    from unittest.mock import Mock
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    paused = db.add_subscription(
+        name="Paused", type="rss", source="https://c.example/f"
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,)
+        )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+        screen._controller.check_now = Mock(
+            side_effect=AssertionError("must not be called")
+        )
+        app.notify = Mock()
+
+        await pilot.press("r")
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if app.notify.called:
+                break
+
+        assert app.notify.called
+        assert "Nothing to check" in str(app.notify.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_r_during_a_batch_is_a_noop():
+    """One batch at a time: a second `r` while checks are in flight does
+    not double-launch."""
+    import asyncio
+
+    app = _build_test_app()
+    active_a, active_b, _paused = _seed_checkable_sources(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+
+        calls: list[int] = []
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _slow_check(*, runtime_backend=None, source_id):
+            calls.append(source_id)
+            entered.set()
+            await release.wait()
+            return {"status": "completed"}
+
+        screen._controller.check_now = _slow_check
+
+        await pilot.press("r")
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if entered.is_set():
+                break
+        assert entered.is_set(), "precondition: the batch is in flight"
+
+        await pilot.press("r")
+        await pilot.pause(0.2)
+        release.set()
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if len(calls) >= 2:
+                break
+        await pilot.pause(0.2)
+
+        assert sorted(calls) == sorted([active_a, active_b]), (
+            "the second `r` must not start a second batch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_r_names_a_failed_source_and_finishes_the_batch():
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    app = _build_test_app()
+    active_a, active_b, _paused = _seed_checkable_sources(app)
+    db = app.local_watchlists_service._db()
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+
+        async def _check(*, runtime_backend=None, source_id):
+            if source_id == active_b:
+                raise RuntimeError("boom")
+            with db.transaction() as conn:
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        "url": f"https://feed.test/new-{source_id}/",
+                        "title": f"New from {source_id}",
+                        "content_hash": f"hash-rf-{source_id}",
+                    },
+                    run_id=None,
+                    now="2026-08-08T09:00:00+00:00",
+                )
+            return {"status": "completed"}
+
+        screen._controller.check_now = _check
+        app.notify = Mock()
+
+        await pilot.press("r")
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if any(
+                "Checked" in str(call.args[0]) for call in app.notify.call_args_list
+            ):
+                break
+
+        toasts = [
+            str(call.args[0]) for call in app.notify.call_args_list
+            if "Checked" in str(call.args[0])
+        ]
+        assert len(toasts) == 1
+        assert "1" in toasts[0] and "failed" in toasts[0], (
+            "the aggregate names the failure count"
+        )
+        assert "1 new items" in toasts[0], (
+            "the delta counts what actually arrived"
+        )
+
+
+# --- TASK-3791 plan task 6: the hostile-search end-to-end pin ------------------
+
+
+@pytest.mark.asyncio
+async def test_a_hostile_search_query_renders_inert_and_never_raises():
+    """An FTS5-syntax attack typed into the reader's search box: the corpus
+    query treats it as literal text (task 2's quoting), the rows render
+    inert, and nothing raises into the UI."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="[bold red]Evil Feed[/]", type="rss", source="https://evil.example/f"
+        )
+        _seed_item(db, source_id, '[script]alert("x")[/script] daily')
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert pane.displayed_items(), "precondition"
+
+        for hostile in ('"unbalanced', "[bold red]", "NEAR/1 AND", '"'):
+            # Each reload recomposes the pane and destroys the Input, and the
+            # recompose lands asynchronously -- settle, re-query, and PROVE
+            # propagation through the screen's mirror before waiting on the
+            # reload, exactly the mechanic the task-3 clearing test pinned.
+            await pilot.pause(0.5)
+            screen.query_one("#items-search-input", Input).value = hostile
+            propagated = False
+            for _ in range(80):
+                await pilot.pause(0.05)
+                if screen._items_search_query == hostile:
+                    propagated = True
+                    break
+            assert propagated, f"{hostile!r} must reach the screen's mirror"
+            for _ in range(100):
+                await pilot.pause(0.05)
+                if screen._loaded_items == []:
+                    break
+            assert screen._loaded_items == [], (
+                f"{hostile!r} matches nothing, and crucially did not raise"
+            )
+
+        # And the hostile SOURCE NAME in the surviving rows renders as
+        # literal characters. Settle, re-query (each reload above recomposed
+        # the pane and destroyed the previous Input), and prove the clear
+        # propagated through the screen's mirror before waiting on the
+        # restore -- the mechanic pinned by the clearing test in task 3.
+        await pilot.pause(0.5)
+        screen.query_one("#items-search-input", Input).value = ""
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._items_search_query == "":
+                break
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if len(screen._loaded_items) == 1:
+                break
+        await pilot.pause(0.5)  # let the restore recompose land
+
+        row_widget = pane._find_row(str(pane.items[0]["id"]))
+        row_text = str(row_widget.render())
+        assert "[bold red]Evil Feed[/]" in row_text
+        assert "[script]" in row_text
+
+
+# --- TASK-3604 plan task 5: the import summary toast ----------------------------
+
+
+def test_opml_import_summary_text_tells_the_whole_story():
+    """The toast names new vs already-present sources, the watchlists
+    created/reused, and the Unassigned remainder -- the pre-round-trip
+    "Imported N source(s)" read identically for a structured import and a
+    no-op re-import."""
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        _opml_import_summary_text,
+    )
+
+    text = _opml_import_summary_text({
+        "created": 12,
+        "existing": 3,
+        "watchlists_created": ["AI", "News"],
+        "watchlists_reused": ["Tech"],
+        "assignments": 13,
+    })
+    assert "12 new" in text and "3 already present" in text
+    assert "13 into 3 watchlists, 2 new" in text
+    assert "2 unassigned" in text
+
+    shared = _opml_import_summary_text({
+        "created": 2,
+        "existing": 0,
+        "watchlists_created": ["News", "Tech"],
+        "watchlists_reused": [],
+        "assignments": 2,
+        "unassigned": 1,
+    })
+    assert "1 unassigned" in shared, (
+        "membership edges cannot be subtracted from unique source count"
+    )
+
+    assert _opml_import_summary_text({
+        "created": 5, "existing": 0,
+        "watchlists_created": [], "watchlists_reused": [], "assignments": 0,
+    }) == "Imported 5 new source(s) from OPML.", (
+        "a folderless import reads exactly like the old toast"
+    )
+
+    noop = _opml_import_summary_text({
+        "created": 0, "existing": 15,
+        "watchlists_created": [], "watchlists_reused": ["Tech"],
+        "assignments": 15,
+    })
+    assert "0 new + 15 already present" in noop
+    assert "unassigned" not in noop, "a full round-trip leaves no remainder"

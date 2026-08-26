@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import logging
 import subprocess
 import threading
 from typing import Any
@@ -18,13 +19,24 @@ SERVER_PROCESS_ATTRS = {
     "ollama": "ollama_server_process",
 }
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(eq=False)
 class ServerLaunchClaim:
-    """An identity-bearing reservation for one provider launch generation."""
+    """An identity-bearing reservation for one provider launch generation.
+
+    Attributes:
+        provider: Local runtime provider reserved by this claim.
+        authority: Path-free label for the selected model source.
+        cancel_event: Signal set when the reserved launch is cancelled.
+    """
 
     provider: str
+    authority: str | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    _resource: Any | None = field(default=None, repr=False)
+    _spawning: bool = field(default=False, repr=False)
 
 
 def _validate_provider(provider: str) -> str:
@@ -49,7 +61,11 @@ def process_is_running(process: Any) -> bool:
         return True
 
 
-def reserve_server_launch(app: Any, provider: str) -> ServerLaunchClaim | None:
+def reserve_server_launch(
+    app: Any,
+    provider: str,
+    authority: str | None = None,
+) -> ServerLaunchClaim | None:
     """Atomically reserve a provider launch unless it is already active."""
 
     process_attr = _validate_provider(provider)
@@ -61,9 +77,87 @@ def reserve_server_launch(app: Any, provider: str) -> ServerLaunchClaim | None:
             return None
         if process is not None:
             setattr(app, process_attr, None)
-        claim = ServerLaunchClaim(provider)
+        claim = ServerLaunchClaim(provider=provider, authority=authority)
         app._llm_server_launch_claims[provider] = claim
         return claim
+
+
+def attach_server_claim_resource(
+    app: Any,
+    provider: str,
+    claim: ServerLaunchClaim,
+    resource: Any,
+) -> bool:
+    """Transfer one closable resource to the exact current uncancelled claim.
+
+    ``resource`` must expose a callable ``close``. When this returns ``False``,
+    ownership remains with the caller.
+
+    Args:
+        app: Application that owns server lifecycle state.
+        provider: Local runtime provider reserved by ``claim``.
+        claim: Exact launch claim that should take ownership.
+        resource: Closable resource to retain for the launch lifetime.
+
+    Returns:
+        ``True`` when ownership transfers to the claim; otherwise ``False``.
+
+    Raises:
+        ValueError: If ``provider`` is not a supported local runtime.
+    """
+
+    _validate_provider(provider)
+    if not callable(getattr(resource, "close", None)):
+        return False
+    with _lock(app):
+        if (
+            claim.provider != provider
+            or app._llm_server_launch_claims.get(provider) is not claim
+            or claim.cancel_event.is_set()
+            or claim._resource is not None
+        ):
+            return False
+        claim._resource = resource
+        return True
+
+
+def _begin_server_process_spawn(
+    app: Any,
+    provider: str,
+    claim: ServerLaunchClaim,
+) -> bool:
+    """Protect the exact current claim while its process is not yet published."""
+
+    _validate_provider(provider)
+    with _lock(app):
+        if (
+            claim.provider != provider
+            or app._llm_server_launch_claims.get(provider) is not claim
+            or claim.cancel_event.is_set()
+            or claim._spawning
+        ):
+            return False
+        claim._spawning = True
+        return True
+
+
+def _finish_server_process_spawn(
+    app: Any,
+    provider: str,
+    claim: ServerLaunchClaim,
+) -> bool:
+    """Clear spawn protection only for the exact current claim."""
+
+    _validate_provider(provider)
+    with _lock(app):
+        if (
+            claim.provider != provider
+            or app._llm_server_launch_claims.get(provider) is not claim
+            or not claim._spawning
+        ):
+            return False
+        claim._spawning = False
+        return True
 
 
 def current_server_claim(app: Any, provider: str) -> ServerLaunchClaim | None:
@@ -105,6 +199,7 @@ def publish_server_process(
         ):
             return False
         setattr(app, process_attr, process)
+        claim._spawning = False
         return True
 
 
@@ -131,7 +226,52 @@ def retain_cancelled_server_process(
         ):
             return False
         setattr(app, process_attr, process)
+        claim._spawning = False
         return True
+
+
+def _detach_server_claim_resource_locked(
+    app: Any,
+    provider: str,
+    claim: ServerLaunchClaim,
+    *,
+    process: Any = None,
+    require_process_identity: bool = False,
+) -> tuple[bool, Any | None]:
+    """Settle one exact claim and return its resource while the lock is held."""
+
+    process_attr = SERVER_PROCESS_ATTRS[provider]
+    current_process = getattr(app, process_attr, None)
+    if (
+        claim.provider != provider
+        or app._llm_server_launch_claims.get(provider) is not claim
+        or claim._spawning
+        or (
+            require_process_identity
+            and (current_process is not process or process_is_running(process))
+        )
+        or (not require_process_identity and process_is_running(current_process))
+    ):
+        return False, None
+    setattr(app, process_attr, None)
+    del app._llm_server_launch_claims[provider]
+    resource = claim._resource
+    claim._resource = None
+    return True, resource
+
+
+def _close_server_claim_resource(provider: str, resource: Any | None) -> None:
+    """Close a detached claim resource without exposing failure details."""
+
+    if resource is None:
+        return
+    try:
+        resource.close()
+    except Exception:
+        logger.error(
+            "%s server claim resource close failed (category=resource_close_failed)",
+            provider,
+        )
 
 
 def release_server_claim(
@@ -139,17 +279,17 @@ def release_server_claim(
     provider: str,
     claim: ServerLaunchClaim,
 ) -> bool:
-    """Release a current claim that has no published live process."""
+    """Release a current claim with no spawn in flight or published live process."""
 
-    process_attr = _validate_provider(provider)
+    _validate_provider(provider)
     with _lock(app):
-        if app._llm_server_launch_claims.get(provider) is not claim:
-            return False
-        if process_is_running(getattr(app, process_attr, None)):
-            return False
-        setattr(app, process_attr, None)
-        del app._llm_server_launch_claims[provider]
-        return True
+        settled, resource = _detach_server_claim_resource_locked(
+            app,
+            provider,
+            claim,
+        )
+    _close_server_claim_resource(provider, resource)
+    return settled
 
 
 def clear_server_process(
@@ -160,17 +300,17 @@ def clear_server_process(
 ) -> bool:
     """Clear only the current claim's exact process after confirmed exit."""
 
-    process_attr = _validate_provider(provider)
+    _validate_provider(provider)
     with _lock(app):
-        if (
-            app._llm_server_launch_claims.get(provider) is not claim
-            or getattr(app, process_attr, None) is not process
-            or process_is_running(process)
-        ):
-            return False
-        setattr(app, process_attr, None)
-        del app._llm_server_launch_claims[provider]
-        return True
+        settled, resource = _detach_server_claim_resource_locked(
+            app,
+            provider,
+            claim,
+            process=process,
+            require_process_identity=True,
+        )
+    _close_server_claim_resource(provider, resource)
+    return settled
 
 
 def clear_unclaimed_process(app: Any, provider: str, process: Any) -> bool:
@@ -315,6 +455,7 @@ def run_server_subprocess(
     subprocess_module: Any,
     *,
     cwd: Any = None,
+    nonzero_status: str | None = None,
 ) -> str:
     """Run one claimed server while discarding potentially sensitive output."""
 
@@ -351,11 +492,13 @@ def run_server_subprocess(
                 return False
 
     process = None
+    spawn_started = False
     retained = False
     published = False
     final_status = None
     try:
-        if claim.cancel_event.is_set() or not claim_is_current(app, provider, claim):
+        spawn_started = _begin_server_process_spawn(app, provider, claim)
+        if not spawn_started:
             return f"{provider} launch cancelled"
         kwargs = {
             "stdout": subprocess.DEVNULL,
@@ -390,7 +533,9 @@ def run_server_subprocess(
             return f"{provider} launch cancelled"
         return_code = process.wait()
         if return_code and not claim.cancel_event.is_set():
-            final_status = f"{provider} server exited (code={return_code})"
+            final_status = nonzero_status or (
+                f"{provider} server exited (code={return_code})"
+            )
         return f"{provider} server exited (code={return_code})"
     except Exception as exc:
         exception_category = type(exc).__name__
@@ -413,6 +558,8 @@ def run_server_subprocess(
         if retained and not process_is_running(process):
             retained = False
         if not retained:
+            if spawn_started and (process is None or not process_is_running(process)):
+                _finish_server_process_spawn(app, provider, claim)
             if process is None or not published:
                 settle_lifecycle(
                     release_server_claim,

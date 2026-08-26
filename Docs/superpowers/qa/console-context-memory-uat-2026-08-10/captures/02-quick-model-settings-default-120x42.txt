@@ -1,0 +1,43 @@
+╭────────────╮
+tldw chatbook
+ ⌃1 Home │ ⌃2 Console │ ⌃3 Library  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Console— Chat, source handoffs, live runs, and control actions.Ready
+ New tab  Settings  Attach context  Search Library  Help
+┌─────────────────────────────▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎─────────────────────────────┐
+│┌───────────────────────────▊▎────────────────────────────│
+││▊Model▎│
+││Console context▊│▎│
+││──────────────────────────▊▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▎────────────────────────────│
+││Sessions▊▊llama.cpp▼▎▎│
+││ConversationNone▊▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▎│
+││Chat 1▊│▎│
+││▊▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Custom ID ▎│
+││▊▊uat-unknown-window-model▎▎│
+││──────────────────────────▊▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▎────────────────────────────│
+││Workspaces▊1 models available. Type to filter.▎│
+││WorkspaceDefault▊▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▎│
+││ Switch  New ▊▊uat-unknown-window-model▎▂▎│
+││ RAG Scope ▊▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▎│
+││Add another workspace bef▊│▎│
+││▊Temperature▎│
+││▊▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▎│
+││──────────────────────────▊Compaction    at 6,400 tokens▎────────────────────────────│
+││Conversations▊Summarizes older turns. Automatic may add one extra▎│
+││ New conversation ▊model call.▎│
+││▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▊▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▎▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔│
+││▊Search conversations▊▊Ask▼▎▎│
+││▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▊▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▎▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁│
+││▊▎│
+││Local stars unavailable▊▼ more — scroll for conversation settings▎│
+││▊▎│
+│└───────────────────────────▊ Context & memory…  Apply ▎────────────────────────────│
+└─────────────────────────────▊▎─────────────────────────────┘
+Provider: Llama_cppMod▊▎tant: GeneralLibrary sea
+▊▎
+┌─────────────────────────────▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎─────────────────────────────┐
+││
+│Composer ▾MenuAsk, command, or paste task...Send disabled: type a message Se  Dictate │
+││
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+… F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit

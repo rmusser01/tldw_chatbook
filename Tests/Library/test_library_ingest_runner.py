@@ -23,11 +23,17 @@ that a spawned process can run ``run_parse_job``.
 
 from __future__ import annotations
 
+import concurrent.futures
+import hashlib
+import multiprocessing
 import os
+import queue
 import subprocess
 import sys
 import textwrap
 import threading
+import time
+from types import MappingProxyType, SimpleNamespace
 from pathlib import Path
 from typing import Any, Callable, Optional
 from unittest.mock import patch
@@ -36,13 +42,60 @@ import pytest
 from textual.app import App
 
 import tldw_chatbook.app as _app_module
+import tldw_chatbook.STT.parakeet_dispatch as _parakeet_dispatch_module
+import tldw_chatbook.STT.parakeet_external as _parakeet_external_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
-    LibraryIngestJobRegistry,
 )
+from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
+    initialize_ingest_parse_worker,
+    run_parse_job,
+)
+from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
+    INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE,
+    ParseProgressEvent,
+)
+from tldw_chatbook.Research_Workspace.contracts import WorkspaceDataSource
+from tldw_chatbook.Research_Workspace.source_association import (
+    ResearchSourceAssociationCoordinator,
+    ResearchSourceAssociationScheduler,
+)
+from tldw_chatbook.Research_Workspace.source_operation_store import (
+    ResearchSourceOperationStore,
+)
+from tldw_chatbook.Research_Workspace.source_operations import (
+    CanonicalItemType,
+    ResearchSourceOperation,
+    SourceOperationStage,
+    SourceOperationStatus,
+)
+from tldw_chatbook.Model_Artifacts.service import (
+    ArtifactDescriptor,
+    ArtifactFile,
+    ArtifactFormat,
+    ArtifactRef,
+    ArtifactRole,
+    ProvenanceClass,
+)
+from tldw_chatbook.STT.contracts import (
+    ExecutionDevice,
+    FileAudioSource,
+    TranscriptionFailureCode,
+)
+from tldw_chatbook.STT.executor import (
+    ExecutorEvent,
+    ExecutorFailure,
+    ExecutorResult,
+    ExecutorUnavailableError,
+    ModelIdentity,
+    WorkerPhase,
+)
+from tldw_chatbook.STT.parakeet_dispatch import ParakeetDispatch
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -83,6 +136,7 @@ class _FakeIngestParsePool:
         # Thread ident `terminate()` was invoked on -- the quit-deadlock
         # pilots assert teardown runs OFF the app's event-loop thread.
         self.terminate_thread_ident: Optional[int] = None
+        self.join_thread_ident: Optional[int] = None
         self._threads: list[threading.Thread] = []
 
     def apply_async(
@@ -136,11 +190,90 @@ class _FakeIngestParsePool:
         self.terminate_thread_ident = threading.get_ident()
 
     def join(self) -> None:
+        self.join_thread_ident = threading.get_ident()
         for thread in self._threads:
             thread.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
 
     def close(self) -> None:
         pass
+
+
+class _RecordingIngestJobStore:
+    """Minimal persistence sink that exposes registry write-through effects."""
+
+    def __init__(self) -> None:
+        self.upserts: list[str] = []
+        self.deletes: list[str] = []
+        self.retries: list[tuple[str, str]] = []
+
+    def upsert_job(self, job: LibraryIngestJob) -> None:
+        self.upserts.append(job.job_id)
+
+    def delete_job(self, job_id: str) -> None:
+        self.deletes.append(job_id)
+
+    def upsert_retry(
+        self,
+        superseded_job: LibraryIngestJob,
+        retry_job: LibraryIngestJob,
+    ) -> None:
+        self.retries.append((superseded_job.job_id, retry_job.job_id))
+
+
+class _FakeLocalSTTExecutor:
+    """Manual executor stand-in that records dispatch and emits off-thread."""
+
+    def __init__(self, *, submit_error: BaseException | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.submit_error = submit_error
+        self.generation = 1
+        self.submit_thread_ident: int | None = None
+        self.close_thread_ident: int | None = None
+        self.cancel_calls: list[str] = []
+        self.force_stop_calls: list[str] = []
+        self.retiring = False
+        self._retirement_complete = threading.Event()
+        self._retirement_complete.set()
+
+    def submit(self, **kwargs: Any) -> int:
+        self.submit_thread_ident = threading.get_ident()
+        if self.submit_error is not None:
+            raise self.submit_error
+        self.calls.append(kwargs)
+        return self.generation
+
+    def trigger_event(self, index: int, event: ExecutorEvent) -> None:
+        self._spawn(self.calls[index]["on_event"], event)
+
+    def trigger_result(self, index: int, result: ExecutorResult) -> None:
+        self._spawn(self.calls[index]["on_result"], result)
+
+    def trigger_failure(self, index: int, failure: ExecutorFailure) -> None:
+        self._spawn(self.calls[index]["on_failure"], failure)
+
+    def cancel(self, attempt_id: str) -> bool:
+        self.cancel_calls.append(attempt_id)
+        return True
+
+    def force_stop(self, attempt_id: str) -> bool:
+        self.force_stop_calls.append(attempt_id)
+        self.retiring = True
+        self._retirement_complete.clear()
+        return True
+
+    def wait_for_retirement(self, timeout: float | None = None) -> bool:
+        return self._retirement_complete.wait(timeout)
+
+    def complete_retirement(self) -> None:
+        self.retiring = False
+        self._retirement_complete.set()
+
+    @staticmethod
+    def _spawn(callback: Callable[[Any], None], value: Any) -> None:
+        threading.Thread(target=callback, args=(value,), daemon=True).start()
+
+    def close(self) -> None:
+        self.close_thread_ident = threading.get_ident()
 
 
 class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
@@ -160,24 +293,33 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         pool_factory: Optional[Callable[[], Any]] = None,
         worker_count: Optional[int] = None,
         heavy_lane: Optional[int] = None,
+        local_stt_executor: _FakeLocalSTTExecutor | None = None,
+        local_stt_dispatch_factory: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         super().__init__()
-        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        # task-3315: runtime state DERIVED from the app's own initializer
+        # (LibraryIngestQueueMixin._init_library_ingest_runtime_state) instead
+        # of hand-listed, so a new `self._ingest_*` read in app.py can never
+        # silently drift this harness. Host inputs (media_db, the fake
+        # local-STT executor) are then applied on top.
+        self._init_library_ingest_runtime_state()
         self.media_db = media_db
-        self._ingest_parse_pool = None
-        self._ingest_parse_pool_generation = 0
-        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
-        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
-        self._ingest_parsed_payloads: dict[str, dict] = {}
-        self._ingest_shutdown = False
+        self._local_stt_executor = local_stt_executor
         self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
         self._pool_create_count = 0
         self._worker_count_override = worker_count
         self._heavy_lane_override = heavy_lane
+        self._local_stt_dispatch_factory = local_stt_dispatch_factory
 
     def _create_ingest_parse_pool(self):
         self._pool_create_count += 1
-        return self._pool_factory()
+        pool_or_resources = self._pool_factory()
+        if isinstance(pool_or_resources, _app_module._IngestParsePoolResources):
+            return pool_or_resources
+        return _app_module._IngestParsePoolResources(
+            pool_or_resources,
+            queue.Queue(maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE),
+        )
 
     def _ingest_parse_worker_count(self) -> int:
         if self._worker_count_override is not None:
@@ -189,6 +331,89 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
             return self._heavy_lane_override
         return super()._ingest_heavy_lane_max_workers()
 
+    def _build_local_stt_dispatch(self, job, options):
+        if self._local_stt_dispatch_factory is not None:
+            return self._local_stt_dispatch_factory(job, options)
+        return super()._build_local_stt_dispatch(job, options)
+
+
+def _fake_local_stt_dispatch(job, options) -> dict[str, Any]:
+    provider = options["transcription_provider"]
+    return {
+        "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
+        "identity": ModelIdentity(
+            provider_id=provider,
+            model_id=options.get("transcription_model") or "local-gguf:whisper",
+            root_revision=None,
+            closure_fingerprint=None,
+            precision=options.get("transcription_precision") or "native",
+            device=ExecutionDevice.CPU,
+        ),
+        "local_source": None,
+        "managed_store_root": None,
+        "managed_artifact_ref": None,
+        "managed_dependency_refs": (),
+    }
+
+
+def _fake_parakeet_dispatch() -> ParakeetDispatch:
+    return ParakeetDispatch(
+        identity=ModelIdentity(
+            provider_id="parakeet-onnx",
+            model_id="nemo-parakeet-tdt-0.6b-v2",
+            root_revision=None,
+            closure_fingerprint=None,
+            precision="int8",
+            device=ExecutionDevice.CPU,
+        ),
+        local_source=None,
+        managed_store_root=None,
+        managed_artifact_ref=None,
+        option_updates=MappingProxyType({}),
+    )
+
+
+def _allow_test_external_root(app: _IngestRunnerHarness, root: Path) -> None:
+    """Give dispatch fixtures exact hashes and ready VAD without global state."""
+
+    service = app._ensure_parakeet_source_service()
+    service._vad_ready = lambda: True
+
+    def descriptor(model_id: str, precision: str) -> ArtifactDescriptor:
+        files = tuple(
+            ArtifactFile(
+                path.name,
+                path.stat().st_size,
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            for path in sorted(root.iterdir())
+        )
+        version = "v3" if model_id.endswith("-v3") else "v2"
+        return ArtifactDescriptor(
+            reference=ArtifactRef(f"parakeet-{version}", "fixture", precision),
+            model_id=model_id,
+            role=ArtifactRole.ROOT,
+            format=ArtifactFormat.ONNX,
+            consumer="stt",
+            model_family="parakeet",
+            upstream_repository="example/parakeet",
+            upstream_revision="fixture",
+            source_url="https://example.invalid/parakeet",
+            precision=precision,
+            expected_installed_bytes=sum(item.size_bytes for item in files),
+            license_id="cc-by-4.0",
+            license_url="https://example.invalid/license",
+            usage_notice="test fixture",
+            runtime_name="onnx-asr",
+            runtime_version_constraint="==0.12.0",
+            supported_os=("darwin",),
+            supported_architectures=("arm64",),
+            provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+            files=files,
+        )
+
+    service._descriptor_for = descriptor
+
 
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
     return MediaDatabase(tmp_path / name, client_id="f3-runner-test")
@@ -198,6 +423,20 @@ def _write_text_file(tmp_path: Path, name: str, content: str) -> Path:
     path = tmp_path / name
     path.write_text(content, encoding="utf-8")
     return path
+
+
+class _RecordingAssociationScheduler:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def resume(self, operation_id: str) -> None:
+        self.calls.append(operation_id)
+
+    async def resume_incomplete(self) -> None:
+        return None
+
+    async def resume_startup(self) -> None:
+        return None
 
 
 def _exit_ingest_worker_abruptly() -> None:
@@ -235,6 +474,7 @@ async def _wait_for_runner_idle(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
     db = _make_db(tmp_path)
     source = _write_text_file(
@@ -253,8 +493,590 @@ async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
         assert row is not None
         assert row["title"] == "Note A"
         assert "moon's gravity" in row["content"]
-
         await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_local_completion_schedules_research_association_after_mark_done(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "research-source.txt", "Captured source.")
+    app = _IngestRunnerHarness(db)
+    scheduler = _RecordingAssociationScheduler()
+    app.research_source_association_scheduler = scheduler
+    listener_observations: list[list[str]] = []
+    app.library_ingest_jobs.add_listener(
+        lambda: listener_observations.append(list(scheduler.calls))
+    )
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            research_source_operation_id="research-op-app-local",
+        )
+        await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        await _wait_for_runner_idle(app, pilot)
+
+    assert scheduler.calls == ["research-op-app-local"]
+    assert listener_observations
+    assert all(observation == [] for observation in listener_observations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_research_operation_refuses_multi_file_folder_before_creating_jobs(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    folder = tmp_path / "research-folder"
+    folder.mkdir()
+    _write_text_file(folder, "first.txt", "First source.")
+    _write_text_file(folder, "second.txt", "Second source.")
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test():
+        with pytest.raises(
+            ValueError,
+            match="one Research source operation per catalog item",
+        ):
+            app.submit_library_ingest_job(
+                source_path=str(folder),
+                research_source_operation_id="research-op-folder",
+            )
+
+    assert app.library_ingest_jobs.jobs() == ()
+
+
+def test_server_research_catalog_retry_requeues_before_server_dispatch(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    ingest_store = LibraryIngestJobsDB(tmp_path / "retry-ingest.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_store)
+    source = _write_text_file(tmp_path, "remote-retry.pdf", "PDF fixture")
+    failed = app.library_ingest_jobs.submit(
+        source_path=str(source),
+        origin="server",
+        detected_type="pdf",
+        research_source_operation_id="research-op-server-retry",
+    )
+    app.library_ingest_jobs.mark_failed(failed.job_id, error="Temporary failure")
+
+    with patch.object(app, "_send_server_ingest_job") as send:
+        retried = app._requeue_research_source_catalog_job(failed.job_id)
+        send.assert_not_called()
+        assert retried is not None
+        app._dispatch_research_source_catalog_job(retried.job_id)
+
+    assert retried.origin == "server"
+    assert retried.research_source_operation_id == "research-op-server-retry"
+    assert app._pool_create_count == 0
+    send.assert_called_once()
+    ingest_store.close()
+
+
+def test_local_research_retry_claim_waits_for_and_uses_parse_capacity(
+    tmp_path: Path,
+) -> None:
+    """The atomic retry claim stays bounded and is dispatched exactly once."""
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    ingest_store = LibraryIngestJobsDB(tmp_path / "local-retry-claim.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_store)
+    app._ingest_parse_worker_count = lambda: 1  # type: ignore[method-assign]
+    app._ingest_heavy_lane_max_workers = lambda: 1  # type: ignore[method-assign]
+    app._ingest_parse_pool_generation = 1
+    app._ingest_parse_jobs_by_generation = {1: set()}
+
+    active = app.library_ingest_jobs.submit(
+        source_path=str(tmp_path / "active.txt"),
+        detected_type="document",
+    )
+    app.library_ingest_jobs.mark_parsing(active.job_id, detected_type="document")
+    source = app.library_ingest_jobs.submit(
+        source_path=str(tmp_path / "research.txt"),
+        detected_type="document",
+        research_source_operation_id="research-op-local-retry-claim",
+    )
+    app.library_ingest_jobs.mark_failed(source.job_id, error="Temporary failure")
+    retry = app._requeue_research_source_catalog_job(source.job_id)
+    assert retry is not None
+
+    class _Pool:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, ...]] = []
+
+        def apply_async(self, function, args, callback, error_callback) -> None:
+            self.calls.append((function, args, callback, error_callback))
+
+    pool = _Pool()
+    app._ensure_ingest_parse_pool = lambda: pool  # type: ignore[method-assign]
+
+    app._dispatch_research_source_catalog_job(retry.job_id)
+
+    claimed = app.library_ingest_jobs.get_job(retry.job_id)
+    assert claimed is not None
+    assert claimed.state is IngestJobState.PARSING
+    assert claimed.dispatch_held is False
+    assert pool.calls == []
+
+    app.library_ingest_jobs.mark_failed(active.job_id, error="Active job stopped")
+    app._top_up_ingest_parse_pool()
+
+    assert len(pool.calls) == 1
+    _, (_, _, progress_context), _, _ = pool.calls[0]
+    assert progress_context == (1, retry.job_id)
+    assert app._research_source_parse_dispatch_pending == set()
+    assert app.library_ingest_jobs.next_queued() is None
+    ingest_store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["local", "server"])
+async def test_production_catalog_dispatch_failure_uses_current_replacement_lineage(
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    app = _IngestRunnerHarness(None if origin == "local" else _make_db(tmp_path))
+    ingest_db = LibraryIngestJobsDB(tmp_path / f"retry-ingest-{origin}.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_db)
+    workspace_db = WorkspaceDB(
+        tmp_path / f"retry-workspaces-{origin}.sqlite",
+        client_id=f"retry-{origin}",
+    )
+    store = ResearchSourceOperationStore(workspace_db)
+    timestamp = "2026-08-24T12:00:00Z"
+    operation = store.create(
+        ResearchSourceOperation(
+            operation_id=f"research-op-production-{origin}",
+            idempotency_key=f"idempotency:production:{origin}",
+            data_source=(
+                WorkspaceDataSource.LOCAL
+                if origin == "local"
+                else WorkspaceDataSource.SERVER
+            ),
+            workspace_id="workspace-a",
+            canonical_item_type=(
+                CanonicalItemType.LOCAL_LIBRARY
+                if origin == "local"
+                else CanonicalItemType.SERVER_MEDIA
+            ),
+            desired_selected=True,
+            created_at=timestamp,
+            updated_at=timestamp,
+            server_profile_id="server-a" if origin == "server" else "",
+            principal_id="principal-a" if origin == "server" else "",
+        )
+    )
+    failed_job = app.library_ingest_jobs.submit(
+        source_path=(
+            str(tmp_path / "source.txt")
+            if origin == "local"
+            else str(tmp_path / "source.pdf")
+        ),
+        origin=origin,
+        detected_type="document" if origin == "local" else "pdf",
+        research_source_operation_id=operation.operation_id,
+    )
+    app.library_ingest_jobs.mark_failed(failed_job.job_id, error="initial failure")
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.IN_PROGRESS,
+        expected_revision=operation.revision,
+        ingest_job_id=failed_job.job_id,
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.FAILED,
+        expected_revision=operation.revision,
+        error_code="catalog_ingest_failed",
+        error_message="Catalog ingest did not complete successfully.",
+    )
+    coordinator = ResearchSourceAssociationCoordinator(
+        operation_store=store,
+        ingest_jobs=app.library_ingest_jobs,
+        catalog_requeuer=app._requeue_research_source_catalog_job,
+        catalog_dispatcher=app._dispatch_research_source_catalog_job,
+    )
+    scheduler = ResearchSourceAssociationScheduler(
+        coordinator=coordinator,
+        operation_store=store,
+    )
+
+    def fail_server_dispatch(job_id: str, kwargs: dict[str, Any]) -> None:
+        app.library_ingest_jobs.mark_failed(job_id, error="immediate server failure")
+
+    context = (
+        patch.object(app, "_send_server_ingest_job", fail_server_dispatch)
+        if origin == "server"
+        else patch.object(
+            app, "_top_up_ingest_parse_pool", wraps=app._top_up_ingest_parse_pool
+        )
+    )
+    with context:
+        receipt = await scheduler.retry(
+            operation.operation_id,
+            stage=SourceOperationStage.CATALOG,
+        )
+
+    assert receipt is not None
+    assert receipt.catalog_status is SourceOperationStatus.FAILED
+    assert receipt.ingest_job_id != failed_job.job_id
+    assert store.get(operation.operation_id) == receipt
+    persisted = {row["job_id"]: row for row in ingest_db.all_jobs()}
+    assert persisted[receipt.ingest_job_id]["state"] == "failed"
+    ingest_db.close()
+    workspace_db.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_schedules_research_catalog_receipt(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    scheduler = _RecordingAssociationScheduler()
+    app.research_source_association_scheduler = scheduler
+
+    async with app.run_test() as pilot:
+        job = app.library_ingest_jobs.submit(
+            source_path=str(tmp_path / "missing.txt"),
+            research_source_operation_id="research-op-failed",
+        )
+        app.library_ingest_jobs.mark_failed(job.job_id, error="missing")
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert scheduler.calls == ["research-op-failed"]
+
+
+@pytest.mark.asyncio
+async def test_worker_exception_releases_terminal_job_for_later_resume(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+
+    class FailOnceScheduler:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def resume(self, operation_id: str) -> None:
+            assert operation_id == "research-op-worker-retry"
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("worker conflict")
+
+    scheduler = FailOnceScheduler()
+    app.research_source_association_scheduler = scheduler
+
+    async with app.run_test() as pilot:
+        job = app.library_ingest_jobs.submit(
+            source_path=str(tmp_path / "missing.txt"),
+            research_source_operation_id="research-op-worker-retry",
+        )
+        app.library_ingest_jobs.mark_failed(job.job_id, error="missing")
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls == 1 and (
+                job.job_id not in app._research_source_terminal_jobs_scheduled
+            ):
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        app.library_ingest_jobs.submit(source_path=str(tmp_path / "unrelated.txt"))
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert scheduler.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_clearing_terminal_history_prunes_research_schedule_dedupe(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    scheduler = _RecordingAssociationScheduler()
+    app.research_source_association_scheduler = scheduler
+
+    async with app.run_test() as pilot:
+        job = app.library_ingest_jobs.submit(
+            source_path=str(tmp_path / "missing.txt"),
+            research_source_operation_id="research-op-cleared",
+        )
+        app.library_ingest_jobs.mark_failed(job.job_id, error="missing")
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert job.job_id in app._research_source_terminal_jobs_scheduled
+
+        app.library_ingest_jobs.clear_finished()
+
+    assert app._research_source_terminal_jobs_scheduled == set()
+
+
+def test_real_app_wires_research_association_and_restores_before_startup_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    workspace_db = _app_module.WorkspaceDB(
+        tmp_path / "app-workspaces.sqlite",
+        client_id="app-wiring-test",
+    )
+    request.addfinalizer(workspace_db.close)
+    provider = SimpleNamespace(get_active_context=lambda: None)
+    server_service = _app_module.ServerNotesWorkspaceService.from_server_context_provider(
+        provider
+    )
+    app = _app_module.TldwCli.__new__(_app_module.TldwCli)
+    app.local_workspace_db = workspace_db
+    app.workspace_registry_service = _app_module.LocalWorkspaceRegistryService(
+        workspace_db
+    )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="restore-workspace",
+        name="Restore workspace",
+    )
+    app._init_library_ingest_runtime_state()
+    app.server_context_provider = provider
+    app.server_notes_workspace_service = server_service
+
+    app._wire_research_source_association()
+
+    scheduler = app.research_source_association_scheduler
+    coordinator = app.research_source_association_coordinator
+    readiness = app.research_source_readiness_coordinator
+
+    assert scheduler._coordinator is coordinator
+    assert scheduler._operation_store is app.research_source_operation_store
+    assert scheduler._readiness_coordinator is readiness
+    assert coordinator._operation_store is app.research_source_operation_store
+    assert readiness._operation_store is app.research_source_operation_store
+    assert set(readiness._adapters) == {
+        WorkspaceDataSource.LOCAL,
+        WorkspaceDataSource.SERVER,
+    }
+    assert coordinator._ingest_jobs is app.library_ingest_jobs
+    assert coordinator._local_registry is app.workspace_registry_service
+    assert coordinator._server_service is app.server_notes_workspace_service
+    assert coordinator._server_context_provider is app.server_context_provider
+    assert coordinator._catalog_requeuer == app._requeue_research_source_catalog_job
+    assert coordinator._catalog_dispatcher == app._dispatch_research_source_catalog_job
+    assert callable(scheduler.retry)
+
+    restored_jobs: list[LibraryIngestJob] = []
+    for index in range(60):
+        operation_id = f"research-op-restored-{index:03d}"
+        job_id = f"ingest-job-{index + 1}"
+        operation = app.research_source_operation_store.create(
+            ResearchSourceOperation(
+                operation_id=operation_id,
+                idempotency_key=f"idempotency:restored:{index:03d}",
+                data_source=WorkspaceDataSource.LOCAL,
+                workspace_id="restore-workspace",
+                canonical_item_type=CanonicalItemType.LOCAL_LIBRARY,
+                desired_selected=True,
+                created_at=f"2026-08-24T12:00:{index:02d}Z",
+                updated_at=f"2026-08-24T12:00:{index:02d}Z",
+            )
+        )
+        operation = app.research_source_operation_store.advance_stage(
+            operation.operation_id,
+            stage=SourceOperationStage.CATALOG,
+            status=SourceOperationStatus.IN_PROGRESS,
+            expected_revision=operation.revision,
+            ingest_job_id=job_id,
+        )
+        if index < 55:
+            operation = app.research_source_operation_store.advance_stage(
+                operation.operation_id,
+                stage=SourceOperationStage.CATALOG,
+                status=SourceOperationStatus.SUCCEEDED,
+                expected_revision=operation.revision,
+                canonical_item_id=str(index + 1),
+            )
+            app.research_source_operation_store.advance_stage(
+                operation.operation_id,
+                stage=SourceOperationStage.ASSOCIATION,
+                status=SourceOperationStatus.SUCCEEDED,
+                expected_revision=operation.revision,
+                workspace_source_id=f"membership-{index + 1}",
+            )
+        elif index < 58:
+            app.research_source_operation_store.advance_stage(
+                operation.operation_id,
+                stage=SourceOperationStage.CATALOG,
+                status=SourceOperationStatus.FAILED,
+                expected_revision=operation.revision,
+                error_code="catalog_ingest_failed",
+                error_message="Catalog ingest did not complete successfully.",
+            )
+        restored_jobs.append(
+            LibraryIngestJob(
+                job_id=job_id,
+                source_path=f"/restored/source-{index:03d}.txt",
+                state=(
+                    IngestJobState.FAILED
+                    if 55 <= index < 58
+                    else IngestJobState.DONE
+                ),
+                media_id=None if 55 <= index < 58 else index + 1,
+                research_source_operation_id=operation_id,
+            )
+        )
+    assert [
+        operation.operation_id
+        for operation in app.research_source_operation_store.list_association_actionable(
+            limit=50
+        )
+    ] == ["research-op-restored-058", "research-op-restored-059"]
+
+    groups: list[str] = []
+    ui_observations: list[int] = []
+    app.library_ingest_jobs.add_listener(
+        lambda: ui_observations.append(len(app.library_ingest_jobs.jobs()))
+    )
+
+    def queue_worker(awaitable, *, group: str):
+        groups.append(group)
+        awaitable.close()
+
+    def restore_real_registry() -> None:
+        app.library_ingest_jobs.restore(restored_jobs, next_id=61)
+
+    monkeypatch.setattr(app, "_restore_ingest_jobs", restore_real_registry)
+    monkeypatch.setattr(app, "run_worker", queue_worker)
+
+    app._restore_ingest_jobs_and_schedule_research_sources()
+
+    assert len(app.library_ingest_jobs.jobs()) == 60
+    assert ui_observations == [60]
+    assert groups == [
+        "research_source_association_startup",
+        "research_paste_staging_startup",
+    ]
+    assert app._research_source_terminal_jobs_scheduled == set()
+
+
+def test_restore_suppression_cleans_up_after_exception_and_empty_repeats(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.research_source_association_scheduler = _RecordingAssociationScheduler()
+    groups: list[str] = []
+
+    def queue_worker(awaitable, *, group: str) -> None:
+        groups.append(group)
+        awaitable.close()
+
+    def fail_restore() -> None:
+        raise RuntimeError("restore failed")
+
+    monkeypatch.setattr(app, "run_worker", queue_worker)
+    monkeypatch.setattr(app, "_restore_ingest_jobs", fail_restore)
+
+    with pytest.raises(RuntimeError, match="restore failed"):
+        app._restore_ingest_jobs_and_schedule_research_sources()
+
+    assert app._research_source_restore_in_progress is False
+    live = app.library_ingest_jobs.submit(
+        source_path="/live-after-restore.txt",
+        research_source_operation_id="research-op-live-after-restore",
+    )
+    app.library_ingest_jobs.mark_failed(live.job_id, error="live failure")
+    assert groups == ["research_source_association"]
+    assert app._research_source_terminal_jobs_scheduled == {live.job_id}
+
+    groups.clear()
+
+    def restore_empty_registry() -> None:
+        app.library_ingest_jobs.restore([], next_id=1)
+
+    monkeypatch.setattr(app, "_restore_ingest_jobs", restore_empty_registry)
+    app._restore_ingest_jobs_and_schedule_research_sources()
+    app._restore_ingest_jobs_and_schedule_research_sources()
+
+    assert groups == [
+        "research_source_association_startup",
+        "research_source_association_startup",
+    ]
+    assert app._research_source_terminal_jobs_scheduled == set()
+    assert app._research_source_restore_in_progress is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_writer_passes_claimed_generate_embeddings_snapshot_to_persistence(
+    tmp_path: Path,
+) -> None:
+    """Changing the writer's option forwarding must make this persistence call true."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "embeddings-off.txt", "Persist this source.")
+    app = _IngestRunnerHarness(db)
+
+    with patch.object(
+        _app_module, "persist_parsed_media", return_value=(777, "media-777", "saved")
+    ) as persist:
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(
+                source_path=str(source),
+                ingest_options={"generic": {"generate_embeddings": False}},
+            )
+            done = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.DONE
+            )
+            await _wait_for_runner_idle(app, pilot)
+
+    assert done.media_id == 777
+    assert persist.call_args.kwargs["generate_embeddings"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_writer_missing_generic_snapshot_uses_capability_defaults(
+    tmp_path: Path,
+) -> None:
+    """Writer fallbacks must delegate to the capability schema, not literals."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "defaults.txt", "Persist this source.")
+    app = _IngestRunnerHarness(db)
+
+    def schema_default(name: str, fallback: object = None) -> object:
+        return {
+            "overwrite_existing": True,
+            "generate_embeddings": False,
+        }.get(name, fallback)
+
+    with (
+        patch.object(_app_module, "generic_option_default", side_effect=schema_default),
+        patch.object(
+            _app_module,
+            "persist_parsed_media",
+            return_value=(778, "media-778", "saved"),
+        ) as persist,
+    ):
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(source_path=str(source))
+            done = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.DONE
+            )
+            await _wait_for_runner_idle(app, pilot)
+
+    assert done.media_id == 778
+    assert persist.call_args.kwargs["overwrite_existing"] is True
+    assert persist.call_args.kwargs["generate_embeddings"] is False
 
 
 @pytest.mark.asyncio
@@ -301,20 +1123,21 @@ async def test_directory_unsupported_file_is_skipped_alone(tmp_path: Path) -> No
     folder = tmp_path / "mixed"
     folder.mkdir()
     _write_text_file(folder, "good.txt", "A perfectly ingestible document.")
-    (folder / "cover.jpg").write_bytes(b"not really a jpeg")
+    # (task-3307: was cover.jpg -- images are a supported group now)
+    (folder / "cover.xyz").write_bytes(b"no handler for this")
     app = _IngestRunnerHarness(db, worker_count=2)
 
     async with app.run_test() as pilot:
         app.submit_library_ingest_job(source_path=str(folder))
 
         jobs = {Path(j.source_path).name: j for j in app.library_ingest_jobs.jobs()}
-        assert set(jobs) == {"good.txt", "cover.jpg"}
+        assert set(jobs) == {"good.txt", "cover.xyz"}
 
         await _wait_for_job_state(
             app, pilot, jobs["good.txt"].job_id, IngestJobState.DONE
         )
         skipped = await _wait_for_job_state(
-            app, pilot, jobs["cover.jpg"].job_id, IngestJobState.SKIPPED
+            app, pilot, jobs["cover.xyz"].job_id, IngestJobState.SKIPPED
         )
         assert "Unsupported file type" in skipped.error
 
@@ -419,6 +1242,7 @@ async def test_failing_job_does_not_block_next_queued_job(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -441,11 +1265,11 @@ async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
     real_run_parse_job = app_module.run_parse_job
     call_count = {"n": 0}
 
-    def _flaky_run_parse_job(file_path, options):
+    def _flaky_run_parse_job(file_path, options, progress_context):
         call_count["n"] += 1
         if call_count["n"] == 1:
             return {"ok": False, "error": "transient parse hiccup", "permanent": False}
-        return real_run_parse_job(file_path, options)
+        return real_run_parse_job(file_path, options, progress_context)
 
     monkeypatch.setattr(app_module, "run_parse_job", _flaky_run_parse_job)
 
@@ -735,8 +1559,12 @@ async def test_real_pool_worker_exit_is_reported_for_owning_generation(
     teardown_threads: list[threading.Thread] = []
     real_terminate = app._terminate_ingest_parse_pool_off_thread
 
-    def _capture_production_teardown(target_pool: Any) -> threading.Thread:
-        thread = real_terminate(target_pool)
+    def _capture_production_teardown(
+        target_pool: Any,
+        progress_queue: Any | None = None,
+        progress_thread: threading.Thread | None = None,
+    ) -> threading.Thread:
+        thread = real_terminate(target_pool, progress_queue, progress_thread)
         teardown_threads.append(thread)
         return thread
 
@@ -969,6 +1797,1552 @@ async def test_retried_transcription_still_obeys_the_heavy_lane_cap(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["parakeet-onnx", "transcribe-cpp"])
+async def test_eligible_local_stt_uses_executor_not_general_pool(
+    tmp_path: Path,
+    provider: str,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": provider}},
+        )
+        await pilot.pause()
+
+        assert len(executor.calls) == 1
+        assert executor.calls[0]["job_id"] == job.job_id
+        assert executor.calls[0]["source"] == FileAudioSource(source)
+        assert executor.calls[0]["options"]["transcription_provider"] == provider
+        assert pool.calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_retry_clears_executor_unhealthy_gate_explicitly(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        assert executor.calls[0]["explicit_retry"] is False
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                executor.calls[0]["attempt_id"],
+                TranscriptionFailureCode.ENGINE_CRASHED,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        await _wait_for_job_state(
+            app,
+            pilot,
+            original.job_id,
+            IngestJobState.FAILED,
+        )
+
+        replacement = app.retry_library_ingest_job(original.job_id)
+        assert replacement is not None
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert len(executor.calls) == 2
+        assert executor.calls[1]["explicit_retry"] is True
+
+
+@pytest.mark.asyncio
+async def test_parakeet_retry_keeps_job_local_override_and_scope_path_private(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    selected = str(tmp_path / "private-parakeet")
+    scope_id = "library-external-retry-scope"
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "transcription_model_dir": selected,
+                    "transcription_external_scope_id": scope_id,
+                }
+            },
+        )
+        await pilot.pause()
+        first_options = executor.calls[0]["options"]
+        assert first_options["transcription_model_dir"] == selected
+        assert first_options["transcription_context"]["external_scope_id"] == scope_id
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                executor.calls[0]["attempt_id"],
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        failed = await _wait_for_job_state(
+            app,
+            pilot,
+            original.job_id,
+            IngestJobState.FAILED,
+        )
+        assert selected not in failed.error
+        assert selected not in str(failed.error_detail)
+
+        retry = app.retry_library_ingest_job(failed.job_id)
+        assert retry is not None
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert len(executor.calls) == 2
+        retry_options = executor.calls[1]["options"]
+        assert retry_options["transcription_model_dir"] == selected
+        assert retry_options["transcription_context"]["external_scope_id"] == scope_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    app._ingest_parse_pool = pool
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        executor.trigger_event(
+            0,
+            ExecutorEvent(1, attempt_id, WorkerPhase.TRANSCRIBING),
+        )
+        await pilot.pause()
+
+        assert app.cancel_local_ingest_job(job.job_id) is True
+        assert executor.cancel_calls == [attempt_id]
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "transcribing",
+            "message": "Transcribing audio",
+            "cancel_requested": True,
+        }
+        app.library_ingest_jobs.update_progress(
+            job.job_id,
+            progress={**current.progress, "percent": 64.0},
+            persist=False,
+        )
+        executor.trigger_event(
+            0,
+            ExecutorEvent(1, attempt_id, WorkerPhase.POST_PROCESSING),
+        )
+        await pilot.pause()
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "post-processing",
+            "message": "Post-processing audio",
+            "cancel_requested": True,
+        }
+
+        topups: list[str] = []
+        app._top_up_ingest_parse_pool = lambda: topups.append("top-up")
+        assert app.force_stop_local_ingest_job(job.job_id) is True
+        for _ in range(_POLL_ATTEMPTS):
+            if executor.force_stop_calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert executor.force_stop_calls == [attempt_id]
+        assert topups == []
+        assert app._ingest_parse_pool is pool
+
+        executor.complete_retirement()
+        for _ in range(_POLL_ATTEMPTS):
+            if topups:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert topups == ["top-up"]
+
+
+@pytest.mark.parametrize(
+    ("cancel_requested", "expected_progress"),
+    (
+        (
+            True,
+            {
+                "phase": "post-processing",
+                "message": "Post-processing audio",
+                "cancel_requested": True,
+            },
+        ),
+        (
+            "truthy-untrusted-value",
+            {
+                "phase": "post-processing",
+                "message": "Post-processing audio",
+            },
+        ),
+    ),
+)
+def test_local_stt_phase_replaces_untrusted_progress_and_preserves_only_true_cancel(
+    cancel_requested: object,
+    expected_progress: dict[str, Any],
+) -> None:
+    app = _IngestRunnerHarness(None)
+    job = app.library_ingest_jobs.submit(source_path="speech.wav")
+    assert app.library_ingest_jobs.mark_parsing(job.job_id) is not None
+    attempt_id = "attempt-progress-replacement"
+    app._ingest_local_stt_jobs[job.job_id] = (1, attempt_id)
+    app.library_ingest_jobs.update_progress(
+        job.job_id,
+        progress={
+            "phase": "transcribing",
+            "message": "Stale message",
+            "percent": 64.0,
+            "cancel_requested": cancel_requested,
+            "provider_private_detail": {"raw": "must not survive"},
+        },
+        persist=False,
+    )
+
+    app._on_ingest_local_stt_event(
+        job.job_id,
+        ExecutorEvent(1, attempt_id, WorkerPhase.POST_PROCESSING),
+    )
+
+    current = app.library_ingest_jobs.get_job(job.job_id)
+    assert current is not None
+    assert current.progress == expected_progress
+
+
+@pytest.mark.asyncio
+async def test_local_stt_cancel_rejects_stale_or_unbound_job(tmp_path: Path) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+
+    async with app.run_test():
+        assert app.cancel_local_ingest_job("missing-job") is False
+        assert app.force_stop_local_ingest_job("missing-job") is False
+        assert executor.cancel_calls == []
+        assert executor.force_stop_calls == []
+
+
+@pytest.mark.asyncio
+async def test_executor_identity_build_and_submit_run_off_textual_thread(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    dispatch_threads: list[int] = []
+
+    def build_dispatch(job, options):
+        dispatch_threads.append(threading.get_ident())
+        return _fake_local_stt_dispatch(job, options)
+
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=build_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    textual_thread = threading.get_ident()
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        for _ in range(_POLL_ATTEMPTS):
+            if executor.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("local STT dispatch never reached the executor")
+
+        assert dispatch_threads
+        assert dispatch_threads[0] != textual_thread
+        assert executor.submit_thread_ident != textual_thread
+
+
+@pytest.mark.asyncio
+async def test_explicit_parakeet_directory_is_snapshotted_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    model_dir = tmp_path / "parakeet"
+    model_dir.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (model_dir / filename).write_bytes(filename.encode("utf-8"))
+    _allow_test_external_root(app, model_dir)
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "transcription_model_dir": str(model_dir),
+                }
+            },
+        )
+        await pilot.pause()
+
+        assert len(executor.calls) == 1
+        snapshot = executor.calls[0]["local_source"]
+        identity = executor.calls[0]["identity"]
+        assert snapshot is not None
+        assert identity.local_snapshot_token == snapshot.token
+        assert str(model_dir) not in repr(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_explicit_parakeet_directory_uses_central_validated_path(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    validated_dir = tmp_path / "validated-parakeet"
+    validated_dir.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (validated_dir / filename).write_bytes(filename.encode("utf-8"))
+    _allow_test_external_root(app, validated_dir)
+
+    with patch.object(
+        _parakeet_external_module,
+        "validate_path_simple",
+        return_value=validated_dir,
+    ):
+        async with app.run_test() as pilot:
+            app.submit_library_ingest_job(
+                source_path=str(source),
+                ingest_options={
+                    "audio_video": {
+                        "transcription_provider": "parakeet-onnx",
+                        "transcription_model_dir": str(
+                            tmp_path / "unvalidated-parakeet"
+                        ),
+                    }
+                },
+            )
+            await pilot.pause()
+
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["options"]["transcription_model_dir"] == str(validated_dir)
+
+
+def test_parakeet_dispatch_delegates_to_shared_resolver_and_copies_updates(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    app = _IngestRunnerHarness(None)
+    job = LibraryIngestJob(job_id="job-shared-resolver", source_path="speech.wav")
+    identity = ModelIdentity(
+        provider_id="parakeet-onnx",
+        model_id=PARAKEET_V2_MODEL,
+        root_revision="fixture-revision",
+        closure_fingerprint="fixture-closure",
+        precision="f32",
+        device=ExecutionDevice.CPU,
+    )
+    resolved = ParakeetDispatch(
+        identity=identity,
+        local_source=None,
+        managed_store_root=tmp_path / "managed",
+        managed_artifact_ref=("artifact", "revision", "variant"),
+        option_updates=MappingProxyType(
+            {
+                "transcription_model_dir": str(tmp_path / "resolved"),
+                "_verify_legacy_parakeet_v2": True,
+            }
+        ),
+        managed_dependency_refs=(("silero-vad", "vad-revision", "f32"),),
+    )
+    requested = tmp_path / "requested"
+    requested.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.onnx",
+        "encoder-model.onnx.data",
+        "decoder_joint-model.onnx",
+    ):
+        (requested / filename).write_bytes(filename.encode())
+    options = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model": PARAKEET_V2_MODEL,
+        "transcription_precision": "f32",
+        "transcription_model_dir": str(requested),
+    }
+
+    resolver = SimpleNamespace(resolve=lambda *_args, **_kwargs: resolved)
+    with patch.object(app, "_ensure_parakeet_source_service", return_value=resolver):
+        with patch.object(resolver, "resolve", wraps=resolver.resolve) as resolve:
+            dispatch = app._build_local_stt_dispatch(job, options)
+
+    resolve.assert_called_once_with(
+        ParakeetSourceKey.V2_F32,
+        override=str(requested),
+        scope_id="job-shared-resolver",
+    )
+    assert dispatch == {
+        "attempt_id": "job-shared-resolver-attempt-1",
+        "identity": identity,
+        "local_source": None,
+        "managed_store_root": tmp_path / "managed",
+        "managed_artifact_ref": ("artifact", "revision", "variant"),
+        "managed_dependency_refs": (("silero-vad", "vad-revision", "f32"),),
+    }
+    assert options["transcription_model_dir"] == str(tmp_path / "resolved")
+    assert options["_verify_legacy_parakeet_v2"] is True
+
+
+def test_transcribe_cpp_dispatch_stays_on_gguf_resolution(
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"gguf")
+    app = _IngestRunnerHarness(None)
+    options = {
+        "transcription_provider": "transcribe-cpp",
+        "transcription_precision": "native",
+        "transcription_context": {"model_path": str(model_path)},
+    }
+    admission = SimpleNamespace(
+        path=model_path,
+        metadata=SimpleNamespace(architecture="whisper"),
+    )
+
+    with (
+        patch(
+            "tldw_chatbook.Model_Artifacts.gguf_admission.validate_local_gguf",
+            return_value=admission,
+        ),
+        patch.object(
+            _parakeet_dispatch_module,
+            "resolve_parakeet_dispatch",
+            side_effect=AssertionError("Parakeet resolver used for transcribe.cpp"),
+        ),
+    ):
+        dispatch = app._build_local_stt_dispatch(
+            LibraryIngestJob(job_id="job-gguf", source_path="speech.wav"),
+            options,
+        )
+
+    assert dispatch["identity"].provider_id == "transcribe-cpp"
+    assert dispatch["identity"].model_id == "local-gguf:whisper"
+    assert dispatch["identity"].device is ExecutionDevice.AUTO
+    assert dispatch["local_source"].paths == (model_path,)
+    assert "transcription_model_dir" not in options
+
+
+def test_managed_parakeet_dispatch_selects_exact_model_and_precision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifacts
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V3_MODEL
+
+    reference = artifacts.parakeet_reference(PARAKEET_V3_MODEL, "f32")
+    handle = SimpleNamespace(
+        root=reference,
+        closure_fingerprint="exact-closure-fingerprint",
+    )
+
+    class _Lease:
+        def __init__(self) -> None:
+            self.handle = handle
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    lease = _Lease()
+    service = SimpleNamespace(acquire=lambda selected: lease)
+    monkeypatch.setattr(
+        _parakeet_dispatch_module,
+        "active_managed_parakeet_dir",
+        lambda model, precision, service=None: tmp_path / "managed-root",
+    )
+    monkeypatch.setattr(
+        _parakeet_dispatch_module,
+        "parakeet_v2_managed_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        _parakeet_dispatch_module,
+        "managed_model_artifact_root",
+        lambda: tmp_path / "managed",
+    )
+
+    app = _IngestRunnerHarness(None)
+    job = LibraryIngestJob(job_id="job-v3-f32", source_path="speech.wav")
+    dispatch = app._build_local_stt_dispatch(
+        job,
+        {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V3_MODEL,
+            "transcription_precision": "f32",
+        },
+    )
+
+    assert dispatch["identity"].model_id == PARAKEET_V3_MODEL
+    assert dispatch["identity"].precision == "f32"
+    assert dispatch["identity"].root_revision == reference.revision
+    assert dispatch["identity"].closure_fingerprint == "exact-closure-fingerprint"
+    assert dispatch["managed_artifact_ref"] == (
+        reference.artifact_id,
+        reference.revision,
+        reference.variant,
+    )
+    assert lease.closed is True
+
+
+def test_explicit_f32_folder_snapshots_the_f32_payload_files(tmp_path: Path) -> None:
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+
+    model_root = tmp_path / "parakeet-f32"
+    model_root.mkdir()
+    required = (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.onnx",
+        "encoder-model.onnx.data",
+        "decoder_joint-model.onnx",
+    )
+    for filename in required:
+        (model_root / filename).write_bytes(filename.encode())
+    app = _IngestRunnerHarness(None)
+    _allow_test_external_root(app, model_root)
+    job = LibraryIngestJob(job_id="job-v2-f32", source_path="speech.wav")
+
+    dispatch = app._build_local_stt_dispatch(
+        job,
+        {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V2_MODEL,
+            "transcription_precision": "f32",
+            "transcription_model_dir": str(model_root),
+        },
+    )
+
+    assert dispatch["local_source"].paths == tuple(
+        model_root / item for item in sorted(required)
+    )
+
+
+def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V3_MODEL
+
+    legacy_v2 = tmp_path / "legacy-v2-int8"
+    legacy_v2.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (legacy_v2 / filename).write_bytes(filename.encode())
+    monkeypatch.setattr(
+        _app_module,
+        "get_cli_setting",
+        lambda key, *args: str(legacy_v2)
+        if key == "transcription.parakeet_onnx_model_dir"
+        else args[0]
+        if args
+        else None,
+    )
+    monkeypatch.setattr(
+        _parakeet_dispatch_module,
+        "active_managed_parakeet_dir",
+        lambda model, precision, service=None: None,
+    )
+    monkeypatch.setattr(
+        _parakeet_dispatch_module,
+        "parakeet_v2_managed_service",
+        lambda: SimpleNamespace(),
+    )
+    app = _IngestRunnerHarness(None)
+
+    with pytest.raises(FileNotFoundError, match="No installed Parakeet artifact"):
+        app._build_local_stt_dispatch(
+            LibraryIngestJob(job_id="job-v3", source_path="speech.wav"),
+            {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model": PARAKEET_V3_MODEL,
+                "transcription_precision": "int8",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_faster_whisper_stays_in_general_pool(tmp_path: Path) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {"transcription_provider": "faster-whisper"}
+            },
+        )
+        await pilot.pause()
+
+        assert len(pool.calls) == 1
+        assert executor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_executor_heavy_job_leaves_remaining_pool_slots_for_documents(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=3,
+        heavy_lane=1,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"fixture")
+    documents = [
+        _write_text_file(tmp_path, f"doc-{index}.txt", f"body {index}")
+        for index in range(3)
+    ]
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(
+            source_path=str(audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        for document in documents:
+            app.submit_library_ingest_job(source_path=str(document))
+        await pilot.pause()
+
+        assert len(executor.calls) == 1
+        assert len(pool.calls) == 2
+        assert app.library_ingest_jobs.counts()["parsing"] == 3
+
+
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
+@pytest.mark.asyncio
+async def test_dictation_reservation_gates_only_heavy_library_work(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=2,
+        heavy_lane=1,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    coordinator = app._ensure_local_stt_dispatch_coordinator()
+    coordinator.begin_dictation(
+        capture_generation=1,
+        dispatch=_fake_parakeet_dispatch(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        language="en",
+        on_logical_segment=lambda _sequence, _text: None,
+    )
+    audio = tmp_path / "reserved.wav"
+    audio.write_bytes(b"fixture")
+    document = _write_text_file(tmp_path, "document.txt", "document body")
+
+    async with app.run_test() as pilot:
+        audio_job = app.submit_library_ingest_job(
+            source_path=str(audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        document_job = app.submit_library_ingest_job(source_path=str(document))
+        await pilot.pause()
+
+        states = {job.job_id: job.state for job in app.library_ingest_jobs.jobs()}
+        assert states[audio_job.job_id] is IngestJobState.QUEUED
+        assert states[document_job.job_id] is IngestJobState.PARSING
+        assert len(pool.calls) == 1
+        assert pool.calls[0]["args"][0] == document_job.source_path
+        assert executor.calls == []
+        reserved_audio = app.library_ingest_jobs.get_job(audio_job.job_id)
+        assert reserved_audio is not None
+        assert reserved_audio.error == ""
+
+
+@pytest.mark.asyncio
+async def test_dictation_race_defers_claimed_library_job_without_failure(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    dispatch_started = threading.Event()
+    release_dispatch = threading.Event()
+    dispatch_count = 0
+
+    def build_dispatch(job, options):
+        nonlocal dispatch_count
+        dispatch_count += 1
+        if dispatch_count == 1:
+            dispatch_started.set()
+            assert release_dispatch.wait(5.0)
+        return _fake_local_stt_dispatch(job, options)
+
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=2,
+        heavy_lane=1,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=build_dispatch,
+    )
+    audio = tmp_path / "raced.wav"
+    audio.write_bytes(b"fixture")
+    document = _write_text_file(tmp_path, "ordered.txt", "document body")
+    later_document = _write_text_file(tmp_path, "later.txt", "later body")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        assert dispatch_started.wait(1.0)
+        coordinator = app._ensure_local_stt_dispatch_coordinator()
+        handle = coordinator.begin_dictation(
+            capture_generation=11,
+            dispatch=_fake_parakeet_dispatch(),
+            sample_rate=16_000,
+            channels=1,
+            sample_width=2,
+            language="en",
+            on_logical_segment=lambda _sequence, _text: None,
+        )
+        document_job = app.submit_library_ingest_job(source_path=str(document))
+        later_document_job = app.submit_library_ingest_job(
+            source_path=str(later_document)
+        )
+        await pilot.pause()
+        current_document = app.library_ingest_jobs.get_job(document_job.job_id)
+        current_later_document = app.library_ingest_jobs.get_job(
+            later_document_job.job_id
+        )
+        assert current_document is not None
+        assert current_later_document is not None
+        assert current_document.state is IngestJobState.PARSING
+        assert current_later_document.state is IngestJobState.QUEUED
+        assert len(pool.calls) == 1
+        assert pool.calls[0]["args"][0] == document_job.source_path
+
+        release_dispatch.set()
+        for _ in range(_POLL_ATTEMPTS):
+            if job.job_id not in app._ingest_local_stt_jobs:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        deferred = app.library_ingest_jobs.get_job(job.job_id)
+        assert deferred is not None
+        assert deferred.state is IngestJobState.QUEUED
+        assert deferred.retry_count == 0
+        assert deferred.error == ""
+        assert deferred.error_detail is None
+        assert deferred.stt_failure_provenance is None
+        assert [item.job_id for item in app.library_ingest_jobs.jobs()] == [
+            later_document_job.job_id,
+            document_job.job_id,
+            job.job_id,
+        ]
+        assert executor.calls == []
+        assert coordinator.dictation_reserved is True
+        deferred_later_document = app.library_ingest_jobs.get_job(
+            later_document_job.job_id
+        )
+        assert deferred_later_document is not None
+        assert deferred_later_document.state is IngestJobState.PARSING
+        assert len(pool.calls) == 2
+
+        pool.trigger_success(
+            0,
+            {"ok": False, "error": "document failed", "permanent": False},
+        )
+        await _wait_for_job_state(
+            app,
+            pilot,
+            document_job.job_id,
+            IngestJobState.FAILED,
+        )
+
+        handle.append_segment(b"\x00\x00")
+        handle.finish()
+        assert [call["job_id"] for call in executor.calls] == [None]
+        dictation_attempt = executor.calls[0]["attempt_id"]
+        executor.trigger_result(
+            0,
+            ExecutorResult(
+                1,
+                dictation_attempt,
+                {"logical_segments": ["dictated"]},
+            ),
+        )
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) >= 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        resumed = app.library_ingest_jobs.get_job(job.job_id)
+        assert resumed is not None
+        assert resumed.state is IngestJobState.PARSING
+        assert resumed.retry_count == 0
+        assert resumed.error == ""
+        assert resumed.error_detail is None
+        assert [call["job_id"] for call in executor.calls] == [None, job.job_id]
+        still_parsing = app.library_ingest_jobs.get_job(later_document_job.job_id)
+        assert still_parsing is not None
+        assert still_parsing.state is IngestJobState.PARSING
+
+
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
+@pytest.mark.asyncio
+async def test_library_terminal_hands_executor_to_pending_dictation_before_top_up(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        worker_count=1,
+        heavy_lane=1,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    first_path = tmp_path / "first.wav"
+    first_path.write_bytes(b"first")
+    second_path = tmp_path / "second.wav"
+    second_path.write_bytes(b"second")
+
+    async with app.run_test() as pilot:
+        first = app.submit_library_ingest_job(
+            source_path=str(first_path),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        coordinator = app._ensure_local_stt_dispatch_coordinator()
+        handle = coordinator.begin_dictation(
+            capture_generation=2,
+            dispatch=_fake_parakeet_dispatch(),
+            sample_rate=16_000,
+            channels=1,
+            sample_width=2,
+            language="en",
+            on_logical_segment=lambda _sequence, _text: None,
+        )
+        handle.append_segment(b"\x00\x00")
+        handle.finish()
+        second = app.submit_library_ingest_job(
+            source_path=str(second_path),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        first_attempt = executor.calls[0]["attempt_id"]
+
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                first_attempt,
+                TranscriptionFailureCode.CANCELLED,
+            ),
+        )
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) >= 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        assert [call["job_id"] for call in executor.calls] == [first.job_id, None]
+        second_job = app.library_ingest_jobs.get_job(second.job_id)
+        assert second_job is not None
+        assert second_job.state is IngestJobState.QUEUED
+
+        dictation_attempt = executor.calls[1]["attempt_id"]
+        executor.trigger_result(
+            1,
+            ExecutorResult(
+                1,
+                dictation_attempt,
+                {"logical_segments": ["dictated"]},
+            ),
+        )
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) >= 3:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        assert [call["job_id"] for call in executor.calls] == [
+            first.job_id,
+            None,
+            second.job_id,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_executor_admits_only_one_local_job_when_legacy_heavy_cap_is_higher(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=3,
+        heavy_lane=2,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    first_audio = tmp_path / "first.wav"
+    first_audio.write_bytes(b"fixture")
+    second_audio = tmp_path / "second.wav"
+    second_audio.write_bytes(b"fixture")
+    document = _write_text_file(tmp_path, "document.txt", "document body")
+
+    async with app.run_test() as pilot:
+        first_job = app.submit_library_ingest_job(
+            source_path=str(first_audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        second_job = app.submit_library_ingest_job(
+            source_path=str(second_audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        document_job = app.submit_library_ingest_job(source_path=str(document))
+        await pilot.pause()
+
+        states = {job.job_id: job.state for job in app.library_ingest_jobs.jobs()}
+        assert len(executor.calls) == 1
+        assert executor.calls[0]["job_id"] == first_job.job_id
+        assert states[second_job.job_id] == IngestJobState.QUEUED
+        assert states[document_job.job_id] == IngestJobState.PARSING
+        assert len(pool.calls) == 1
+
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                executor.calls[0]["attempt_id"],
+                TranscriptionFailureCode.CANCELLED,
+            ),
+        )
+        await _wait_for_job_state(
+            app, pilot, first_job.job_id, IngestJobState.CANCELLED
+        )
+        await _wait_for_job_state(app, pilot, second_job.job_id, IngestJobState.PARSING)
+        assert len(executor.calls) == 2
+        assert executor.calls[1]["job_id"] == second_job.job_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_executor_callbacks_are_fenced_and_progress_has_no_percentage(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    store = _RecordingIngestJobStore()
+    app.library_ingest_jobs.attach_store(store)
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    wakes: list[str] = []
+    app._start_library_ingest_queue_if_idle = lambda: wakes.append("writer")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        call = executor.calls[0]
+        attempt_id = call["attempt_id"]
+        persisted_before_tick = tuple(store.upserts)
+
+        executor.trigger_event(
+            0,
+            ExecutorEvent(1, attempt_id, WorkerPhase.TRANSCRIBING),
+        )
+        await pilot.pause()
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "transcribing",
+            "message": "Transcribing audio",
+        }
+        assert "percent" not in current.progress
+        assert tuple(store.upserts) == persisted_before_tick
+
+        executor.trigger_result(
+            0,
+            ExecutorResult(2, attempt_id, {"content": "stale"}),
+        )
+        await pilot.pause()
+        assert job.job_id not in app._ingest_parsed_payloads
+
+        payload = {"content": "accepted"}
+        executor.trigger_result(0, ExecutorResult(1, attempt_id, payload))
+        await pilot.pause()
+        assert app._ingest_parsed_payloads[job.job_id] == payload
+        assert wakes == ["writer"]
+
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                TranscriptionFailureCode.ENGINE_CRASHED,
+            ),
+        )
+        await pilot.pause()
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None and current.state == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+async def test_executor_cpu_retry_generation_is_accepted_after_preparing_event(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    app._start_library_ingest_queue_if_idle = lambda: None
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+
+        executor.trigger_event(
+            0,
+            ExecutorEvent(2, attempt_id, WorkerPhase.PREPARING),
+        )
+        await pilot.pause()
+        executor.trigger_result(
+            0,
+            ExecutorResult(2, attempt_id, {"content": "cpu retry"}),
+        )
+        await pilot.pause()
+
+        assert app._ingest_parsed_payloads[job.job_id] == {"content": "cpu retry"}
+
+
+@pytest.mark.asyncio
+async def test_executor_terminal_can_bind_before_submitted_callback(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        app._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
+
+        app._on_ingest_local_stt_failure(
+            job.job_id,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                TranscriptionFailureCode.ENGINE_CRASHED,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        app._on_ingest_local_stt_submitted(job.job_id, 1, attempt_id)
+
+        terminal = app.library_ingest_jobs.get_job(job.job_id)
+        assert terminal is not None
+        assert terminal.state is IngestJobState.FAILED
+        assert job.job_id not in app._ingest_local_stt_jobs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "expected_state"),
+    [
+        (TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE, IngestJobState.FAILED),
+        (TranscriptionFailureCode.ENGINE_CRASHED, IngestJobState.FAILED),
+        (TranscriptionFailureCode.CANCELLED, IngestJobState.CANCELLED),
+    ],
+)
+async def test_executor_failure_uses_stable_job_terminal(
+    tmp_path: Path,
+    code: TranscriptionFailureCode,
+    expected_state: IngestJobState,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                code,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        terminal = await _wait_for_job_state(app, pilot, job.job_id, expected_state)
+
+        assert terminal.error
+        assert "fixture" not in terminal.error
+        if code is not TranscriptionFailureCode.CANCELLED:
+            assert terminal.error_detail == {
+                "category": "stt_failure",
+                "code": code.value,
+                "message": terminal.error,
+                "actions": ["retry_faster_whisper"],
+            }
+
+
+@pytest.mark.asyncio
+async def test_parakeet_failed_attempt_reaches_faster_whisper_retry_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion.transcription_service import (
+        TranscriptionService,
+    )
+    from tldw_chatbook.STT.persistence import (
+        load_transcription_provenance_document,
+    )
+
+    monkeypatch.setattr(
+        TranscriptionService,
+        "transcribe",
+        lambda self, audio_path, **kwargs: {
+            "text": "Recovered with faster whisper.",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.5,
+                    "text": "Recovered with faster whisper.",
+                }
+            ],
+            "language": "en",
+            "language_probability": 0.99,
+            "duration": 1.5,
+            "provider": "faster-whisper",
+            "model": kwargs.get("model") or "base",
+        },
+    )
+    pool = _FakeIngestParsePool()
+    executor = _FakeLocalSTTExecutor()
+    db = _make_db(tmp_path)
+    app = _IngestRunnerHarness(
+        db,
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {"transcription_provider": "parakeet-onnx"}
+            },
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        failed_attempt = {
+            "attempt_id": attempt_id,
+            "batch_id": original.batch_id,
+            "job_id": original.job_id,
+            "provider_id": "parakeet-onnx",
+            "model_id": "nemo-parakeet-tdt-0.6b-v2",
+            "artifact_root": {
+                "artifact_id": "parakeet-v2",
+                "revision": "root-revision",
+                "variant": "int8",
+            },
+            "artifact_dependencies": [
+                {
+                    "artifact_id": "silero-vad",
+                    "revision": "vad-revision",
+                    "variant": "f32",
+                }
+            ],
+            "precision": "int8",
+            "requested_device": "cpu",
+            "effective_device": "cpu",
+            "requested_language": "en",
+            "effective_language": "en",
+            "detected_language": None,
+            "task": "transcribe",
+            "error_code": "artifact_incompatible",
+        }
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                recovery_actions=("retry_faster_whisper",),
+                failed_attempt=failed_attempt,
+            ),
+        )
+        failed = await _wait_for_job_state(
+            app,
+            pilot,
+            original.job_id,
+            IngestJobState.FAILED,
+        )
+
+        retry = app.retry_library_ingest_job_with_provider(
+            failed.job_id,
+            "faster-whisper",
+        )
+        await pilot.pause()
+
+        assert retry is not None
+        assert retry.retry_of_job_id == failed.job_id
+        assert retry.retry_source_failure_provenance == failed_attempt
+        assert retry.ingest_options["audio_video"]["transcription_provider"] == (
+            "faster-whisper"
+        )
+        done = await _wait_for_job_state(
+            app,
+            pilot,
+            retry.job_id,
+            IngestJobState.DONE,
+        )
+        assert done.media_id is not None
+        row = db.get_media_by_id(done.media_id)
+        assert row is not None
+        provenance = load_transcription_provenance_document(
+            row["transcription_provenance_json"]
+        )
+        assert provenance["provider_id"] == "faster-whisper"
+        assert provenance["model_id"] == "base"
+        assert provenance["job_id"] == retry.job_id
+        assert provenance["retry_of_attempt_id"] == failed_attempt["attempt_id"]
+        assert provenance["retry_of_job_id"] == failed.job_id
+        assert provenance["failed_attempt"] == failed_attempt
+
+
+@pytest.mark.asyncio
+async def test_executor_start_failure_does_not_retire_general_pool(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor(
+        submit_error=ExecutorUnavailableError("executor unavailable")
+    )
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=2,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"fixture")
+    document = _write_text_file(tmp_path, "document.txt", "document body")
+
+    async with app.run_test() as pilot:
+        failed_job = app.submit_library_ingest_job(
+            source_path=str(audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        document_job = app.submit_library_ingest_job(source_path=str(document))
+        failed = await _wait_for_job_state(
+            app, pilot, failed_job.job_id, IngestJobState.FAILED
+        )
+
+        assert failed.permanent is False
+        assert len(pool.calls) == 1
+        assert pool.calls[0]["args"][0] == document_job.source_path
+        assert app._ingest_parse_pool is pool
+
+
+def test_shutdown_closes_local_executor_off_caller_thread(tmp_path: Path) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+    )
+    caller_thread = threading.get_ident()
+
+    teardown = app._shutdown_ingest_parse_pool()
+    assert teardown is not None
+    teardown.join(timeout=5.0)
+
+    assert app._ingest_shutdown is True
+    assert app._local_stt_executor is None
+    assert executor.close_thread_ident is not None
+    assert executor.close_thread_ident != caller_thread
+
+
+def test_shutdown_closes_and_detaches_coordinator_before_executor_teardown(
+    tmp_path: Path,
+) -> None:
+    class _BlockingExecutor(_FakeLocalSTTExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_started = threading.Event()
+            self.close_release = threading.Event()
+
+        def close(self) -> None:
+            self.close_started.set()
+            assert self.close_release.wait(5.0)
+            super().close()
+
+    executor = _BlockingExecutor()
+    app = _IngestRunnerHarness(_make_db(tmp_path), local_stt_executor=executor)
+    coordinator = app._ensure_local_stt_dispatch_coordinator()
+    handle = coordinator.begin_dictation(
+        capture_generation=3,
+        dispatch=_fake_parakeet_dispatch(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        language="en",
+        on_logical_segment=lambda _sequence, _text: None,
+    )
+
+    started = time.monotonic()
+    teardown = app._shutdown_ingest_parse_pool()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5
+    assert app._local_stt_dispatch_coordinator is None
+    assert app._local_stt_executor is None
+    with pytest.raises(RuntimeError, match="closed"):
+        coordinator.begin_dictation(
+            capture_generation=4,
+            dispatch=_fake_parakeet_dispatch(),
+            sample_rate=16_000,
+            channels=1,
+            sample_width=2,
+            language="en",
+            on_logical_segment=lambda _sequence, _text: None,
+        )
+    with pytest.raises(RuntimeError) as cancelled:
+        handle.wait()
+    assert cancelled.value.args == (TranscriptionFailureCode.CANCELLED,)
+    assert executor.cancel_calls == []
+    assert executor.close_started.wait(1.0)
+    assert executor.close_thread_ident is None
+
+    executor.close_release.set()
+    assert teardown is not None
+    teardown.join(timeout=5.0)
+    assert not teardown.is_alive()
+    assert executor.close_thread_ident is not None
+
+
+def test_shutdown_cooperatively_cancels_active_dictation_before_executor_close(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(_make_db(tmp_path), local_stt_executor=executor)
+    coordinator = app._ensure_local_stt_dispatch_coordinator()
+    handle = coordinator.begin_dictation(
+        capture_generation=5,
+        dispatch=_fake_parakeet_dispatch(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        language="en",
+        on_logical_segment=lambda _sequence, _text: None,
+    )
+    handle.append_segment(b"\x00\x00")
+    attempt_id = executor.calls[0]["attempt_id"]
+
+    teardown = app._shutdown_ingest_parse_pool()
+
+    assert executor.cancel_calls == [attempt_id]
+    assert app._local_stt_dispatch_coordinator is None
+    assert app._local_stt_executor is None
+    assert teardown is not None
+    teardown.join(timeout=5.0)
+    assert not teardown.is_alive()
+
+
+def test_shutdown_thread_waits_for_executor_and_parse_pool(tmp_path: Path) -> None:
+    class _BlockingExecutor(_FakeLocalSTTExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_started = threading.Event()
+            self.close_release = threading.Event()
+
+        def close(self) -> None:
+            self.close_started.set()
+            assert self.close_release.wait(5.0)
+            super().close()
+
+    executor = _BlockingExecutor()
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+    )
+    app._ingest_parse_pool = pool
+
+    teardown = app._shutdown_ingest_parse_pool()
+    assert teardown is not None
+    assert executor.close_started.wait(1.0)
+    teardown.join(timeout=0.05)
+    assert teardown.is_alive()
+
+    executor.close_release.set()
+    teardown.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
+
+    assert not teardown.is_alive()
+    assert executor.close_thread_ident is not None
+    assert pool.terminated is True
+
+
+def test_local_stt_marshal_failure_logs_callback_context(tmp_path: Path) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+
+    def safe_callback() -> None:
+        return None
+
+    with (
+        patch.object(app, "call_from_thread", side_effect=RuntimeError("closed")),
+        patch("tldw_chatbook.app.logger") as logger,
+    ):
+        app._marshal_local_stt_call(safe_callback)
+
+    logger.error.assert_called_once_with(
+        "Library local STT callback could not be marshaled (callback={}).",
+        "safe_callback",
+    )
+
+
+@pytest.mark.asyncio
 async def test_shutdown_flag_stops_late_parse_completion_callbacks(
     tmp_path: Path,
 ) -> None:
@@ -1126,6 +3500,55 @@ def test_pool_callbacks_short_circuit_without_marshaling_when_shutdown(
     assert len(marshaled) == 2
 
 
+@pytest.mark.parametrize(
+    ("callback_name", "callback_value"),
+    [
+        ("_ingest_pool_callback", {"ok": True, "payload": {}}),
+        ("_ingest_pool_error_callback", RuntimeError("pool failure")),
+    ],
+)
+def test_pool_callback_ignores_cancelled_marshal_only_during_shutdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    callback_name: str,
+    callback_value: Any,
+) -> None:
+    """A callback already past the shutdown check may lose its UI future."""
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    marshal_entered = threading.Event()
+    release_marshal = threading.Event()
+
+    def cancelled_marshal(*_args: Any, **_kwargs: Any) -> None:
+        marshal_entered.set()
+        assert release_marshal.wait(5.0)
+        raise concurrent.futures.CancelledError
+
+    monkeypatch.setattr(app, "call_from_thread", cancelled_marshal)
+    callback = getattr(app, callback_name)
+    callback_errors: list[BaseException] = []
+
+    def invoke_callback() -> None:
+        try:
+            callback(1, "ingest-job-1", callback_value)
+        except BaseException as exc:  # noqa: BLE001 - assert thread outcome below
+            callback_errors.append(exc)
+
+    callback_thread = threading.Thread(target=invoke_callback, daemon=True)
+    callback_thread.start()
+    assert marshal_entered.wait(1.0)
+    app._ingest_shutdown = True
+    release_marshal.set()
+    callback_thread.join(timeout=5.0)
+
+    assert not callback_thread.is_alive()
+    assert callback_errors == []
+
+    app._ingest_shutdown = False
+    with pytest.raises(concurrent.futures.CancelledError):
+        callback(1, "ingest-job-2", callback_value)
+
+
 def test_shutdown_terminates_pool_off_the_caller_thread(tmp_path: Path) -> None:
     """(Quit-deadlock guard, layer b) `_shutdown_ingest_parse_pool` must
     set the shutdown flag, detach the pool reference, and run
@@ -1153,6 +3576,81 @@ def test_shutdown_terminates_pool_off_the_caller_thread(tmp_path: Path) -> None:
     assert pool.terminated is True
     assert pool.terminate_thread_ident is not None
     assert pool.terminate_thread_ident != caller_ident
+
+
+def test_shutdown_detaches_and_cleans_progress_resources_off_caller_thread(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    progress_queue = _ClosableQueue()
+    resources = _app_module._IngestParsePoolResources(pool, progress_queue)
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: resources,
+    )
+    app._ensure_ingest_parse_pool()
+    stop_event = app._ingest_parse_pool_stop_event
+    progress_thread = app._ingest_parse_progress_thread
+    caller_ident = threading.get_ident()
+
+    teardown_thread = app._shutdown_ingest_parse_pool()
+
+    assert stop_event is not None and stop_event.is_set()
+    assert app._ingest_parse_pool is None
+    assert app._ingest_parse_progress_queue is None
+    assert app._ingest_parse_progress_thread is None
+    assert teardown_thread is not None
+    teardown_thread.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
+    assert not teardown_thread.is_alive()
+    assert progress_thread is not None and not progress_thread.is_alive()
+    assert pool.terminated is True
+    assert pool.terminate_thread_ident not in {None, caller_ident}
+    assert pool.join_thread_ident not in {None, caller_ident}
+    assert progress_queue.closed is True
+    assert progress_queue.cancelled_join is True
+    assert progress_queue.close_thread_ident not in {None, caller_ident}
+    assert progress_queue.cancel_thread_ident not in {None, caller_ident}
+
+
+def test_broken_pool_detaches_and_cleans_progress_resources_off_caller_thread(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    progress_queue = _ClosableQueue()
+    resources = _app_module._IngestParsePoolResources(pool, progress_queue)
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: resources,
+    )
+    app._ensure_ingest_parse_pool()
+    generation = app._ingest_parse_pool_generation
+    stop_event = app._ingest_parse_pool_stop_event
+    progress_thread = app._ingest_parse_progress_thread
+    caller_ident = threading.get_ident()
+
+    app._handle_broken_ingest_parse_pool(
+        generation,
+        None,
+        RuntimeError("worker exited"),
+    )
+
+    assert stop_event is not None and stop_event.is_set()
+    assert app._ingest_parse_pool is None
+    assert app._ingest_parse_progress_queue is None
+    assert app._ingest_parse_progress_thread is None
+    deadline = time.monotonic() + 5.0
+    while not progress_queue.closed and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pool.terminated is True
+    assert pool.terminate_thread_ident not in {None, caller_ident}
+    assert pool.join_thread_ident not in {None, caller_ident}
+    assert progress_queue.closed is True
+    assert progress_queue.cancelled_join is True
+    assert progress_queue.close_thread_ident not in {None, caller_ident}
+    assert progress_queue.cancel_thread_ident not in {None, caller_ident}
+    assert progress_thread is not None
+    progress_thread.join(timeout=1.0)
+    assert not progress_thread.is_alive()
 
 
 def test_shutdown_with_no_pool_still_sets_flag_and_returns_none(tmp_path: Path) -> None:
@@ -1246,6 +3744,603 @@ async def test_broken_pool_spares_payload_ready_job_and_writer_drains_it(
 # the top-up path on the UI thread, and crashed the app.
 
 
+class _ClosableQueue:
+    """Queue double exposing multiprocessing queue cleanup observations."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.cancelled_join = False
+        self.close_thread_ident: int | None = None
+        self.cancel_thread_ident: int | None = None
+        self._items: queue.Queue[Any] = queue.Queue()
+
+    def get(self, timeout: float) -> Any:
+        return self._items.get(timeout=timeout)
+
+    def close(self) -> None:
+        self.closed = True
+        self.close_thread_ident = threading.get_ident()
+
+    def cancel_join_thread(self) -> None:
+        self.cancelled_join = True
+        self.cancel_thread_ident = threading.get_ident()
+
+
+def _bare_ingest_mixin() -> LibraryIngestQueueMixin:
+    mixin = LibraryIngestQueueMixin()
+    mixin._ingest_parse_worker_count = lambda: 1
+    mixin._ingest_shutdown = False
+    return mixin
+
+
+def test_create_pool_returns_progress_resources_and_uses_combined_initializer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Context:
+        def Queue(self, maxsize: int) -> _ClosableQueue:
+            captured["maxsize"] = maxsize
+            progress_queue = _ClosableQueue()
+            captured["progress_queue"] = progress_queue
+            return progress_queue
+
+        def Pool(self, **kwargs: Any) -> _FakeIngestParsePool:
+            captured.update(kwargs)
+            return _FakeIngestParsePool(auto_run=False)
+
+    monkeypatch.setattr(multiprocessing, "get_context", lambda _name: _Context())
+
+    resources = LibraryIngestQueueMixin._create_ingest_parse_pool(
+        _bare_ingest_mixin()
+    )
+
+    assert resources.progress_queue is captured["progress_queue"]
+    assert captured["maxsize"] == INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
+    assert captured["initializer"] is initialize_ingest_parse_worker
+    assert captured["initargs"] == (resources.progress_queue,)
+
+
+def test_create_pool_progress_resources_close_queue_when_pool_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    progress_queue = _ClosableQueue()
+
+    class _Context:
+        def Queue(self, maxsize: int) -> _ClosableQueue:
+            assert maxsize == INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
+            return progress_queue
+
+        def Pool(self, **_kwargs: Any) -> Any:
+            raise RuntimeError("pool construction failed")
+
+    monkeypatch.setattr(multiprocessing, "get_context", lambda _name: _Context())
+
+    with pytest.raises(RuntimeError, match="pool construction failed"):
+        LibraryIngestQueueMixin._create_ingest_parse_pool(_bare_ingest_mixin())
+
+    assert progress_queue.closed is True
+    assert progress_queue.cancelled_join is True
+
+
+def test_partial_pool_construction_cleanup_logs_operation_and_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed queue cleanup must identify its operation and resource type."""
+    from loguru import logger
+
+    class _FailingConstructionQueue:
+        def close(self) -> None:
+            raise RuntimeError("close failed")
+
+        def cancel_join_thread(self) -> None:
+            raise RuntimeError("cancel failed")
+
+    progress_queue = _FailingConstructionQueue()
+
+    class _Context:
+        def Queue(self, maxsize: int) -> _FailingConstructionQueue:
+            assert maxsize == INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
+            return progress_queue
+
+        def Pool(self, **_kwargs: Any) -> Any:
+            raise RuntimeError("pool construction failed")
+
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="ERROR",
+    )
+    monkeypatch.setattr(multiprocessing, "get_context", lambda _name: _Context())
+    try:
+        with pytest.raises(RuntimeError, match="pool construction failed"):
+            LibraryIngestQueueMixin._create_ingest_parse_pool(_bare_ingest_mixin())
+    finally:
+        logger.remove(sink_id)
+
+    assert messages == [
+        "Error cleaning up a partially constructed Library ingest progress queue "
+        "(operation=close, queue_type=_FailingConstructionQueue).",
+        "Error cleaning up a partially constructed Library ingest progress queue "
+        "(operation=cancel_join_thread, queue_type=_FailingConstructionQueue).",
+    ]
+
+
+def test_detached_progress_queue_cleanup_logs_operation_and_resource() -> None:
+    """Detached cleanup failures must retain actionable queue context."""
+    from loguru import logger
+
+    class _FailingDetachedQueue:
+        def close(self) -> None:
+            raise RuntimeError("close failed")
+
+        def cancel_join_thread(self) -> None:
+            raise RuntimeError("cancel failed")
+
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="ERROR",
+    )
+    try:
+        teardown = LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+            None,
+            None,
+            None,
+            None,
+            _FailingDetachedQueue(),
+            None,
+        )
+        teardown.join(timeout=5.0)
+        assert not teardown.is_alive()
+    finally:
+        logger.remove(sink_id)
+
+    assert messages == [
+        "Error cleaning up the Library ingest progress queue "
+        "(operation=close, queue_type=_FailingDetachedQueue).",
+        "Error cleaning up the Library ingest progress queue "
+        "(operation=cancel_join_thread, queue_type=_FailingDetachedQueue).",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_pool_submission_binds_generation_and_job_and_applies_transient_progress(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(_make_db(tmp_path), pool_factory=lambda: pool)
+    store = _RecordingIngestJobStore()
+    app.library_ingest_jobs.attach_store(store)
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(_write_text_file(tmp_path, "progress.txt", "body"))
+        )
+        await pilot.pause()
+        generation = app._ingest_parse_pool_generation
+        persisted_before_tick = tuple(store.upserts)
+        lifecycle_notifications: list[str] = []
+        progress_notifications: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
+        app.library_ingest_jobs.add_listener(
+            lambda: lifecycle_notifications.append("lifecycle")
+        )
+        app.library_ingest_jobs.add_progress_listener(
+            lambda before, after: progress_notifications.append(
+                (before.progress, after.progress)
+            )
+        )
+
+        assert pool.calls[0]["args"][2] == (generation, job.job_id)
+        app._on_ingest_parse_progress_batch(
+            generation,
+            (
+                ParseProgressEvent(
+                    generation,
+                    job.job_id,
+                    "extracting",
+                    "Extracting page 1 of 4",
+                    25.0,
+                ),
+            ),
+        )
+
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "extracting",
+            "message": "Extracting page 1 of 4",
+            "percent": 25.0,
+        }
+        assert tuple(store.upserts) == persisted_before_tick
+        assert lifecycle_notifications == []
+        assert progress_notifications == [
+            (
+                None,
+                {
+                    "phase": "extracting",
+                    "message": "Extracting page 1 of 4",
+                    "percent": 25.0,
+                },
+            )
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_parse_progress_batch_revalidates_nominal_events_and_ignores_unknown_data(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(_make_db(tmp_path), pool_factory=lambda: pool)
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(_write_text_file(tmp_path, "revalidate.txt", "body"))
+        )
+        await pilot.pause()
+        generation = app._ingest_parse_pool_generation
+
+        class _HostileQueueItem:
+            @property
+            def generation(self) -> int:
+                raise RuntimeError("malformed IPC property")
+
+        app._on_ingest_parse_progress_batch(
+            generation,
+            (
+                object(),
+                _HostileQueueItem(),
+                ParseProgressEvent(
+                    generation,
+                    job.job_id,
+                    "provider-private-stage",
+                    "raw provider data",
+                    90.0,
+                ),
+                ParseProgressEvent(
+                    generation,
+                    job.job_id,
+                    "extracting",
+                    "Extracting page 2\nof 4\x00",
+                    float("inf"),
+                ),
+            ),
+        )
+
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "extracting",
+            "message": "Extracting page 2 of 4",
+        }
+
+
+@pytest.mark.parametrize(
+    "fence",
+    (
+        "shutdown",
+        "handler_generation",
+        "event_generation",
+        "generation_membership",
+        "job_missing",
+        "non_parsing",
+        "terminal",
+        "hidden",
+        "payload_ready",
+    ),
+)
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_parse_progress_batch_rejects_stale_or_ineligible_events(
+    tmp_path: Path,
+    fence: str,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(_make_db(tmp_path), pool_factory=lambda: pool)
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(_write_text_file(tmp_path, f"{fence}.txt", "body"))
+        )
+        await pilot.pause()
+        generation = app._ingest_parse_pool_generation
+        app.library_ingest_jobs.update_progress(
+            job.job_id,
+            progress={
+                "phase": "inspecting",
+                "message": "Before stale event",
+                "percent": 5.0,
+            },
+            persist=False,
+        )
+        handler_generation = generation
+        event_generation = generation
+        event_job_id = job.job_id
+
+        if fence == "shutdown":
+            app._ingest_shutdown = True
+        elif fence == "handler_generation":
+            handler_generation += 1
+            event_generation = handler_generation
+            app._ingest_parse_jobs_by_generation[handler_generation] = {job.job_id}
+        elif fence == "event_generation":
+            event_generation += 1
+        elif fence == "generation_membership":
+            app._ingest_parse_jobs_by_generation[generation].remove(job.job_id)
+        elif fence == "job_missing":
+            event_job_id = "ingest-job-missing"
+            app._ingest_parse_jobs_by_generation[generation].add(event_job_id)
+        elif fence == "non_parsing":
+            assert app.library_ingest_jobs.mark_writing(job.job_id) is not None
+        elif fence == "terminal":
+            assert app.library_ingest_jobs.mark_failed(
+                job.job_id, error="settled"
+            ) is not None
+        elif fence == "hidden":
+            assert app.library_ingest_jobs.mark_failed(
+                job.job_id, error="hidden"
+            ) is not None
+            assert app.library_ingest_jobs.dismiss(job.job_id) is not None
+        elif fence == "payload_ready":
+            app._ingest_parsed_payloads[job.job_id] = {"content": "ready"}
+        else:  # pragma: no cover - parameter table is exhaustive
+            raise AssertionError(f"unknown fence: {fence}")
+
+        before = app.library_ingest_jobs.get_job(job.job_id)
+        assert before is not None
+        app._on_ingest_parse_progress_batch(
+            handler_generation,
+            (
+                ParseProgressEvent(
+                    event_generation,
+                    event_job_id,
+                    "extracting",
+                    "After stale event",
+                    75.0,
+                ),
+            ),
+        )
+
+        after = app.library_ingest_jobs.get_job(job.job_id)
+        assert after is not None
+        assert after.progress == before.progress
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_late_progress_after_parse_completion_cannot_replace_payload_receipt(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(_make_db(tmp_path), pool_factory=lambda: pool)
+    app._start_library_ingest_queue_if_idle = lambda: None
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(_write_text_file(tmp_path, "complete.txt", "body"))
+        )
+        await pilot.pause()
+        generation = app._ingest_parse_pool_generation
+        app.library_ingest_jobs.update_progress(
+            job.job_id,
+            progress={"phase": "extracting", "message": "Parse receipt"},
+            persist=False,
+        )
+
+        payload = {"content": "parsed"}
+        app._on_ingest_parse_complete(
+            generation,
+            job.job_id,
+            {"ok": True, "payload": payload},
+        )
+        app._on_ingest_parse_progress_batch(
+            generation,
+            (
+                ParseProgressEvent(
+                    generation,
+                    job.job_id,
+                    "extracting",
+                    "Late extraction",
+                    99.0,
+                ),
+            ),
+        )
+
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert app._ingest_parsed_payloads[job.job_id] == payload
+        assert current.progress == {
+            "phase": "extracting",
+            "message": "Parse receipt",
+        }
+
+
+def test_progress_drain_coalesces_latest_event_with_injected_clock() -> None:
+    first = ParseProgressEvent(4, "ingest-job-1", "extracting", "first", 10.0)
+    latest = ParseProgressEvent(4, "ingest-job-1", "extracting", "latest", 30.0)
+
+    class _ProgressQueue:
+        def __init__(self) -> None:
+            self.events = [first, latest]
+
+        def get(self, timeout: float) -> ParseProgressEvent:
+            assert timeout == 0.05
+            if self.events:
+                return self.events.pop(0)
+            raise queue.Empty
+
+    mixin = _bare_ingest_mixin()
+    stop_event = threading.Event()
+
+    def handler(*_args: Any) -> None:
+        return None
+
+    mixin._on_ingest_parse_progress_batch = handler
+    marshaled: list[tuple[Any, ...]] = []
+
+    def _capture_marshal(callback: Any, *args: Any) -> None:
+        marshaled.append((callback, *args))
+        stop_event.set()
+
+    mixin._marshal_ingest_pool_call = _capture_marshal
+    clock_values = iter((10.0, 10.1, 10.25))
+
+    thread = mixin._start_ingest_parse_progress_drain(
+        4,
+        _ProgressQueue(),
+        stop_event,
+        clock=lambda: next(clock_values),
+    )
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert marshaled == [(handler, 4, (latest,))]
+
+
+def test_progress_drain_ignores_hostile_item_and_marshals_later_valid_event() -> None:
+    valid = ParseProgressEvent(4, "ingest-job-1", "extracting", "valid", 30.0)
+
+    class _HostileQueueItem:
+        generation = 4
+
+        @property
+        def job_id(self) -> str:
+            raise RuntimeError("hostile IPC attribute")
+
+    class _ProgressQueue:
+        def __init__(self) -> None:
+            self.events: list[Any] = [_HostileQueueItem(), valid]
+
+        def get(self, timeout: float) -> Any:
+            assert timeout == 0.05
+            if self.events:
+                return self.events.pop(0)
+            raise queue.Empty
+
+    mixin = _bare_ingest_mixin()
+    stop_event = threading.Event()
+
+    def handler(*_args: Any) -> None:
+        return None
+
+    mixin._on_ingest_parse_progress_batch = handler
+    marshaled: list[tuple[Any, ...]] = []
+
+    def _capture_marshal(callback: Any, *args: Any) -> None:
+        marshaled.append((callback, *args))
+        stop_event.set()
+
+    mixin._marshal_ingest_pool_call = _capture_marshal
+    clock_values = iter((10.0, 10.1, 10.25))
+
+    thread = mixin._start_ingest_parse_progress_drain(
+        4,
+        _ProgressQueue(),
+        stop_event,
+        clock=lambda: next(clock_values),
+    )
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert stop_event.is_set()
+    assert marshaled == [(handler, 4, (valid,))]
+
+
+def test_progress_drain_does_not_marshal_event_released_after_generation_stop() -> None:
+    event = ParseProgressEvent(4, "ingest-job-1", "extracting", "late", 40.0)
+    get_entered = threading.Event()
+    release_get = threading.Event()
+
+    class _BlockingProgressQueue:
+        def get(self, timeout: float) -> ParseProgressEvent:
+            assert timeout == 0.05
+            get_entered.set()
+            assert release_get.wait(1.0)
+            return event
+
+    mixin = _bare_ingest_mixin()
+    stop_event = threading.Event()
+    marshaled: list[tuple[Any, ...]] = []
+
+    def handler(*_args: Any) -> None:
+        return None
+
+    def _capture_marshal(callback: Any, *args: Any) -> None:
+        marshaled.append((callback, *args))
+
+    mixin._on_ingest_parse_progress_batch = handler
+    mixin._marshal_ingest_pool_call = _capture_marshal
+    clock_values = iter((10.0, 10.25))
+
+    thread = mixin._start_ingest_parse_progress_drain(
+        4,
+        _BlockingProgressQueue(),
+        stop_event,
+        clock=lambda: next(clock_values),
+    )
+    assert get_entered.wait(1.0)
+    stop_event.set()
+    release_get.set()
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert marshaled == []
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows spawn/resource-tracker boundary",
+)
+def test_create_pool_real_windows_spawn_progress_delivery_and_cleanup(
+    tmp_path: Path,
+) -> None:
+    source = _write_text_file(
+        tmp_path,
+        "spawn-progress.txt",
+        "Parsed inside a spawned worker with progress.",
+    )
+    mixin = _bare_ingest_mixin()
+    resources = mixin._create_ingest_parse_pool()
+    cleanup: threading.Thread | None = None
+    cleaned = False
+    try:
+        result = resources.pool.apply_async(
+            run_parse_job,
+            (
+                str(source),
+                {"title": "Spawn progress"},
+                (9, "ingest-job-windows-spawn"),
+            ),
+        ).get(timeout=120)
+        event = resources.progress_queue.get(timeout=120)
+
+        cleanup = mixin._shutdown_ingest_workers_off_thread(
+            None,
+            None,
+            None,
+            resources.pool,
+            resources.progress_queue,
+            None,
+        )
+        cleanup.join(timeout=10.0)
+        cleaned = not cleanup.is_alive()
+
+        assert result["ok"] is True
+        assert result["payload"]["title"] == "Spawn progress"
+        assert event.generation == 9
+        assert event.job_id == "ingest-job-windows-spawn"
+        assert event.phase == "inspecting"
+        assert cleaned, "real parse-pool progress cleanup exceeded 10 seconds"
+    finally:
+        if not cleaned:
+            resources.pool.terminate()
+            resources.pool.join()
+            resources.progress_queue.close()
+            resources.progress_queue.cancel_join_thread()
+
+
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
     """Run `code` in a FRESH interpreter (mirrors the Task 2 import-weight
     helper). Fresh matters here: the multiprocessing resource tracker is
@@ -1335,13 +4430,16 @@ def test_create_pool_survives_filenoless_stderr_real_spawn(tmp_path: Path) -> No
             # Instance shadow: one worker keeps the spawn cost bounded.
             mixin._ingest_parse_worker_count = lambda: 1
 
-            pool = mixin._create_ingest_parse_pool()
+            resources = mixin._create_ingest_parse_pool()
+            pool = resources.pool
             try:
                 result = pool.apply_async(pow, (2, 3)).get(timeout=120)
                 assert result == 8, result
             finally:
                 pool.terminate()
                 pool.join()
+                resources.progress_queue.close()
+                resources.progress_queue.cancel_join_thread()
             print("POOL_OK")
         """,
     )
@@ -1365,7 +4463,7 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
     deterministic."""
     import tldw_chatbook.app as app_module
 
-    recorded: dict[str, int] = {}
+    recorded: dict[str, Any] = {}
 
     class _RecordingPool:
         def __init__(self, processes=None):
@@ -1375,10 +4473,21 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
                 recorded["fd_during_construction"] = -1
 
     class _RecordingContext:
-        def Pool(self, processes=None, initializer=None):
-            # (task-2016) The real Pool now receives the worker-noise
-            # silencer; the fake records it so the contract is pinned.
+        def Queue(self, maxsize=None):
+            recorded["maxsize"] = maxsize
+            try:
+                recorded["queue_fd_during_construction"] = sys.stderr.fileno()
+            except Exception:
+                recorded["queue_fd_during_construction"] = -1
+            progress_queue = _ClosableQueue()
+            recorded["progress_queue"] = progress_queue
+            return progress_queue
+
+        def Pool(self, processes=None, initializer=None, initargs=()):
+            # The combined initializer retains worker-noise suppression and
+            # installs the progress queue for this spawned generation.
             recorded["initializer"] = initializer
+            recorded["initargs"] = initargs
             return _RecordingPool(processes)
 
     class _RecordingMultiprocessing:
@@ -1392,14 +4501,13 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
 
     mixin = LibraryIngestQueueMixin()
     mixin._ingest_parse_worker_count = lambda: 1  # instance shadow: skip config read
-    pool = mixin._create_ingest_parse_pool()
+    resources = mixin._create_ingest_parse_pool()
 
-    assert isinstance(pool, _RecordingPool)
+    assert isinstance(resources.pool, _RecordingPool)
+    assert recorded["queue_fd_during_construction"] >= 0
     assert recorded["fd_during_construction"] >= 0
-    assert (
-        recorded["initializer"]
-        is app_module.silence_ingest_worker_import_noise
-    )
+    assert recorded["initializer"] is initialize_ingest_parse_worker
+    assert recorded["initargs"] == (resources.progress_queue,)
 
 
 def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
@@ -1416,10 +4524,17 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
             recorded["stderr_during_construction"] = sys.stderr
 
     class _RecordingContext:
-        def Pool(self, processes=None, initializer=None):
-            # (task-2016) The real Pool now receives the worker-noise
-            # silencer; the fake records it so the contract is pinned.
+        def Queue(self, maxsize=None):
+            recorded["maxsize"] = maxsize
+            progress_queue = _ClosableQueue()
+            recorded["progress_queue"] = progress_queue
+            return progress_queue
+
+        def Pool(self, processes=None, initializer=None, initargs=()):
+            # The combined initializer retains worker-noise suppression and
+            # installs the progress queue for this spawned generation.
             recorded["initializer"] = initializer
+            recorded["initargs"] = initargs
             return _RecordingPool(processes)
 
     class _RecordingMultiprocessing:
@@ -1435,13 +4550,11 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
 
     mixin = LibraryIngestQueueMixin()
     mixin._ingest_parse_worker_count = lambda: 1
-    mixin._create_ingest_parse_pool()
+    resources = mixin._create_ingest_parse_pool()
 
     assert recorded["stderr_during_construction"] is ambient_stderr
-    assert (
-        recorded["initializer"]
-        is app_module.silence_ingest_worker_import_noise
-    )
+    assert recorded["initializer"] is initialize_ingest_parse_worker
+    assert recorded["initargs"] == (resources.progress_queue,)
 
 
 @pytest.mark.asyncio
@@ -1785,6 +4898,55 @@ async def test_reingest_of_unchanged_file_still_resolves_media_id(
         await _wait_for_runner_idle(app, pilot)
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
+@pytest.mark.asyncio
+async def test_local_writer_uses_claimed_generic_overwrite_option(tmp_path: Path) -> None:
+    """A job's snapshot, rather than current form state, controls overwrite."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(
+        tmp_path, "overwrite.txt", "Unchanged document body for overwrite testing."
+    )
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        first = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Original title",
+            ingest_options={"generic": {"overwrite_existing": False}},
+        )
+        first_done = await _wait_for_job_state(
+            app, pilot, first.job_id, IngestJobState.DONE
+        )
+        assert first_done.media_id is not None
+
+        skipped = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Skipped title",
+            ingest_options={"generic": {"overwrite_existing": False}},
+        )
+        await _wait_for_job_state(app, pilot, skipped.job_id, IngestJobState.DONE)
+        row = db.execute_query(
+            "SELECT title FROM Media WHERE id = ?", (first_done.media_id,)
+        ).fetchone()
+        assert row["title"] == "Original title"
+
+        updated = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Updated title",
+            ingest_options={"generic": {"overwrite_existing": True}},
+        )
+        updated_done = await _wait_for_job_state(
+            app, pilot, updated.job_id, IngestJobState.DONE
+        )
+        assert updated_done.media_id == first_done.media_id
+        row = db.execute_query(
+            "SELECT title FROM Media WHERE id = ?", (first_done.media_id,)
+        ).fetchone()
+        assert row["title"] == "Updated title"
+        await _wait_for_runner_idle(app, pilot)
+
+
 # --- remote poller (task-684.2) ---------------------------------------------
 
 
@@ -1802,8 +4964,18 @@ class _FakeServerMediaService:
         return {"batch_id": batch_id, "jobs": []}
 
 
-def _queued_server_job(app, *, remote_job_id: str, batch_id: str = "batch-1"):
-    job = app.library_ingest_jobs.submit(source_path="/tmp/a.mp3", origin="server")
+def _queued_server_job(
+    app,
+    *,
+    remote_job_id: str,
+    batch_id: str = "batch-1",
+    research_source_operation_id: str | None = None,
+):
+    job = app.library_ingest_jobs.submit(
+        source_path="/tmp/a.mp3",
+        origin="server",
+        research_source_operation_id=research_source_operation_id,
+    )
     return app.library_ingest_jobs.attach_remote(
         job.job_id, remote_job_id=remote_job_id, batch_id=batch_id
     )
@@ -1840,6 +5012,49 @@ async def test_remote_poll_settles_a_server_job_then_stops(tmp_path: Path) -> No
         assert len(service.batch_calls) == calls_after_settle, (
             "poller kept fetching a settled batch"
         )
+
+
+@pytest.mark.asyncio
+async def test_remote_completion_schedules_research_association_after_settle(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    scheduler = _RecordingAssociationScheduler()
+    app.research_source_association_scheduler = scheduler
+    app.server_media_reading_service = _FakeServerMediaService(
+        [
+            {
+                "batch_id": "batch-1",
+                "jobs": [
+                    {
+                        "id": 11,
+                        "status": "completed",
+                        "result": {"media_id": 884},
+                    }
+                ],
+            }
+        ]
+    )
+
+    async with app.run_test() as pilot:
+        job = _queued_server_job(
+            app,
+            remote_job_id="11",
+            research_source_operation_id="research-op-app-server",
+        )
+        app.poll_remote_ingest_jobs()
+        await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert scheduler.calls == ["research-op-app-server"]
+    settled = app.library_ingest_jobs.get_job(job.job_id)
+    assert settled is not None
+    assert settled.media_id is None
+    assert settled.remote_media_id == "884"
 
 
 @pytest.mark.asyncio
@@ -1962,7 +5177,7 @@ async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
     app.server_media_reading_service = _CancellableService()
 
     async with app.run_test() as pilot:
-        job = _queued_server_job(app, remote_job_id="11")
+        _queued_server_job(app, remote_job_id="11")
         app.cancel_remote_ingest_batch("batch-1")
 
         # The request alone must not move the local job.
@@ -2199,8 +5414,6 @@ async def test_an_unrecognised_backend_falls_back_to_local(tmp_path: Path) -> No
     the dataclass's guarantee instead of this fallback, and would pass even if
     the fallback were inverted.
     """
-    from types import SimpleNamespace
-
     db = _make_db(tmp_path)
     source = _write_text_file(tmp_path, "note.txt", "Body.")
     app = _IngestRunnerHarness(db)
@@ -2848,4 +6061,11 @@ async def test_folder_submission_shares_one_batch_id(tmp_path: Path) -> None:
         assert jobs["solo.txt"].batch_id is None
         assert solo_job.batch_id is None
 
+        for submitted in jobs.values():
+            await _wait_for_job_state(
+                app,
+                pilot,
+                submitted.job_id,
+                IngestJobState.DONE,
+            )
         await _wait_for_runner_idle(app, pilot)

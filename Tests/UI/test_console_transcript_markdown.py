@@ -7,6 +7,10 @@ guarantee is preserved).
 """
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    ConsolePresentationContext,
+    resolve_console_message_presentation,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import (
     _markdown_body_spans,
     _message_render_text,
@@ -69,6 +73,30 @@ def test_user_message_text_is_left_verbatim():
     plain = _message_render_text(msg, selected=False).plain
     assert "**stars**" in plain
     assert "## hash" in plain
+
+
+def test_plain_renderer_uses_roleplay_presentation_without_parsing_the_name():
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="hello",
+        status="complete",
+    )
+    presentation = resolve_console_message_presentation(
+        message,
+        ConsolePresentationContext(
+            user_name="Captain [Rowan]",
+            assistant_kind="character",
+            character_name="Alraune [bold red]",
+            revision=1,
+        ),
+    )
+
+    plain = _message_render_text(
+        message, selected=False, presentation=presentation
+    ).plain
+
+    assert "Alraune [bold red]" in plain
+    assert "Assistant" not in plain
 
 
 def test_system_and_tool_messages_are_left_verbatim():

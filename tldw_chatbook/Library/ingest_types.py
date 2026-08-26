@@ -54,3 +54,16 @@ class PreflightResult:
     #: say "at least N" rather than presenting the cap as the truth (an
     #: 80-duplicate folder read "20 files appear to already be…").
     already_in_library_capped: bool = False
+    #: (task-3305, MI-19) True when the analyzed source was an http(s) URL.
+    #: A URL's size is unknown to the probe, so ``total_size`` is 0 by
+    #: construction -- the UI must not present that as "1 file · 0 B".
+    source_is_url: bool = False
+    #: (xhigh review of task-14823) Directory entries the scan passed over
+    #: without collecting a file from them: symlinks, dot-entries, and
+    #: folders it could not read. ``total_files == 0`` alone cannot tell
+    #: "this folder holds nothing" from "this folder's entries were all
+    #: skipped", and the ingest gate asserted the first about both -- a
+    #: folder of symlinked media was told it was empty AND (since
+    #: task-14823's submit gate) refused outright. ``0`` for non-directory
+    #: sources, which have no entries to skip.
+    skipped_entries: int = 0

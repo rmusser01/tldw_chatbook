@@ -1,0 +1,22 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "3316fe946b76f65a2e78ee406f359f19",
+        "chunk_index": 1,
+        "chunk_method": "xml",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 1
+      },
+      "text": "[root/item]: text 0\n[root/item]: text 1\n[root/item]: text 2\n[root/item]: text 3\n[root/item]: text 4\n[root/item]: text 5\n[root/item]: text 6\n[root/item]: text 7\n[root/item]: text 8\n[root/item]: text 9\n[root/item]: text 10\n[root/item]: text 11\n[root/item]: text 12\n[root/item]: text 13\n[root/item]: text 14\n[root/item]: text 15\n[root/item]: text 16\n[root/item]: text 17\n[root/item]: text 18\n[root/item]: text 19"
+    }
+  ],
+  "outcome": "ok"
+}

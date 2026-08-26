@@ -17,6 +17,10 @@ from unittest.mock import patch
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App
 from textual.widgets import Button
 
@@ -69,7 +73,7 @@ _LAB_SCREENS_FLAT_COMPOSE = tuple(
 )
 
 
-class _StripHarness(App[None]):
+class _StripHarness(ConsolidatedCSSApp):
     """Bare harness mounting only the strip; records navigation requests."""
 
     def __init__(self, active_route: str):
@@ -112,7 +116,7 @@ async def test_evals_composes_mode_strip_under_destination_header_via_real_app()
     call outside a running app."""
     from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
-    class _EvalsHarness(App[None]):
+    class _EvalsHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self._app_instance = app_instance
@@ -147,7 +151,7 @@ async def test_llm_composes_mode_strip_under_destination_header_via_real_app():
     present."""
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 
-    class _LLMHarness(App[None]):
+    class _LLMHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self._app_instance = app_instance
@@ -270,22 +274,8 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 
     _prepare_clean_environment(monkeypatch, tmp_path)
-    # Isolate the navigation test from the remaining Download Models widgets:
-    # their init-fired reactives and download workers schedule
-    # deferred DOM updates (call_later/thread completion) that race child
-    # mounting and screen switches under run_test -- a pre-existing family of
-    # races in those widgets, unrelated to shell navigation.
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
-    from tldw_chatbook.Widgets.HuggingFace.download_manager import DownloadManager
-    from tldw_chatbook.Widgets.HuggingFace.model_search_widget import ModelSearchWidget
 
-    async def _noop_async_update(self, *args):
-        return None
-
-    monkeypatch.setattr(ModelSearchWidget, "perform_search", lambda self: None)
-    monkeypatch.setattr(ModelSearchWidget, "_update_results_list", _noop_async_update)
-    monkeypatch.setattr(DownloadManager, "_refresh_downloads_list", _noop_async_update)
-    monkeypatch.setattr(DownloadManager, "_update_summary", lambda self: None)
     app = _build_test_app()
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
@@ -343,11 +333,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 
-class _BundledStripHarness(App[None]):
+class _BundledStripHarness(ConsolidatedCSSApp):
     """Mount the strip with the production stylesheet.
 
     The bundle is required: the bug under test lives in the bundle's global
-    `.is-active` rule, which beats LabModeStrip.DEFAULT_CSS. A harness
+    `.is-active` rule, which beats LabModeStrip.BUNDLED_CSS. A harness
     without CSS_PATH passes vacuously.
     """
 
@@ -370,11 +360,14 @@ def _has_border(widget) -> bool:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("route", "active_chip"), [
-    ("llm", "lab-mode-models"),
-    ("stts", "lab-mode-speech"),
-    ("evals", "lab-mode-evals"),
-])
+@pytest.mark.parametrize(
+    ("route", "active_chip"),
+    [
+        ("llm", "lab-mode-models"),
+        ("stts", "lab-mode-speech"),
+        ("evals", "lab-mode-evals"),
+    ],
+)
 async def test_active_mode_chip_has_no_border_so_its_label_renders(route, active_chip):
     """The active chip must not gain the bundle's global `.is-active` border.
 
@@ -394,11 +387,14 @@ async def test_active_mode_chip_has_no_border_so_its_label_renders(route, active
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("route", "active_chip", "other_chip"), [
-    ("llm", "lab-mode-models", "lab-mode-speech"),
-    ("stts", "lab-mode-speech", "lab-mode-evals"),
-    ("evals", "lab-mode-evals", "lab-mode-models"),
-])
+@pytest.mark.parametrize(
+    ("route", "active_chip", "other_chip"),
+    [
+        ("llm", "lab-mode-models", "lab-mode-speech"),
+        ("stts", "lab-mode-speech", "lab-mode-evals"),
+        ("evals", "lab-mode-evals", "lab-mode-models"),
+    ],
+)
 async def test_focused_non_active_chip_does_not_impersonate_the_active_chip(
     route, active_chip, other_chip
 ):
@@ -444,11 +440,14 @@ def _rendered_text(app: App) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("route", "active_label"), [
-    ("llm", "Models"),
-    ("stts", "Speech"),
-    ("evals", "Evals"),
-])
+@pytest.mark.parametrize(
+    ("route", "active_label"),
+    [
+        ("llm", "Models"),
+        ("stts", "Speech"),
+        ("evals", "Evals"),
+    ],
+)
 async def test_active_mode_chip_label_is_actually_rendered(route, active_label):
     """Assert the active chip's rendered label text, not a styles proxy.
 

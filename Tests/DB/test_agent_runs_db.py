@@ -5,7 +5,8 @@ from contextlib import contextmanager
 
 import pytest
 
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Agents.agent_models import AgentDefinition
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, AgentStepConflictError
 
 
 @pytest.fixture()
@@ -71,7 +72,7 @@ def test_count_subagents_counts_only_subagent_kind(db):
 # not one connection/query per conversation row per poll tick). ---
 
 
-def test_count_subagents_by_conversation_batches_single_query(db, monkeypatch):
+def test_count_subagents_by_conversation_batches_single_query(db):
     parent_a = db.create_run(conversation_id="conv-a", agent_kind="primary")
     for i in range(2):
         db.create_run(
@@ -90,15 +91,13 @@ def test_count_subagents_by_conversation_batches_single_query(db, monkeypatch):
     # conv-c has only a primary run -- zero sub-agents, must be absent.
     db.create_run(conversation_id="conv-c", agent_kind="primary")
 
+    # Attach the trace callback directly to the thread's HELD connection
+    # (task-3012) rather than monkeypatching _get_connection + db.close():
+    # that older approach lost coverage of the held-connection path itself,
+    # since it forced a fresh per-call connection through the spy instead of
+    # observing the one every real call actually reuses.
     executed = []
-    original_get_connection = type(db)._get_connection
-
-    def spy_get_connection(self):
-        conn = original_get_connection(self)
-        conn.set_trace_callback(executed.append)
-        return conn
-
-    monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    db._held_connection().set_trace_callback(executed.append)
     counts = db.count_subagents_by_conversation(["conv-a", "conv-b", "conv-c"])
 
     assert counts == {"conv-a": 2, "conv-b": 1}
@@ -120,11 +119,16 @@ def test_count_subagents_by_conversation_dedupes_ids_and_ignores_blanks(db):
     assert counts == {"conv-a": 1}
 
 
-def test_supersede_run_tree_marks_run_and_children(db):
+def test_supersede_run_tree_marks_run_and_terminal_children(db):
+    # A parent and child that have ALREADY finished (terminal) by the time
+    # supersede runs are both superseded exactly as before this task --
+    # that half must not regress.
     parent = db.create_run(conversation_id="c", agent_kind="primary")
+    db.set_status(parent, "done", result="parent finished before supersede")
     child = db.create_run(
         conversation_id="c", agent_kind="subagent", task="t", parent_run_id=parent
     )
+    db.set_status(child, "done", result="child finished before supersede")
     other = db.create_run(conversation_id="c", agent_kind="primary")
     changed = db.supersede_run_tree(parent)
     assert changed == 2
@@ -133,8 +137,81 @@ def test_supersede_run_tree_marks_run_and_children(db):
     assert db.get_run(other)["status"] == "running"
 
 
+def test_supersede_run_tree_leaves_live_child_untouched(db):
+    # PR3a-1 Task 2 lets a sub-agent outlive its turn. Task 4: superseding
+    # the primary (retry/regenerate/variant) must not flip a still-running
+    # child to a terminal status out from under its live worker thread --
+    # that child is not a dead attempt, it is a real cross-turn survivor
+    # still spending tokens. The primary here is put in a terminal status
+    # first (the realistic case -- see the coupled primary-liveness test
+    # below for the case where the primary itself is still live) so this
+    # test isolates the CHILD guard specifically.
+    parent = db.create_run(conversation_id="c", agent_kind="primary")
+    db.set_status(parent, "done", result="parent finished before supersede")
+    live_child = db.create_run(
+        conversation_id="c", agent_kind="subagent", task="t", parent_run_id=parent
+    )
+    changed = db.supersede_run_tree(parent)
+    # The already-terminal parent is superseded; the live child is skipped
+    # entirely, so exactly one row (the parent) is counted.
+    assert changed == 1
+    assert db.get_run(parent)["status"] == "superseded"
+    assert db.get_run(live_child)["status"] == "running"
+    # Lineage stays intact: the child is still parented to the (now
+    # superseded) primary -- this only changes status semantics.
+    assert db.get_run(live_child)["parent_run_id"] == parent
+
+
+def test_supersede_run_tree_leaves_a_live_primary_untouched(db):
+    # The hole in the first draft of this fix: `run_turn`'s guarantee that
+    # ITS OWN primary is persisted terminally before it returns says
+    # nothing about a DIFFERENT, earlier run_turn call whose coroutine
+    # already returned to the UI (via Stop) while its OS thread -- an
+    # `asyncio.to_thread` call, which survives Task cancellation -- keeps
+    # running. `_previous_primary_run_id` resolves to the newest
+    # non-superseded primary for the WHOLE conversation, not the run tied
+    # to the message being retried, so retrying an older failed message
+    # can supersede a DIFFERENT, still-live, stopped-but-not-dead primary.
+    # That primary's row must be left untouched by supersede, and its own
+    # later terminal set_status (e.g. "cancelled" once the thread notices)
+    # must still land -- assert the result is READABLE afterwards, not
+    # merely that the row isn't 'superseded'.
+    live_primary = db.create_run(conversation_id="c", agent_kind="primary")
+    changed = db.supersede_run_tree(live_primary)
+    assert changed == 0
+    assert db.get_run(live_primary)["status"] == "running"
+    updated = db.set_status(
+        live_primary, "cancelled", result="the primary's real terminal result"
+    )
+    assert updated is True
+    run = db.get_run(live_primary)
+    assert run["status"] == "cancelled"
+    assert run["result"] == "the primary's real terminal result"
+
+
+def test_supersede_run_tree_does_not_lose_a_live_childs_real_result(db):
+    # The actual defect: superseding used to flip a live child straight to
+    # the terminal status 'superseded'. Because 'superseded' is itself a
+    # TERMINAL_RUN_STATUSES member, set_status's first-writer-wins guard
+    # then silently dropped the child's real terminal write when it
+    # finished for real -- the row lied dead while the child was alive, and
+    # its genuine result was lost on arrival. Assert the result is
+    # READABLE afterwards, not merely that the row isn't 'superseded'.
+    parent = db.create_run(conversation_id="c", agent_kind="primary")
+    live_child = db.create_run(
+        conversation_id="c", agent_kind="subagent", task="t", parent_run_id=parent
+    )
+    db.supersede_run_tree(parent)  # primary retried while the child runs on
+    updated = db.set_status(live_child, "done", result="the child's real answer")
+    assert updated is True
+    run = db.get_run(live_child)
+    assert run["status"] == "done"
+    assert run["result"] == "the child's real answer"
+
+
 def test_list_runs_filters_superseded_when_asked(db):
     a = db.create_run(conversation_id="c", agent_kind="primary")
+    db.set_status(a, "done", result="a finished before supersede")
     db.create_run(conversation_id="c", agent_kind="primary")
     db.supersede_run_tree(a)
     assert len(db.list_runs("c")) == 2
@@ -156,19 +233,14 @@ def test_sql_is_parameterized_against_quotes(db):
 # hazard when multiple workers write concurrently. ---
 
 
-def test_transaction_begins_immediate_not_deferred(db, monkeypatch):
+def test_transaction_begins_immediate_not_deferred(db):
     # sqlite3.Connection is a C type — can't monkeypatch .execute on it —
     # so use the module-supported trace callback to observe every SQL
     # statement actually sent to SQLite on the transaction() connection.
+    # Attach directly to the thread's HELD connection (task-3012) — see the
+    # comment in test_count_subagents_by_conversation_batches_single_query.
     calls = []
-    original_get_connection = type(db)._get_connection
-
-    def spy_get_connection(self):
-        conn = original_get_connection(self)
-        conn.set_trace_callback(calls.append)
-        return conn
-
-    monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    db._held_connection().set_trace_callback(calls.append)
     with db.transaction() as conn:
         conn.execute("SELECT 1")
     begin_calls = [c for c in calls if c.strip().upper().startswith("BEGIN")]
@@ -347,6 +419,117 @@ def test_reconcile_preserves_existing_result(tmp_path):
     row = db2.get_run(rid)
     assert row["status"] == "error"
     assert row["result"] == "partial output"  # COALESCE keeps it
+    diagnostics = [step for step in row["steps"] if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["status"] == "incomplete"
+    assert diagnostics[0]["parent_event_id"] == f"agent-run:{rid}"
+
+
+def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(tmp_path, monkeypatch):
+    db = AgentRunsDB(tmp_path / "atomic-terminal.db")
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    step = {
+        "index": 10_000_010,
+        "kind": "agent_run_completed",
+        "summary": "Agent run completed",
+        "created_at": "2026-08-22T00:00:00.000000Z",
+        "status": "done",
+        "owner_seq": 0,
+        "parent_event_id": f"agent-run:{run_id}",
+        "source_event_id": None,
+        "field_states": {"payload": "omitted"},
+        "sensitivity": "diagnostic",
+    }
+    real_transaction = db.transaction
+
+    class FaultAfterInsert:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def execute(self, sql, params=()):
+            if sql.startswith("UPDATE agent_runs SET status"):
+                raise sqlite3.OperationalError("injected after lifecycle insert")
+            return self.conn.execute(sql, params)
+
+    @contextmanager
+    def faulting_transaction():
+        with real_transaction() as conn:
+            yield FaultAfterInsert(conn)
+
+    monkeypatch.setattr(db, "transaction", faulting_transaction)
+    with pytest.raises(sqlite3.OperationalError):
+        db.set_terminal_with_step(run_id, "done", "answer", step)
+
+    row = db.get_run(run_id)
+    assert row["status"] == "running"
+    assert row["result"] is None
+    assert not any(step["kind"] == "agent_run_completed" for step in row["steps"])
+
+
+def test_terminal_status_result_and_lifecycle_are_first_writer_wins(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    completed = {
+        "index": 10_000_010,
+        "kind": "agent_run_completed",
+        "summary": "Agent run completed",
+        "created_at": "2026-08-22T00:00:00.000000Z",
+        "status": "done",
+        "owner_seq": 0,
+        "parent_event_id": f"agent-run:{run_id}",
+        "source_event_id": None,
+        "field_states": {"payload": "omitted"},
+        "sensitivity": "diagnostic",
+    }
+    failed = {**completed, "index": 10_000_014, "kind": "agent_run_failed"}
+
+    assert db.set_terminal_with_step(run_id, "done", "answer", completed) is True
+    assert db.set_terminal_with_step(run_id, "error", "late error", failed) is False
+    with pytest.raises(AgentStepConflictError):
+        db.set_terminal_with_step(
+            run_id,
+            "done",
+            "answer",
+            {**completed, "summary": "conflicting terminal observation"},
+        )
+
+    row = db.get_run(run_id)
+    assert row["status"] == "done"
+    assert row["result"] == "answer"
+    assert [step["kind"] for step in row["steps"]] == ["agent_run_completed"]
+
+
+def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
+    db_path = tmp_path / "split-terminal.db"
+    setup = AgentRunsDB(db_path)
+    run_id = setup.create_run(conversation_id="c", agent_kind="primary")
+    setup.insert_steps_at_indices(
+        run_id,
+        [
+            (
+                0,
+                {
+                    "index": 0,
+                    "kind": "model_request_started",
+                    "summary": "Model request started",
+                    "owner_seq": 0,
+                    "parent_event_id": f"agent-run:{run_id}",
+                },
+            )
+        ],
+    )
+    assert setup.set_status(run_id, "done", "legacy answer") is True
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    reopened = AgentRunsDB(db_path)
+    row = reopened.get_run(run_id)
+    assert row["status"] == "done"
+    assert row["result"] == "legacy answer"
+    diagnostic = next(step for step in row["steps"] if step["kind"] == "capture_failed")
+    assert diagnostic["status"] == "incomplete"
+    assert diagnostic["field_states"]["agent_run_completed"] == "not_observed"
+    assert diagnostic["parent_event_id"] == f"agent-step:{run_id}:0"
+    reopened.close()
 
 
 def test_reconcile_idempotent_same_process(tmp_path):
@@ -493,6 +676,7 @@ def test_count_runs_matches_agent_kind_and_conversation(db):
 
 def test_count_runs_excludes_superseded_when_asked(db):
     a = db.create_run(conversation_id="c", agent_kind="primary")
+    db.set_status(a, "done", result="a finished before supersede")
     db.create_run(conversation_id="c", agent_kind="primary")
     db.supersede_run_tree(a)
 
@@ -500,7 +684,7 @@ def test_count_runs_excludes_superseded_when_asked(db):
     assert db.count_runs("c", include_superseded=False) == 1
 
 
-def test_count_runs_does_not_materialize_rows_beyond_a_single_count(db, monkeypatch):
+def test_count_runs_does_not_materialize_rows_beyond_a_single_count(db):
     """Finding A's own point: `count_runs` must be a single `COUNT(*)`
     query, never `len(list_runs(...))` in disguise -- assert on the ACTUAL
     SQL sent, the same trace-callback technique
@@ -508,17 +692,324 @@ def test_count_runs_does_not_materialize_rows_beyond_a_single_count(db, monkeypa
     for _ in range(5):
         db.create_run(conversation_id="c", agent_kind="primary")
 
+    # Attach directly to the thread's HELD connection (task-3012) — see the
+    # comment in test_count_subagents_by_conversation_batches_single_query.
     calls = []
-    original_get_connection = type(db)._get_connection
-
-    def spy_get_connection(self):
-        conn = original_get_connection(self)
-        conn.set_trace_callback(calls.append)
-        return conn
-
-    monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    db._held_connection().set_trace_callback(calls.append)
     n = db.count_runs("c", agent_kind="primary")
     assert n == 5
     select_calls = [c for c in calls if c.strip().upper().startswith("SELECT")]
     assert len(select_calls) == 1
     assert "COUNT(*)" in select_calls[0].upper()
+
+
+# --- agent_definitions CRUD tests (Task 2: fleet spec §4) ---
+
+
+def _defn(**overrides):
+    base = dict(
+        name="researcher",
+        description="Searches sources.",
+        instructions="Research thoroughly.",
+        tool_allowlist=("web_search",),
+    )
+    base.update(overrides)
+    return AgentDefinition(**base)
+
+
+def test_definition_crud_round_trip(db):
+    definition_id = db.create_agent_definition(_defn())
+    rows = db.list_agent_definitions()
+    assert [r["name"] for r in rows] == ["researcher"]
+    assert rows[0]["tool_allowlist"] == ["web_search"]
+    db.update_agent_definition(definition_id, _defn(description="v2"))
+    assert db.get_agent_definition(definition_id)["description"] == "v2"
+    db.soft_delete_agent_definition(definition_id)
+    assert db.list_agent_definitions() == []
+
+
+def test_duplicate_name_raises_and_frees_after_soft_delete(db):
+    definition_id = db.create_agent_definition(_defn())
+    with pytest.raises(ValueError, match="already exists"):
+        db.create_agent_definition(_defn())
+    db.soft_delete_agent_definition(definition_id)
+    db.create_agent_definition(_defn())  # name reusable after soft delete
+
+
+def test_invalid_definition_rejected_at_db_boundary(db):
+    with pytest.raises(ValueError, match="reserved"):
+        db.create_agent_definition(_defn(name="subagent"))
+
+
+def test_update_after_soft_delete_raises_not_found(db):
+    # A missing/soft-deleted id used to no-op silently (0-row UPDATE), and
+    # the Settings ▸ Agents panel would still report "Saved" -- the caller
+    # must be able to tell the edit never landed.
+    definition_id = db.create_agent_definition(_defn())
+    db.soft_delete_agent_definition(definition_id)
+    with pytest.raises(ValueError, match="not found"):
+        db.update_agent_definition(definition_id, _defn(description="v2"))
+
+
+def test_update_unknown_id_raises_not_found(db):
+    with pytest.raises(ValueError, match="not found"):
+        db.update_agent_definition("does-not-exist", _defn())
+
+
+def test_enabled_only_filter(db):
+    db.create_agent_definition(_defn(name="on-agent"))
+    db.create_agent_definition(_defn(name="off-agent", enabled=False))
+    assert [r["name"] for r in db.list_agent_definitions(enabled_only=True)] == [
+        "on-agent"
+    ]
+    assert len(db.list_agent_definitions()) == 2
+
+
+def test_definitions_survive_reopen_and_migration_is_idempotent(tmp_path):
+    path = tmp_path / "agent_runs.db"
+    first = AgentRunsDB(path, client_id="test")
+    first.create_agent_definition(_defn())
+    first.close()
+    second = AgentRunsDB(path, client_id="test")  # re-runs _initialize_schema
+    assert [r["name"] for r in second.list_agent_definitions()] == ["researcher"]
+    with second.connection() as conn:
+        versions = {
+            row[0]
+            for row in conn.execute("SELECT version FROM schema_version").fetchall()
+        }
+    assert 5 in versions
+
+
+# --- Task 3: agent_definition + definition_fingerprint audit columns ---
+
+
+def test_create_run_records_definition_audit_fields(db):
+    run_id = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        parent_run_id=None,
+        agent_definition="researcher",
+        definition_fingerprint="abc123def4567890",
+    )
+    run = db.get_run(run_id)
+    assert run["agent_definition"] == "researcher"
+    assert run["definition_fingerprint"] == "abc123def4567890"
+
+
+def test_create_run_definition_fields_default_none(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    run = db.get_run(run_id)
+    assert run["agent_definition"] is None
+    assert run["definition_fingerprint"] is None
+
+
+def test_agent_runs_columns_backfilled_on_old_file(tmp_path):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    # Simulate a pre-v5 file: the v4-era 12-column table, no new columns.
+    conn.execute(
+        """CREATE TABLE agent_runs (
+               id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+               parent_run_id TEXT, agent_kind TEXT NOT NULL, task TEXT,
+               status TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]',
+               result TEXT, budget TEXT, created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL, assistant_message_id TEXT)"""
+    )
+    conn.commit()
+    conn.close()
+    db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    with db.connection() as conn:
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+        }
+    assert {"agent_definition", "definition_fingerprint"} <= columns
+
+
+# --- Task 2: terminal-status guard on set_status (first-writer-wins) ---
+
+
+def test_set_status_first_terminal_write_wins(db):
+    # A child abandoned after a join timeout can persist LATE; it must not
+    # overwrite the terminal status the coordinator already recorded.
+    run_id = db.create_run(conversation_id="c", agent_kind="subagent", task="t")
+    assert db.set_status(run_id, "cancelled") is True
+    assert db.set_status(run_id, "done", result="late answer") is False
+    run = db.get_run(run_id)
+    assert run["status"] == "cancelled"
+    assert run["result"] is None
+
+
+def test_set_status_still_updates_a_running_run(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    assert db.set_status(run_id, "done", result="ok") is True
+    assert db.get_run(run_id)["status"] == "done"
+    assert db.get_run(run_id)["result"] == "ok"
+
+
+def test_set_status_missing_run_returns_false(db):
+    assert db.set_status("nope", "done") is False
+
+
+# --- PR3b Task 4 (fleet continuation): resumed_from_run_id, v11, and the
+# task-15669 constant-vs-version-table fold (coordinator ruling #3). ---
+
+#: The pre-v11 shape: agent_runs as every migration through v10 left it --
+#: all columns EXCEPT resumed_from_run_id -- with version rows through 10.
+_LEGACY_PRE_V11_DDL = """
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY NOT NULL
+    );
+    INSERT OR IGNORE INTO schema_version (version) VALUES (4);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (5);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (6);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (7);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (8);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (9);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (10);
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        parent_run_id TEXT,
+        agent_kind TEXT NOT NULL,
+        task TEXT,
+        status TEXT NOT NULL,
+        steps TEXT NOT NULL DEFAULT '[]',
+        result TEXT,
+        budget TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        assistant_message_id TEXT,
+        agent_definition TEXT,
+        definition_fingerprint TEXT,
+        wake_delivered_at TEXT
+    );
+"""
+
+
+def test_schema_version_constant_agrees_with_the_version_table(tmp_path):
+    """task-15669 AC#1/#3 (folded into v11 per coordinator ruling #3): the
+    constant CLAUDE.md points every schema change at must agree with the
+    highest version a freshly created database actually records -- and
+    this test fails if the two ever diverge again."""
+    db = AgentRunsDB(tmp_path / "fresh.db", client_id="test")
+    with db.connection() as conn:
+        recorded = conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0]
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION
+
+
+def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
+    """Migration idempotency (plan red): a pre-v11 file gains the column
+    via the guarded ALTER on first open, and a second open is a no-op."""
+    path = tmp_path / "legacy_pre_v11.db"
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(_LEGACY_PRE_V11_DDL)
+        conn.commit()
+    finally:
+        conn.close()
+
+    raw = sqlite3.connect(str(path))
+    try:
+        cols = {row[1] for row in raw.execute("PRAGMA table_info(agent_runs)")}
+    finally:
+        raw.close()
+    assert "resumed_from_run_id" not in cols
+
+    first = AgentRunsDB(path, client_id="test")
+    run_id = first.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resumed_from_run_id="prior-run",
+    )
+    assert first.get_run(run_id)["resumed_from_run_id"] == "prior-run"
+    with first.connection() as conn:
+        versions = {
+            row[0]
+            for row in conn.execute("SELECT version FROM schema_version")
+        }
+    assert 11 in versions
+
+    # Open TWICE (the plan's wording): the guarded ALTER must be a no-op.
+    second = AgentRunsDB(path, client_id="test")
+    second_id = second.create_run(
+        conversation_id="c", agent_kind="subagent", task="t2"
+    )
+    assert second.get_run(second_id)["resumed_from_run_id"] is None
+    assert second.get_run(run_id)["resumed_from_run_id"] == "prior-run"
+
+
+def test_create_run_resumed_from_run_id_round_trips_and_defaults_none(db):
+    origin = db.create_run(conversation_id="c", agent_kind="subagent", task="t")
+    resumed = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resumed_from_run_id=origin,
+    )
+    assert db.get_run(resumed)["resumed_from_run_id"] == origin
+    assert db.get_run(origin)["resumed_from_run_id"] is None
+    # The lineage flows through the list read too (SELECT * row dicts).
+    listed = {row["id"]: row for row in db.list_runs("c")}
+    assert listed[resumed]["resumed_from_run_id"] == origin
+
+
+def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
+    path = tmp_path / "legacy_pre_v14.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL);
+        INSERT INTO schema_version(version) VALUES
+            (4), (5), (6), (7), (8), (9), (10), (11), (12), (13);
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            parent_run_id TEXT,
+            agent_kind TEXT NOT NULL,
+            task TEXT,
+            status TEXT NOT NULL,
+            steps TEXT NOT NULL DEFAULT '[]',
+            result TEXT,
+            budget TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            assistant_message_id TEXT,
+            agent_definition TEXT,
+            definition_fingerprint TEXT,
+            wake_delivered_at TEXT,
+            resumed_from_run_id TEXT
+        );
+        """
+    )
+    conn.commit()
+    columns_before = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+    conn.close()
+    assert "spawn_event_id" not in columns_before
+
+    first = AgentRunsDB(path, client_id="migrate-v14")
+    with first.connection() as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+        recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+    assert "spawn_event_id" in columns
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 14
+    parent = first.create_run(conversation_id="c", agent_kind="primary")
+    child = first.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        parent_run_id=parent,
+        spawn_event_id=f"agent-step:{parent}:3",
+    )
+    assert first.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
+    first.close()
+
+    second = AgentRunsDB(path, client_id="reopen-v14")
+    assert second.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
+    second.close()

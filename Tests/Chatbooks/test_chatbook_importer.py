@@ -2,6 +2,7 @@
 # Unit tests for chatbook importer
 
 import pytest
+import io
 import json
 import os
 import zipfile
@@ -17,6 +18,13 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
+from tldw_chatbook.Chatbooks.chatbook_models import ChatbookManifest, ChatbookVersion
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    encode_project_context_json,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
 
 class TestChatbookImporter:
@@ -180,6 +188,110 @@ class TestChatbookImporter:
             "manifest": 0o600,
             "note": 0o600,
         }
+        assert list(chatbook_importer.temp_dir.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        ("members", "limits"),
+        [
+            ({"a": b"x", "b": b"x"}, {"_MAX_ARCHIVE_MEMBERS": 1}),
+            ({"a": b"xx"}, {"_MAX_ARCHIVE_MEMBER_BYTES": 1}),
+            (
+                {"a": b"xx", "b": b"xx"},
+                {"_MAX_ARCHIVE_TOTAL_BYTES": 3},
+            ),
+            (
+                {"a": b"x" * 1_000},
+                {"_MAX_ARCHIVE_COMPRESSION_RATIO": 2},
+            ),
+        ],
+    )
+    def test_preview_rejects_archive_resource_limits_before_extraction(
+        self,
+        chatbook_importer,
+        tmp_path,
+        monkeypatch,
+        members,
+        limits,
+    ):
+        archive_path = tmp_path / "bounded.zip"
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, payload in members.items():
+                archive.writestr(name, payload)
+        for name, value in limits.items():
+            monkeypatch.setattr(importer_module, name, value)
+
+        manifest, error = chatbook_importer.preview_chatbook(archive_path)
+
+        assert manifest is None
+        assert (
+            error
+            == "Error previewing chatbook: Chatbook archive exceeds safety limits."
+        )
+        assert list(chatbook_importer.temp_dir.iterdir()) == []
+
+    def test_extraction_counts_actual_member_bytes_and_cleans_up(
+        self,
+        chatbook_importer,
+        tmp_path,
+        monkeypatch,
+    ):
+        archive_path = tmp_path / "dishonest.zip"
+        archive_path.write_bytes(b"fake")
+        member = zipfile.ZipInfo("manifest.json")
+        member.file_size = 1
+        member.compress_size = 1
+
+        class FakeArchive:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def infolist():
+                return [member]
+
+            @staticmethod
+            def open(*_args, **_kwargs):
+                return io.BytesIO(b"xx")
+
+        monkeypatch.setattr(importer_module.zipfile, "ZipFile", FakeArchive)
+
+        manifest, error = chatbook_importer.preview_chatbook(archive_path)
+
+        assert manifest is None
+        assert (
+            error
+            == "Error previewing chatbook: Chatbook archive exceeds safety limits."
+        )
+        assert list(chatbook_importer.temp_dir.iterdir()) == []
+
+    def test_archive_limit_import_fails_before_database_writes(
+        self,
+        chatbook_importer,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        archive_path = tmp_path / "too-many.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("manifest.json", "{}")
+            archive.writestr("extra", "x")
+        monkeypatch.setattr(importer_module, "_MAX_ARCHIVE_MEMBERS", 1)
+
+        success, error = chatbook_importer.import_chatbook(archive_path)
+
+        assert success is False
+        assert error == "Fatal error: Chatbook archive exceeds safety limits."
+        with sqlite3.connect(temp_db_paths["ChaChaNotes"]) as connection:
+            assert (
+                connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+                == 0
+            )
         assert list(chatbook_importer.temp_dir.iterdir()) == []
 
     @pytest.fixture
@@ -821,3 +933,213 @@ class TestChatbookImporterKeyCasingMismatch:
         # contract rather than raising.
         assert status.successful_items == 0
         assert status.errors == ["ChaChaNotes database path not configured"]
+
+
+# ---------------------------------------------------------------------------
+# task-4022 (review round 2, I1a): the DB-layer trash-restore fix
+# (Client_Media_DB_v2.add_media_with_keywords) made restoring a trashed
+# match on re-import OPT-IN (``restore_trashed=True``) rather than
+# unconditional. ``ChatbookImporter._import_media`` never passes that flag,
+# so a trashed row must stay exactly as inert as it was before task-4022
+# existed -- even though its own conflict check (``get_media_by_url``,
+# which excludes trashed rows by default) can't see the trashed row and
+# therefore never even reaches the SKIP/RENAME branch for it. Real,
+# file-backed ``MediaDatabase`` throughout -- no mocks -- per this
+# programme's DB-layer testing requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_import_media_skip_conflict_leaves_trashed_row_untouched(tmp_path):
+    target_path = tmp_path / "target.sqlite"
+    target = MediaDatabase(target_path, client_id="target")
+    url = "https://example.com/trashed-article"
+    media_id, _, _ = target.add_media_with_keywords(
+        title="Original title",
+        media_type="article",
+        content="original content",
+        url=url,
+    )
+    assert target.mark_as_trash(media_id) is True
+    target.close_connection()
+
+    extract_dir = tmp_path / "export"
+    media_dir = extract_dir / "content" / "media"
+    metadata_dir = media_dir / "metadata"
+    metadata_dir.mkdir(parents=True)
+    export_media_id = "999"
+    (metadata_dir / f"media_{export_media_id}.json").write_text(
+        json.dumps(
+            {
+                "title": "Reimported title",
+                "url": url,
+                "media_type": "article",
+                "metadata": {"media_keywords": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (media_dir / f"media_{export_media_id}.txt").write_text(
+        "reimported content", encoding="utf-8"
+    )
+
+    manifest = ChatbookManifest(
+        version=ChatbookVersion.V1, name="skip-conflict", description="test"
+    )
+    importer = ChatbookImporter(db_paths={"Media": str(target_path)})
+    status = ImportStatus()
+    importer._import_media(
+        extract_dir, manifest, [export_media_id], ConflictResolution.SKIP, status
+    )
+
+    # Its OWN existing-check (get_media_by_url, include_trash=False) can't
+    # see the trashed row, so this is NOT `status.skipped_items` -- it
+    # falls through to `add_media_with_keywords`, which (without
+    # `restore_trashed=True`) reports the trashed match as an ordinary
+    # duplicate-skip: `media_id=None` -> `status.failed_items += 1`. The
+    # important behavior under test is what happens to the ROW, not which
+    # counter absorbs it.
+    assert status.successful_items == 0
+    assert status.failed_items == 1
+
+    verify = MediaDatabase(target_path, client_id="verify")
+    row = verify.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 1, "SKIP must not resurrect a trashed row"
+    assert row["title"] == "Original title"
+    assert row["content"] == "original content"
+    cursor = verify.execute_query("SELECT COUNT(*) FROM Media")
+    assert cursor.fetchone()[0] == 1, "no second row must have been created either"
+    verify.close_connection()
+
+
+def _write_project_context_conflict_chatbook(path: Path) -> None:
+    """Write one conflicting conversation with a hostile local-state field."""
+    now = datetime.now().isoformat()
+    manifest = {
+        "version": "1.0",
+        "name": "Project context conflict",
+        "description": "Importer local-state preservation fixture",
+        "created_at": now,
+        "updated_at": now,
+        "content_items": [
+            {
+                "id": "incoming-1",
+                "type": "conversation",
+                "title": "Existing conversation",
+                "created_at": now,
+                "file_path": "content/conversations/conversation_incoming-1.json",
+            }
+        ],
+        "relationships": [],
+        "statistics": {"total_conversations": 1},
+    }
+    conversation = {
+        "id": "incoming-1",
+        "name": "Existing conversation",
+        "title": "Existing conversation",
+        "created_at": now,
+        "updated_at": now,
+        "character_id": None,
+        "messages": [{"role": "user", "content": "imported", "timestamp": now}],
+        "console_project_context_json": "must-not-enter-local-state",
+    }
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr(
+            "content/conversations/conversation_incoming-1.json",
+            json.dumps(conversation),
+        )
+
+
+def _seed_conversation_with_project_context(path: Path) -> tuple[str, str]:
+    db = CharactersRAGDB(path, client_id="import-seed")
+    conversation_id = db.add_conversation({"title": "Existing conversation"})
+    encoded = encode_project_context_json(
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id="existing-binding",
+            working_folder_locator_fingerprint="existing-locator-fingerprint",
+            project_instruction_notice_key="existing-notice-key",
+        )
+    )
+    db.set_conversation_console_project_context(conversation_id, encoded)
+    db.close_connection()
+    return str(conversation_id), encoded
+
+
+def test_import_conflict_skip_preserves_existing_console_project_context(
+    tmp_path, monkeypatch
+) -> None:
+    user_data = tmp_path / "user-data"
+    monkeypatch.setattr(importer_module, "get_user_data_dir", lambda: user_data)
+    db_path = tmp_path / "chachanotes.db"
+    existing_id, encoded = _seed_conversation_with_project_context(db_path)
+    chatbook_path = tmp_path / "conflict.chatbook.zip"
+    _write_project_context_conflict_chatbook(chatbook_path)
+    importer = ChatbookImporter(db_paths={"ChaChaNotes": str(db_path)})
+    status = ImportStatus()
+
+    importer.import_chatbook(
+        chatbook_path=chatbook_path,
+        conflict_resolution=ConflictResolution.SKIP,
+        import_status=status,
+    )
+
+    reopened = CharactersRAGDB(db_path, client_id="import-assert")
+    rows = (
+        reopened.get_connection()
+        .execute(
+            "SELECT id, console_project_context_json FROM conversations "
+            "WHERE title = ? ORDER BY rowid",
+            ("Existing conversation",),
+        )
+        .fetchall()
+    )
+    assert status.skipped_items == 1
+    assert [(row["id"], row["console_project_context_json"]) for row in rows] == [
+        (existing_id, encoded)
+    ]
+    reopened.close_connection()
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        ConflictResolution.REPLACE,
+        ConflictResolution.RENAME,
+        ConflictResolution.MERGE,
+    ],
+)
+def test_import_non_skip_conflicts_create_null_local_state_and_preserve_existing(
+    tmp_path, monkeypatch, resolution
+) -> None:
+    user_data = tmp_path / "user-data"
+    monkeypatch.setattr(importer_module, "get_user_data_dir", lambda: user_data)
+    db_path = tmp_path / "chachanotes.db"
+    existing_id, encoded = _seed_conversation_with_project_context(db_path)
+    chatbook_path = tmp_path / "conflict.chatbook.zip"
+    _write_project_context_conflict_chatbook(chatbook_path)
+    importer = ChatbookImporter(db_paths={"ChaChaNotes": str(db_path)})
+    status = ImportStatus()
+
+    success, _message = importer.import_chatbook(
+        chatbook_path=chatbook_path,
+        conflict_resolution=resolution,
+        import_status=status,
+    )
+
+    reopened = CharactersRAGDB(db_path, client_id="import-assert")
+    rows = (
+        reopened.get_connection()
+        .execute(
+            "SELECT id, console_project_context_json FROM conversations ORDER BY rowid"
+        )
+        .fetchall()
+    )
+    assert success is True
+    assert status.successful_items == 1
+    assert len(rows) == 2
+    assert rows[0]["id"] == existing_id
+    assert rows[0]["console_project_context_json"] == encoded
+    assert rows[1]["id"] != existing_id
+    assert rows[1]["console_project_context_json"] is None
+    reopened.close_connection()

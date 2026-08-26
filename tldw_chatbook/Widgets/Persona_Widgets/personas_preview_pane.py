@@ -43,7 +43,7 @@ _DEFAULT_USER_LABEL = "User"
 class PersonasPreviewPane(Vertical):
     """Collapsible test conversation: transcript, input, and actions."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasPreviewPane {
         height: auto;
         max-height: 60%;

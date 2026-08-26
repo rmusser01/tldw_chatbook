@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.geometry import Region
-from textual.widgets import Button, DataTable, Static, TextArea
+from textual.widgets import Button, DataTable, ListView, Static, TextArea
 
 # The end-to-end check harness (TASK-1362 tests below): the real service, the
 # real DB and the real `URLMonitor.check_url` persistence path. See its own
@@ -41,7 +41,11 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     ResumeSourceRequested,
     SaveNoiseSelectorsRequested,
 )
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected, ItemsPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import (
+    ArticleListPane,
+    _ArticleRow,
+)
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import (
     NotificationSelected,
     RefreshNotificationsRequested,
@@ -1415,27 +1419,45 @@ async def _open_items_with_seeded_item(pilot, screen, app, db):
     `app.watchlist_bundle_service._db` is pointed at `db` only AFTER the
     initial mount's background loads have settled (`pane.items` populated),
     never before: mounting the screen fires several CONCURRENT background
-    loads that each construct a fresh `SubscriptionsDB(...)` against this
-    same brand-new file, and reassigning earlier lets those races hit the
-    one-time schema-migration gate on this connection's cached schema view.
-    Observed directly: an early reassignment intermittently made the very
-    next write on `db` raise `OperationalError: no such table:
-    subscription_items`, which then self-healed on an immediate retry --
-    proof it was a startup race, not a real absence of the table. Waiting
-    for the settle removes the race instead of papering over it with a
-    retry loop.
+    loads, and reassigning earlier let those races hit the one-time
+    schema-migration gate on this connection's cached schema view. Observed
+    directly: an early reassignment intermittently made the very next write
+    on `db` raise `OperationalError: no such table: subscription_items`,
+    which then self-healed on an immediate retry -- proof it was a startup
+    race, not a real absence of the table.
+
+    task-15463 removed the source of that race rather than only avoiding it:
+    the app now builds ONE `SubscriptionsDB`, so no background load and no
+    FTS-backfill worker re-runs `_initialize_schema` (~52 statements,
+    measured at 238 ms) against the same file while other threads are
+    opening connections to it. The wait is kept anyway -- it also settles the
+    loads this test then asserts against.
     """
     screen.active_section = "items"
     await pilot.pause(0.3)
-    pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+    pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
     for _ in range(40):
         await pilot.pause()
         if pane.items:
             break
     assert pane.items, "the seeded item must reach the Items pane"
-    table = pane.query_one("#items-table", DataTable)
     app.watchlist_bundle_service._db = db
-    return pane, table
+    return pane
+
+
+def _queued_indicator_shown(pane: ArticleListPane, row_key: str) -> bool:
+    """Whether the queued glyph shows on `row_key`'s rendered row.
+
+    TASK-3072 shape: ItemsPane's queued CELL became the reader row's inline
+    glyph, so the assertion reads the row's `Text` back off the mounted
+    ListView -- what the user sees, same as the old `get_row(...)[4]`.
+    """
+    list_view = pane.query_one("#items-table", ListView)
+    for node in list_view.children:
+        if isinstance(node, _ArticleRow) and node.item_id_key == row_key:
+            # task-15776: the row renders itself -- no inner Static.
+            return ArticleListPane._QUEUED_GLYPH in node.render().plain
+    return False
 
 
 @pytest.mark.asyncio
@@ -1454,10 +1476,11 @@ async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row(
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        pane = await _open_items_with_seeded_item(pilot, screen, app, db)
+        list_view = pane.query_one("#items-table", ListView)
 
         row_key = str(pane.items[0]["id"])
-        assert table.get_row(row_key)[4] == "", (
+        assert not _queued_indicator_shown(pane, row_key), (
             "precondition: a freshly seeded item is not queued"
         )
 
@@ -1474,19 +1497,19 @@ async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row(
         button.press()
         # Fix round 1: the write now happens in a worker (`asyncio.to_thread`
         # then the in-place patch + repaint), so settle on the LAST
-        # observable effect of that sequence -- the repainted cell -- rather
+        # observable effect of that sequence -- the repainted row -- rather
         # than the DB flag alone. The repaint only ever runs after the write
         # has already been awaited, so waiting on it also guarantees the DB
         # assertion below is no longer racing the worker.
         for _ in range(40):
             await pilot.pause()
-            if table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH:
+            if _queued_indicator_shown(pane, row_key):
                 break
 
         assert _queued_flag(db, item_id) is True, (
             "the press must reach SubscriptionsDB.set_item_briefing_queued"
         )
-        assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH, (
+        assert _queued_indicator_shown(pane, row_key), (
             "the row indicator must repaint in place once the write succeeds"
         )
         assert str(button.label) == "Unqueue from briefing", (
@@ -1496,8 +1519,8 @@ async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row(
 
         # Phase D pattern: no full-screen recompose. The very instances the
         # user was looking at must still be the ones mounted.
-        assert screen.query_one("#watchlists-items-pane", ItemsPane) is pane
-        assert pane.query_one("#items-table", DataTable) is table
+        assert screen.query_one("#watchlists-items-pane", ArticleListPane) is pane
+        assert pane.query_one("#items-table", ListView) is list_view
         assert (
             screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
         )
@@ -1531,7 +1554,7 @@ async def test_the_queue_write_runs_off_the_event_loop_thread():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        pane = await _open_items_with_seeded_item(pilot, screen, app, db)
         row_key = str(pane.items[0]["id"])
 
         pane.select_item_by_id(row_key)
@@ -1592,17 +1615,17 @@ async def test_the_item_status_write_runs_off_the_event_loop_thread():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        pane = await _open_items_with_seeded_item(pilot, screen, app, db)
         row_key = str(pane.items[0]["id"])
 
-        # `LocalWatchlistsService._db()` builds a brand-new `SubscriptionsDB`
-        # on every call (`app.py`'s `_wire_watchlists_and_notifications_
-        # services`), so the instance-level spy above -- on THIS `db` object
-        # -- is invisible to the real write path unless `db_factory` is
-        # repointed at this exact object. Same reasoning as
-        # `_open_items_with_seeded_item`'s `watchlist_bundle_service._db`
-        # reassignment just above, done here only after the initial mount's
-        # background loads have settled, for the identical race reason.
+        # Since task-15463 `_db()` returns the app's ONE `SubscriptionsDB`,
+        # and `_seed_new_item` hands back that same object -- so the
+        # instance-level spy above is already on the write path. The
+        # reassignment is kept as the explicit pin that it is: repointing
+        # `db_factory` must still take effect (its setter drops the cached
+        # instance), and a future wiring that hands the service a different
+        # database has to keep this test honest rather than silently spying
+        # on an object nothing writes to.
         app.local_watchlists_service.db_factory = lambda: db
 
         pane.select_item_by_id(row_key)
@@ -1635,7 +1658,7 @@ async def test_pressing_queue_for_briefing_again_unqueues_and_relabels():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        pane = await _open_items_with_seeded_item(pilot, screen, app, db)
         row_key = str(pane.items[0]["id"])
 
         pane.select_item_by_id(row_key)
@@ -1644,27 +1667,27 @@ async def test_pressing_queue_for_briefing_again_unqueues_and_relabels():
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         button = inspector.query_one("#inspector-queue-briefing-button", Button)
 
-        # Fix round 1: settle on the repainted cell, the LAST effect of the
+        # Fix round 1: settle on the repainted row, the LAST effect of the
         # worker's write-then-patch sequence -- see the comment in
         # `test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row`.
         button.press()
         for _ in range(40):
             await pilot.pause()
-            if table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH:
+            if _queued_indicator_shown(pane, row_key):
                 break
         assert _queued_flag(db, item_id) is True, "precondition: first press queued it"
-        assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH
+        assert _queued_indicator_shown(pane, row_key)
 
         button.press()
         for _ in range(40):
             await pilot.pause()
-            if table.get_row(row_key)[4] == "":
+            if not _queued_indicator_shown(pane, row_key):
                 break
 
         assert _queued_flag(db, item_id) is False, (
             "the second press must clear the flag, not queue it again"
         )
-        assert table.get_row(row_key)[4] == "", (
+        assert not _queued_indicator_shown(pane, row_key), (
             "the indicator must clear along with the flag"
         )
         assert str(button.label) == "Queue for briefing", (
@@ -1728,7 +1751,7 @@ async def test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        pane = await _open_items_with_seeded_item(pilot, screen, app, db)
         row_key = str(pane.items[0]["id"])
 
         pane.select_item_by_id(row_key)
@@ -1750,7 +1773,7 @@ async def test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged():
         assert _queued_flag(db, item_id) is False, (
             "a failed write must leave the stored flag exactly as it was"
         )
-        assert table.get_row(row_key)[4] == "", (
+        assert not _queued_indicator_shown(pane, row_key), (
             "a failed write must not repaint the indicator"
         )
         assert str(button.label) == "Queue for briefing", (
@@ -1782,14 +1805,14 @@ async def test_the_queued_indicator_renders_from_the_normalized_flag_on_load():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
-        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        pane = await _open_items_with_seeded_item(pilot, screen, app, db)
 
         assert pane.items[0].get("queued_for_briefing") is True, (
             "the normalized item handed to the pane must already carry the "
             "flag -- the read path, not a write this test performs"
         )
         row_key = str(pane.items[0]["id"])
-        assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH, (
+        assert _queued_indicator_shown(pane, row_key), (
             "a pre-queued item must show the glyph as soon as it loads"
         )
 

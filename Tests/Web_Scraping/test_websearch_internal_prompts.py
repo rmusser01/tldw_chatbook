@@ -148,7 +148,9 @@ async def test_result_summarization_override_reaches_transport(scratch_config, m
     monkeypatch.setattr(Summarization_General_Lib, "analyze", fake_analyze)
 
     await WebSearch_APIs.search_result_relevance(
-        [{"content": "page text", "url": "https://example.com", "id": "1"}],
+        # A numeric global address keeps the real SSRF guard in this transport
+        # test without making its scrape branch depend on DNS.
+        [{"content": "page text", "url": "https://93.184.216.34/article", "id": "1"}],
         original_question="what is love",
         sub_questions=["a"],
         api_endpoint="openai",

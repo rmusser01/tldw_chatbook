@@ -30,6 +30,7 @@ from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleTranscriptSurface,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
@@ -49,6 +50,7 @@ CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
 CONSOLE_SESSION_TAB_WIDTH = 21
 CONSOLE_TRANSCRIPT_TITLE = "Conversation"
+CONSOLE_SESSION_TITLE_MAX_CHARACTERS = 500
 #: Fleet-UX expert review F2 (task-1232): one-time coach-mark row mounted
 #: under the tab strip, hidden until `show_fleet_coachmark` reveals it.
 CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH = 3
@@ -59,6 +61,7 @@ def _session_tab_tooltip(
     *,
     active: bool,
     marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
+    queued_count: int = 0,
 ) -> str:
     """Return action copy for a Console session tab.
 
@@ -83,18 +86,22 @@ def _session_tab_tooltip(
     that class of bug even though today's fixed vocabulary (the marker
     meaning, "Click again to rename.") happens to contain no brackets.
     """
+    display_title = sanitize_character_display_label(
+        session.title,
+        max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+    ) or "Untitled"
     meaning = CONSOLE_RUN_MARKER_MEANINGS.get(marker, "")
     tail = f" — {meaning}." if meaning else "."
     # DS-04 (TASK-2154.15): the middle-click close accelerator is surfaced
     # here in the tab tooltip; it is documented nowhere else in the UI.
     if active:
         text = (
-            f"Active Console tab: {session.title}{tail} Click again to rename."
+            f"Active Console tab: {display_title}{tail} Click again to rename."
             " Middle-click closes the tab."
         )
     else:
         text = (
-            f"Switch to Console tab: {session.title}{tail}"
+            f"Switch to Console tab: {display_title}{tail}"
             " Middle-click closes the tab."
         )
     if session.ephemeral:
@@ -105,6 +112,8 @@ def _session_tab_tooltip(
         # ONE short name; the "not saved locally" scope sentence stays in
         # the chip's own tooltip.
         text = f"{text} Temporary — not saved."
+    if queued_count:
+        text = f"{text} Queue {queued_count}."
     return _escape_markup(text)
 
 
@@ -119,7 +128,7 @@ class ConsoleSessionTabButton(Button):
 
     # TASK-375: keep the (middle-truncated) label on one line so its ellipsis
     # renders instead of being word-wrapped onto a hidden second row.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSessionTabButton {
         text-wrap: nowrap;
         text-overflow: clip;
@@ -295,7 +304,7 @@ class ConsoleSessionSurface(Vertical):
         (``console_chat_models.py``, the auto-title helper this label
         usually renders) -- one truncation convention, not two. TASK-375's
         own word-wrap fix (``ConsoleSessionTabButton``'s ``text-wrap:
-        nowrap`` DEFAULT_CSS above) is untouched and still what keeps a
+        nowrap`` BUNDLED_CSS above) is untouched and still what keeps a
         single-line label from hiding the ellipsis off-screen; only the
         cut POSITION changes here. Trade-off accepted: two conversations
         sharing a long common prefix can once again render identical tab
@@ -303,7 +312,10 @@ class ConsoleSessionSurface(Vertical):
         title always remains one hover away in the tab's tooltip
         (``_session_tab_tooltip``).
         """
-        normalized_title = title.strip() or "Untitled"
+        normalized_title = sanitize_character_display_label(
+            title,
+            max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+        ) or "Untitled"
         if len(normalized_title) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS:
             return normalized_title
         keep = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 1  # room for the ellipsis cell
@@ -315,14 +327,20 @@ class ConsoleSessionSurface(Vertical):
         *,
         active: bool,
         marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
+        queued_count: int = 0,
     ) -> Button:
         """Build a stable-width Console session tab title button."""
         classes = "console-session-tab"
         if active:
             classes = f"{classes} console-session-tab-active"
         button = ConsoleSessionTabButton(
-            self._tab_label(
-                session.title, marker=marker, ephemeral=session.ephemeral
+            Text(
+                self._tab_label(
+                    session.title,
+                    marker=marker,
+                    ephemeral=session.ephemeral,
+                    queued_count=queued_count,
+                )
             ),
             id=f"console-session-tab-{session.id}",
             classes=classes,
@@ -330,7 +348,10 @@ class ConsoleSessionSurface(Vertical):
             session_id=session.id,
         )
         button.tooltip = _session_tab_tooltip(
-            session, active=active, marker=marker
+            session,
+            active=active,
+            marker=marker,
+            queued_count=queued_count,
         )
         button.styles.width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
@@ -347,6 +368,7 @@ class ConsoleSessionSurface(Vertical):
         *,
         marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
         ephemeral: bool = False,
+        queued_count: int = 0,
     ) -> str:
         """Return the tab label, prefixed with its fleet run-marker glyph.
 
@@ -368,6 +390,8 @@ class ConsoleSessionSurface(Vertical):
         # promotion saves verbatim.
         if ephemeral:
             label = f"{resolve_glyph(GLYPH_TEMPORARY)} {label}"
+        if queued_count:
+            label = f"Q{queued_count} {label}"
         return label
 
     @staticmethod
@@ -432,6 +456,7 @@ class ConsoleSessionSurface(Vertical):
         active_session_id: str | None,
         streaming_session_id: str | None = None,
         run_markers: dict[str, ConsoleRunMarker] | None = None,
+        queue_counts: dict[str, int] | None = None,
     ) -> None:
         """Update labels, tooltips, and active state without stealing focus."""
         session_by_id = {session.id: session for session in sessions}
@@ -447,13 +472,19 @@ class ConsoleSessionSurface(Vertical):
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
                 )
-                child.label = self._tab_label(
-                    session.title, marker=marker, ephemeral=session.ephemeral
+                child.label = Text(
+                    self._tab_label(
+                        session.title,
+                        marker=marker,
+                        ephemeral=session.ephemeral,
+                        queued_count=(queue_counts or {}).get(session_id, 0),
+                    )
                 )
                 child.tooltip = _session_tab_tooltip(
                     session,
                     active=session.id == active_session_id,
                     marker=marker,
+                    queued_count=(queue_counts or {}).get(session_id, 0),
                 )
                 child.set_class(
                     session.id == active_session_id,
@@ -480,6 +511,7 @@ class ConsoleSessionSurface(Vertical):
         active_session_id: str | None,
         streaming_session_id: str | None = None,
         run_markers: dict[str, ConsoleRunMarker] | None = None,
+        queue_counts: dict[str, int] | None = None,
     ) -> None:
         """Render native Console session tabs from controller-owned state.
 
@@ -510,6 +542,7 @@ class ConsoleSessionSurface(Vertical):
                     active_session_id=active_session_id,
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
+                    queue_counts=queue_counts,
                 )
                 return
 
@@ -529,6 +562,7 @@ class ConsoleSessionSurface(Vertical):
                         session,
                         active=is_active,
                         marker=marker,
+                        queued_count=(queue_counts or {}).get(session.id, 0),
                     )
                 )
                 await tab_strip.mount(self._build_close_tab_button(session))
@@ -594,7 +628,10 @@ class ConsoleSessionSurface(Vertical):
         Args:
             title: Active conversation/session title, or ``None`` to reset.
         """
-        normalized = (title or "").strip()
+        normalized = sanitize_character_display_label(
+            title,
+            max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+        )
         self._session_title = normalized or None
         try:
             header = self.query_one("#console-transcript-title", Static)

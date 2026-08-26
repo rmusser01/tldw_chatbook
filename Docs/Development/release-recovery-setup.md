@@ -18,6 +18,49 @@ Missing optional features do not mean Chatbook is broken. They mean the user has
 | Local inference | `local_vllm`, `local_mlx`, `local_transformers` | `pip install -e ".[local_vllm]"` | `pip install "tldw_chatbook[local_vllm]"` | Console/provider setup |
 | Web access | `web` | `pip install -e ".[web]"` | `pip install "tldw_chatbook[web]"` | Web/browser serving |
 
+## Standalone MCP recovery contract
+
+For a packaged install, install and launch the standalone stdio server with
+these exact commands:
+
+```bash
+pip install "tldw_chatbook[mcp]"
+python -m tldw_chatbook.MCP
+```
+
+The server supports `2025-03-26`, `2025-11-25`, and the current `2026-07-28`
+protocol profile. Batch requests are accepted only with `2025-03-26`;
+`2025-11-25` and `2026-07-28` reject them.
+
+### Standalone inventory
+
+The retired `ingest_media` placeholder is absent. Use Library Import for
+persistent URL or file ingestion.
+
+- **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
+- **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
+- **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
+- **Library tools excluded from standalone (24):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
+
+### Standalone behavior and controls
+
+All 24 Library tools are excluded from the standalone stdio catalog and remain
+behind the gated and logged direct Library action; raw in-app `tools/call` is
+refused.
+
+Resource chunks are bounded to 256 KiB of UTF-8 text. Continue with `nextUri`
+from `_meta["tldw.chatbook/continuation"]`; resource-specific metadata stays
+under `_meta["tldw.chatbook/resource"]`.
+
+Local filesystem, git, and web exposure defaults to
+`[mcp] expose_local_tools = false`. When enabled, it keeps workspace
+confinement, reloads the shared `mcp_permissions.json` store, and honors the
+kill switch. An external `ask` state is refused because no Chatbook approval
+card exists in the stdio client.
+
+> [!WARNING]
+> An external MCP client runs with the user's OS access. It can read private local Library content through exposed tools, resources, and prompts, and it may send that content off-device to a cloud model. Treat the client and its model provider as part of the local-data trust boundary.
+
 ## Recovery Matrix
 
 | Blocker | Visible State | Recovery | Documentation |

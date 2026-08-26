@@ -22,6 +22,7 @@ import json
 from unittest.mock import Mock, patch
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import (
     _anthropic_supports_caching,
     _anthropic_tools_payload,
@@ -200,6 +201,68 @@ def test_openai_tool_history_converts_to_anthropic_blocks(mock_post):
         {"type": "tool_result", "tool_use_id": "toolu_B", "content": "6"},
     ]
     assert len(sent) == 3
+
+
+@patch("requests.Session.post")
+def test_project_context_coalesces_after_all_anthropic_tool_results(mock_post):
+    messages = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "toolu_A",
+                    "type": "function",
+                    "function": {"name": "calculator", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "toolu_A", "content": "4"},
+        {
+            "role": "user",
+            "content": "[Project instructions] scoped text",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+    ]
+    sent = _call_anthropic(mock_post, messages)["messages"]
+    assert sent[-1]["role"] == "user"
+    assert [block["type"] for block in sent[-1]["content"]] == [
+        "tool_result",
+        "text",
+    ]
+    assert EPHEMERAL_ORIGIN_KEY not in sent[-1]
+
+
+@patch("requests.Session.post")
+def test_nested_context_is_distinct_final_block_after_parallel_anthropic_results(
+    mock_post,
+):
+    messages = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "one", "arguments": "{}"}},
+                {"id": "b", "type": "function", "function": {"name": "two", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "a", "content": "deferred-a"},
+        {"role": "tool", "tool_call_id": "b", "content": "deferred-b"},
+        {
+            "role": "user",
+            "content": "NESTED_CONTEXT",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+    ]
+
+    blocks = _call_anthropic(mock_post, messages)["messages"][-1]["content"]
+
+    assert [block["type"] for block in blocks] == ["tool_result", "tool_result", "text"]
+    assert [block["tool_use_id"] for block in blocks[:2]] == ["a", "b"]
+    assert blocks[-1] == {"type": "text", "text": "NESTED_CONTEXT"}
+    assert all("NESTED_CONTEXT" not in str(block) for block in blocks[:2])
 
 
 @patch("requests.Session.post")

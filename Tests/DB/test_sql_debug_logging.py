@@ -114,6 +114,70 @@ class TestNoStringifyAtDefaultLevel:
         assert "Executing SQL" in captured.err
 
 
+class TestCharacterCardUpdateNoEagerBlobLogging:
+    """task-15474: ``update_character_card``'s debug log used to build an
+    eager ``f"Params: {final_params}"`` string on every call. ``image`` is in
+    ``updatable_direct_fields``, so a character-card save with an embedded
+    avatar built a multi-MB repr on every single update regardless of log
+    level -- exactly the cost ``DB/sql_logging.py`` (and this file's own
+    ``execute_query`` coverage above) exists to eliminate.
+    """
+
+    def test_image_blob_not_stringified_at_default_log_level(self, db):
+        blob = _make_blob_param(size=2_000_000)
+        char_id = db.add_character_card({"name": "Blob Carrier"})
+        assert CountingBytes.repr_calls == 0  # sanity: add didn't touch it
+
+        result = db.update_character_card(char_id, {"image": blob}, expected_version=1)
+        assert result is True
+        assert CountingBytes.repr_calls == 0
+
+    def test_image_blob_not_stringified_even_with_debug_sink_attached(self, db, capsys):
+        blob = _make_blob_param(size=2_000_000)
+        char_id = db.add_character_card({"name": "Blob Carrier 2"})
+        sink_id = logger.add(sys.stderr, level="DEBUG")
+        try:
+            result = db.update_character_card(
+                char_id, {"image": blob}, expected_version=1
+            )
+        finally:
+            logger.remove(sink_id)
+        assert result is True
+        assert CountingBytes.repr_calls == 0
+
+    def test_update_debug_log_line_is_actually_emitted_when_enabled(self, db, capsys):
+        """Sanity check the lazy conversion didn't silently delete the log
+        line -- it must still fire (with a length-only preview) at DEBUG."""
+        char_id = db.add_character_card({"name": "Blob Carrier 3"})
+        sink_id = logger.add(sys.stderr, level="DEBUG")
+        try:
+            db.update_character_card(
+                char_id, {"image": b"x" * 1024}, expected_version=1
+            )
+        finally:
+            logger.remove(sink_id)
+        captured = capsys.readouterr()
+        assert "Executing SINGLE character update query" in captured.err
+        assert "<1024 bytes>" in captured.err
+
+    def test_no_eager_params_fstring_remains_in_source(self):
+        """Structural regression coverage (task-15474): reads live source via
+        ``inspect.getsource`` so a refactor that reintroduces
+        ``f"Params: {final_params}"`` fails this test even if it moves the
+        code -- durable, environment-independent evidence alongside the
+        functional BLOB-safety tests above."""
+        import inspect
+
+        source = inspect.getsource(CharactersRAGDB.update_character_card)
+        assert '{final_params}")' not in source, (
+            "Eager params f-string literal reintroduced into "
+            "update_character_card -- route it through preview_params "
+            "under logger.opt(lazy=True) instead (task-15474)."
+        )
+        assert "preview_params(final_params)" in source
+        assert "logger.opt(lazy=True)" in source
+
+
 def test_add_message_debug_log_redacts_sensitive_insert_params(db):
     conversation_id = db.add_conversation(
         {

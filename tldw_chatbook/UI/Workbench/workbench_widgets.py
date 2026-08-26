@@ -25,6 +25,15 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
 )
 
 
+#: Marker for "no state has been pushed into this widget yet" (task-15452).
+#: A dedicated sentinel rather than ``None`` because ``RecoveryCallout``
+#: legitimately syncs ``None``, and rather than comparing against
+#: ``self.state`` because every ``on_mount`` self-syncs the constructor
+#: state and must still apply the status/density classes ``compose`` never
+#: sets.
+_UNSYNCED: Any = object()
+
+
 def _safe_id(value: str) -> str:
     """Return a Textual-safe ID segment for state-owned identifiers."""
     return normalize_workbench_id(value)
@@ -71,12 +80,54 @@ def _sync_density_classes(widget: Widget, density: str) -> None:
     widget.set_class(density == "compact", "density-compact")
 
 
+def _state_children_in_desired_order(
+    widget: Widget,
+    desired_order: dict[str, int],
+    attribute_name: str,
+) -> bool:
+    """Return True when the children already sit in the desired order.
+
+    ``sort_children`` is never free, even when it reorders nothing
+    (task-15452): ``NodeList._sort`` calls ``NodeList.updated``, which bumps
+    the update counter on this widget *and* on every ancestor up to the
+    screen -- and the screen's counter is part of the ``query_one`` LRU
+    cache key, so one no-op sort invalidates every cached ``#id`` lookup on
+    the largest tree in the app. It then calls ``refresh(layout=True)`` on
+    top of that.
+
+    Python's sort is stable, so the sort changes nothing exactly when the
+    child key sequence is already non-decreasing. Children queued for
+    removal are still in ``children`` at schedule time and key to
+    ``len(desired_order)``; dropping elements from a sequence can never
+    CREATE an inversion, so an "already ordered" verdict taken while they
+    are still present stays correct once they are pruned.
+
+    Args:
+        widget: Container whose children are state-owned.
+        desired_order: Map of state ID to its index in the new state.
+        attribute_name: Child attribute carrying the state ID.
+
+    Returns:
+        True when sorting would leave the child order unchanged.
+    """
+    missing = len(desired_order)
+    previous = -1
+    for child in widget.children:
+        index = desired_order.get(getattr(child, attribute_name, ""), missing)
+        if index < previous:
+            return False
+        previous = index
+    return True
+
+
 def _sort_state_children(
     widget: Widget,
     desired_order: dict[str, int],
     attribute_name: str,
 ) -> None:
     """Sort state-owned children to match the latest Workbench state order."""
+    if _state_children_in_desired_order(widget, desired_order, attribute_name):
+        return
     widget.sort_children(
         key=lambda child: desired_order.get(
             getattr(child, attribute_name, ""),
@@ -90,7 +141,15 @@ def _schedule_sort_state_children(
     desired_order: dict[str, int],
     attribute_name: str,
 ) -> None:
-    """Sort after queued mount/remove operations settle for this message."""
+    """Sort after queued mount/remove operations settle for this message.
+
+    Skipped outright when the order already matches: the deferred callback
+    would find nothing to do, and even scheduling it costs a message per
+    sync. Re-checked inside ``_sort_state_children`` because mounts and
+    removals queued by other code can still land in the gap.
+    """
+    if _state_children_in_desired_order(widget, desired_order, attribute_name):
+        return
     widget.call_next(_sort_state_children, widget, desired_order, attribute_name)
 
 
@@ -108,23 +167,37 @@ class DestinationHeader(Vertical):
     # Height guard for harness apps that do not load the app CSS bundle: the
     # design-system `.workbench-header` rules (height auto, border, padding)
     # always win over this when the bundle is present.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     DestinationHeader {
         height: auto;
     }
     """
 
+    #: Last header state actually pushed into the child widgets. A CLASS
+    #: attribute default so `__new__`-built doubles never miss it.
+    _synced_state: Any = _UNSYNCED
+
     def __init__(
         self,
         state: WorkbenchHeaderState,
+        *,
+        before_status: Widget | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initialize a destination header.
+
+        Args:
+            state: Header title, subtitle, and status state.
+            before_status: Optional fixed widget rendered immediately before status.
+            **kwargs: Additional Textual widget arguments.
+        """
         classes = kwargs.pop("classes", "")
         super().__init__(
             classes=f"workbench-header ds-destination-header {classes}".strip(),
             **kwargs,
         )
         self.state = state
+        self.before_status = before_status
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -137,6 +210,8 @@ class DestinationHeader(Vertical):
             id="workbench-header-subtitle",
             classes="workbench-header-subtitle",
         )
+        if self.before_status is not None:
+            yield self.before_status
         yield Static(
             self._chip_text(),
             id="workbench-header-status",
@@ -151,8 +226,16 @@ class DestinationHeader(Vertical):
         self.sync_state(self.state)
 
     def sync_state(self, state: WorkbenchHeaderState) -> None:
-        """Refresh header copy and state classes without remounting."""
+        """Refresh header copy and state classes without remounting.
+
+        A no-op once the same state has already been pushed (task-15452):
+        `Static.update` has no equality check of its own, so an ungated
+        re-push invalidates layout for three Statics per call -- and the
+        Console runs this on every printable keystroke.
+        """
         self.state = state
+        if state == self._synced_state:
+            return
         self.query_one("#workbench-header-title", Static).update(state.title)
         self.query_one("#workbench-header-subtitle", Static).update(state.subtitle)
         self.query_one("#workbench-header-status", Static).update(
@@ -161,10 +244,14 @@ class DestinationHeader(Vertical):
         self.set_class(not state.subtitle, "has-empty-subtitle")
         _sync_status_classes(self, state.status)
         _sync_density_classes(self, state.density)
+        self._synced_state = state
 
 
 class CommandStrip(Horizontal):
     """Stable strip for visible Workbench actions."""
+
+    #: Last action tuple actually pushed into the buttons (task-15452).
+    _synced_actions: Any = _UNSYNCED
 
     def __init__(
         self,
@@ -210,9 +297,18 @@ class CommandStrip(Horizontal):
             yield self._build_button(action)
 
     def sync_actions(self, actions: Iterable[WorkbenchAction]) -> None:
-        """Refresh action buttons while preserving the strip widget."""
+        """Refresh action buttons while preserving the strip widget.
+
+        A no-op once the same actions have already been pushed (task-15452).
+        `WorkbenchAction` is a frozen dataclass, so tuple equality covers
+        every attribute the button sync writes -- label, disabled, tooltip,
+        primary -- and the button IDs are derived from the same IDs, so the
+        `_button_ids_by_action_id` map is already correct too.
+        """
         actions = tuple(actions)
         self.actions = actions
+        if actions == self._synced_actions:
+            return
         actions_by_id = {action.id: action for action in actions}
         desired_button_ids = {action.id: self._button_id(action) for action in actions}
         mounted = 0
@@ -248,6 +344,7 @@ class CommandStrip(Horizontal):
         self._button_ids_by_action_id = {
             action_id: button_id for action_id, button_id in desired_button_ids.items()
         }
+        self._synced_actions = actions
         if mounted or removed:
             _record_mount_churn(
                 self,
@@ -268,6 +365,9 @@ class CommandStrip(Horizontal):
 
 class ModeStrip(Horizontal):
     """Stable strip for Workbench mode chips."""
+
+    #: Last mode tuple actually pushed into the chips (task-15452).
+    _synced_modes: Any = _UNSYNCED
 
     def __init__(
         self,
@@ -306,9 +406,16 @@ class ModeStrip(Horizontal):
             yield self._build_mode(mode)
 
     def sync_modes(self, modes: Iterable[WorkbenchMode]) -> None:
-        """Refresh mode labels without remounting unchanged mode IDs."""
+        """Refresh mode labels without remounting unchanged mode IDs.
+
+        A no-op once the same modes have already been pushed (task-15452):
+        `WorkbenchMode` is frozen, so tuple equality covers label, active
+        and status -- everything `_sync_mode_label` writes.
+        """
         modes = tuple(modes)
         self.modes = modes
+        if modes == self._synced_modes:
+            return
         modes_by_id = {mode.id: mode for mode in modes}
         mounted = 0
         removed = 0
@@ -336,6 +443,7 @@ class ModeStrip(Horizontal):
             {mode.id: index for index, mode in enumerate(modes)},
             "_workbench_mode_id",
         )
+        self._synced_modes = modes
 
         if mounted or removed:
             _record_mount_churn(
@@ -348,6 +456,10 @@ class ModeStrip(Horizontal):
 
 class RecoveryCallout(Vertical):
     """Visible recovery copy with an optional action."""
+
+    #: Last recovery state actually pushed into the children (task-15452).
+    #: `None` is a real state here, hence the sentinel default.
+    _synced_state: Any = _UNSYNCED
 
     def __init__(
         self,
@@ -388,8 +500,13 @@ class RecoveryCallout(Vertical):
         self.sync_state(self.state)
 
     def sync_state(self, state: RecoveryState | None) -> None:
-        """Refresh recovery copy, visibility, and action state."""
+        """Refresh recovery copy, visibility, and action state.
+
+        A no-op once the same state has already been pushed (task-15452).
+        """
         self.state = state
+        if state == self._synced_state:
+            return
         visible = bool(state and state.visible)
         self.set_class(not visible, "is-hidden")
         self.display = visible
@@ -409,6 +526,7 @@ class RecoveryCallout(Vertical):
         action_button.set_class(bool(action and action.primary), "is-primary")
         action_button.set_class(bool(action and action.disabled), "is-disabled")
         action_button.set_class(True, "workbench-action")
+        self._synced_state = state
 
     @on(Button.Pressed, "#workbench-recovery-action")
     def on_recovery_action_pressed(self, event: Button.Pressed) -> None:

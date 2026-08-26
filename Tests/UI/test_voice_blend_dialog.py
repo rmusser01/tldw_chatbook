@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
+from tldw_chatbook.UI.Speech import speech_settings_mixin
+from tldw_chatbook.UI.Speech import speech_settings_pane
 
 
 def _voice_entry(index: int, voice: str, weight: str):
@@ -29,6 +31,39 @@ def _dialog_like(*, name="", description="", entries=()):
         voice_entries=list(entries),
         app=SimpleNamespace(notify=Mock()),
         dismiss=Mock(),
+    )
+
+
+def test_voice_destinations_and_blend_actions_have_unambiguous_labels() -> None:
+    destination_actions = getattr(
+        speech_settings_pane,
+        "VOICE_DESTINATION_ACTIONS",
+        (),
+    )
+    blend_actions = getattr(speech_settings_pane, "VOICE_BLEND_ACTIONS", ())
+
+    assert [(action.id, action.label) for action in destination_actions] == [
+        ("voice-profiles", "Voice Profiles"),
+        ("voice-blends", "Voice Blends"),
+    ]
+    assert [(action.id, action.label) for action in blend_actions] == [
+        ("add-voice-blend-btn", "Add Voice Blend"),
+        ("import-blends-btn", "Import Voice Blends"),
+        ("export-blends-btn", "Export Voice Blends"),
+    ]
+
+
+def test_non_kokoro_provider_invalidates_a_blend_selection() -> None:
+    normalize = getattr(
+        speech_settings_mixin,
+        "normalize_provider_voice_selection",
+        None,
+    )
+
+    assert callable(normalize), "Voice selection needs provider-scoped validation"
+    assert normalize("openai", "blend:duet", ("alloy", "nova")) == "alloy"
+    assert normalize("kokoro", "blend:duet", ("af_bella", "blend:duet")) == (
+        "blend:duet"
     )
 
 

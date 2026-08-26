@@ -30,15 +30,38 @@ body) is behavior-preserving: this file's own 14 Task 3 tests are left
 completely unchanged and must stay green.
 """
 
+import asyncio
+import time
+from dataclasses import replace
+from io import BytesIO
+from threading import Event, Lock
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from PIL import Image
+from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_personas_expression_slots import (
+    expr_db,  # noqa: F401 -- fixture dependency, not referenced by name
+    personas_editor_with_bound_pack,  # noqa: F401 -- used as a fixture
+    personas_editor_with_saved_character,  # noqa: F401 -- used as a fixture
+)
+from tldw_chatbook.Character_Chat.visual_identity import (
+    SAMIRA_EXPRESSION_KEYS,
+    SAMIRA_REACTION_LABELS,
+    VisualIdentityPublicationError,
+    VisualIdentityPublicationResult,
+)
 from tldw_chatbook.Media_Creation.generation_templates import get_template
 from tldw_chatbook.UI.Screens import personas_screen as personas_screen_module
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_card_widget import (
+    PersonasCharacterCardWidget,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -49,11 +72,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterExpressionSetExportRequested,
     CharacterExpressionSetImportRequested,
     CharacterExpressionStylePickRequested,
-)
-
-from Tests.UI.test_personas_expression_slots import (
-    expr_db,  # noqa: F401 -- fixture dependency, not referenced by name
-    personas_editor_with_saved_character,  # noqa: F401 -- used as a fixture
+    CharacterSaveRequested,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -61,7 +80,26 @@ pytestmark = pytest.mark.asyncio
 EXPRESSION_STATES = ("thinking", "speaking", "error")
 
 
-class _CaptureApp(App):
+def _valid_png(color=(20, 40, 60)) -> bytes:
+    stream = BytesIO()
+    Image.new("RGB", (8, 8), color).save(stream, format="PNG")
+    return stream.getvalue()
+
+
+def _fail_on_cancelled_task_reshield(monkeypatch) -> None:
+    """Bound drain regressions so a cancelled child cannot spin the test loop."""
+
+    shield = asyncio.shield
+
+    def bounded(awaitable):
+        if isinstance(awaitable, asyncio.Task) and awaitable.cancelled():
+            raise RuntimeError("cancelled task was re-shielded")
+        return shield(awaitable)
+
+    monkeypatch.setattr(asyncio, "shield", bounded)
+
+
+class _CaptureApp(ConsolidatedCSSApp):
     """Bare editor host that records the three new generate messages, plus
     (Task 4) the style-pick message."""
 
@@ -1687,3 +1725,1993 @@ async def test_style_pick_reset_on_cancel_edit(
     editor = screen.query_one(PersonasCharacterEditorWidget)
     readout = editor.query_one("#personas-char-editor-style-readout", Static)
     assert str(readout.renderable) == "Style: Custom"
+
+
+# ===== TASK-16319.3 Task 14: immutable Visual Identity authoring =====
+
+
+async def test_visual_identity_clear_stages_without_changing_active_version(
+    personas_editor_with_bound_pack,
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    before = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", char_id
+    )
+    asset = browser.selected_asset
+    assert asset is not None
+
+    assert await screen._stage_visual_identity_clear(asset)
+
+    after = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", char_id
+    )
+    assert after["version"]["id"] == before["version"]["id"]
+    candidate = screen._visual_identity_authoring.candidate
+    assert asset.expression_key in candidate.cleared_expression_keys
+    assert "1 staged change" in str(
+        browser.query_one("#personas-visual-identity-dirty", Static).renderable
+    )
+
+
+async def test_visual_identity_generate_all_decline_makes_zero_provider_calls(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    dialogs = []
+
+    async def decline(dialog):
+        dialogs.append(dialog)
+        return False
+
+    monkeypatch.setattr(app, "push_screen_wait", decline)
+    calls = []
+    monkeypatch.setattr(
+        personas_screen_module, "run_generation", lambda request: calls.append(request)
+    )
+
+    await screen._generate_visual_identity_pack_all()
+
+    assert len(dialogs) == 1
+    assert "31 provider calls" in dialogs[0].message
+    assert calls == []
+
+
+async def test_visual_identity_generate_all_uses_three_threads_one_reference_and_event(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    _set_description(screen, "silver hair, amber eyes")
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    reference_bytes = _valid_png((1, 2, 3))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=reference_bytes,
+        ),
+    )
+    lock = Lock()
+    active = 0
+    peak = 0
+    requests = []
+
+    def generate(request):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            requests.append(request)
+        time.sleep(0.01)
+        with lock:
+            active -= 1
+        return SimpleNamespace(content=_valid_png(), content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", generate)
+
+    assert await screen._generate_visual_identity_pack_all()
+
+    assert len(requests) == len(SAMIRA_REACTION_LABELS) == 31
+    assert peak == 3
+    assert len({id(request.reference_image) for request in requests}) == 1
+    assert requests[0].reference_image.content == reference_bytes
+    assert len({id(request.cancel_event) for request in requests}) == 1
+    assert isinstance(requests[0].cancel_event, Event)
+    assert len(screen._visual_identity_authoring.candidate.replaced_expression_keys) == 31
+
+
+async def test_visual_identity_generate_all_cancellation_discards_candidate_and_drains(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    _set_description(screen, "silver hair, amber eyes")
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    started = Event()
+    exited = Event()
+    seen_events = []
+
+    def generate(request):
+        seen_events.append(request.cancel_event)
+        if len(seen_events) >= 3:
+            started.set()
+        request.cancel_event.wait(2)
+        exited.set()
+        return SimpleNamespace(content=_valid_png(), content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", generate)
+    task = asyncio.create_task(screen._generate_visual_identity_pack_all())
+    assert await asyncio.to_thread(started.wait, 2)
+
+    screen._request_visual_identity_generation_cancel()
+    assert await task is False
+
+    assert exited.is_set()
+    assert seen_events and len({id(event) for event in seen_events}) == 1
+    assert seen_events[0].is_set()
+    assert screen._visual_identity_authoring is None
+
+
+async def test_visual_identity_generate_all_one_failure_discards_without_publication(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    _set_description(screen, "silver hair, amber eyes")
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    before = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", char_id
+    )
+
+    def generate(request):
+        if "Admiration expression" in request.prompt:
+            raise RuntimeError("provider failed")
+        return SimpleNamespace(content=_valid_png(), content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", generate)
+
+    assert await screen._generate_visual_identity_pack_all() is False
+
+    after = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", char_id
+    )
+    assert after["version"]["id"] == before["version"]["id"]
+    assert screen._visual_identity_authoring is None
+
+
+async def test_visual_identity_unsupported_reference_fails_before_candidate_or_call(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="stable_diffusion_cpp"),
+    )
+    calls = []
+    monkeypatch.setattr(
+        personas_screen_module, "run_generation", lambda request: calls.append(request)
+    )
+
+    assert await screen._generate_visual_identity_pack_all() is False
+
+    assert calls == []
+    assert screen._visual_identity_authoring is None
+
+
+async def test_visual_identity_save_publishes_once_then_invalidates_before_refresh(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    order = []
+    result = VisualIdentityPublicationResult(
+        actor_kind="character",
+        actor_id=str(char_id),
+        old_pack_id=1,
+        old_version_id=1,
+        new_pack_id=2,
+        new_version_id=2,
+        version_directory=tmp_path,
+    )
+
+    def publish(*args, **kwargs):
+        order.append("publish")
+        return result
+
+    async def invalidate(_result):
+        order.append("invalidate")
+
+    async def refresh(_snapshot):
+        order.append("refresh")
+        current = browser.pack
+        assert current is not None
+        browser.pack = replace(
+            current,
+            pack_id=2,
+            pack_version_id=2,
+            assets=tuple(
+                replace(asset, asset_id=asset.asset_id + 100)
+                for asset in current.assets
+            ),
+        )
+
+    monkeypatch.setattr(personas_screen_module, "publish_visual_identity_candidate", publish)
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+
+    assert await screen._save_visual_identity_pack(browser.pack)
+    assert not await screen._save_visual_identity_pack(browser.pack)
+
+    assert order == ["publish", "invalidate", "refresh"]
+    assert browser.pack is not None
+    assert browser.pack.pack_version_id == 2
+    assert len(browser.pack.assets) == 31
+    assert all(asset.asset_id > 0 for asset in browser.pack.assets)
+
+
+async def test_visual_identity_concurrent_save_attempt_publishes_exactly_once(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    entered = Event()
+    release = Event()
+    calls = []
+
+    def publish(*args, **kwargs):
+        calls.append(1)
+        entered.set()
+        release.wait(2)
+        return VisualIdentityPublicationResult(
+            actor_kind="character",
+            actor_id=str(char_id),
+            old_pack_id=1,
+            old_version_id=1,
+            new_pack_id=2,
+            new_version_id=2,
+            version_directory=tmp_path,
+        )
+
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
+    monkeypatch.setattr(
+        screen, "_invalidate_visual_identity_publication", AsyncMock()
+    )
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", AsyncMock())
+
+    first = asyncio.create_task(screen._save_visual_identity_pack(browser.pack))
+    assert await asyncio.to_thread(entered.wait, 2)
+    assert not await screen._save_visual_identity_pack(browser.pack)
+    release.set()
+    assert await first
+    assert calls == [1]
+
+
+async def test_drain_async_returns_cancelled_child_without_reshielding(monkeypatch):
+    _fail_on_cancelled_task_reshield(monkeypatch)
+
+    async def cancel_child():
+        raise asyncio.CancelledError("child-cancelled")
+
+    outcome = await asyncio.wait_for(
+        personas_screen_module._drain_async(
+            cancel_child(), task_name="personas-cancelled-child-probe"
+        ),
+        1,
+    )
+
+    assert outcome.error is None
+    assert isinstance(outcome.cancellation, asyncio.CancelledError)
+
+
+async def test_cancelled_reaction_save_drains_commit_before_releasing_admission(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    entered = Event()
+    release = Event()
+    order = []
+
+    def publish(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        order.append("publish")
+        return VisualIdentityPublicationResult(
+            actor_kind="character",
+            actor_id=str(char_id),
+            old_pack_id=1,
+            old_version_id=1,
+            new_pack_id=2,
+            new_version_id=2,
+            version_directory=tmp_path,
+        )
+
+    async def invalidate(_result):
+        order.append("invalidate")
+
+    async def refresh(_snapshot):
+        order.append("refresh")
+
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+    save = asyncio.create_task(
+        screen._save_visual_identity_pack(browser.pack), name="cancelled-reaction-save"
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is save
+    assert not await screen._stage_visual_identity_clear(asset)
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert order == ["publish", "invalidate", "refresh"]
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_authoring is None
+    assert browser._staged == {}
+
+
+async def test_cancelled_reaction_save_drains_failure_and_cleans_exact_orphan(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    app, screen, db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    before = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", screen._visual_identity_authoring.snapshot.character_id
+    )
+    token = "packs/profile-0123456789abcdef0123456789abcdef/versions/" + "c" * 32
+    user_root = tmp_path / "user-root"
+    entered = Event()
+    release = Event()
+    cleanup_calls = []
+    notifications = _capture_notifications(app)
+
+    def publish(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        raise VisualIdentityPublicationError(
+            "visual_identity_database_failed", cleanup_candidate_relpath=token
+        )
+
+    def cleanup(cleanup_db, cleanup_token, *, user_data_dir):
+        cleanup_calls.append((cleanup_db, cleanup_token, user_data_dir))
+        return True
+
+    monkeypatch.setattr(personas_screen_module, "get_user_data_dir", lambda: user_root)
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "cleanup_visual_identity_publication_candidate",
+        cleanup,
+    )
+    save = asyncio.create_task(
+        screen._save_visual_identity_pack(browser.pack), name="cancelled-reaction-error"
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    assert not await screen._stage_visual_identity_clear(asset)
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert cleanup_calls == [(db, token, user_root)]
+    assert token not in " ".join(message for message, _severity in notifications)
+    after = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", screen._visual_identity_authoring.snapshot.character_id
+    )
+    assert after["version"]["id"] == before["version"]["id"]
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+
+
+async def test_cancelled_reaction_save_drains_post_commit_reconciliation(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    invalidation_entered = asyncio.Event()
+    release_invalidation = asyncio.Event()
+    order = []
+
+    def publish(*_args, **_kwargs):
+        order.append("publish")
+        return VisualIdentityPublicationResult(
+            actor_kind="character",
+            actor_id=str(char_id),
+            old_pack_id=1,
+            old_version_id=1,
+            new_pack_id=2,
+            new_version_id=2,
+            version_directory=tmp_path,
+        )
+
+    async def invalidate(_result):
+        order.append("invalidate-start")
+        invalidation_entered.set()
+        await release_invalidation.wait()
+        order.append("invalidate-done")
+
+    async def refresh(_snapshot):
+        order.append("refresh")
+
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+    save = asyncio.create_task(
+        screen._save_visual_identity_pack(browser.pack),
+        name="cancelled-reaction-reconcile",
+    )
+    await asyncio.wait_for(invalidation_entered.wait(), 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is save
+    assert not await screen._stage_visual_identity_clear(asset)
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    release_invalidation.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert order == ["publish", "invalidate-start", "invalidate-done", "refresh"]
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_authoring is None
+    assert browser._staged == {}
+
+
+async def test_cancelled_reaction_reconciliation_releases_operation_guards(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    notifications = _capture_notifications(app)
+    _fail_on_cancelled_task_reshield(monkeypatch)
+
+    monkeypatch.setattr(
+        personas_screen_module,
+        "publish_visual_identity_candidate",
+        lambda *_args, **_kwargs: VisualIdentityPublicationResult(
+            actor_kind="character",
+            actor_id=str(char_id),
+            old_pack_id=1,
+            old_version_id=1,
+            new_pack_id=2,
+            new_version_id=2,
+            version_directory=tmp_path,
+        ),
+    )
+
+    async def cancel_invalidation(_result):
+        raise asyncio.CancelledError("invalidation-cancelled")
+
+    refresh = AsyncMock()
+    monkeypatch.setattr(
+        screen, "_invalidate_visual_identity_publication", cancel_invalidation
+    )
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(screen._save_visual_identity_pack(browser.pack), 2)
+
+    refresh.assert_not_awaited()
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_authoring is None
+    assert browser._staged == {}
+    assert notifications == []
+
+
+async def test_cancelled_reaction_publication_preserves_unpublished_candidate(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    authoring = screen._visual_identity_authoring
+    staged = dict(browser._staged)
+
+    def cancel_publication(*_args, **_kwargs):
+        raise asyncio.CancelledError("publication-cancelled")
+
+    invalidate = AsyncMock()
+    refresh = AsyncMock()
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", cancel_publication
+    )
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(screen._save_visual_identity_pack(browser.pack), 2)
+
+    invalidate.assert_not_awaited()
+    refresh.assert_not_awaited()
+    assert screen._visual_identity_authoring is authoring
+    assert browser._staged == staged
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+
+
+async def test_visual_identity_first_clear_admits_one_candidate_and_cancel_reaches_it(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    entered = Event()
+    release = Event()
+    create_calls = []
+    original_create = personas_screen_module.create_visual_identity_candidate
+
+    def blocked_create(*args, **kwargs):
+        create_calls.append(1)
+        entered.set()
+        assert release.wait(2)
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(
+        personas_screen_module, "create_visual_identity_candidate", blocked_create
+    )
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    provider_calls = []
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: provider_calls.append(request)
+        or SimpleNamespace(content=_valid_png(), content_type="image/png"),
+    )
+
+    clear = asyncio.create_task(screen._stage_visual_identity_clear(asset))
+    assert await asyncio.to_thread(entered.wait, 2)
+    assert browser.query_one(
+        "#personas-visual-identity-cancel", Button
+    ).display
+    assert (
+        str(browser.query_one("#personas-visual-identity-dirty", Static).renderable)
+        == "Preparing reactions…"
+    )
+    generate = asyncio.create_task(screen._generate_visual_identity_assets((asset,)))
+    generate_all = asyncio.create_task(screen._generate_visual_identity_pack_all())
+    await asyncio.sleep(0)
+    browser.query_one("#personas-visual-identity-cancel", Button).press()
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await asyncio.gather(clear, generate, generate_all) == [False, False, False]
+    assert create_calls == [1]
+    assert provider_calls == []
+    assert screen._visual_identity_authoring is None
+
+
+async def test_visual_identity_duplicate_generation_shares_global_three_call_ceiling(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    _set_description(screen, "silver hair, amber eyes")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    lock = Lock()
+    active = 0
+    peak = 0
+    three_started = Event()
+
+    def generate(request):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            if active >= 3:
+                three_started.set()
+        request.cancel_event.wait(2)
+        with lock:
+            active -= 1
+        return SimpleNamespace(content=_valid_png(), content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", generate)
+    generate_all = asyncio.create_task(screen._generate_visual_identity_pack_all())
+    assert await asyncio.to_thread(three_started.wait, 2)
+    duplicate = asyncio.create_task(
+        screen._generate_visual_identity_assets((asset,))
+    )
+    await asyncio.sleep(0.1)
+
+    screen._request_visual_identity_generation_cancel()
+    assert await generate_all is False
+    assert await duplicate is False
+    assert peak == 3
+
+
+async def test_visual_identity_mode_guard_decline_preserves_staged_candidate(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_clear(asset)
+    state = screen._visual_identity_authoring
+    assert state is not None
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=False))
+
+    await screen._run_guarded(lambda: screen._apply_mode("personas"))
+    await app.workers.wait_for_complete()
+
+    assert screen.state.active_mode == "characters"
+    assert screen._visual_identity_authoring is state
+    assert not state.cancel_event.is_set()
+    assert asset.expression_key in state.candidate.cleared_expression_keys
+
+
+async def test_visual_identity_actor_guard_discards_only_after_approval(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_clear(asset)
+    state = screen._visual_identity_authoring
+    transition = AsyncMock()
+    monkeypatch.setattr(screen, "_select_character", transition)
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(side_effect=[False, True]))
+
+    await screen._run_guarded(lambda: screen._select_character("999", "Other"))
+    await app.workers.wait_for_complete()
+    assert transition.await_count == 0
+    assert screen._visual_identity_authoring is state
+    assert state is not None and not state.cancel_event.is_set()
+
+    await screen._run_guarded(lambda: screen._select_character("999", "Other"))
+    await app.workers.wait_for_complete()
+    transition.assert_awaited_once_with("999", "Other")
+    assert state.cancel_event.is_set()
+    assert screen._visual_identity_authoring is None
+
+
+async def test_visual_identity_mode_transition_signals_then_drains_adapter(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    _set_description(screen, "silver hair, amber eyes")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    entered = Event()
+    saw_cancel = Event()
+    allow_exit = Event()
+
+    def generate(request):
+        entered.set()
+        if request.cancel_event.wait(2):
+            saw_cancel.set()
+        assert allow_exit.wait(2)
+        return SimpleNamespace(content=_valid_png(), content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", generate)
+    generation = asyncio.create_task(
+        screen._generate_visual_identity_assets((asset,))
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+    try:
+        await screen._run_guarded(lambda: screen._apply_mode("personas"))
+        assert await asyncio.to_thread(saw_cancel.wait, 1)
+        assert screen.state.active_mode == "characters"
+        allow_exit.set()
+        assert await generation is False
+        await app.workers.wait_for_complete()
+        assert screen.state.active_mode == "personas"
+        assert screen._visual_identity_authoring is None
+    finally:
+        allow_exit.set()
+
+
+@pytest.mark.parametrize("cleanup_result", [True, False])
+async def test_visual_identity_save_consumes_orphan_token_without_exposing_path(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path, cleanup_result
+):
+    app, screen, db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    before = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", screen._visual_identity_authoring.snapshot.character_id
+    )
+    token = "packs/profile-0123456789abcdef0123456789abcdef/versions/" + "a" * 32
+    user_root = tmp_path / "user-root"
+    calls = []
+    notifications = _capture_notifications(app)
+
+    def publish(*_args, **_kwargs):
+        raise VisualIdentityPublicationError(
+            "visual_identity_database_failed", cleanup_candidate_relpath=token
+        )
+
+    def cleanup(cleanup_db, cleanup_token, *, user_data_dir):
+        calls.append((cleanup_db, cleanup_token, user_data_dir))
+        if not cleanup_result:
+            raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
+        return True
+
+    monkeypatch.setattr(personas_screen_module, "get_user_data_dir", lambda: user_root)
+    monkeypatch.setattr(personas_screen_module, "publish_visual_identity_candidate", publish)
+    monkeypatch.setattr(
+        personas_screen_module,
+        "cleanup_visual_identity_publication_candidate",
+        cleanup,
+        raising=False,
+    )
+
+    assert not await screen._save_visual_identity_pack(browser.pack)
+
+    assert calls == [(db, token, user_root)]
+    assert token not in " ".join(message for message, _severity in notifications)
+    assert any(
+        "visual_identity_database_failed" in message
+        for message, _severity in notifications
+    )
+    after = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", screen._visual_identity_authoring.snapshot.character_id
+    )
+    assert after["version"]["id"] == before["version"]["id"]
+
+
+async def test_visual_identity_orphan_cleanup_never_notifies_reloaded_editor(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    token = "packs/profile-0123456789abcdef0123456789abcdef/versions/" + "b" * 32
+    cleanup_started = Event()
+    cleanup_release = Event()
+    notifications = _capture_notifications(app)
+
+    def publish(*_args, **_kwargs):
+        raise VisualIdentityPublicationError(
+            "visual_identity_database_failed", cleanup_candidate_relpath=token
+        )
+
+    def cleanup(_db, cleanup_token, *, user_data_dir):
+        assert cleanup_token == token
+        assert user_data_dir == tmp_path / "user-root"
+        cleanup_started.set()
+        assert cleanup_release.wait(2)
+        return True
+
+    monkeypatch.setattr(
+        personas_screen_module, "get_user_data_dir", lambda: tmp_path / "user-root"
+    )
+    monkeypatch.setattr(personas_screen_module, "publish_visual_identity_candidate", publish)
+    monkeypatch.setattr(
+        personas_screen_module,
+        "cleanup_visual_identity_publication_candidate",
+        cleanup,
+    )
+    save = asyncio.create_task(screen._save_visual_identity_pack(browser.pack))
+    assert await asyncio.to_thread(cleanup_started.wait, 2)
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    editor.load_character(
+        {"id": char_id, "name": "Reloaded", "description": "new session"},
+        visual_identity_pending=True,
+    )
+    cleanup_release.set()
+
+    assert await save is False
+    assert notifications == []
+
+
+async def test_character_save_refuses_staged_reaction_changes_without_mutation(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = _set_description(screen, "unsaved character edit")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_clear(asset)
+    authoring = screen._visual_identity_authoring
+    assert authoring is not None
+    generation = screen._character_editor_generation
+    save_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_save_character_worker",
+        lambda *args: save_calls.append(args),
+    )
+    notifications = _capture_notifications(app)
+
+    screen._handle_save_requested(CharacterSaveRequested(editor.get_character_data()))
+
+    assert save_calls == []
+    assert notifications == [
+        ("Save or Cancel reaction changes before saving the character.", "warning")
+    ]
+    assert editor._area("description").text == "unsaved character edit"
+    assert screen._character_editor_generation == generation
+    assert screen._visual_identity_authoring is authoring
+    assert not authoring.cancel_event.is_set()
+    assert asset.expression_key in authoring.candidate.cleared_expression_keys
+    assert not screen._character_save_inflight
+
+
+async def test_character_save_refuses_inflight_reaction_generation_without_cancelling(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = _set_description(screen, "unsaved character edit")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    entered = Event()
+    release = Event()
+
+    def generate(request):
+        entered.set()
+        assert release.wait(2)
+        return SimpleNamespace(content=_valid_png(), content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", generate)
+    generation_task = asyncio.create_task(
+        screen._generate_visual_identity_assets((asset,))
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+    authoring = screen._visual_identity_authoring
+    assert authoring is not None
+    editor_generation = screen._character_editor_generation
+    save_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_save_character_worker",
+        lambda *args: save_calls.append(args),
+    )
+    notifications = _capture_notifications(app)
+    try:
+        screen._handle_save_requested(
+            CharacterSaveRequested(editor.get_character_data())
+        )
+
+        assert save_calls == []
+        assert notifications == [
+            ("Save or Cancel reaction changes before saving the character.", "warning")
+        ]
+        assert editor._area("description").text == "unsaved character edit"
+        assert screen._character_editor_generation == editor_generation
+        assert screen._visual_identity_authoring is authoring
+        assert screen._visual_identity_operation_task is generation_task
+        assert not authoring.cancel_event.is_set()
+        assert not screen._character_save_inflight
+    finally:
+        screen._request_visual_identity_generation_cancel()
+        release.set()
+        assert await generation_task is False
+
+
+async def test_character_save_dispatches_normally_without_reaction_authoring(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = _set_description(screen, "ordinary character edit")
+    generation = screen._character_editor_generation
+    save_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_save_character_worker",
+        lambda *args: save_calls.append(args),
+    )
+
+    screen._handle_save_requested(CharacterSaveRequested(editor.get_character_data()))
+
+    assert len(save_calls) == 1
+    assert save_calls[0][0]["description"] == "ordinary character edit"
+    assert save_calls[0][1:] == (screen.state.selected_entity_id, screen._edit_mode)
+    assert screen._character_editor_generation == generation
+    assert screen._character_save_inflight
+
+
+async def test_visual_identity_clear_refuses_character_save_inflight_without_state(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    candidate_calls = []
+    original_create = personas_screen_module.create_visual_identity_candidate
+
+    def create_candidate(*args, **kwargs):
+        candidate_calls.append((args, kwargs))
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(
+        personas_screen_module,
+        "create_visual_identity_candidate",
+        create_candidate,
+    )
+    notifications = _capture_notifications(app)
+    screen._character_save_inflight = True
+
+    assert not await screen._stage_visual_identity_clear(asset)
+
+    assert notifications == [
+        ("Wait for Character Save to finish before editing reactions.", "warning")
+    ]
+    assert candidate_calls == []
+    assert screen._visual_identity_authoring is None
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_operation_event is None
+    assert browser._staged == {}
+
+
+async def test_visual_identity_generation_refuses_character_save_before_work(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    admitted = AsyncMock(return_value=True)
+    provider_calls = []
+    dialogs = AsyncMock(return_value=True)
+    monkeypatch.setattr(screen, "_generate_visual_identity_assets_admitted", admitted)
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: provider_calls.append(request),
+    )
+    monkeypatch.setattr(app, "push_screen_wait", dialogs)
+    notifications = _capture_notifications(app)
+    screen._character_save_inflight = True
+
+    assert not await screen._generate_visual_identity_assets((asset,))
+    assert not await screen._generate_visual_identity_pack_all()
+
+    assert notifications == [
+        ("Wait for Character Save to finish before editing reactions.", "warning"),
+        ("Wait for Character Save to finish before editing reactions.", "warning"),
+    ]
+    assert admitted.await_count == 0
+    assert dialogs.await_count == 0
+    assert provider_calls == []
+    assert screen._visual_identity_authoring is None
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_operation_event is None
+    assert browser._staged == {}
+
+
+async def test_visual_identity_operation_admits_when_character_save_idle(
+    personas_editor_with_bound_pack,
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    snapshot = screen._visual_identity_author_snapshot()
+    assert snapshot is not None
+
+    admission = screen._begin_visual_identity_operation(snapshot)
+
+    assert admission is not None
+    task, event = admission
+    assert task is asyncio.current_task()
+    assert not event.is_set()
+    screen._finish_visual_identity_operation(task)
+
+
+async def test_visual_identity_operation_admits_after_character_save_completion(
+    personas_editor_with_bound_pack,
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    screen._character_save_inflight = True
+
+    await screen._after_character_save(str(char_id), "Packed")
+    await app.workers.wait_for_complete()
+    snapshot = screen._visual_identity_author_snapshot()
+
+    assert not screen._character_save_inflight
+    assert snapshot is not None
+    admission = screen._begin_visual_identity_operation(snapshot)
+    assert admission is not None
+    task, _event = admission
+    screen._finish_visual_identity_operation(task)
+
+
+async def test_idle_pack_cancel_discards_candidate_and_widget_staging(
+    personas_editor_with_bound_pack,
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    original_pack = browser.pack
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_clear(asset)
+    candidate = screen._visual_identity_authoring.candidate
+
+    browser.query_one("#personas-visual-identity-cancel", Button).press()
+    await asyncio.sleep(0.05)
+    await app.workers.wait_for_complete()
+
+    assert candidate._cancelled
+    assert screen._visual_identity_authoring is None
+    assert browser.pack == original_pack
+    assert browser._staged == {}
+    assert (
+        str(browser.query_one("#personas-visual-identity-dirty", Static).renderable)
+        == "No staged changes"
+    )
+
+
+@pytest.mark.parametrize("newer_authority", ("binding", "session"))
+async def test_cancel_never_restores_pack_over_newer_editor_authority(
+    personas_editor_with_bound_pack, newer_authority
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_clear(asset)
+    candidate = screen._visual_identity_authoring.candidate
+    current = browser.pack
+    assert current is not None
+    newer_pack = replace(current, title="Externally refreshed")
+    if newer_authority == "binding":
+        newer_pack = replace(
+            newer_pack,
+            binding_id=current.binding_id + 1,
+            pack_id=current.pack_id + 1,
+            pack_version_id=current.pack_version_id + 1,
+        )
+    else:
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor._visual_identity_session_token += 1
+    browser.pack = newer_pack
+
+    screen._discard_visual_identity_authoring()
+
+    assert candidate._cancelled
+    assert screen._visual_identity_authoring is None
+    assert browser.pack == newer_pack
+
+
+async def test_candidate_authority_mismatch_refuses_before_staging_or_provider(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    _set_description(screen, "silver hair, amber eyes")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    original_create = personas_screen_module.create_visual_identity_candidate
+    candidates = []
+
+    def mismatched_candidate(*args, **kwargs):
+        candidate = original_create(*args, **kwargs)
+        candidate.old_binding_id += 1
+        candidates.append(candidate)
+        return candidate
+
+    monkeypatch.setattr(
+        personas_screen_module, "create_visual_identity_candidate", mismatched_candidate
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    provider_calls = []
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: provider_calls.append(request),
+    )
+
+    assert not await screen._generate_visual_identity_assets((asset,))
+
+    assert len(candidates) == 1
+    assert candidates[0]._cancelled
+    assert provider_calls == []
+    assert screen._visual_identity_authoring is None
+    assert browser._staged == {}
+
+
+async def test_publication_invalidation_isolated_and_busy_state_always_restored(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    result = VisualIdentityPublicationResult(
+        actor_kind="character",
+        actor_id=str(char_id),
+        old_pack_id=1,
+        old_version_id=1,
+        new_pack_id=2,
+        new_version_id=2,
+        version_directory=tmp_path,
+    )
+    invalidated = []
+
+    async def broken_invalidator(*_args):
+        invalidated.append("broken")
+        raise RuntimeError("/private/secret/cache")
+
+    async def healthy_invalidator(*_args):
+        invalidated.append("healthy")
+
+    fake_screens = [
+        SimpleNamespace(
+            _session=SimpleNamespace(
+                invalidate_visual_identity_actor=broken_invalidator
+            )
+        ),
+        SimpleNamespace(
+            _session=SimpleNamespace(
+                invalidate_visual_identity_actor=healthy_invalidator
+            )
+        ),
+    ]
+    monkeypatch.setattr(
+        personas_screen_module,
+        "publish_visual_identity_candidate",
+        lambda *_args, **_kwargs: result,
+    )
+    reload_metadata = AsyncMock()
+    monkeypatch.setattr(
+        screen, "_configure_character_visual_identity", reload_metadata
+    )
+
+    async def invalidate(result):
+        host = SimpleNamespace(app=SimpleNamespace(screen_stack=fake_screens))
+        await personas_screen_module.PersonasScreen._invalidate_visual_identity_publication(
+            host, result
+        )
+
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
+    saved = await screen._save_visual_identity_pack(browser.pack)
+
+    assert saved
+    assert invalidated == ["broken", "healthy"]
+    reload_metadata.assert_awaited_once()
+    assert screen._visual_identity_authoring is None
+    assert browser._staged == {}
+    assert (
+        str(browser.query_one("#personas-visual-identity-dirty", Static).renderable)
+        == "No staged changes"
+    )
+
+
+@pytest.mark.parametrize("error_type", (OSError, ValueError))
+async def test_visual_identity_replace_read_failure_redacts_private_path(
+    personas_editor_with_bound_pack, monkeypatch, error_type
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    private_path = "/private/people/alice/reactions/secret-portrait.png"
+    notifications = _capture_notifications(app)
+    fake_logger = Mock()
+    monkeypatch.setattr(personas_screen_module, "logger", fake_logger)
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=private_path))
+
+    def fail_read(path):
+        assert path == private_path
+        raise error_type(f"cannot read {private_path}")
+
+    monkeypatch.setattr(screen, "_read_avatar_image_bytes", fail_read)
+
+    await screen._visual_identity_replace_dialog(asset)
+
+    assert notifications == [
+        ("Reaction replacement failed. Choose another image.", "error")
+    ]
+    assert private_path not in str(notifications)
+    assert private_path not in str(fake_logger.mock_calls)
+    fake_logger.warning.assert_called_once_with(
+        "Reaction replacement failed (category=image_read_failed, error_type={}).",
+        error_type.__name__,
+    )
+
+
+async def test_character_save_presentation_failure_releases_all_admission_guards(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    notifications = _capture_notifications(app)
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        screen,
+        "_after_character_save",
+        AsyncMock(side_effect=RuntimeError("/private/secret/refresh")),
+    )
+    screen._character_save_inflight = True
+
+    await personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+        screen, {"name": "Packed"}, str(char_id), "edit"
+    )
+
+    assert not screen._character_save_inflight
+    assert notifications == [
+        ("Character saved, but the editor could not refresh.", "warning")
+    ]
+    snapshot = screen._visual_identity_author_snapshot()
+    assert snapshot is not None
+    admission = screen._begin_visual_identity_operation(snapshot)
+    assert admission is not None
+    task, _event = admission
+    screen._finish_visual_identity_operation(task)
+
+
+async def test_character_save_reread_failure_warns_without_success_toast(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    notifications = _capture_notifications(app)
+    private_token = "/private/people/alice/characters/saved.sqlite"
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+
+    def fail_fetch(_character_id):
+        raise OSError(private_token)
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "fetch_character_by_id",
+        fail_fetch,
+    )
+    screen._character_save_inflight = True
+
+    await personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+        screen, {"name": "Packed"}, str(char_id), "edit"
+    )
+
+    assert notifications == [
+        ("Character saved, but the editor could not refresh.", "warning")
+    ]
+    assert private_token not in str(notifications)
+    assert screen.character_handler.current_character_id is None
+    assert screen.character_handler.current_character_data == {}
+    assert screen.state.selected_entity_id == str(char_id)
+    assert screen.query_one("#personas-character-card-empty").display
+    assert not screen._character_save_inflight
+
+
+async def test_character_save_success_emits_one_information_toast(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    notifications = _capture_notifications(app)
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(screen, "_render_all_character_editor_thumbnails", AsyncMock())
+    screen._character_save_inflight = True
+
+    await personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+        screen, {"name": "Packed"}, str(char_id), "edit"
+    )
+
+    assert notifications == [("Character saved.", "information")]
+    assert not screen._character_save_inflight
+
+
+@pytest.mark.parametrize("stale_session", (False, True))
+async def test_cancelled_character_save_drains_commit_before_reconcile_and_release(
+    personas_editor_with_bound_pack, monkeypatch, stale_session
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    entered = Event()
+    release = Event()
+
+    def persist(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        return True
+
+    reconcile = AsyncMock()
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler, "update_character", persist
+    )
+    monkeypatch.setattr(screen, "_after_character_save", reconcile)
+    screen._character_save_inflight = True
+    save = asyncio.create_task(
+        personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+            screen, {"name": "Packed"}, str(char_id), "edit"
+        ),
+        name="cancelled-character-save",
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+    if stale_session:
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor._visual_identity_session_token += 1
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._character_save_inflight
+    snapshot = screen._visual_identity_author_snapshot()
+    assert snapshot is not None
+    assert screen._begin_visual_identity_operation(snapshot) is None
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert not screen._character_save_inflight
+    if stale_session:
+        reconcile.assert_not_awaited()
+    else:
+        reconcile.assert_awaited_once()
+        args, kwargs = reconcile.await_args
+        assert args == (str(char_id), "Packed")
+        assert isinstance(
+            kwargs["authority"], personas_screen_module._CharacterSaveAuthority
+        )
+    admission = screen._begin_visual_identity_operation(snapshot)
+    assert admission is not None
+    task, _event = admission
+    screen._finish_visual_identity_operation(task)
+
+
+async def test_cancelled_character_save_drains_late_error_and_releases_guard(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    entered = Event()
+    release = Event()
+
+    def persist(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        raise RuntimeError("/private/secret/character.db")
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler, "update_character", persist
+    )
+    notifications = _capture_notifications(app)
+    screen._character_save_inflight = True
+    save = asyncio.create_task(
+        personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+            screen, {"name": "Packed"}, str(char_id), "edit"
+        ),
+        name="cancelled-character-error",
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._character_save_inflight
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert not screen._character_save_inflight
+    assert notifications == [("Character save failed.", "error")]
+
+
+async def test_cancelled_character_save_drains_post_commit_reconciliation(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    reconciliation_entered = asyncio.Event()
+    release_reconciliation = asyncio.Event()
+    order = []
+
+    def persist(*_args, **_kwargs):
+        order.append("persist")
+        return True
+
+    async def reconcile(saved_id, submitted_name, *, authority):
+        assert isinstance(authority, personas_screen_module._CharacterSaveAuthority)
+        order.append(("reconcile-start", saved_id, submitted_name))
+        reconciliation_entered.set()
+        await release_reconciliation.wait()
+        order.append("reconcile-done")
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler, "update_character", persist
+    )
+    monkeypatch.setattr(screen, "_after_character_save", reconcile)
+    screen._character_save_inflight = True
+    save = asyncio.create_task(
+        personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+            screen, {"name": "Packed"}, str(char_id), "edit"
+        ),
+        name="cancelled-character-reconcile",
+    )
+    await asyncio.wait_for(reconciliation_entered.wait(), 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._character_save_inflight
+    snapshot = screen._visual_identity_author_snapshot()
+    assert snapshot is not None
+    assert screen._begin_visual_identity_operation(snapshot) is None
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._character_save_inflight
+    release_reconciliation.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert order == [
+        "persist",
+        ("reconcile-start", str(char_id), "Packed"),
+        "reconcile-done",
+    ]
+    assert not screen._character_save_inflight
+    admission = screen._begin_visual_identity_operation(snapshot)
+    assert admission is not None
+    task, _event = admission
+    screen._finish_visual_identity_operation(task)
+
+
+async def test_cancelled_character_reconciliation_releases_save_guard(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    notifications = _capture_notifications(app)
+    _fail_on_cancelled_task_reshield(monkeypatch)
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+
+    async def cancel_reconciliation(_saved_id, _submitted_name, *, authority):
+        assert isinstance(authority, personas_screen_module._CharacterSaveAuthority)
+        raise asyncio.CancelledError("character-reconcile-cancelled")
+
+    monkeypatch.setattr(screen, "_after_character_save", cancel_reconciliation)
+    screen._character_save_inflight = True
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(
+            personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+                screen, {"name": "Packed"}, str(char_id), "edit"
+            ),
+            2,
+        )
+
+    assert not screen._character_save_inflight
+    assert notifications == []
+
+
+async def test_cancelled_character_persist_never_reconciles_none_result(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    before_data = editor.get_character_data()
+    before_selection = screen.state.selected_entity_id
+
+    def cancel_persist(*_args, **_kwargs):
+        raise asyncio.CancelledError("persist-cancelled")
+
+    reconcile = AsyncMock()
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler, "update_character", cancel_persist
+    )
+    monkeypatch.setattr(screen, "_after_character_save", reconcile)
+    screen._character_save_inflight = True
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(
+            personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+                screen, {"name": "Packed"}, str(char_id), "edit"
+            ),
+            2,
+        )
+
+    reconcile.assert_not_awaited()
+    assert editor.get_character_data() == before_data
+    assert screen.state.selected_entity_id == before_selection
+    assert not screen._character_save_inflight
+
+
+@pytest.mark.parametrize("barrier", ("refresh", "fetch"))
+async def test_character_save_reconciliation_never_repaints_new_session(
+    personas_editor_with_bound_pack, monkeypatch, barrier
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    entered = Event()
+    release = Event()
+    fetch_calls: list[str] = []
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+    if barrier == "refresh":
+
+        async def block_refresh():
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 2)
+
+        monkeypatch.setattr(
+            screen.character_handler, "refresh_character_list", block_refresh
+        )
+
+        def record_fetch(character_id):
+            fetch_calls.append(str(character_id))
+            return {"id": char_id, "name": "Old saved session", "version": 2}
+
+        monkeypatch.setattr(
+            personas_screen_module.ccp_character_handler,
+            "fetch_character_by_id",
+            record_fetch,
+        )
+    else:
+
+        def block_fetch(_character_id):
+            entered.set()
+            assert release.wait(2)
+            return {"id": char_id, "name": "Old saved session", "version": 2}
+
+        monkeypatch.setattr(
+            personas_screen_module.ccp_character_handler,
+            "fetch_character_by_id",
+            block_fetch,
+        )
+
+    screen._character_save_inflight = True
+    save = asyncio.create_task(
+        personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+            screen, {"name": "Old saved session"}, str(char_id), "edit"
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    await screen._begin_create_character()
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    editor._input("name").value = "New draft"
+    editor._area("description").text = "new session bytes"
+    new_data = editor.get_character_data()
+    new_generation = screen._character_editor_generation
+    new_token = editor.visual_identity_session_token
+    release.set()
+    await save
+
+    assert editor.get_character_data() == new_data
+    assert screen.state.selected_entity_id is None
+    assert screen._edit_mode == "create"
+    assert screen._character_editor_generation == new_generation
+    assert editor.visual_identity_session_token == new_token
+    if barrier == "refresh":
+        assert fetch_calls == []
+    assert not screen._character_save_inflight
+
+
+async def test_character_save_reconciliation_never_launches_detached_reload(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    card = screen.query_one(PersonasCharacterCardWidget)
+    release = asyncio.Event()
+    load_calls: list[str] = []
+    late_workers: list[asyncio.Task] = []
+    rendered_character_ids: list[int | str | None] = []
+    saved_record = personas_screen_module.ccp_character_handler.fetch_character_by_id(
+        char_id
+    )
+    assert saved_record is not None
+    saved_record = {**saved_record, "name": "After save"}
+
+    async def launch_detached_reload(character_id):
+        load_calls.append(str(character_id))
+
+        async def overwrite_new_session():
+            await release.wait()
+            editor._input("name").value = "Stale saved session"
+
+        late_workers.append(asyncio.create_task(overwrite_new_session()))
+
+    monkeypatch.setattr(
+        screen.character_handler, "load_character", launch_detached_reload
+    )
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "fetch_character_by_id",
+        lambda _character_id: dict(saved_record),
+    )
+
+    async def record_thumbnail_render(_screen, character_id):
+        rendered_character_ids.append(character_id)
+
+    monkeypatch.setattr(
+        personas_screen_module.PersonasScreen,
+        "_render_all_character_editor_thumbnails",
+        record_thumbnail_render,
+    )
+
+    await screen._after_character_save(str(char_id), "Saved session")
+
+    assert screen.character_handler.current_character_data["name"] == "After save"
+    assert editor._character_data["name"] == "After save"
+    assert str(
+        card.query_one("#personas-character-card-name", Static).renderable
+    ) == "Name: After save"
+    assert rendered_character_ids == [char_id]
+    screen._finish_cancel_edit()
+    assert screen._edit_mode == "view"
+    assert str(
+        card.query_one("#personas-character-card-name", Static).renderable
+    ) == "Name: After save"
+    await screen._begin_create_character()
+    editor._input("name").value = "New session sentinel"
+    release.set()
+    if late_workers:
+        await asyncio.gather(*late_workers)
+
+    assert load_calls == []
+    assert editor._input("name").value == "New session sentinel"
+
+
+async def test_character_save_fetch_failure_clears_handler_without_detached_reload(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    card = screen.query_one(PersonasCharacterCardWidget)
+    card.load_character({"id": "prior", "name": "Prior character"})
+    screen.character_handler.current_character_id = "stale-id"
+    screen.character_handler.current_character_data = {"name": "Stale character"}
+    load_character = AsyncMock()
+    monkeypatch.setattr(screen.character_handler, "load_character", load_character)
+
+    def fail_fetch(_character_id):
+        raise RuntimeError("read failed")
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "fetch_character_by_id",
+        fail_fetch,
+    )
+
+    await screen._after_character_save(str(char_id), "Saved session")
+
+    load_character.assert_not_awaited()
+    assert screen.character_handler.current_character_id is None
+    assert screen.character_handler.current_character_data == {}
+    assert screen._edit_mode == "view"
+    assert card.query_one("#personas-character-card-empty").display
+    assert not card.query_one("#personas-character-card-body").display
+    assert "Prior character" not in str(
+        card.query_one("#personas-character-card-name", Static).renderable
+    )
+
+
+async def test_generate_all_restores_missing_canonical_asset_and_direction(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    _set_description(screen, "silver hair, amber eyes")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    pack = browser.pack
+    assert pack is not None
+    omitted_label = "remorse"
+    omitted_key = SAMIRA_EXPRESSION_KEYS[omitted_label]
+    omitted = next(
+        asset for asset in pack.assets if asset.expression_key == omitted_key
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            "DELETE FROM visual_identity_assets WHERE pack_version_id = ? AND expression_key = ?",
+            (pack.pack_version_id, omitted_key),
+        )
+    browser.pack = replace(
+        pack,
+        assets=tuple(asset for asset in pack.assets if asset is not omitted),
+    )
+    authoritative_pack = browser.pack
+    authoritative_graph = personas_screen_module.VisualIdentityRepository(
+        db
+    ).get_active_actor_pack("character", char_id)
+    assert authoritative_graph is not None
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=pack.pack_id,
+            pack_version_id=pack.pack_version_id,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    requests = []
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: requests.append(request)
+        or SimpleNamespace(content=_valid_png(), content_type="image/png"),
+    )
+
+    assert await screen._generate_visual_identity_pack_all()
+
+    assert len(requests) == 31
+    assert any(
+        "lowered gaze and accountable regret" in request.prompt
+        for request in requests
+    )
+    candidate = screen._visual_identity_authoring.candidate
+    assert set(candidate.replaced_expression_keys) == set(
+        SAMIRA_EXPRESSION_KEYS.values()
+    )
+    assert browser.pack is not None
+    assert len(browser.pack.assets) == 31
+    assert any(asset.asset_id < 0 for asset in browser.pack.assets)
+
+    browser.query_one("#personas-visual-identity-cancel", Button).press()
+    await asyncio.sleep(0.05)
+    await app.workers.wait_for_complete()
+
+    assert candidate._cancelled
+    assert screen._visual_identity_authoring is None
+    assert browser.pack == authoritative_pack
+    assert len(browser.pack.assets) == 30
+    assert all(asset.asset_id > 0 for asset in browser.pack.assets)
+    live_graph = personas_screen_module.VisualIdentityRepository(
+        db
+    ).get_active_actor_pack("character", char_id)
+    assert live_graph is not None
+    assert live_graph["version"]["id"] == authoritative_graph["version"]["id"]
+    assert tuple(asset["id"] for asset in live_graph["assets"]) == tuple(
+        asset["id"] for asset in authoritative_graph["assets"]
+    )
+
+
+async def test_provider_failure_notifies_once_without_private_detail(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    _set_description(screen, "silver hair, amber eyes")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda _request: (_ for _ in ()).throw(
+            RuntimeError("/private/secret/provider-key")
+        ),
+    )
+    notifications = _capture_notifications(app)
+
+    assert not await screen._generate_visual_identity_assets((asset,))
+
+    assert notifications == [("Reaction generation failed. Try again.", "error")]
+    assert screen._visual_identity_authoring is None

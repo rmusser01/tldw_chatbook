@@ -26,6 +26,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     USER_DENY_REFUSAL,
     UNRESOLVED_REFUSAL,
 )
+from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
@@ -160,6 +161,26 @@ class FakeMCPService:
         if self.execute_raises is not None:
             raise self.execute_raises
         return self.execute_result
+
+
+#: PR2a Task 5: verdict stamps are keyed by RUN. Every test in this file
+#: exercises a single run, so it stamps and reads under this one id.
+RUN = "run-1"
+
+
+@pytest.fixture(autouse=True)
+def _dispatching_run():
+    """Bind ``RUN`` as the dispatching run for every test in this module.
+
+    ``invoke()`` reads the run whose call it is executing from
+    ``run_context`` (bound in production by ``AgentService`` around each
+    invocation), so a test that stamps a verdict for ``RUN`` and then calls
+    ``invoke()`` must be running as ``RUN`` -- exactly as production does.
+    Assertions are unchanged: a stamp this run made is a stamp this run
+    consumes.
+    """
+    with use_run_id(RUN):
+        yield
 
 
 @pytest.fixture
@@ -327,9 +348,9 @@ def test_apply_batch_decisions_then_stamped_decision_is_a_peek_not_a_pop():
     provider = MCPToolProvider(
         service=FakeMCPService(), main_loop=asyncio.new_event_loop()
     )
-    provider.apply_batch_decisions({"mcp__srv__run": "deny"})
-    assert provider.stamped_decision("mcp__srv__run") == "deny"
-    assert provider.stamped_decision("mcp__srv__run") == "deny"
+    provider.apply_batch_decisions(RUN, {"mcp__srv__run": "deny"})
+    assert provider.stamped_decision(RUN, "mcp__srv__run") == "deny"
+    assert provider.stamped_decision(RUN, "mcp__srv__run") == "deny"
 
 
 def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps():
@@ -339,11 +360,11 @@ def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps():
     provider = MCPToolProvider(
         service=FakeMCPService(), main_loop=asyncio.new_event_loop()
     )
-    provider.apply_batch_decisions({"mcp__srv__run": "approve_once"})
-    assert provider.stamped_decision("mcp__srv__run") == "approve_once"
+    provider.apply_batch_decisions(RUN, {"mcp__srv__run": "approve_once"})
+    assert provider.stamped_decision(RUN, "mcp__srv__run") == "approve_once"
 
-    provider.apply_batch_decisions({})  # next turn: nothing needed gating
-    assert provider.stamped_decision("mcp__srv__run") is None
+    provider.apply_batch_decisions(RUN, {})  # next turn: nothing needed gating
+    assert provider.stamped_decision(RUN, "mcp__srv__run") is None
 
 
 def test_compose_catalog_clears_stale_stamped_decisions():
@@ -357,12 +378,12 @@ def test_compose_catalog_clears_stale_stamped_decisions():
 
     # Stamp a bogus tool name not in the catalog.
     bogus_name = "mcp__srv__nonexistent"
-    provider.apply_batch_decisions({bogus_name: "approve_once"})
-    assert provider.stamped_decision(bogus_name) == "approve_once"
+    provider.apply_batch_decisions(RUN, {bogus_name: "approve_once"})
+    assert provider.stamped_decision(RUN, bogus_name) == "approve_once"
 
     # Recompose: stale decision should be cleared.
     _compose(provider)
-    assert provider.stamped_decision(bogus_name) is None
+    assert provider.stamped_decision(RUN, bogus_name) is None
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +657,7 @@ def test_invoke_deny_refuses_and_records_decision(running_loop):
 
     assert result.ok is False
     assert result.error == DENY_REFUSAL
+    assert result.outcome == "blocked"
     assert service.record_tool_decision_calls == [
         ("local:srv", "run", "denied", "agent", None)
     ]
@@ -725,15 +747,15 @@ def test_invoke_ask_callback_approve_session_persists_and_short_circuits_next_ca
 
     # A later call with no stamp and NO callback still executes: the
     # service's own is_session_approved() short-circuits the "ask" gate.
-    # Finding I1: this fresh-path execution records decision="approved"
-    # (a live session approval), NOT "allowed" (a persistent server
-    # default) -- the two are different entries in the decision
-    # vocabulary and must not collapse together.
+    # The first call records the human approval. Later executions covered
+    # by that cached grant stay distinct so they cannot look like repeated
+    # permission prompts to the recommendation analyzer.
     provider._approval_callback = None
     result2 = provider.invoke(tool_id, {})
     assert result2.ok is True
     assert len(service.execute_calls) == 2
-    assert service.execute_calls[1][4] == "approved"
+    assert service.execute_calls[0][4] == "approved"
+    assert service.execute_calls[1][4] == "approved-session"
 
 
 def test_invoke_ask_callback_always_allow_sets_tool_state_with_live_hub_tool(
@@ -838,7 +860,7 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    provider.apply_batch_decisions({tool_id: "deny"})
+    provider.apply_batch_decisions(RUN, {tool_id: "deny"})
 
     result = provider.invoke(tool_id, {})
 
@@ -858,7 +880,7 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
 
     # Next turn: the closure clears the stamp set (even with `{}`) -- a
     # further call now re-gates fresh instead of reusing the stale stamp.
-    provider.apply_batch_decisions({})
+    provider.apply_batch_decisions(RUN, {})
     result3 = provider.invoke(tool_id, {})
     assert result3.ok is False  # default "ask" state, no callback -> fail closed
     assert len(service.record_tool_decision_calls) == 3
@@ -871,7 +893,7 @@ def test_invoke_stamped_timeout_uses_exact_model_facing_copy(running_loop):
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    provider.apply_batch_decisions({tool_id: "timeout"})
+    provider.apply_batch_decisions(RUN, {tool_id: "timeout"})
 
     result = provider.invoke(tool_id, {})
 
@@ -888,7 +910,7 @@ def test_invoke_stamped_approve_once_executes(running_loop):
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    provider.apply_batch_decisions({tool_id: "approve_once"})
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_once"})
 
     result = provider.invoke(tool_id, {})
 
@@ -911,7 +933,7 @@ def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
     # One batch-review round trip, one card, one verdict for both calls.
-    provider.apply_batch_decisions({tool_id: "approve_once"})
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_once"})
 
     result1 = provider.invoke(tool_id, {"query": "first"})
     result2 = provider.invoke(tool_id, {"query": "second"})
@@ -924,6 +946,28 @@ def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(
     # Both calls left an "approved" audit record via execute_hub_tool's
     # own decision arg -- no denied/re-gated record for the second call.
     assert [c[4] for c in service.execute_calls] == ["approved", "approved"]
+
+
+def test_invoke_stamped_approve_session_counts_one_prompt_for_same_name_calls(
+    running_loop,
+):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_session"})
+
+    result1 = provider.invoke(tool_id, {"query": "first"})
+    result2 = provider.invoke(tool_id, {"query": "second"})
+
+    assert result1.ok is True
+    assert result2.ok is True
+    assert [call[4] for call in service.execute_calls] == [
+        "approved",
+        "approved-session",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1378,7 +1422,7 @@ def test_invoke_refuses_when_kill_switch_flips_even_with_a_stamped_verdict(
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    provider.apply_batch_decisions({tool_id: "approve_once"})
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_once"})
 
     service.kill_switch = True
 
@@ -1413,3 +1457,142 @@ def test_invoke_kill_switch_check_survives_getter_exception(running_loop):
 
     assert result.ok is True
     assert service.execute_calls
+
+
+# ---------------------------------------------------------------------------
+# builtin_raw_name_exclusions (task-1337, plan Task 8)
+# ---------------------------------------------------------------------------
+#
+# The Console shadows 29 built-in raw names (the 24 `library_*` descriptor
+# tools served by its own LibraryToolProvider, plus the five legacy RAG/chat
+# readers whose Console coverage is the bounded RAG/direct tools). The
+# Console-composed provider must drop those names ONLY when they come from
+# `builtin:tldw_chatbook` -- same-named tools on external/local MCP profiles
+# stay eligible and permission-governed, and the local MCP inventory itself
+# is never mutated.
+
+_LEGACY_SHADOWED_NAMES = (
+    "search_rag",
+    "search_notes",
+    "search_conversations",
+    "get_conversation_history",
+    "export_conversation",
+)
+
+
+def _console_exclusion_set() -> frozenset:
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    return frozenset(set(LIBRARY_TOOL_DESCRIPTORS) | set(_LEGACY_SHADOWED_NAMES))
+
+
+def _mixed_library_inventory() -> dict:
+    names = sorted(_console_exclusion_set()) + ["chat_with_llm"]
+    return {"tools": [_tool_dict(name, f"{name} description") for name in names]}
+
+
+def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
+    """Default (no exclusions): all non-Console callers preserve current
+    behavior -- even the shadowed names stay in the catalog."""
+    service = FakeMCPService(inventory=_mixed_library_inventory())
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+
+    _compose(provider)
+
+    names = {entry.name for entry in provider.list_catalog()}
+    assert "mcp__tldw_chatbook__library_list_media" in names
+    assert "mcp__tldw_chatbook__search_rag" in names
+    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert len(names) == 30  # 29 shadowed + the unrelated built-in
+
+
+def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
+    """With the Console exclusion set: exactly the 29 built-in raw names
+    disappear; the unrelated built-in and same-named local-profile tools
+    remain, and the inventory mapping is left untouched."""
+    exclusions = _console_exclusion_set()
+    assert len(exclusions) == 29  # 24 descriptors + 5 legacy, no overlap
+    service = FakeMCPService(
+        inventory=_mixed_library_inventory(),
+        catalog_records=[
+            _catalog_record(
+                "docs",
+                [_tool_dict("library_list_media"), _tool_dict("search_rag")],
+            )
+        ],
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.new_event_loop(),
+        builtin_raw_name_exclusions=exclusions,
+    )
+
+    _compose(provider)
+
+    names = {entry.name for entry in provider.list_catalog()}
+    for raw_name in exclusions:
+        assert f"mcp__tldw_chatbook__{raw_name}" not in names
+    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    # Same raw names on a LOCAL profile are a different tool entirely.
+    assert "mcp__docs__library_list_media" in names
+    assert "mcp__docs__search_rag" in names
+    # The provider never rewrites the source inventory.
+    assert [t["name"] for t in service.inventory["tools"]] == [
+        t["name"] for t in _mixed_library_inventory()["tools"]
+    ]
+
+
+def test_compose_catalog_excluded_names_still_gated_when_served_locally():
+    """Governance, not just eligibility: the local twin of an excluded raw
+    name still flows through the permission machinery (ask -> pending row;
+    deny -> dropped)."""
+    exclusions = _console_exclusion_set()
+    service = FakeMCPService(
+        inventory=_mixed_library_inventory(),
+        catalog_records=[
+            _catalog_record(
+                "docs",
+                [_tool_dict("library_list_media"), _tool_dict("search_rag")],
+            )
+        ],
+        states={
+            ("local:docs", "search_rag"): EffectiveToolState(
+                state="deny", origin="tool_override"
+            ),
+        },
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.new_event_loop(),
+        builtin_raw_name_exclusions=exclusions,
+    )
+
+    _compose(provider)
+
+    names = {entry.name for entry in provider.list_catalog()}
+    # Deny-governed local twin dropped by the STATE filter, not the exclusion.
+    assert "mcp__docs__search_rag" not in names
+    assert "mcp__docs__library_list_media" in names
+    # The surviving ask-state twin still resolves a pending gate row.
+    pending = provider.pending_gate_for("mcp__docs__library_list_media", {})
+    assert pending is not None
+    assert pending.server_key == "local:docs"
+    assert pending.tool_name == "library_list_media"
+
+
+def test_compose_catalog_exclusion_set_stored_immutably():
+    """The constructor argument is stored as an immutable frozenset copy --
+    later mutation of the caller's container cannot widen the filter."""
+    mutable = {"library_list_media"}
+    provider = MCPToolProvider(
+        service=FakeMCPService(inventory=_mixed_library_inventory()),
+        main_loop=asyncio.new_event_loop(),
+        builtin_raw_name_exclusions=mutable,
+    )
+    mutable.add("chat_with_llm")
+
+    _compose(provider)
+
+    names = {entry.name for entry in provider.list_catalog()}
+    assert "mcp__tldw_chatbook__library_list_media" not in names
+    assert "mcp__tldw_chatbook__chat_with_llm" in names

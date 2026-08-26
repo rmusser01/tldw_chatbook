@@ -11,6 +11,10 @@ from tldw_chatbook.Agents.native_tools import (
     schemas_to_openai_tools,
 )
 from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
+from tldw_chatbook.LLM_Calls.qwencloud import (
+    build_qwencloud_payload,
+    normalize_qwencloud_response,
+)
 
 
 def test_capability_set_membership():
@@ -31,6 +35,110 @@ def test_every_native_provider_forwards_tools_in_param_map():
         mapping = PROVIDER_PARAM_MAP.get(provider)
         assert mapping is not None, provider
         assert mapping.get("tools") == "tools", provider
+
+
+def test_zai_native_provider_contract_is_eligible() -> None:
+    assert "zai" in NATIVE_TOOLS_PROVIDERS
+    assert PROVIDER_PARAM_MAP["zai"]["tools"] == "tools"
+
+
+def test_native_provider_contract_requires_qwencloud_dispatch_and_history():
+    """QwenCloud may be native only after all three seam invariants hold."""
+    assert "qwencloud" in NATIVE_TOOLS_PROVIDERS
+    assert PROVIDER_PARAM_MAP["qwencloud"]["tools"] == "tools"
+
+    normalized = normalize_qwencloud_response(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": "call_A",
+                    "name": "calculator",
+                    "arguments": '{"expression":"6*7"}',
+                },
+                {
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": "call_B",
+                    "name": "calculator",
+                    "arguments": '{"expression":"8*8"}',
+                },
+            ],
+        },
+        api_mode="responses",
+    )
+    assert normalized["choices"][0]["message"]["tool_calls"] == [
+        {
+            "id": "call_A",
+            "type": "function",
+            "function": {
+                "name": "calculator",
+                "arguments": '{"expression":"6*7"}',
+            },
+        },
+        {
+            "id": "call_B",
+            "type": "function",
+            "function": {
+                "name": "calculator",
+                "arguments": '{"expression":"8*8"}',
+            },
+        },
+    ]
+
+    continuation = [
+        {"role": "user", "content": "Calculate it."},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": normalized["choices"][0]["message"]["tool_calls"],
+        },
+        # Canonical runtime history is accepted even when result rows arrive
+        # out of call order; Responses must restore call/output adjacency.
+        {"role": "tool", "tool_call_id": "call_B", "content": "64"},
+        {"role": "tool", "tool_call_id": "call_A", "content": "42"},
+    ]
+    responses_payload = build_qwencloud_payload(
+        api_mode="responses",
+        model="qwen3.8-max",
+        system_message=None,
+        messages_payload=continuation,
+        streaming=False,
+    )
+    assert responses_payload["input"][-4:] == [
+        {
+            "type": "function_call",
+            "call_id": "call_A",
+            "name": "calculator",
+            "arguments": '{"expression":"6*7"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_A",
+            "output": "42",
+        },
+        {
+            "type": "function_call",
+            "call_id": "call_B",
+            "name": "calculator",
+            "arguments": '{"expression":"8*8"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_B",
+            "output": "64",
+        },
+    ]
+    chat_payload = build_qwencloud_payload(
+        api_mode="chat_completions",
+        model="qwen3.8-max",
+        system_message=None,
+        messages_payload=continuation,
+        streaming=False,
+    )
+    assert chat_payload["messages"] == continuation
 
 
 def test_schemas_to_openai_tools_shape_and_empty_parameters_default():
@@ -81,6 +189,27 @@ def test_parse_native_tool_calls_happy_path_and_order():
     ]
 
 
+def test_parse_native_tool_calls_preserves_exact_string_arguments() -> None:
+    raw_arguments = '{ "b": 2, "a": 1 }'
+    calls = parse_native_tool_calls(
+        {
+            "tool_calls": [
+                {
+                    "id": "exact",
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "arguments": raw_arguments,
+                    },
+                }
+            ]
+        }
+    )
+
+    assert calls[0].args == {"a": 1, "b": 2}
+    assert calls[0].raw_arguments == raw_arguments
+
+
 def test_parse_native_tool_calls_malformed_and_junk():
     message = {
         "tool_calls": [
@@ -107,6 +236,7 @@ def test_parse_native_tool_calls_malformed_and_junk():
         ("calculator", {}),
         ("calculator", {"expression": "1"}),
     ]
+    assert [c.raw_arguments for c in calls] == ["{not json", ""]
     assert parse_native_tool_calls({}) == ()
     assert parse_native_tool_calls({"tool_calls": None}) == ()
     assert parse_native_tool_calls(None) == ()

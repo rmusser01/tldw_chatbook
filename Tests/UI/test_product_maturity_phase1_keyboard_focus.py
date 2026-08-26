@@ -112,34 +112,33 @@ async def test_clean_run_tab_order_reaches_nav_and_primary_setup_action(
                 ),
             )
 
-            if not isinstance(app.focused, Button):
+            # First-run now focuses the primary setup action. Cycle to the
+            # first navigation destination before asserting the nav order.
+            for _ in range(24):
+                if isinstance(app.focused, Button) and app.focused.id == "nav-home":
+                    break
                 await pilot.press("tab")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    isinstance(app.focused, Button) and app.focused.id == "nav-home"
+                ),
+            )
 
             focus_ids: list[str] = []
             expected_focus_ids = [
                 f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS
             ]
-            for expected_focus_id in expected_focus_ids:
-                await _wait_until(
-                    pilot,
-                    lambda: (
-                        isinstance(app.focused, Button)
-                        and app.focused.id == expected_focus_id
-                    ),
-                )
+            for _ in range(24):
                 focused = app.focused
                 assert isinstance(focused, Button)
                 assert focused.id is not None
-                focus_ids.append(focused.id)
-
-                await pilot.press("tab")
-
-            for _ in range(24):
-                if (
-                    isinstance(app.focused, Button)
-                    and app.focused.id == "home-primary-action"
-                ):
+                if focused.id == "home-primary-action":
                     break
+                if focused.id.startswith("nav-") and focused.id != "nav-overflow-hint":
+                    assert not focused.has_class("nav-button-clip-ghost")
+                    focus_ids.append(focused.id)
+
                 await pilot.press("tab")
             await _wait_until(
                 pilot,
@@ -150,11 +149,33 @@ async def test_clean_run_tab_order_reaches_nav_and_primary_setup_action(
             )
             focused = app.focused
             assert isinstance(focused, Button)
-            focus_ids.append(focused.id or "")
+            assert focus_ids
+            assert focus_ids[0] == "nav-home"
+            assert len(focus_ids) == len(set(focus_ids))
+            assert [
+                expected_focus_ids.index(focus_id) for focus_id in focus_ids
+            ] == sorted(expected_focus_ids.index(focus_id) for focus_id in focus_ids)
 
-            assert focus_ids == [*expected_focus_ids, "home-primary-action"]
+            # Clip-ghosted strip entries are deliberately omitted from Tab
+            # order. The keyboard-reachable overflow menu remains the complete
+            # destination list.
             nav_hint = app.screen.query_one("#nav-overflow-hint", Button)
             assert "More" in str(nav_hint.label)
+            nav_hint.focus()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot,
+                lambda: app.screen.__class__.__name__ == "NavOverflowMenu",
+            )
+            overflow_ids = [
+                button.id
+                for button in app.screen.query(".nav-overflow-destination")
+                if isinstance(button, Button)
+            ]
+            assert overflow_ids == [
+                f"nav-overflow-{destination_id}"
+                for destination_id in TOP_LEVEL_DESTINATION_IDS
+            ]
 
 
 @pytest.mark.asyncio

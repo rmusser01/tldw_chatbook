@@ -14,14 +14,527 @@ actively wrong -- the shipped config.toml template ships ~12 default
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Mapping
+import json
+import math
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Literal
+from unicodedata import category as unicode_category
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.provider_setup_persistence import ProviderSetupMutation
 
 WIZARD_STATE_SECTION = "first_run"
 SETUP_STARTED_KEY = "setup_started"
 SETUP_COMPLETED_KEY = "setup_completed"
+SETUP_DRAFT_VERSION = 1
+
+DRAFT_VERSION_KEY = "draft_version"
+DRAFT_TRACK_KEY = "draft_track"
+DRAFT_ACTIVE_STEP_KEY = "active_step_id"
+DRAFT_VALUES_KEY = "draft_values"
+DRAFT_RESUME_ATTEMPTED_KEY = "resume_attempted"
+SETUP_DRAFT_KEYS = (
+    DRAFT_VERSION_KEY,
+    DRAFT_TRACK_KEY,
+    DRAFT_ACTIVE_STEP_KEY,
+    DRAFT_VALUES_KEY,
+    DRAFT_RESUME_ATTEMPTED_KEY,
+)
+
+_MAX_SETUP_DRAFT_FIELDS = 64
+_MAX_SETUP_DRAFT_BYTES = 16 * 1024
+_MAX_PROVIDER_CHARS = 128
+_MAX_ENDPOINT_CHARS = 4096
+_MAX_MODEL_CHARS = 120
+_MAX_CREDENTIAL_CHARS = 8192
+_MAX_IDENTITY_COUNTER = 2**63 - 1
+_SECRET_FIELD_TOKENS = ("api_key", "credential", "password", "token", "secret")
+_CREDENTIAL_SOURCES = frozenset({"none", "draft", "environment", "stored"})
+_ENDPOINT_REQUIRED_PROVIDER_KEYS = frozenset(
+    {"custom", "custom_2", "llama_cpp", "local_llamacpp"}
+)
+_UNSAFE_TEXT_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_ENV_VAR_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 
 _PLACEHOLDER_MARKERS = ("<", ">")
+
+FirstRunCredentialSource = Literal["none", "draft", "environment", "stored"]
+FirstRunSummaryAction = Literal[
+    "start_chatting", "review_provider", "explore_home", "review_settings"
+]
+
+
+def is_untouched_default_session(
+    session: object,
+    messages: object,
+    draft: object,
+    staged_attachments: object,
+) -> bool:
+    """Delegate first-run eligibility to Console's canonical pure predicate."""
+
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+    from tldw_chatbook.Chat.console_chat_store import (
+        is_untouched_default_session as console_session_is_untouched,
+    )
+
+    if (
+        not isinstance(session, ConsoleChatSession)
+        or session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+    ):
+        return False
+    try:
+        return console_session_is_untouched(
+            session,
+            messages,  # type: ignore[arg-type]
+            draft,  # type: ignore[arg-type]
+            staged_attachments,  # type: ignore[arg-type]
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+class _CredentialValueOwner:
+    """Provide an in-memory value slot that dataclass serialization cannot see."""
+
+    __slots__ = ("_value",)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ProviderCredentialDraft(_CredentialValueOwner):
+    """One bounded credential decision whose value is never a dataclass field."""
+
+    source: FirstRunCredentialSource = field(init=False)
+    revision: int = field(init=False)
+
+    def __init__(
+        self,
+        source: FirstRunCredentialSource,
+        value: str,
+        revision: int = 0,
+    ) -> None:
+        if type(source) is not str or source not in _CREDENTIAL_SOURCES:
+            raise ValueError("Credential source is invalid.")
+        if type(revision) is not int or not 0 <= revision <= _MAX_IDENTITY_COUNTER:
+            raise ValueError("Credential revision is invalid.")
+        if type(value) is not str or len(value) > _MAX_CREDENTIAL_CHARS:
+            raise ValueError("Credential value is invalid.")
+        if any(
+            unicode_category(character) in _UNSAFE_TEXT_CATEGORIES
+            for character in value
+        ):
+            raise ValueError("Credential value is invalid.")
+        if source in {"none", "stored"} and value:
+            raise ValueError("Credential value conflicts with its source.")
+        if source == "environment" and _ENV_VAR_PATTERN.fullmatch(value) is None:
+            raise ValueError("Credential environment variable is invalid.")
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "revision", revision)
+        object.__setattr__(self, "_value", value)
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "_value":
+            raise AttributeError("credential value is memory-only")
+        return object.__getattribute__(self, name)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        del cls, kwargs
+        raise TypeError("ProviderCredentialDraft is sealed.")
+
+    def __copy__(self) -> object:
+        raise TypeError("Provider credentials are memory-only.")
+
+    def __deepcopy__(self, memo: object) -> object:
+        del memo
+        raise TypeError("Provider credentials are memory-only.")
+
+    def __reduce__(self) -> object:
+        raise TypeError("Provider credentials are memory-only.")
+
+    def __reduce_ex__(self, protocol: int) -> object:
+        del protocol
+        raise TypeError("Provider credentials are memory-only.")
+
+
+def _credential_value_for_boundary(credential: ProviderCredentialDraft) -> str:
+    """Reveal a credential only to the first-run probe/persistence boundaries."""
+
+    if type(credential) is not ProviderCredentialDraft:
+        raise ValueError("Credential draft is invalid.")
+    return object.__getattribute__(credential, "_value")
+
+
+@dataclass(frozen=True, slots=True)
+class FirstRunProviderDraft:
+    """The provider connection staged between Provider and Model."""
+
+    provider: str
+    endpoint: str
+    credential: ProviderCredentialDraft = field(repr=False)
+    discovery_endpoint: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.provider) is not str
+            or not self.provider
+            or len(self.provider) > _MAX_PROVIDER_CHARS
+            or self.provider != self.provider.strip()
+            or _contains_unsafe_text(self.provider)
+        ):
+            raise ValueError("Provider is invalid.")
+        if (
+            type(self.endpoint) is not str
+            or len(self.endpoint) > _MAX_ENDPOINT_CHARS
+            or _contains_unsafe_text(self.endpoint)
+        ):
+            raise ValueError("Endpoint is invalid.")
+        if (
+            type(self.discovery_endpoint) is not str
+            or len(self.discovery_endpoint) > _MAX_ENDPOINT_CHARS
+            or _contains_unsafe_text(self.discovery_endpoint)
+        ):
+            raise ValueError("Discovery endpoint is invalid.")
+        if type(self.credential) is not ProviderCredentialDraft:
+            raise ValueError("Credential draft is invalid.")
+
+
+@dataclass(frozen=True, slots=True)
+class FirstRunModelDiscoveryKey:
+    """Secret-free identity for model discovery against one exact connection."""
+
+    provider_key: str
+    connection_identity: tuple[str, str]
+    credential_source: FirstRunCredentialSource
+    credential_revision: int
+
+    def __post_init__(self) -> None:
+        from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
+
+        if (
+            type(self.credential_revision) is not int
+            or not 0 <= self.credential_revision <= _MAX_IDENTITY_COUNTER
+        ):
+            raise ValueError("Credential revision is invalid.")
+        if (
+            type(self.credential_source) is not str
+            or self.credential_source not in _CREDENTIAL_SOURCES
+        ):
+            raise ValueError("Credential source is invalid.")
+        try:
+            ProviderDraftIdentity(
+                provider_key=self.provider_key,
+                connection_identity=self.connection_identity,
+                credential_source=self.credential_source,
+                credential_revision=self.credential_revision,
+                draft_generation=0,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Model discovery identity is invalid.") from exc
+
+
+def _contains_unsafe_text(value: str) -> bool:
+    return any(
+        unicode_category(character) in _UNSAFE_TEXT_CATEGORIES for character in value
+    )
+
+
+def build_first_run_model_discovery_key(
+    provider_draft: FirstRunProviderDraft,
+) -> FirstRunModelDiscoveryKey:
+    """Build a canonical cache/evidence key without reading credential value."""
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+        resolve_provider_endpoint,
+    )
+
+    if type(provider_draft) is not FirstRunProviderDraft:
+        raise ValueError("Provider draft is invalid.")
+    provider_key = _first_run_provider_owner_key(provider_draft.provider)
+    endpoint = provider_draft.discovery_endpoint or provider_draft.endpoint
+    if not endpoint:
+        from tldw_chatbook.Chat.console_provider_endpoints import (
+            builtin_provider_endpoint,
+        )
+
+        endpoint = builtin_provider_endpoint(provider_key) or ""
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    identity = canonical_connection_identity(provider_key, endpoint)
+    if resolution.errors or identity is None:
+        raise ValueError("Provider endpoint is invalid.")
+    return FirstRunModelDiscoveryKey(
+        provider_key=resolution.provider_key,
+        connection_identity=identity,
+        credential_source=provider_draft.credential.source,
+        credential_revision=provider_draft.credential.revision,
+    )
+
+
+def _first_run_provider_owner_key(provider: object) -> str:
+    """Return one shared provider owner key without reading configuration."""
+
+    from tldw_chatbook.Chat.provider_setup_persistence import canonical_provider_key
+
+    return canonical_provider_key(provider)
+
+
+def _validate_first_run_app_config(
+    app_config: object, provider: str
+) -> Mapping[str, object]:
+    """Reject malformed matching provider tables before constructing a write."""
+
+    if type(app_config) is not dict:
+        raise TypeError("Application configuration is invalid.")
+    api_settings = app_config.get("api_settings")
+    if api_settings is None:
+        return app_config
+    if type(api_settings) is not dict:
+        raise TypeError("Provider configuration is invalid.")
+    target = _first_run_provider_owner_key(provider)
+    for index, (configured_provider, settings) in enumerate(api_settings.items()):
+        if index >= 256:
+            raise ValueError("Provider configuration is too large.")
+        try:
+            configured_owner = _first_run_provider_owner_key(configured_provider)
+        except ValueError:
+            continue
+        if configured_owner != target:
+            continue
+        if type(settings) is not dict:
+            raise TypeError("Provider configuration is invalid.")
+    return app_config
+
+
+def _first_run_provider_settings(
+    app_config: Mapping[str, object], provider: str
+) -> Mapping[str, object]:
+    """Return the same owned provider table selected by shared persistence."""
+
+    api_settings = app_config.get("api_settings")
+    if type(api_settings) is not dict:
+        return {}
+    target = _first_run_provider_owner_key(provider)
+    exact = api_settings.get(target)
+    if type(exact) is dict:
+        return exact
+    for index, (configured_provider, settings) in enumerate(api_settings.items()):
+        if index >= 256:
+            raise ValueError("Provider configuration is too large.")
+        try:
+            configured_owner = _first_run_provider_owner_key(configured_provider)
+        except ValueError:
+            continue
+        if configured_owner == target and type(settings) is dict:
+            return settings
+    return {}
+
+
+def resolve_first_run_provider_draft(
+    provider_draft: FirstRunProviderDraft,
+    app_config: object,
+) -> FirstRunProviderDraft:
+    """Resolve an untouched endpoint without turning blank into implicit clear."""
+
+    if type(provider_draft) is not FirstRunProviderDraft:
+        raise ValueError("Provider draft is invalid.")
+    config = _validate_first_run_app_config(app_config, provider_draft.provider)
+    endpoint, discovery_endpoint = _resolve_first_run_provider_endpoints(
+        provider_draft.provider,
+        provider_draft.endpoint,
+        config,
+    )
+    return replace(
+        provider_draft,
+        endpoint=endpoint,
+        discovery_endpoint=discovery_endpoint,
+    )
+
+
+def _resolve_first_run_provider_endpoints(
+    provider: str,
+    editable_endpoint: str,
+    app_config: Mapping[str, object],
+) -> tuple[str, str]:
+    """Resolve persisted and runtime endpoints without credential state."""
+
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        effective_provider_discovery_endpoint,
+        first_configured_endpoint,
+    )
+    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+
+    endpoint = editable_endpoint.strip()
+    owner_key = _first_run_provider_owner_key(provider)
+    provider_settings = _first_run_provider_settings(app_config, provider)
+    if not endpoint:
+        endpoint = first_configured_endpoint(provider_settings) or ""
+    if endpoint:
+        resolution = resolve_provider_endpoint(owner_key, endpoint)
+        if resolution.errors or resolution.persisted_endpoint is None:
+            raise ValueError("Provider endpoint is invalid.")
+        endpoint = resolution.persisted_endpoint
+    if owner_key in _ENDPOINT_REQUIRED_PROVIDER_KEYS:
+        if not endpoint:
+            raise ValueError("Provider endpoint is required.")
+    discovery_endpoint = effective_provider_discovery_endpoint(
+        owner_key,
+        endpoint or None,
+        provider_settings,
+    )
+    if discovery_endpoint:
+        discovery_resolution = resolve_provider_endpoint(
+            owner_key, discovery_endpoint
+        )
+        if discovery_resolution.errors or discovery_resolution.chat_url is None:
+            raise ValueError("Provider discovery endpoint is invalid.")
+        discovery_endpoint = discovery_resolution.chat_url
+    return endpoint, discovery_endpoint or ""
+
+
+def build_current_first_run_model_discovery_key(
+    *,
+    provider: object,
+    editable_endpoint: object,
+    credential_source: object,
+    credential_revision: object,
+    app_config: object,
+) -> FirstRunModelDiscoveryKey:
+    """Resolve a current secret-free discovery key for persistence CAS."""
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+
+    if (
+        type(provider) is not str
+        or type(editable_endpoint) is not str
+        or len(editable_endpoint) > _MAX_ENDPOINT_CHARS
+        or _contains_unsafe_text(editable_endpoint)
+        or type(credential_source) is not str
+        or credential_source not in _CREDENTIAL_SOURCES
+        or type(credential_revision) is not int
+        or not 0 <= credential_revision <= _MAX_IDENTITY_COUNTER
+    ):
+        raise ValueError("Provider discovery identity is invalid.")
+    config = _validate_first_run_app_config(app_config, provider)
+    _, discovery_endpoint = _resolve_first_run_provider_endpoints(
+        provider,
+        editable_endpoint,
+        config,
+    )
+    provider_key = _first_run_provider_owner_key(provider)
+    identity = canonical_connection_identity(provider_key, discovery_endpoint)
+    if identity is None:
+        raise ValueError("Provider discovery identity is invalid.")
+    return FirstRunModelDiscoveryKey(
+        provider_key=provider_key,
+        connection_identity=identity,
+        credential_source=credential_source,
+        credential_revision=credential_revision,
+    )
+
+
+def validate_first_run_model_id(model_id: object) -> str:
+    """Return one bounded display/config-safe model identifier."""
+
+    if type(model_id) is not str:
+        raise ValueError("Model is invalid.")
+    model = model_id.strip()
+    if (
+        not model
+        or len(model) > _MAX_MODEL_CHARS
+        or not model.isprintable()
+        or _contains_unsafe_text(model)
+    ):
+        raise ValueError("Model is invalid.")
+    return model
+
+
+def build_first_run_provider_commit(
+    provider_draft: FirstRunProviderDraft,
+    model_id: object,
+    app_config: object,
+) -> ProviderSetupMutation:
+    """Delegate one validated first-run provider/default commit to its owner."""
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        ProviderSetupDraft,
+        ProviderSetupMutation,
+        build_provider_setup_mutation,
+    )
+
+    if type(provider_draft) is not FirstRunProviderDraft:
+        raise ValueError("Provider draft is invalid.")
+    config = _validate_first_run_app_config(app_config, provider_draft.provider)
+    effective_draft = resolve_first_run_provider_draft(provider_draft, config)
+    model = validate_first_run_model_id(model_id)
+    if effective_draft.endpoint:
+        resolution = resolve_provider_endpoint(
+            _first_run_provider_owner_key(effective_draft.provider),
+            effective_draft.endpoint,
+        )
+        if resolution.errors:
+            raise ValueError("Provider endpoint is invalid.")
+
+    credential = provider_draft.credential
+    credential_value = _credential_value_for_boundary(credential)
+
+    def shared_draft(source: str) -> ProviderSetupDraft:
+        return ProviderSetupDraft(
+            provider=effective_draft.provider,
+            model=model,
+            endpoint=effective_draft.endpoint,
+            credential_source=source,
+            credential_revision=credential.revision,
+            draft_generation=0,
+            credential_value=(
+                credential_value
+                if credential.source == "draft" and credential_value
+                else None
+            ),
+            credential_env_var=(
+                credential_value if credential.source == "environment" else None
+            ),
+        )
+
+    if credential.source == "none":
+        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+        readiness = get_provider_readiness(effective_draft.provider, config)
+        if str(readiness.api_key_source or "").startswith("config:"):
+            source = "stored"
+        elif str(readiness.api_key_source or "").startswith("env:"):
+            source = "environment"
+        else:
+            source = "none"
+        mutation = build_provider_setup_mutation(shared_draft(source), config)
+    elif credential.source == "draft" and not credential_value:
+        mutation = build_provider_setup_mutation(shared_draft("none"), config)
+    else:
+        mutation = build_provider_setup_mutation(
+            shared_draft(credential.source), config
+        )
+    if type(mutation) is not ProviderSetupMutation:
+        raise ValueError("Provider setup mutation is invalid.")
+    return mutation
+
+
+def build_first_run_summary_actions(
+    *, provider_configured: bool, model_configured: bool
+) -> tuple[FirstRunSummaryAction, FirstRunSummaryAction, FirstRunSummaryAction]:
+    """Return the exact primary, secondary, and tertiary summary hierarchy."""
+
+    if type(provider_configured) is not bool or type(model_configured) is not bool:
+        raise ValueError("Summary readiness must use booleans.")
+    primary: FirstRunSummaryAction = (
+        "start_chatting"
+        if provider_configured and model_configured
+        else "review_provider"
+    )
+    return primary, "explore_home", "review_settings"
 
 
 def coerce_wizard_flag(raw: Any) -> bool:
@@ -43,11 +556,21 @@ def coerce_wizard_flag(raw: Any) -> bool:
 
 
 def _is_real_secret(value: Any) -> bool:
-    """A non-empty string that is not a <PLACEHOLDER> template value."""
+    """A non-empty string that is not a generic template placeholder."""
     if not isinstance(value, str) or not value.strip():
         return False
     stripped = value.strip()
-    return not (stripped.startswith(_PLACEHOLDER_MARKERS[0]) and stripped.endswith(_PLACEHOLDER_MARKERS[1]))
+    return not (
+        stripped.startswith(_PLACEHOLDER_MARKERS[0])
+        and stripped.endswith(_PLACEHOLDER_MARKERS[1])
+    )
+
+
+def _is_real_provider_api_key(value: Any) -> bool:
+    """Return the shared canonical provider-credential validity decision."""
+    from tldw_chatbook.config import is_valid_provider_api_key
+
+    return is_valid_provider_api_key(value)
 
 
 def any_provider_configured(
@@ -83,10 +606,14 @@ def any_provider_configured(
     for settings in api_settings.values():
         if not isinstance(settings, Mapping):
             continue
-        if _is_real_secret(settings.get("api_key")):
+        if _is_real_provider_api_key(settings.get("api_key")):
             return True
         env_var = settings.get("api_key_env_var")
-        if isinstance(env_var, str) and env_var.strip() and environ.get(env_var.strip()):
+        if (
+            isinstance(env_var, str)
+            and env_var.strip()
+            and _is_real_provider_api_key(environ.get(env_var.strip()))
+        ):
             return True
     return False
 
@@ -229,6 +756,7 @@ TRACK_FULL = "full"
 STEP_WELCOME = "welcome"
 STEP_PROVIDER = "provider"
 STEP_MODEL = "model"
+STEP_VOICE = "voice"
 STEP_RAG = "rag"
 STEP_SPEECH = "speech"
 STEP_TOOLS = "tools"
@@ -237,18 +765,326 @@ STEP_APPEARANCE = "appearance"
 STEP_PROTECT = "protect-keys"
 STEP_SUMMARY = "summary"
 
+STEP_TITLES: Mapping[str, str] = {
+    STEP_WELCOME: "Welcome",
+    STEP_PROVIDER: "Provider",
+    STEP_MODEL: "Model",
+    STEP_VOICE: "Voice",
+    STEP_RAG: "RAG",
+    STEP_SPEECH: "Speech",
+    STEP_TOOLS: "Tools",
+    STEP_NOTES: "Notes",
+    STEP_APPEARANCE: "Style",
+    STEP_PROTECT: "Protect",
+    STEP_SUMMARY: "Summary",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class SetupProgressItem:
+    """One row in the progress tracker for the resolved setup path."""
+
+    step_id: str
+    title: str
+    state: Literal["active", "complete", "upcoming"]
+
+
 # TASK-1301: Speech transcription joins the FULL track only, right after RAG
 # (both are optional model-setup steps) -- QUICK_TRACK stays byte-identical
 # on purpose, see AC#1.
 _FULL_TRACK = (
-    STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_RAG, STEP_SPEECH,
-    STEP_TOOLS, STEP_NOTES, STEP_APPEARANCE, STEP_PROTECT, STEP_SUMMARY,
+    STEP_WELCOME,
+    STEP_PROVIDER,
+    STEP_MODEL,
+    STEP_VOICE,
+    STEP_RAG,
+    STEP_SPEECH,
+    STEP_TOOLS,
+    STEP_NOTES,
+    STEP_APPEARANCE,
+    STEP_PROTECT,
+    STEP_SUMMARY,
 )
-_QUICK_TRACK = (STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_PROTECT, STEP_SUMMARY)
+_QUICK_TRACK = (
+    STEP_WELCOME,
+    STEP_PROVIDER,
+    STEP_MODEL,
+    STEP_VOICE,
+    STEP_PROTECT,
+    STEP_SUMMARY,
+)
+
+_SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
+    STEP_WELCOME: {"track": str},
+    STEP_PROVIDER: {"provider_key": str, "provider_value": str},
+    STEP_MODEL: {"model_id": str},
+    STEP_VOICE: {
+        "endpoint": str,
+        "authentication_mode": str,
+        "model_id": str,
+        "voice_id": str,
+        "response_format": str,
+        "speed": float,
+        "sample_text": str,
+        "use_as_default": bool,
+    },
+    STEP_RAG: {"embedding_model": str},
+    STEP_SPEECH: {},
+    STEP_TOOLS: {},
+    STEP_NOTES: {},
+    STEP_APPEARANCE: {"theme": str, "splash_card": str},
+    STEP_PROTECT: {"encryption_enabled": bool},
+    STEP_SUMMARY: {},
+}
+
+
+@dataclass(frozen=True, slots=True)
+class SetupDraft:
+    """Bounded, non-secret checkpoint for resuming first-run setup."""
+
+    version: int
+    track: str
+    active_step_id: str
+    values: Mapping[str, Mapping[str, object]]
+    resume_attempted: bool = False
+
+
+def _normalized_field_name(name: object) -> str:
+    if not isinstance(name, str):
+        return ""
+    with_word_boundaries = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    return re.sub(r"[^a-z0-9]+", "_", with_word_boundaries.casefold()).strip("_")
+
+
+def _contains_secret_field_name(name: object) -> bool:
+    normalized = _normalized_field_name(name)
+    return any(token in normalized for token in _SECRET_FIELD_TOKENS)
+
+
+def _canonical_setup_draft_size(payload: Mapping[str, object]) -> int | None:
+    try:
+        serialized = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return None
+    return len(serialized.encode("utf-8"))
+
+
+def _mapping_contains_secret_key(value: object, seen: set[int] | None = None) -> bool:
+    """Inspect nested mapping keys before applying the scalar allowlist."""
+
+    if not isinstance(value, Mapping):
+        return False
+    if seen is None:
+        seen = set()
+    identity = id(value)
+    if identity in seen:
+        return False
+    seen.add(identity)
+    for key, nested_value in value.items():
+        if _contains_secret_field_name(key):
+            return True
+        if _mapping_contains_secret_key(nested_value, seen):
+            return True
+    return False
+
+
+def _validated_setup_draft(
+    *,
+    version: object,
+    track: object,
+    active_step_id: object,
+    values: object,
+    resume_attempted: object,
+) -> SetupDraft | None:
+    if type(version) is not int or version != SETUP_DRAFT_VERSION:
+        return None
+    if track not in (TRACK_QUICK, TRACK_FULL):
+        return None
+    if not isinstance(active_step_id, str):
+        return None
+    allowed_steps = active_step_ids(str(track), key_entered=True)
+    if active_step_id not in allowed_steps:
+        return None
+    if not isinstance(resume_attempted, bool) or not isinstance(values, Mapping):
+        return None
+
+    field_count = 0
+    clean_values: dict[str, dict[str, object]] = {}
+    for step_id, step_values in values.items():
+        if not isinstance(step_id, str) or step_id not in _SETUP_DRAFT_FIELD_TYPES:
+            return None
+        if step_id not in allowed_steps or not isinstance(step_values, Mapping):
+            return None
+        allowed_fields = _SETUP_DRAFT_FIELD_TYPES[step_id]
+        clean_step: dict[str, object] = {}
+        for field_name, value in step_values.items():
+            field_count += 1
+            if field_count > _MAX_SETUP_DRAFT_FIELDS:
+                return None
+            if _contains_secret_field_name(field_name):
+                return None
+            if not isinstance(field_name, str) or field_name not in allowed_fields:
+                return None
+            if _mapping_contains_secret_key(value):
+                return None
+            expected_type = allowed_fields[field_name]
+            if expected_type is bool:
+                if not isinstance(value, bool):
+                    return None
+            elif not isinstance(value, expected_type) or isinstance(value, bool):
+                return None
+            if isinstance(value, float) and not math.isfinite(value):
+                return None
+            clean_step[field_name] = value
+        clean_values[step_id] = clean_step
+
+    payload = {
+        DRAFT_VERSION_KEY: version,
+        DRAFT_TRACK_KEY: track,
+        DRAFT_ACTIVE_STEP_KEY: active_step_id,
+        DRAFT_VALUES_KEY: clean_values,
+        DRAFT_RESUME_ATTEMPTED_KEY: resume_attempted,
+    }
+    size = _canonical_setup_draft_size(payload)
+    if size is None or size > _MAX_SETUP_DRAFT_BYTES:
+        return None
+    welcome_values = clean_values.get(STEP_WELCOME)
+    if welcome_values is not None and welcome_values.get("track") != track:
+        return None
+    return SetupDraft(
+        version=version,
+        track=str(track),
+        active_step_id=active_step_id,
+        values=clean_values,
+        resume_attempted=resume_attempted,
+    )
+
+
+def read_setup_draft(app_config: Mapping[str, object]) -> SetupDraft | None:
+    """Parse a setup checkpoint defensively; malformed drafts fail closed."""
+
+    try:
+        first_run = app_config.get(WIZARD_STATE_SECTION)
+        if not isinstance(first_run, Mapping):
+            return None
+        return _validated_setup_draft(
+            version=first_run.get(DRAFT_VERSION_KEY),
+            track=first_run.get(DRAFT_TRACK_KEY),
+            active_step_id=first_run.get(DRAFT_ACTIVE_STEP_KEY),
+            values=first_run.get(DRAFT_VALUES_KEY),
+            resume_attempted=first_run.get(DRAFT_RESUME_ATTEMPTED_KEY, False),
+        )
+    except Exception:
+        return None
+
+
+def setup_draft_checkpoint(
+    *,
+    track: str,
+    active_step_id: str,
+    values: Mapping[str, Mapping[str, object]],
+    resume_attempted: bool = False,
+) -> SetupDraft:
+    """Select allowlisted checkpoint fields from completed wizard-step data."""
+
+    clean_values: dict[str, dict[str, object]] = {}
+    allowed_steps = set(active_step_ids(track, key_entered=True))
+    for step_id, allowed_fields in _SETUP_DRAFT_FIELD_TYPES.items():
+        if step_id not in allowed_steps:
+            continue
+        raw_step = values.get(step_id)
+        if not isinstance(raw_step, Mapping):
+            continue
+        clean_step: dict[str, object] = {}
+        for field_name, expected_type in allowed_fields.items():
+            value = raw_step.get(field_name)
+            if expected_type is bool:
+                valid = isinstance(value, bool)
+            else:
+                valid = isinstance(value, expected_type) and not isinstance(value, bool)
+            if valid:
+                clean_step[field_name] = value
+        if clean_step:
+            clean_values[step_id] = clean_step
+
+    draft = _validated_setup_draft(
+        version=SETUP_DRAFT_VERSION,
+        track=track,
+        active_step_id=active_step_id,
+        values=clean_values,
+        resume_attempted=resume_attempted,
+    )
+    if draft is None:
+        raise ValueError("setup draft checkpoint is invalid")
+    return draft
+
+
+def build_setup_draft_mutation(
+    draft: SetupDraft | None,
+) -> tuple[dict[str, dict[str, object]], dict[str, tuple[str, ...]]]:
+    """Build the isolated first-run set/delete mutation for a checkpoint."""
+
+    if draft is None:
+        return {}, {WIZARD_STATE_SECTION: SETUP_DRAFT_KEYS}
+    if type(draft) is not SetupDraft:
+        raise TypeError("setup draft mutation requires SetupDraft")
+    validated = _validated_setup_draft(
+        version=draft.version,
+        track=draft.track,
+        active_step_id=draft.active_step_id,
+        values=draft.values,
+        resume_attempted=draft.resume_attempted,
+    )
+    if validated is None:
+        raise ValueError("setup draft is invalid")
+    return {
+        WIZARD_STATE_SECTION: {
+            DRAFT_VERSION_KEY: validated.version,
+            DRAFT_TRACK_KEY: validated.track,
+            DRAFT_ACTIVE_STEP_KEY: validated.active_step_id,
+            DRAFT_VALUES_KEY: {
+                key: dict(value) for key, value in validated.values.items()
+            },
+            DRAFT_RESUME_ATTEMPTED_KEY: validated.resume_attempted,
+        }
+    }, {}
+
+
+def setup_recovery_action(
+    app_config: Mapping[str, object], environ: Mapping[str, str]
+) -> Literal["offer", "prompt", "home", "none"]:
+    """Choose the single startup action for setup or recovery."""
+
+    if should_offer_wizard(app_config, environ):
+        return "offer"
+    if _wizard_flag(app_config, SETUP_COMPLETED_KEY):
+        return "none"
+    if not _wizard_flag(app_config, SETUP_STARTED_KEY):
+        return "none"
+    draft = read_setup_draft(app_config)
+    if draft is None:
+        return "none"
+    return "home" if draft.resume_attempted else "prompt"
+
 
 WIZARD_OWNED_SECTIONS = frozenset(
-    {"chat_defaults", "embedding_config", "tools", "notes", "general",
-     "splash_screen", "transcription", WIZARD_STATE_SECTION}
+    {
+        "chat_defaults",
+        "embedding_config",
+        "tools",
+        "notes",
+        "general",
+        "splash_screen",
+        "transcription",
+        "provider_setup.confirmed",
+        WIZARD_STATE_SECTION,
+    }
 )
 _API_SETTINGS_PREFIX = "api_settings."
 
@@ -264,6 +1100,33 @@ def active_step_ids(track: str, *, key_entered: bool) -> tuple[str, ...]:
     if key_entered:
         return base
     return tuple(step for step in base if step != STEP_PROTECT)
+
+
+def build_setup_progress(
+    active_ids: tuple[str, ...], current_index: int
+) -> tuple[SetupProgressItem, ...]:
+    """Project a resolved setup path into display-ready progress rows."""
+
+    unknown_ids = tuple(step_id for step_id in active_ids if step_id not in STEP_TITLES)
+    if unknown_ids:
+        raise ValueError(f"unknown setup step: {unknown_ids[0]}")
+    if not active_ids:
+        return ()
+    active_index = min(max(current_index, 0), len(active_ids) - 1)
+    return tuple(
+        SetupProgressItem(
+            step_id=step_id,
+            title=STEP_TITLES[step_id],
+            state=(
+                "complete"
+                if index < active_index
+                else "active"
+                if index == active_index
+                else "upcoming"
+            ),
+        )
+        for index, step_id in enumerate(active_ids)
+    )
 
 
 def stored_plaintext_key_present(app_config: Mapping[str, object]) -> bool:
@@ -290,7 +1153,9 @@ def stored_plaintext_key_present(app_config: Mapping[str, object]) -> bool:
     if not isinstance(api_settings, Mapping):
         return False
     for settings in api_settings.values():
-        if isinstance(settings, Mapping) and _is_real_secret(settings.get("api_key")):
+        if isinstance(settings, Mapping) and _is_real_provider_api_key(
+            settings.get("api_key")
+        ):
             return True
     return False
 
@@ -309,7 +1174,9 @@ def build_provider_commit(
     return {f"{_API_SETTINGS_PREFIX}{provider_key}": values}
 
 
-def build_model_commit(*, provider_value: str, model_id: str) -> dict[str, dict[str, Any]]:
+def build_model_commit(
+    *, provider_value: str, model_id: str
+) -> dict[str, dict[str, Any]]:
     """Mutation for the model step.
 
     Args:
@@ -398,30 +1265,6 @@ def tools_commit_delta(
         if bool(value) != bool(current_gates.get(key, False))
     }
 
-
-def build_notes_commit(
-    *, sync_directory: str | None = None, auto_sync_enabled: bool
-) -> dict[str, dict[str, Any]]:
-    """Mutation for the notes-sync step.
-
-    ``sync_directory`` is optional: omit it (leave as None) to commit only
-    the enabled flag -- e.g. an OFF-transition on re-run, where the
-    directory should survive untouched. ``save_settings_to_cli_config``
-    merges per-key within a section, so a dict missing "sync_directory"
-    never clobbers the persisted value; passing an empty string here would.
-
-    Args:
-        sync_directory: The notes-sync directory to persist, or None to
-            omit the key entirely (see above).
-        auto_sync_enabled: Whether notes sync should be turned on.
-
-    Returns:
-        The section/value mapping to persist under ``notes``.
-    """
-    values: dict[str, Any] = {"auto_sync_enabled": auto_sync_enabled}
-    if sync_directory is not None:
-        values["sync_directory"] = sync_directory
-    return {"notes": values}
 
 
 def build_appearance_commit(
@@ -539,7 +1382,9 @@ def commit_sections_allowed(section_values: Mapping[str, Mapping[Any, Any]]) -> 
     for section in section_values:
         if section in WIZARD_OWNED_SECTIONS:
             continue
-        if section.startswith(_API_SETTINGS_PREFIX) and len(section) > len(_API_SETTINGS_PREFIX):
+        if section.startswith(_API_SETTINGS_PREFIX) and len(section) > len(
+            _API_SETTINGS_PREFIX
+        ):
             continue
         return False
     return True
@@ -550,8 +1395,10 @@ class SecretPresence:
     """Whether a provider secret exists — never the secret itself."""
 
     configured: bool
+    inline_configured: bool = False
     env_var: str | None = None
     env_var_set: bool = False
+    env_var_declared: bool = False
 
 
 @dataclass(frozen=True)
@@ -560,8 +1407,6 @@ class WizardPrefill:
 
     provider_value: str = ""
     model_id: str = ""
-    sync_directory: str = ""
-    auto_sync_enabled: bool = False
     default_theme: str = ""
     tool_gates: tuple[tuple[str, bool], ...] = ()
     card_selection: str = ""
@@ -641,31 +1486,48 @@ def read_provider_secret_presence(
     """
     from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
 
-    settings = _section(_section(app_config, "api_settings"), provider_key)
+    settings = _first_run_provider_settings(app_config, provider_key)
+    credential_source = settings.get("credential_source")
+    explicit_source = (
+        credential_source.strip().lower()
+        if type(credential_source) is str
+        and credential_source.strip().lower()
+        in {"none", "stored", "environment"}
+        else None
+    )
     env_var_raw = settings.get("api_key_env_var")
+    env_var_declared = isinstance(env_var_raw, str) and bool(env_var_raw.strip())
     env_var = (
         env_var_raw.strip()
-        if isinstance(env_var_raw, str) and env_var_raw.strip()
+        if env_var_declared
         else default_api_key_env_var(provider_key)
     )
-    env_var_set = bool(env_var and environ.get(env_var))
-    inline = _is_real_secret(settings.get("api_key"))
+    env_var_set = bool(env_var and _is_real_provider_api_key(environ.get(env_var)))
+    inline = _is_real_provider_api_key(settings.get("api_key"))
+    if explicit_source == "none":
+        inline = False
+        env_var_set = False
+    elif explicit_source == "stored":
+        env_var_set = False
+    elif explicit_source == "environment":
+        inline = False
     return SecretPresence(
-        configured=inline or env_var_set, env_var=env_var, env_var_set=env_var_set
+        configured=inline or env_var_set,
+        inline_configured=inline,
+        env_var=env_var,
+        env_var_set=env_var_set,
+        env_var_declared=env_var_declared,
     )
 
 
 def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     chat_defaults = _section(app_config, "chat_defaults")
-    notes = _section(app_config, "notes")
     general = _section(app_config, "general")
     tools = _section(app_config, "tools")
     splash_screen = _section(app_config, "splash_screen")
     return WizardPrefill(
         provider_value=str(chat_defaults.get("provider") or ""),
         model_id=str(chat_defaults.get("model") or ""),
-        sync_directory=str(notes.get("sync_directory") or ""),
-        auto_sync_enabled=coerce_wizard_flag(notes.get("auto_sync_enabled")),
         default_theme=str(general.get("default_theme") or ""),
         tool_gates=tuple(
             (str(key), coerce_wizard_flag(value)) for key, value in tools.items()
@@ -719,12 +1581,17 @@ def build_summary_rows(
     # committed endpoint (the one-click "Use this server" path).
     provider_ok = provider_summary_configured(app_config, environ)
     tools_on = [key for key, value in prefill.tool_gates if value]
-    notes_on = prefill.auto_sync_enabled and bool(prefill.sync_directory)
-    encryption_on = coerce_wizard_flag(_section(app_config, "encryption").get("enabled"))
-    rag_model = str(_section(app_config, "embedding_config").get("default_model_id") or "")
+    encryption_on = coerce_wizard_flag(
+        _section(app_config, "encryption").get("enabled")
+    )
+    rag_model = str(
+        _section(app_config, "embedding_config").get("default_model_id") or ""
+    )
 
     if not rag_deps_installed:
-        rag_row = SummaryRow("RAG", ROW_DEFAULT, "optional — embeddings deps not installed")
+        rag_row = SummaryRow(
+            "RAG", ROW_DEFAULT, "optional — embeddings deps not installed"
+        )
     elif rag_model and rag_model != _TEMPLATE_DEFAULT_RAG_MODEL:
         rag_row = SummaryRow("RAG", ROW_CONFIGURED, f"embedding model: {rag_model}")
     elif rag_model:
@@ -781,9 +1648,13 @@ def build_summary_rows(
     )
 
     speech_prefill = read_speech_prefill(app_config)
-    speech_configured = speech_prefill.provider_id == routing_policy().parakeet_provider_id
+    speech_configured = (
+        speech_prefill.provider_id == routing_policy().parakeet_provider_id
+    )
     if not speech_configured:
-        speech_row = SummaryRow("Speech transcription", ROW_DEFAULT, "not set up (optional)")
+        speech_row = SummaryRow(
+            "Speech transcription", ROW_DEFAULT, "not set up (optional)"
+        )
     elif not speech_runtime_installed:
         # Review Important 4 residual: readiness must agree with the same
         # runtime probe the step itself gates on -- "files on disk" is not
@@ -826,9 +1697,9 @@ def build_summary_rows(
             f"{len(tools_on)} enabled" if tools_on else "all off (default)",
         ),
         SummaryRow(
-            "Notes sync",
-            ROW_CONFIGURED if notes_on else ROW_DEFAULT,
-            prefill.sync_directory if notes_on else "off",
+            "Notes folder sync",
+            ROW_DEFAULT,
+            "set up later in Library",
         ),
         SummaryRow(
             "Theme",

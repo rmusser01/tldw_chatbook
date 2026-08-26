@@ -13,6 +13,10 @@ import pytest
 from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widget import Widget
 from textual.widgets import Button, Input, Select, Static
 
@@ -112,7 +116,7 @@ class _FakeAppInstance:
         self.notifications.append((message, severity))
 
 
-class EvalsHarness(App):
+class EvalsHarness(ConsolidatedCSSApp):
     """Minimal Textual App hosting the real EvalsScreen against a real
     (``:memory:``) EvalsDB -- pushed via ``push_screen`` exactly like the
     real app's master shell routing pushes a destination screen, so

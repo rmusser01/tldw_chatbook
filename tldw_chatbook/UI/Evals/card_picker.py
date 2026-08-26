@@ -31,7 +31,14 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
+from textual.timer import Timer
 from textual.widgets import Button, Input, Static
+
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`). A full refresh removes
+#: and remounts up to `evals_state.py`'s ``_LIST_LIMIT`` (500) card rows,
+#: which should not happen on every keystroke (task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 
 class CardRow(Button):
@@ -118,6 +125,7 @@ class CardPicker(Vertical):
         self._cards = [dict(card) for card in cards]
         self._selected: set[int] = {int(cid) for cid in selected_ids}
         self._filter = ""
+        self._refresh_timer: Timer | None = None
 
     def selected_ids(self) -> tuple[int, ...]:
         """Selected card ids, in the order the cards were supplied.
@@ -200,11 +208,24 @@ class CardPicker(Vertical):
             return
         event.stop()
         self._filter = event.value
-        # `call_after_refresh`, not an immediate `await` here (this handler
-        # is sync): lets Textual finish processing the keystroke that
-        # triggered this `Changed` event (including the `Input`'s own
-        # cursor/value update) before the row list underneath it is torn
-        # down and remounted.
+        # Debounced (task-15476): with up to `_LIST_LIMIT` (500) cards, a
+        # full remove_children()+mount_all() of the row list on every
+        # keystroke is the exact defect this task fixes. `call_after_refresh`
+        # alone (the previous approach) only deferred one frame -- it still
+        # rebuilt on every keystroke, just slightly later. A 0.2 s timer that
+        # re-arms on each keystroke settles once typing pauses instead.
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+        self._refresh_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS, self._debounced_refresh_rows
+        )
+
+    def _debounced_refresh_rows(self) -> None:
+        self._refresh_timer = None
+        # `call_after_refresh`, not an immediate `await` here (this runs
+        # from a timer callback, not the Input's own Changed handler): lets
+        # Textual finish any in-flight layout pass before the row list
+        # underneath the search box is torn down and remounted.
         self.call_after_refresh(self._refresh_rows)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

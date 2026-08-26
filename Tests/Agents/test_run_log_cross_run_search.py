@@ -37,6 +37,9 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.test_agent_service import FleetChat, verbatim
+from Tests.Agents.conftest import join_fleet_children
+
 
 def _fence(name, args):
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
@@ -351,19 +354,24 @@ def test_subagent_cannot_call_search_run_log_with_conversation_scope(
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
-    calls = []
-    script = [
-        _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
-        _svc_fence(
-            SEARCH_RUN_LOG_TOOL_NAME, {"contains": "x", "scope": "conversation"}
-        ),  # child tries cross-run reach
-        {"choices": [{"message": {"content": "child gave up"}}]},
-        {"choices": [{"message": {"content": "final"}}]},
-    ]
-
-    def chat(**kwargs):
-        calls.append(kwargs)
-        return script.pop(0)
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- one ordered queue is no longer deterministic. Addressed
+    # per agent instead; the replies themselves are unchanged.
+    chat = FleetChat(
+        [
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
+            {"choices": [{"message": {"content": "final"}}]},
+        ],
+        {
+            "native task": [
+                _svc_fence(
+                    SEARCH_RUN_LOG_TOOL_NAME, {"contains": "x", "scope": "conversation"}
+                ),  # child tries cross-run reach
+                {"choices": [{"message": {"content": "child gave up"}}]},
+            ]
+        },
+        reply=verbatim,
+    )
 
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(
@@ -377,11 +385,17 @@ def test_subagent_cannot_call_search_run_log_with_conversation_scope(
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
     # (a) schema gate: the child never sees search_run_log at all (scope is
-    # just an argument on an undisclosed tool).
-    child_system_prompt = calls[1]["messages_payload"][0]["content"]
+    # just an argument on an undisclosed tool). Addressed by task text
+    # rather than by `calls[1]`: under the fleet the child's call is no
+    # longer guaranteed to be the second chat_call overall, but it is still
+    # THE call this assertion always meant.
+    child_system_prompt = chat.child_calls["native task"][0]["messages_payload"][0][
+        "content"
+    ]
     assert SEARCH_RUN_LOG_TOOL_NAME not in child_system_prompt
 
     # (b) dispatch gate: the child's call, made regardless of (a), is

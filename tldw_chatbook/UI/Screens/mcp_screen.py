@@ -65,7 +65,7 @@ class MCPScreen(BaseAppScreen):
         Binding("t", "mcp_test_tool", "Test tool", show=False),
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     Button.mcp-mode-chip {
         width: auto;
         /* min-width kept in lockstep with the higher-specificity app-bundle
@@ -254,7 +254,8 @@ class MCPScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen (e.g. after a pushed overlay pops)."""
         self._register_footer_shortcuts()
-        # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
+        # Textual's MRO dispatch also invokes BaseAppScreen's shared reconciliation;
+        # this handler extends that resume event with MCP-owned footer state.
 
     def on_screen_suspend(self) -> None:
         """Called when another screen is pushed on top of this one."""

@@ -27,11 +27,14 @@ Two ways, both inside the Library screen (**Ctrl+3** — see
 
 Top to bottom on the main canvas:
 
-- **"Library Search/RAG"** — the canvas title.
-- **Query row** — the **"mode: Search ▸"** button (click to cycle to
-  "mode: RAG Answer ▸" and back), the query box ("Ask or search Library
-  sources"), and **Run** (reads "Searching…" while a search is in flight).
-  A one-line status sits underneath.
+- **"Search / RAG"** — the canvas title (task-2859: dropped the redundant
+  "Library " prefix and now matches the rail row's own "Search / RAG"
+  spacing; it used to read "Library Search/RAG").
+- **Query row** — the **"mode: ✓ Search ⇄ RAG Answer"** toggle (both modes
+  are on the label with ✓ on the active one; one click flips to the other),
+  the query box ("Ask or search Library sources"), and **Run** (reads
+  "Searching…" while a search is in flight). A one-line status sits
+  underneath.
 - **"Sources"** — the scope block: a "Scope: …" summary line (reads "Scope:
   all local sources" when every available source is selected, otherwise the
   selected sources followed by what's off, e.g. "Scope: Notes, Conversations
@@ -43,10 +46,19 @@ Top to bottom on the main canvas:
   evidence rows. Nothing renders here in Search mode, or before a RAG
   Answer query has run (see [The generated answer](#the-generated-answer)
   below).
-- **"Evidence · top 5 per source"** (Search mode) / **"Evidence · top 5"**
+- **"Evidence · top 15 per source"** (Search mode) / **"Evidence · top 15"**
   (RAG Answer mode) — the result rows (anatomy below). RAG Answer mode
   drops "per source" because it runs one merged semantic query, not one
-  query per source the way Search mode does.
+  query per source the way Search mode does. The number is your active RAG
+  profile's result count, not a fixed 5 — see
+  [How deep the search goes](#how-deep-the-search-goes) below.
+- **"N results for 'query'."** (task-2859) — a headline right above the
+  evidence cards once results land, naming the count actually on screen
+  and the query that produced it. Absent while there are no results yet
+  (empty state, in-flight search, or a recovery message covers that
+  instead), and it tracks whichever rows a source-scope toggle currently
+  shows — unlike "Evidence · top N" above it, which stays fixed across a
+  toggle.
 - **"Recent searches"** — a collapsible fold of your recent queries.
 
 ## Features & controls
@@ -60,10 +72,11 @@ source." Those are quiet nudges, not errors. Real failures are louder — a
 **"Blocked | <reason>"** callout plus a recovery block spelling out Why /
 Next / Recovery / Owner.
 
-The **"mode: … ▸"** button cycles between the two modes; switching resets
-the current results. Its tooltip names which mode a press switches *to*
-and, for RAG Answer, that it's the paid one: "Next: RAG Answer — calls a
-paid provider." / "Next: Search — stays local." Once you're in RAG Answer
+The **mode** toggle carries both modes on its label — "mode: ✓ Search ⇄
+RAG Answer" — with ✓ marking the active one; a single press flips to the
+other mode and resets the current results. Its tooltip names which mode a
+press switches *to* and, for RAG Answer, that it's the paid one: "Next:
+RAG Answer — calls a paid provider." / "Next: Search — stays local." Once you're in RAG Answer
 mode with a provider configured, the query row's status line (silent in
 Search mode) states the same fact before you press Run: "RAG Answer sends
 your question and the evidence to \<provider>. Search stays local." — a
@@ -71,7 +84,9 @@ statement, not a confirmation gate; nothing blocks Run because of it.
 
 - **Search** — keyword matching over your sources; works with nothing extra
   installed.
-- **RAG Answer** — semantic retrieval. If embeddings support isn't
+- **RAG Answer** — retrieval driven by your active RAG profile (see
+  [Retrieval mode follows your RAG profile](#retrieval-mode-follows-your-rag-profile)
+  below), then a generated answer. If embeddings support isn't
   installed, the run blocks as "RAG unavailable" with the next step
   `Install RAG support: pip install "tldw_chatbook[embeddings_rag]", then
   restart, or switch mode to Search.` and the recovery pointer
@@ -79,6 +94,92 @@ statement, not a confirmation gate; nothing blocks Run because of it.
   "Index empty" — "The semantic index has no content yet" — with the
   recovery "Ingest content to index it automatically, run a semantic index
   backfill, or switch mode to Search".
+
+### Retrieval mode follows your RAG profile
+
+RAG Answer's retrieval step is no longer fixed to "always semantic" — it
+follows whichever **search mode** your active RAG profile
+([Settings ▸ RAG](../settings/rag.md)) is set to:
+
+- **Plain keyword** profiles (e.g. the built-in "BM25 Only") route the
+  query through the same keyword search Search mode uses, honestly
+  labeled — no vector index required, and no `match: strong`-style
+  similarity band on the resulting rows (they read `| keyword match`
+  instead — see [Evidence rows](#evidence-rows) below).
+- **Semantic** profiles run vector retrieval, same as before.
+- **Hybrid** profiles blend keyword and vector retrieval whenever at least
+  one **keyword-indexed source** is selected — which is now all four of
+  Media, Notes, Conversations and Prompts. A query narrowed by a RAG scope
+  stays on the hybrid path: the scope is pushed into *both* legs, so
+  keyword matches from inside your scope reach the results and nothing from
+  outside it can. (A scope can only name media and notes, so an active
+  scope excludes conversations and prompts from retrieval entirely rather
+  than searching them unrestricted.)
+- **Prompts are keyword-only.** Nothing builds a vector index over your
+  saved prompts, so a prompt reaches hybrid results through the keyword leg
+  alone. In practice that means prompts answer *keyword-shaped* queries —
+  the words you type have to appear in the prompt's name or body.
+  **Two things soften that, and it is worth knowing which is which
+  (2026-08-13).** The keyword leg first asks for **every** word you typed,
+  function words included. When a source comes back with nothing, it asks a
+  second time — dropping the common function words ("the", "a", "for",
+  "about", "of", …) *and* treating each remaining word as the **start** of a
+  word rather than the whole of it. So "saved prompt for chasing a supplier
+  **about** a late order" finds a prompt whose text never contains "about",
+  and "watchlist **brief**" now finds a page that only ever says
+  "briefing". **The widening goes one way only:** typing `briefings` will
+  not find "briefing", and every *content* word you type must still match
+  something — as a whole word or as the beginning of one. A long
+  natural-language question that would find a note by meaning can therefore
+  still miss a prompt. If a prompt you know exists is not coming back, drop
+  to the distinctive nouns from its name or body, and prefer the shorter
+  form of a word to the longer one.
+
+  (This is the whole keyword leg's behaviour, not a prompts-only rule — it
+  is just that prompts have no vector leg to cover for it, so prompts are
+  where you notice.)
+
+A quiet one-line disclosure can appear above the evidence rows,
+alongside the "No strong semantic matches" / "Semantic search found
+nothing from…" lines described below, when the route taken is worth
+naming: `Profile 'BM25 Only': keyword search (no vectors).`,
+`No keyword leg for the selected sources — semantic only.`, or
+`Semantic leg empty — keyword-only results.` (shown when a hybrid
+profile's vector leg came back empty but its keyword leg still found
+rows — the "Index empty" recovery state is withheld in that case, since
+the index genuinely isn't empty).
+
+RAG Answer mode still needs embeddings support installed regardless of
+which mode the active profile resolves to, and generating the answer
+itself still calls your configured LLM provider either way — only the
+*retrieval* step's behavior depends on the profile.
+
+### How deep the search goes
+
+The Evidence heading names the depth — **"Evidence · top 15"** — and that
+number is your active RAG profile's **result count**
+([Settings ▸ RAG](../settings/rag.md), the **"Default results"** field),
+the same setting the Console's Library RAG chip already followed. On the
+shipped default profile ("Hybrid Basic") it is 15; "Fast Search" and "Long
+Context" ship 5, "High Accuracy" and "BM25 Only" ship 20. Change the
+profile — or that field — and the next search on this canvas runs at the
+new depth; no restart. (Built-in profiles are read-only, so editing the
+number means cloning one first, which Settings ▸ RAG says on the spot.)
+
+Two details worth knowing:
+
+- In **Search** (keyword) mode the count is *per selected source*, so four
+  selected sources can produce up to four times as many rows; **RAG
+  Answer** mode merges one query across sources and caps the total. That
+  is the whole reason the heading says "per source" in one mode and not the
+  other.
+- Depths above 50 are trimmed to 50 on this canvas. Nothing stops you
+  setting a profile to 100 for other surfaces; the evidence list just
+  stops there.
+
+A deep list is a scrolling list: the evidence region scrolls, and the
+"N results for '…'" headline directly above the rows always names how many
+are actually on screen right now.
 
 ### Sources scope
 
@@ -98,6 +199,52 @@ loading (right after landing on this canvas, or after a count lookup
 fails) filtering is suspended, so rows are never wrongly hidden before
 real counts arrive — the toggle strip and the run gate read the same
 either way.
+
+### Older-engine chunks: the report line and Re-chunk
+
+Under the source toggles, the panel reports how much of your Library was
+chunked by the pre-parity engine: **"Chunked by an older engine: N items."**
+The line (and everything in this section) appears only when such items
+actually exist — a fully migrated Library shows nothing at all, rather
+than a zero. Beside the line sits **"Re-chunk older-engine items"**,
+which re-chunks exactly those items through the current template-aware
+path: each item is re-chunked honoring **its own stored template choice**
+(the one picked at import, or the `[chunking] default_template` config
+fallback, or plain options), the old chunk rows are replaced in one
+transaction, and the item is force-reindexed into the semantic index —
+the stale vector document is deleted by its deterministic id first, so
+search serves the new chunk text, and the owning service's query cache is
+cleared. When the run lands, a summary line states the outcome honestly:
+**"N re-chunked, M skipped, K failed"** plus any notes (for example "…
+re-index skipped (semantic index unavailable)" when no embeddings index is
+configured) — never a bare "done". The reported count drops by exactly
+the number re-chunked; skipped and failed items keep their older-engine
+chunks.
+
+Details worth knowing before you press:
+
+- **Skips are honest, not silent.** An item whose source text is empty or
+  whose stored template no longer resolves is *skipped* and counted —
+  never silently re-chunked with different settings. Genuine errors (a
+  chunker crash, a database failure) are per-item *failures* that never
+  abort the rest of the batch.
+- **Re-chunk and index backfill refuse to overlap.** While a RAG index
+  backfill (Settings ▸ RAG) is running, the press is refused with a
+  notice — and a backfill is likewise refused while a re-chunk runs.
+  Neither cancels the other; wait for one to finish, then run the other.
+- **An interrupted run loses nothing.** The re-index step marks the item
+  as needing re-indexing *before* adding the new vector document, so a
+  crash in between leaves the item re-indexable — the next backfill
+  restores it to search rather than leaving it permanently absent.
+- **Offset-basis caveat for re-chunked items.** When the governing
+  template runs a preprocessing step (normalizing whitespace, cleaning
+  markdown), the re-chunked rows' start/end offsets count into that
+  *transformed* text, not necessarily the stored source — the same caveat
+  as template imports (see [Import &
+  export](import-and-export.md)). Each chunk's metadata names the basis
+  it used (`offset_basis`: "source" when nothing rewrote the text,
+  otherwise the preprocessing operation), so navigation and citation
+  consumers can check that one key instead of guessing.
 
 ### The generated answer
 
@@ -181,10 +328,40 @@ Console](#sending-evidence-to-console) below.
 Each hit is one block:
 
 - **Title** — numbered, e.g. "1. g2_demo_article", with a match band
-  appended when the row carries a score: `| match: strong` (≥ 0.5),
-  `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the weak band
-  keeps the raw number so you can see how weak. Keyword ("Search") mode
-  rows carry no score, so nothing is appended.
+  appended when the row carries a similarity score: `| match: strong`
+  (≥ 0.5), `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the
+  weak band keeps the raw number so you can see how weak. Keyword
+  ("Search") mode rows carry no score, so nothing is appended.
+
+  The band is a statement about *semantic similarity*, so rows scored
+  another way say what they are instead of borrowing a band they don't
+  fit:
+
+  - Hybrid profiles (Hybrid Basic / Hybrid Full) blend the keyword and
+    vector rankings into a fused score that maxes out near 0.17 — still far
+    below the weak boundary. Those rows are banded on the vector leg's own
+    similarity, so a strong hybrid hit reads `| match: strong`, exactly as
+    the same hit would in a semantic profile.
+  - A hybrid row that only the keyword leg found has no similarity at all
+    and reads `| keyword match`. You see these in two situations. The
+    obvious one: the vector leg came back short or empty — for instance the
+    selected sources have nothing in the vector index yet. The one that
+    matters more: **a document the keyword leg matched exactly and the
+    vector leg never returned can now take a slot in a full result list**,
+    which is the point of running a hybrid profile at all. It normally
+    lands at the bottom of the list, below the rows the vector leg ranked,
+    so a hybrid result reads as "the semantically closest documents, plus
+    anything that matched your words literally". A document both legs found
+    is unaffected: it fuses into one row and is ranked on the strength of
+    both.
+  - A reranked row reads `| reranked`: reranker scores are on the
+    reranking model's own scale, not a 0-1 similarity, so the band is
+    withheld rather than guessed.
+
+  The "No strong semantic matches — results below are weak." line above
+  the list follows the same rule: only rows carrying a real similarity can
+  trigger it, so keyword-match and reranked rows neither cause it nor
+  suppress it.
 - **Badge line** — the source type first (e.g. "Media"), then a workspace
   name when it isn't "all workspaces", a citation count ("2 citations")
   when the hit carries citations, and "excluded from context" when the row
@@ -202,6 +379,23 @@ Each hit is one block:
   **Select evidence**. On a selected row the button reads **"Selected
   evidence"** and an inline **"Use in Console"** button appears beside it.
 
+**Row order in Search mode: sources take turns.** When a query matches more
+than one source, the list interleaves by rank — each source's best hit, then
+each source's second-best, and so on — rather than listing all notes, then all
+media, then all conversations, then all prompts. Nothing is dropped and the
+count is unchanged; only the order differs, and "Evidence · top N per source"
+still means exactly what it says (each source is still capped at N on its own).
+Notes break ties at equal rank, so a note still holds row 1 whenever notes
+matched at all; what changed is that a media or conversation hit no longer
+waits behind *every* note. Concretely, on a library where twelve notes mention
+your words in passing and one media document is squarely about them, that
+document is now row 2 instead of row 13. **Which modes this reaches:** the
+reorder belongs to the plain (keyword) retrieval path, so it applies to Search
+mode always, and to RAG Answer mode whenever your active profile's search mode
+is plain — the shipped "BM25 Only" profile is exactly that case. Hybrid and
+semantic profiles are untouched: their retrieval runs the engine's own leg,
+which has ranked across sources since well before this change.
+
 Before any search the region shows "No evidence yet. Run Search/RAG to
 populate results." A search that runs cleanly but finds nothing is a quiet
 two-line note, not an error: "No evidence matched '\<your query>'." then
@@ -216,9 +410,27 @@ actually touch one of your selected sources (or every hit's match is weak),
 a quiet line appears above the rows, e.g. "Semantic search found nothing
 from: Notes, Conversations." or "No strong semantic matches — results
 below are weak." — telling you *why* a source is missing instead of leaving
-you to guess whether it has nothing relevant or was never searched. Search
-mode never shows this line; its keyword leg always queries every selected
-source.
+you to guess whether it has nothing relevant or was never searched. Under a
+**hybrid** profile a source can also be on screen purely from the keyword
+leg; that reads "Keyword matches only from: Notes." rather than claiming
+the search found nothing from a source whose rows you are looking at.
+Prompts never appear in any of these lines, in either direction: the line
+is a statement about the *semantic* leg, and prompts are outside it
+entirely, so saying "semantic search found nothing from Prompts" would
+blame a search that was never run. Search mode never shows this line; its
+keyword leg always queries every selected source.
+
+The same line also carries the one disclosure a reranking-enabled profile
+owes you. Reranking never fails a search — if the reranker cannot run, or
+runs and silently fails to score some rows, the unreranked results come
+back anyway — so without a line saying so the screen looks identical to a
+successful rerank. When it happens you get exactly one sentence, appended
+last: "Reranking was skipped (\<reason>) — these results are in their
+original retrieval order." if the attempt raised (a dead credential, a
+provider outage), or "Reranking was degraded (3/5 scorings failed) — …" if
+it returned having scored only some of them. Rows the reranker never
+actually scored also keep their original score band rather than claiming
+`| reranked`.
 
 ### Recent searches
 
@@ -307,10 +519,18 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 ## Quirks & troubleshooting
 
-- **"top 5" is fixed here.** The tunable top-k in Settings ▸ RAG does not
-  change this canvas. "Per source" only appears in Search mode — RAG
-  Answer mode runs one merged semantic query across sources, not one per
-  source, so the heading doesn't claim it.
+- **The evidence window follows your active profile.** "Evidence · top N
+  per source" reads the active RAG profile's **Default results** setting
+  (Settings ▸ RAG), clamped at 50 — it falls back to a fixed top 5 only
+  when no profile resolves. "Per source" only appears in Search mode — RAG
+  Answer mode runs one merged query across sources (semantic, keyword, or
+  hybrid depending on the active profile — see [Retrieval mode follows
+  your RAG profile](#retrieval-mode-follows-your-rag-profile)), not one
+  per source, so the heading doesn't claim it.
+- **Which retrieval mode RAG Answer actually uses depends on your active
+  profile**, not a fixed "always semantic" assumption — see [Retrieval
+  mode follows your RAG profile](#retrieval-mode-follows-your-rag-profile)
+  above.
 - **The scope summary line tracks the toggles.** Deselecting a source (e.g.
   turning Media off) updates "Scope: …" to name what's still in scope and
   what's off — it's a live summary of the ✓/○ toggles below it, not a fixed
@@ -357,4 +577,232 @@ check uses — not just an endpoint name. Verified against 42b28089f —
 2026-08-06 (task-2852: live check on a fresh profile — "Use in Console"
 on a locked Console now warns before navigating and stages a visible
 receipt on the "Get started" card; a configured Console still lands on
-the unchanged staged-evidence strip).*
+the unchanged staged-evidence strip). Verified against d6b6a738f —
+2026-08-07 (RAG-port P0 live walkthrough on a scratch profile holding a
+copy of the real Library DBs, real provider): under the default Hybrid
+Basic profile a RAG Answer run returned rows banded on real similarity —
+"match: moderate" for the two best and "match: weak (0.18)" / "weak
+(0.17)" below them — not the old wall of "weak (0.02)" that banding a
+rank-fused score produced. Under BM25 Only the same panel disclosed
+"Profile 'BM25 Only': keyword search (no vectors)." and returned both a
+note and a **media** row, the keyword leg that previously could not
+return a row at all. Under Hybrid Full with no matching index the run
+disclosed "Semantic search found nothing from: Notes, Conversations.
+Semantic leg empty — keyword-only results." and rendered its FTS-leg row
+as "keyword match" rather than inventing a similarity. Turning Media off
+routed the run to semantic and said so: "Media excluded — semantic
+only." Every one of those route notes rendered on zero-row outcomes too.*
+
+> **Superseded in part (TASK-3996).** The last observation above no longer
+> holds: the keyword leg now covers notes and conversations as well as
+> media, so turning Media off while Notes or Conversations stay selected
+> runs the fused hybrid path instead of falling back to semantic, and the
+> "Media excluded — semantic only." disclosure no longer exists. Two later
+> changes finished the job: TASK-15020/B1 pushed scope allowlists into both
+> legs, so a scoped query stays on the hybrid path, and TASK-15020/B2 gave
+> the keyword leg a prompts sub-leg, so a **Prompts-only** selection runs
+> hybrid too. No combination of the four source toggles now falls back to
+> semantic-only, and the "No keyword leg for the selected sources —
+> semantic only." disclosure survives only for a selection with nothing in
+> it this build recognizes. The rest of that walkthrough stands.
+
+*Verified against ec1ed811e — 2026-08-09 (hybrid-fusion cluster live check,
+scratch profile holding a copy of the real Library DBs and vector index,
+real provider): with **Media deselected** and Notes + Conversations in
+scope — the case that used to fall back to semantic — RAG Answer on the
+default Hybrid Basic profile returned a **note** row and a **conversation**
+row, both banded `keyword match`, for the query "worktree UAT database".
+Those three tokens appear in the note but never adjacently, so the query
+matched nothing at all before the per-token FTS quoting fix, and neither
+source type was reachable by the engine's keyword leg before it grew its
+notes and conversations sub-legs. The vector index on that profile holds
+media chunks only, which is why the keyword-only rows survived to be shown
+— at the time, a full vector leg would still have crowded them out.*
+
+*Verified against 0e7b3b564 — 2026-08-10 (TASK-4110 fusion-weighting live
+check): the keyword-only rescue described under
+[Evidence rows](#evidence-rows), seen in the real UI. Scratch profile
+holding a copy of the real Library DBs and vector index, **plus 60 real
+documentation files ingested through the app's own indexing path** — the
+untouched library had four indexed documents, too few for the vector leg to
+fill a result list, and a keyword-only row appearing in that situation
+proves nothing. On the resulting 64-document library, default Hybrid Basic
+profile, Library Search/RAG at its default top-5: the query "drafted
+expert" (two words that occur literally in `Docs/User_Guide/settings.md`
+and in no other document, and that vector retrieval never returns) placed
+that page at position **5, banded `keyword match`**, with positions 1-4
+holding the same four `match: moderate` vector rows as before. Re-running
+the identical query on the identical library with the fusion constant
+reverted to its previous value put an ordinary vector row
+(`Docs/User_Guide/index.md | match: moderate`) in that slot and the
+settings page nowhere in the list. Ordinary semantic queries were unharmed:
+"how do I import a PDF into the library" ranked
+`library/import-and-export.md` first, and "change the color theme and
+appearance" returned a byte-identical list under both constants — the
+weighting change moves the bottom of the list, not the ranking above it.*
+
+*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
+(task-4023 AC#6: running a query scrolls the Evidence region into view at
+run start and again when results land, so Run visibly does something even
+when the configuration region fills the fold; the rail search box and the
+canvas query box now mirror each other as you type — one query, two
+views of it; the mode button reads "mode: Search ⇄".)*
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
+(task-14902: the mode control stays a one-press toggle — a genuine
+two-state flip earns its single press — but its full option set moved
+onto the label: "mode: ✓ Search ⇄ RAG Answer", ✓ marking the active mode,
+so the option space is on screen instead of only in the tooltip.)*
+*Verified against feat/rag-p2a-instrument-renewal @ 08c9fe294 — 2026-08-11
+(TASK-15020 live check; scratch profile holding a copy of the real Library
+DBs and vector index — 453 vectors, 4 media — plus 24 of this repo's own
+User Guide pages seeded as notes and 3 prompts, because the untouched
+library had 8 notes and no prompts, too little to tell a 5-deep list from
+a 15-deep one or to have a prompt to find at all).*
+
+*Verified against fix/rag-keyword-leg-match @ 2558f7844 — 2026-08-12
+(TASK-15400, the function-word change in "Prompts are keyword-only" above).
+**What was verified in the running app:** a scratch profile (`TLDW_CONFIG_PATH`
+plus its own `[paths] data_dir`, `lsof`-confirmed to hold no handle under the
+real profile, real config byte-identical before and after) with three prompts
+written through the app's own `add_prompt`, and two RAG profiles differing in
+exactly one value — the keyword leg's MATCH construction. Library ▸ Search /
+RAG listed **"Prompts (3)"** and offered them as a selected source, and
+switching the mode control to **"mode: Search ⇄ ✓ RAG Answer"** started a run
+against the hybrid profile. **What was NOT verified:** that run did not
+finish — the first hybrid query in a fresh profile sat on "searching ·
+Prompts…" at 98% CPU for over four minutes while the embedding stack came up,
+so no Evidence row was ever seen on screen and the retrieval claim below does
+not rest on a screenshot. **What the claim does rest on:** the same query, on
+the same app-written prompts database, through the engine's own MATCH builder
+under those two profiles — `"saved" "prompt" "for" "chasing" "a" "supplier"
+"about" "a" "late" "order"` returned **0 rows**, and
+`"saved" "prompt" "chasing" "supplier" "late" "order"` returned **1** — the
+"Saved prompt: chasing a late order" row. Note that the plain **Search** mode
+of the same screen is a different code path (the Library's four-seam keyword
+search) and is unchanged by this: it still requires every typed word.*
+
+*Verified against fix/rag-merge-interleave @ db73f0953 — 2026-08-13
+(TASK-15700, the prefix-fallback change in "Prompts are keyword-only" above).
+**Scratch profile** with its own `[paths] data_dir`, `HOME`/`XDG_*` all
+redirected, the model cache read-only and `HF_HUB_OFFLINE=1`; isolation
+confirmed at the running PID (`lsof`: **0** handles under the real profile,
+64 under the scratch) and the real `config.toml` byte-identical before and
+after. The library was built through the app's own paths — **36 of this
+repo's User Guide pages written with `add_note` and indexed with
+`index_entries`** — and the app listed them as "Notes (36)", offered them as
+a selected source, and started a run after the mode control was switched to
+"mode: Search ⇄ ✓ RAG Answer". **What was NOT verified:** that run did not
+finish. The first RAG Answer query on a fresh profile sat on "searching ·
+Notes…" at ~98% CPU for **eleven minutes** without rendering an Evidence row
+— the same stall the 2026-08-12 check hit at four minutes, now filed as
+TASK-15810 (a CPU sample puts the spin inside the Python interpreter, not in
+model loading, so the old "the embedding stack came up" attribution above is
+not established). No Evidence row was seen on screen. **What the claims DO
+rest on:** the same app-written notes and the same app-written vector index,
+through the engine's own hybrid search, two arms one config value apart:*
+
+- *"how do I schedule a watchlist brief" — the shipped `and_then_prefix`
+  builds `'"how" "do" "I" "schedule" "a" "watchlist" "brief"'` and, that
+  returning nothing, `'"schedule"* "watchlist"* "brief"*'`: the keyword leg
+  returns **1 row**, `watchlists.md`, stamped `prefix`. The previous default
+  builds `'"schedule" "watchlist" "brief"'` and its leg returns **0 rows** —
+  the page says "briefing", never "brief". Fused, the page's score rises
+  0.1167 → **0.1667** (it becomes a keyword+vector row); its rank does not
+  move, because the vector leg already had it first.*
+- *"what does the anyone brief do" — a query whose target the vector leg
+  misses entirely. Shipped: `watchlists.md` sits in the fused list at **rank
+  7 of 13**. Previous default: **absent**, 12 rows. That pair of lists is
+  the arc's claim.*
+- *Control, "how do I change the color theme and appearance": both arms
+  return the **same 15 rows, same order, same scores**, and the keyword leg
+  answers from its AND primary under both — the change does not touch a
+  query whose words are all present.*
+
+*Honest bound on all three: on a 36-page library of real documentation the
+vector leg answers nearly everything, so the shipped construction's gain
+shows up as a keyword row and a score rather than as a reordering. That is
+exactly what the harness predicted (0 of 105 gated metrics moved); the gain
+is leg-level and matters where the vector leg is blind, absent or scoped
+away.*
+
+- ***Depth follows the profile, both ways.*** On the shipped default
+  profile the Evidence heading read **"Evidence · top 15 per source"** and
+  the keyword query "settings" returned **16 results** — its 15-note
+  per-source cap plus one conversation — with the list scrolling normally
+  through all 16 cards. Cloning that profile, setting the clone's **Default
+  results** to 5 in Settings ▸ RAG (one constant apart, nothing else
+  changed) and re-running the *same query on the same data* gave
+  **"Evidence · top 5 per source"** and **6 results**, with no restart. Both
+  numbers came from the profile; neither is reachable from any control on
+  the canvas, which has none.
+- ***A scoped hybrid query keeps its keyword leg.*** With a Console RAG
+  scope narrowed to a single note (`Scope: 1`) and the hybrid profile
+  active, "zircaloy flange torque" staged that note as evidence — a note
+  seeded after the vector index was copied and never indexed during the
+  session, so the keyword leg is what produced it, and the pre-B1 scoped
+  divert to semantic-only could not have. No "semantic only" text appeared
+  anywhere on that screen.
+- ***A prompt can now be found.*** In RAG Answer mode on the hybrid
+  profile, "shift log summary supervisor" returned the saved prompt *Shift
+  log summary for a supervisor* as evidence row 4, typed `prompt` and
+  banded **`| keyword match`** — the first time a prompt has appeared in
+  these results at all.
+
+*Verified against `feat/rag-3502-reranker-followups` — 2026-08-16
+(TASK-3502 note-(a), the reranking-disclosure sentence on the Evidence
+region's quiet note line — the first UI consumer of tags the engine had
+been writing with nothing reading them). Verified by tests, not a live
+walkthrough: the tag is traced end to end from the engine's `SearchResult`
+metadata onto the panel's row provenance
+(`Tests/Library/test_library_local_rag_search_service.py`), and both
+sentences plus an untagged control are asserted on the rendered
+`#library-rag-coverage-note` Static
+(`Tests/UI/test_product_maturity_gate16_library_search_rag.py`).*
+
+*Verified against fix/rag-four-seam-cross-ranking @ 6af4ea3bc — 2026-08-14
+(TASK-16071, the "Row order in Search mode" paragraph under
+[Evidence rows](#evidence-rows)). **Scratch profile** with its own
+`[paths] data_dir`, `HOME`/`XDG_*` redirected and `HF_HUB_OFFLINE=1`;
+isolation confirmed at the running PID (`lsof`: **0** handles under the real
+profile, 52 under the scratch) and the real `config.toml` byte-identical
+before and after. The library was built through the app's own writers — 12
+shift-log notes that mention "kestrel gearbox inspection" in passing, one
+media document that IS the inspection manual, and one conversation about
+scheduling it — because a real library rarely holds one query matching
+several notes AND a media item AND a conversation, and without that
+precondition this change has nothing to show. Library ▸ Search / RAG in
+**Search** mode on the default profile, heading "Evidence · top 15 per
+source" and **14 results** in both arms, same data, one code constant apart:*
+
+- *Shipped merge: **1.** Shift log 01 (note), **2. Kestrel gearbox inspection
+  manual** (Media), **3. Maintenance: kestrel gearbox inspection scheduling**
+  (conversation), then shift logs 02-12 filling rows 4-14.*
+- *The previous fixed-order concatenation, restored in the same session for
+  the comparison: shift logs 01-12 at rows **1-12**, the media manual at
+  **13**, the conversation at **14**.*
+
+*So the document the query is actually about moved from row 13 to row 2 on
+identical data, and the row count did not change (nothing is truncated here).
+**What was NOT exercised:** RAG Answer mode on a plain profile, which inherits
+this same reorder and was not run live (only Search mode was) — so the
+TASK-15810 first-query stall, which belongs to the embedding path, was never in
+play; the keyword-only Search run had its full list on screen at the first
+capture after Enter, in both arms. Hybrid and semantic profiles are untouched
+by the change rather than merely unexercised: their retrieval never enters this
+merge.*
+
+*Verified against feat/chunking-template-parity — 2026-08-21
+(chunking-template-parity tasks 12-13: the Sources block gains the
+"Chunked by an older engine: N items" report line and the "Re-chunk
+older-engine items" action documented above. The line is fetched off the
+mount path via the RAG admin scope service's diagnostics payload and is
+omitted when empty; the re-chunk worker runs in its own worker group
+behind a shared in-flight guard with the Settings backfill (a refusal
+notice, never worker cancellation), replaces chunk rows in one
+transaction honoring each item's stored template choice, force-reindexes
+by deterministic vector id with the pre-add needs-reindexing mark, and
+clears the query cache. Pinned by
+`Tests/UI/test_library_rag_legacy_chunk_report.py`,
+`Tests/Library/test_library_rechunk_service.py`,
+`Tests/UI/test_library_rag_rechunk_action.py`, and
+`Tests/RuntimePolicy/test_rechunk_policy_pin.py`.)*

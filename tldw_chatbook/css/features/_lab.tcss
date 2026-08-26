@@ -61,10 +61,9 @@
  * `3fr` with `min-width: 24`). The bounds keep the labels intact at 80
  * columns without letting the rail sprawl at 200.
  *
- * The 24 floor is measured, not guessed: at 20 the longest Models label
- * ("Download Models") rendered as "Download" -- Textual drops the whole
- * overflowing word rather than clipping mid-word, so the truncation is
- * silent and total. `Tests/UI/test_lab_workbench.py` pins it.
+ * The 24 floor fits the exact surviving longest label, "Speech Recognition",
+ * including padding, border, and the active accent. The rendered oracle in
+ * `Tests/UI/test_lab_workbench.py` pins it.
  */
 
 .lab-workbench {
@@ -90,6 +89,23 @@
     height: 100%;
     min-height: 0;
     padding: 0 1;
+}
+
+/* The app-tier global Select rule claims 100% width and a bottom margin.
+ * Keep Remote's local variant toolbar balanced; widget-tier BUNDLED_CSS
+ * cannot override app-tier geometry in Textual's cascade. */
+#remote-variant-sort {
+    width: 24;
+    min-width: 18;
+    margin-left: 1;
+    margin-bottom: 0;
+}
+
+RemoteView.-narrow #remote-variant-sort {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+    margin-bottom: 0;
 }
 
 /* TASK-1076: was a hard `30` at every terminal width -- the exact anti-
@@ -284,8 +300,7 @@
     min-width: 6;
 }
 
-/* Rail width is per-mode, because label length is per-mode. The shared floor
- * fits Models (longest: "Download Models", 15 cells). Speech's rows carry
+/* Rail width is per-mode, because label length is per-mode. Speech's rows carry
  * double-width emoji -- "🔤 Speech Recognition" measures 21 cells, and at the
  * shared floor Textual dropped the overflowing word entirely, rendering
  * "🔤 Speech" and a bare "📚". Measured, not estimated. */
@@ -373,6 +388,7 @@
 .speech-pane {
     height: 1fr;
     padding: 0 1;
+    overflow-y: auto;
 }
 
 .speech-pane-title {
@@ -439,6 +455,75 @@
     color: $ds-text-muted;
 }
 
+.audio-cpp-runtime-card {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}
+
+.audio-cpp-runtime-status {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.audio-cpp-runtime-pending,
+.audio-cpp-runtime-reason {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+.audio-cpp-diagnostics-warning {
+    height: auto;
+    min-height: 1;
+    color: $ds-status-warning;
+}
+
+.audio-cpp-diagnostics-lines {
+    height: auto;
+    min-height: 1;
+    max-height: 12;
+    overflow-y: auto;
+    color: $ds-text-muted;
+}
+
+.audio-cpp-diagnostics-lines:focus {
+    outline: heavy $ds-action-focus;
+    background: $ds-focus-bg;
+    color: $ds-text-primary;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#audio-cpp-runtime-actions {
+    height: 1;
+    min-height: 1;
+}
+
+#audio-cpp-runtime-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+.speech-split-stacked #audio-cpp-runtime-actions {
+    layout: vertical;
+    height: 3;
+    min-height: 3;
+}
+
+.speech-split-stacked #audio-cpp-runtime-actions Button.workbench-action {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    content-align: left middle;
+}
+
 /* Textual's Button carries a default min-width, so the shared
  * `.workbench-action { width: auto }` alone still spread six actions across
  * the full pane -- "Export" rendered as "Ex" and "Clear" fell off the right
@@ -470,7 +555,13 @@
  * empty box is what made the first two passes read as sparse. */
 .speech-split {
     height: 1fr;
-    min-height: 0;
+    /* Reference setup and the runtime card are auto-height siblings. Without
+     * a floor they consume the short Lab viewport and Textual compresses the
+     * synthesis text/current-result split to one or two unusable rows. The
+     * current-result pane needs thirteen rows when the clone-only profile-save
+     * action is present; keep that complete action set inside the split and
+     * let the outer pane scroll for the runtime/clone setup below it. */
+    min-height: 13;
     margin-top: 1;
 }
 
@@ -735,6 +826,12 @@ Input.speech-axis-control {
     color: $ds-text-muted;
 }
 
+.speech-result-provenance {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
 .speech-player-transport {
     height: 1;
 }
@@ -755,7 +852,9 @@ Input.speech-axis-control {
  * diagnostics and tuning disclosures are compact workbench rows. */
 #speech-param-group,
 #speech-connection-details,
-#speech-log-group {
+#speech-log-group,
+#audio-cpp-runtime-details,
+#audio-cpp-runtime-diagnostics {
     height: auto;
     min-height: 1;
     padding: 0;
@@ -766,7 +865,9 @@ Input.speech-axis-control {
 
 #speech-param-group > CollapsibleTitle,
 #speech-connection-details > CollapsibleTitle,
-#speech-log-group > CollapsibleTitle {
+#speech-log-group > CollapsibleTitle,
+#audio-cpp-runtime-details > CollapsibleTitle,
+#audio-cpp-runtime-diagnostics > CollapsibleTitle {
     height: 1;
     min-height: 1;
     padding: 0 1;
@@ -776,7 +877,9 @@ Input.speech-axis-control {
 
 #speech-param-group > Contents,
 #speech-connection-details > Contents,
-#speech-log-group > Contents {
+#speech-log-group > Contents,
+#audio-cpp-runtime-details > Contents,
+#audio-cpp-runtime-diagnostics > Contents {
     height: auto;
 }
 
@@ -820,6 +923,72 @@ Input.speech-axis-control {
 .speech-source-status {
     width: 1fr;
     color: $text-muted;
+}
+
+.speech-clone-setup-host,
+#speech-clone-setup {
+    height: auto;
+    min-height: 0;
+}
+
+#speech-clone-setup {
+    margin-top: 1;
+    padding: 0 1;
+    border-top: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+.speech-clone-guidance,
+.speech-clone-privacy,
+.speech-clone-error {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+.speech-clone-privacy {
+    color: $ds-status-warning;
+}
+
+.speech-clone-error {
+    color: $ds-status-info;
+}
+
+.speech-clone-reference-row,
+.speech-clone-actions {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+}
+
+.speech-clone-reference-row Button,
+.speech-clone-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    margin: 0 1 0 0;
+    border: none;
+}
+
+.speech-clone-transcript {
+    height: 4;
+    min-height: 3;
+    margin-top: 1;
+}
+
+.speech-split-stacked .speech-clone-reference-row,
+.speech-split-stacked .speech-clone-actions {
+    layout: vertical;
+    height: auto;
+}
+
+.speech-split-stacked .speech-clone-reference-row Button,
+.speech-split-stacked .speech-clone-actions Button {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    content-align: left middle;
 }
 
 /* --- Speech: TTS Settings --------------------------------------------- */
@@ -869,6 +1038,22 @@ Input.speech-setting-control {
     padding: 0 1;
 }
 
+/* The forms-wide `Input:focus` rule re-adds a border at higher specificity
+ * than the border-none class rule above, and the reset-tier `*:focus`
+ * accessibility outline paints OVER the widget's outermost rendered lines
+ * (its own comment warns of exactly this) — on a height-1 row that line IS
+ * the only content line, so focusing the field replaced the typed value
+ * with the outline's box characters (TASK-15421 AC3). Opt out of both and
+ * show focus with the content-safe tint instead — the same opt-out +
+ * recolour pattern the reset comment prescribes (TASK-1160's DataTable
+ * precedent). */
+Input.speech-setting-control:focus {
+    border: none;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
 .speech-settings-group {
     height: auto;
     border: none;
@@ -908,7 +1093,8 @@ Input.speech-setting-control {
 }
 
 #speech-settings-actions Button.workbench-action,
-#studio-tts-voice-profile-actions Button.workbench-action {
+#studio-tts-voice-destination-actions Button.workbench-action,
+#voice-blends-actions Button.workbench-action {
     width: auto;
     min-width: 0;
     height: 1;
@@ -972,18 +1158,19 @@ Input.speech-setting-control {
     height: auto;
 }
 
-#studio-tts-voice-profile-actions {
+#studio-tts-voice-destination-actions,
+#voice-blends-actions {
     height: auto;
     min-height: 1;
     margin: 0 1 1 1;
 }
 
-.studio-tts-settings-stacked #studio-tts-voice-profile-actions {
+.studio-tts-settings-stacked #studio-tts-voice-destination-actions {
     layout: vertical;
-    height: 3;
+    height: 2;
 }
 
-.studio-tts-settings-stacked #studio-tts-voice-profile-actions Button.workbench-action {
+.studio-tts-settings-stacked #studio-tts-voice-destination-actions Button.workbench-action {
     width: 100%;
     margin-right: 0;
 }
@@ -1001,6 +1188,81 @@ Input.speech-setting-control {
     height: 1;
     padding: 0 1;
     border: none;
+}
+
+/* Voice-profile portability uses one scrollable, terminal-native review
+ * surface. The vertical action stack remains reachable at 80x24 without
+ * relying on pointer-only affordances or clipped horizontal controls. */
+TTSProfileExportChoiceModal,
+TTSVoiceBundleConsentModal,
+TTSVoiceBundleReviewModal {
+    align: center middle;
+    background: $background 75%;
+}
+
+.stts-portability-dialog {
+    width: 90%;
+    max-width: 76;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: $panel;
+    border: round $accent;
+    overflow-y: auto;
+}
+
+.stts-portability-title {
+    height: auto;
+    margin-bottom: 1;
+    text-style: bold;
+}
+
+.stts-portability-copy,
+.stts-portability-recovery {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.stts-portability-recovery {
+    color: $warning;
+}
+
+.stts-portability-actions {
+    layout: vertical;
+    height: auto;
+    margin-top: 1;
+}
+
+.stts-portability-actions Button {
+    width: 100%;
+    height: 3;
+    min-width: 0;
+    margin-bottom: 1;
+}
+
+/* Portable material controls stay visibly inert without stacking the generic
+ * whole-widget fade, Textual's disabled ink and the app's disabled token.
+ * The neutral surface carries state; the label remains readable at the
+ * product's 3:1 disabled-control floor in every bundled theme. */
+.stts-portability-dialog .stts-portability-actions Button:disabled,
+STTSProfileLibrary #stts-profile-actions #stts-profile-import-btn:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $text;
+    background: $surface-darken-1;
+}
+
+.stts-portability-actions Button:focus,
+.stts-portability-dialog Checkbox:focus,
+.stts-portability-dialog Select:focus,
+.stts-portability-dialog TextArea:focus {
+    outline: heavy $accent;
+}
+
+#stts-bundle-review-facts {
+    height: 9;
+    min-height: 6;
 }
 
 
@@ -1021,4 +1283,96 @@ Input.speech-setting-control {
     padding: 0 1;
     margin: 0 2 0 0;
     border: none;
+}
+
+/* Model Library is an operate surface: rows grow with truthful package facts,
+ * while the allocated pane (including a narrow Lab rail) owns scrolling. */
+#llm-view-curated,
+#llm-view-installed,
+CuratedView,
+InstalledView {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+CuratedView .curated-header,
+InstalledView .installed-header {
+    layout: vertical;
+    height: auto;
+}
+
+CuratedView .curated-header Button,
+InstalledView .installed-header Button {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
+CuratedView .curated-list,
+InstalledView .installed-list {
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+CuratedView .curated-model-row,
+InstalledView .installed-model-row,
+CuratedView .audio-cpp-companions,
+InstalledView .audio-cpp-companions,
+CuratedView .audio-cpp-package-copy,
+InstalledView .audio-cpp-package-copy,
+InstalledView .installed-recovery-status {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+CuratedView .audio-cpp-actions,
+InstalledView ModelActivationControls.audio-cpp-actions,
+InstalledView ModelActivationControls.audio-cpp-actions Horizontal {
+    layout: vertical;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+CuratedView .audio-cpp-actions Button,
+InstalledView .audio-cpp-actions Button {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
+InstalledView .installed-recovery-status {
+    color: $warning;
+    margin-bottom: 1;
+}
+
+CuratedView .curated-disabled-reason,
+CuratedView .curated-recovery-status,
+InstalledView .model-disabled-reason {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    margin-bottom: 1;
+    color: $warning;
+}
+
+CuratedView Button:focus,
+CuratedView CollapsibleTitle:focus,
+InstalledView Button:focus,
+InstalledView CollapsibleTitle:focus {
+    outline: heavy $accent;
+}
+
+/* App-tier disabled ink overrides Textual's generic dimming. The neutral
+ * surface plus normal text token remains >=3:1 in all five shipped themes. */
+CuratedView Button:disabled,
+InstalledView Button:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $text;
+    background: $surface-darken-1;
 }

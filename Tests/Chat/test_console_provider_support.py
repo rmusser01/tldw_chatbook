@@ -121,6 +121,7 @@ def test_supported_console_provider_catalog_describes_handler_identities() -> No
             "local_vllm",
             "mlx_lm",
             "local_mlx_lm",
+            "qwencloud",
         }
     )
     by_readiness_key = {entry.readiness_key: entry for entry in catalog}
@@ -133,12 +134,15 @@ def test_supported_console_provider_catalog_describes_handler_identities() -> No
         "local_mlx_lm",
         "local_vllm",
         "openai",
+        "qwencloud",
     }
     assert by_readiness_key["custom"].execution_key == "custom-openai-api"
     assert by_readiness_key["custom_2"].execution_key == "custom-openai-api-2"
     assert by_readiness_key["llama_cpp"].requires_api_key is False
     assert by_readiness_key["openai"].requires_api_key is True
     assert by_readiness_key["openai"].display_name == "OpenAI"
+    assert by_readiness_key["qwencloud"].execution_key == "qwencloud"
+    assert by_readiness_key["qwencloud"].display_name == "QwenCloud"
 
 
 def test_all_chat_api_call_handlers_resolve_to_supported_console_identity() -> None:

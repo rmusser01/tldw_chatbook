@@ -346,6 +346,16 @@ def test_assistant_label_names_the_active_character():
     assert state.assistant_label == "Character: Seraphina"
 
 
+def test_assistant_chip_projects_character_identity_to_one_safe_line():
+    state = ConsoleControlState.from_values(
+        character="Nyx\n\tAdmin\x00[/bold]",
+    )
+
+    assert state.assistant_label == "Character: Nyx Admin?[/bold]"
+    assert "\n" not in state.assistant_label
+    assert "\t" not in state.assistant_label
+
+
 def test_assistant_label_is_generic_without_an_identified_assistant():
     state = ConsoleControlState.from_values(provider="llama_cpp", model="m")
 

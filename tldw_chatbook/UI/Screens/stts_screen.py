@@ -10,6 +10,7 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -20,14 +21,15 @@ from ..Lab_Modules.lab_speech_status import (
     speech_capability_detail,
     speech_capability_text,
     speech_capability_tooltip,
+    speech_local_dependency_availability,
 )
 from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
-from ..STTS_Window import STTS_VIEW_KEYS, STTSWindow
+from ..Speech.speech_playground_model import AXIS_CONTROLS
 from ..Speech.speech_runtime_status import (
     speech_tts_navigation_target_from_context,
 )
-from ..Speech.speech_playground_model import AXIS_CONTROLS
 from ..Speech.speech_settings_contracts import SpeechTTSNavigationTarget
+from ..STTS_Window import STTS_VIEW_KEYS, STTSWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabScreen
 
@@ -152,6 +154,7 @@ class STTSScreen(LabScreen):
             | None
         ) = None
         self._restored_playground_axes: dict[str, str] = {}
+        self._speech_local_dependencies = None
 
     def _lab_footer_registration(self) -> tuple[str, tuple]:
         """Register the Speech hints in place of the frame's plain set.
@@ -214,6 +217,17 @@ class STTSScreen(LabScreen):
 
     def compose_lab_rail(self) -> ComposeResult:
         """Yield the two rail sections and their seven view rows."""
+        dependencies = speech_local_dependency_availability(refresh=True)
+        self._speech_local_dependencies = dependencies
+        summary = Static(
+            speech_capability_text(dependencies),
+            id="speech-capability-summary",
+            classes="speech-capability-status",
+            markup=False,
+        )
+        summary.tooltip = speech_capability_tooltip(dependencies)
+        yield summary
+
         for title, entries in SPEECH_RAIL_SECTIONS:
             yield Static(title, classes="lab-rail-section")
             for view_key, label in entries:
@@ -231,18 +245,6 @@ class STTSScreen(LabScreen):
                 row.lab_view_key = view_key
                 yield row
 
-        # One line, stating the fact. The full recovery taxonomy is ~14
-        # rendered lines; inline here it buried the seven rows above it, so it
-        # lives in the inspector instead (compose_lab_inspector below).
-        summary = Static(
-            speech_capability_text(),
-            id="speech-capability-summary",
-            classes="speech-capability-status",
-            markup=False,
-        )
-        summary.tooltip = speech_capability_tooltip()
-        yield summary
-
     def compose_lab_inspector(self) -> ComposeResult:
         """Yield the local-speech recovery detail.
 
@@ -252,9 +254,13 @@ class STTSScreen(LabScreen):
         region for exactly this: detail that must stay reachable without
         hovering, but must not crowd the rail.
         """
+        dependencies = self._speech_local_dependencies
+        if dependencies is None:
+            dependencies = speech_local_dependency_availability(refresh=True)
+            self._speech_local_dependencies = dependencies
         yield Static("Local speech", classes="lab-rail-section")
         yield Static(
-            speech_capability_detail(),
+            speech_capability_detail(dependencies),
             id=SPEECH_CAPABILITY_SELECTOR,
             classes="speech-capability-status",
             markup=False,
@@ -277,10 +283,15 @@ class STTSScreen(LabScreen):
             The ``STTSWindow``, mounted after first paint like every Lab
             body.
         """
+        dependencies = self._speech_local_dependencies
+        if dependencies is None:
+            dependencies = speech_local_dependency_availability(refresh=True)
+            self._speech_local_dependencies = dependencies
         self.stts_window = STTSWindow(
             self.app_instance,
             classes="window",
             playground_axis_values=self._restored_playground_axes,
+            local_dependencies=dependencies,
         )
         self.stts_window.styles.height = "1fr"
         return self.stts_window
@@ -388,6 +399,18 @@ class STTSScreen(LabScreen):
             row.set_class(
                 getattr(row, "lab_view_key", None) == current_view, "is-active"
             )
+
+    def on_key(self, _event: Key) -> None:
+        """Do not let deferred profile restoration override keyboard intent."""
+
+        if self.stts_window is not None:
+            self.stts_window.cancel_profile_focus_restore()
+
+    def on_click(self, _event: Click) -> None:
+        """Do not let deferred profile restoration override pointer intent."""
+
+        if self.stts_window is not None:
+            self.stts_window.cancel_profile_focus_restore()
 
     @on(Button.Pressed, f".{LAB_RAIL_ROW_CLASS}")
     def _handle_rail_press(self, event: Button.Pressed) -> None:

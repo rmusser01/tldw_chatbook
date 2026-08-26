@@ -8,7 +8,18 @@ RAGService._fuse_hybrid_results and the pipeline rrf_merge parallel step.
 Server-parity reference (tldw_server database_retrievers.py):
     leg_rrf(doc) = 1 / (k + rank)   # rank 1-based within the leg
     final(doc)   = (1 - alpha) * fts_rrf + alpha * vector_rrf
-with k = 60 and alpha = 0.7 (vector-weighted) as defaults.
+with k = 60 and alpha = 0.7 (vector-weighted) as `fusion.py`'s own defaults.
+
+TWO k VALUES LIVE HERE (TASK-4110 Task 5). `fusion.DEFAULT_RRF_K` is still
+60 -- it is the no-config fallback (`reciprocal_rank_fusion`'s signature
+default, `resolve_rrf_k`'s invalid/missing branch, `_fuse_hybrid_results`'
+pre-parameter default) and every test below that calls those directly still
+expects it. The value chatbook actually SHIPS is
+`config.DEFAULT_HYBRID_RRF_K` = 5, measured for its ~20-row candidate
+window, and the pipeline merge picks it up from the active profile via
+`resolve_rrf_k(None)` -- so `TestPipelineRrfMerge` expects `PROFILE_K`, not
+`K`. That split is the point: one number is a fallback, the other is the
+product's behavior.
 """
 
 import asyncio
@@ -16,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.RAG_Search.fusion import (
     DEFAULT_HYBRID_ALPHA,
@@ -24,6 +36,7 @@ from tldw_chatbook.RAG_Search.fusion import (
     reciprocal_rank_fusion,
     resolve_hybrid_alpha,
 )
+from tldw_chatbook.RAG_Search.simplified.config import DEFAULT_HYBRID_RRF_K
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +58,13 @@ def _scores(fused):
     return {entry.key: entry.score for entry in fused}
 
 
-K = DEFAULT_RRF_K  # 60
+K = DEFAULT_RRF_K  # 60 -- the no-config fallback
+
+#: The shipped default the ACTIVE PROFILE carries (TASK-4110 Task 5). The
+#: pipeline merge resolves `rrf_k` through `resolve_rrf_k(None)` -> the
+#: active profile, which under the suite's sandboxed HOME is the
+#: `hybrid_basic` builtin built from a bare `RAGConfig()`.
+PROFILE_K = DEFAULT_HYBRID_RRF_K  # 5
 
 
 class TestServerParityDefaults:
@@ -275,11 +294,100 @@ class TestResolveHybridAlpha:
 
 
 class TestResolveRrfK:
-    def test_none_returns_default(self):
-        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+    """TASK-4110 review, important 2: resolve_rrf_k now mirrors
+    resolve_hybrid_alpha's active-profile fallback exactly (see
+    TestResolveHybridAlpha above) -- before this, `rrf_k` had NO profile
+    fallback while `alpha` did, so a future default change would move one
+    live fusion call site (RAGService, whose config flows through the
+    active profile) without moving the other
+    (pipeline_builder_simple._rrf_merge_parallel_results, which also calls
+    resolve_rrf_k with no explicit value).
+    """
 
-        assert resolve_rrf_k(None) == DEFAULT_RRF_K
-        assert resolve_rrf_k() == DEFAULT_RRF_K
+    def test_profile_with_nothing_to_say_returns_the_shipped_default(
+        self, monkeypatch
+    ):
+        """No explicit value AND the active profile has nothing to say
+        (``search.rrf_k`` itself resolves to ``None``) -> the SHIPPED
+        default. Mocked rather than relying on the test env's real default
+        profile, so this is deterministic regardless of what that profile
+        contains.
+
+        ORACLE UPDATE (TASK-4110 Task 5, review round 2), disclosed: this
+        expected ``DEFAULT_RRF_K`` (60) when the two constants were the same
+        number. `resolve_rrf_k` is the APP-CONFIG resolver and every one of
+        its fallbacks is now the app's shipped default -- a profile that
+        states nothing is exactly the case the shipped default exists for,
+        and returning 60 here would strand this path on the weighting
+        TASK-4110 measured away from.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
+        class _FakeSearch:
+            rrf_k = None
+
+        class _FakeConfig:
+            search = _FakeSearch()
+
+        monkeypatch.setattr(
+            ac, "resolve_active_rag_config", lambda *a, **k: _FakeConfig()
+        )
+
+        assert resolve_rrf_k(None) == DEFAULT_HYBRID_RRF_K
+        assert resolve_rrf_k() == DEFAULT_HYBRID_RRF_K
+
+    def test_reads_from_active_profile(self, monkeypatch):
+        """THE PIN: mirrors TestResolveHybridAlpha.test_reads_from_active_profile
+        exactly. A non-default profile ``rrf_k`` must be honored with no
+        explicit override -- this is what makes a Task 5 default-k change
+        move BOTH live fusion call sites together instead of stranding one
+        at 60.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
+        class _FakeSearch:
+            rrf_k = 15
+
+        class _FakeConfig:
+            search = _FakeSearch()
+
+        monkeypatch.setattr(
+            ac, "resolve_active_rag_config", lambda *a, **k: _FakeConfig()
+        )
+
+        assert resolve_rrf_k() == 15
+
+    def test_unreadable_profile_falls_back_to_the_SHIPPED_default(self, monkeypatch):
+        """A profile that RAISES must not silently revert the fix.
+
+        The profile is where the shipped `rrf_k` lives, so when it cannot be
+        read the honest answer is the value it would have supplied
+        (`DEFAULT_HYBRID_RRF_K` = 5) -- not fusion's server-parity 60, which
+        would quietly put whichever path hit the error back on the weighting
+        TASK-4110 measured away from. Before Task 5 the two were the same
+        number and this branch was untestable in any meaningful sense.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
+        def _boom(*a, **k):
+            raise RuntimeError("profile store unavailable")
+
+        monkeypatch.setattr(ac, "resolve_active_rag_config", _boom)
+
+        messages = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            assert resolve_rrf_k(None) == DEFAULT_HYBRID_RRF_K == 5
+            assert resolve_rrf_k() == DEFAULT_HYBRID_RRF_K
+        finally:
+            logger.remove(sink_id)
+
+        assert any("Could not read rrf_k" in message for message in messages), (
+            f"a silently-swallowed profile failure must leave a trace: {messages}"
+        )
 
     @pytest.mark.parametrize(
         "value,expected", [(60, 60), (0, 0), ("42", 42), (59.5, 59)]
@@ -289,11 +397,99 @@ class TestResolveRrfK:
 
         assert resolve_rrf_k(value) == expected
 
-    @pytest.mark.parametrize("bad", ["abc", -1, -60, object(), None])
-    def test_invalid_values_fall_back_to_default(self, bad):
+    @pytest.mark.parametrize("bad", ["abc", -1, -60, object()])
+    def test_invalid_values_fall_back_to_the_shipped_default(self, bad):
+        """``None`` is deliberately NOT parametrized here (TASK-4110
+        review): it is no longer simply "an invalid value" that
+        short-circuits to the default -- it is the "no explicit override"
+        sentinel that now triggers a real active-profile lookup first (see
+        ``test_profile_with_nothing_to_say_returns_the_shipped_default`` /
+        ``test_reads_from_active_profile`` above).
+
+        ORACLE UPDATE (TASK-4110 Task 5, review round 2), disclosed: this
+        expected ``DEFAULT_RRF_K`` (60). An explicitly-supplied invalid
+        value is NOT a library-level accident here -- it is reachable
+        straight from user configuration (a TOML pipeline's
+        ``steps[].config.rrf_k``, or a round-tripped
+        ``config.search.rrf_k``), so a config carrying ``rrf_k = "oops"``
+        would have silently reverted that one path to the measured-broken
+        60 while every other path ran at 5. ``DEFAULT_RRF_K`` survives only
+        as ``reciprocal_rank_fusion``'s own no-config signature default,
+        pinned in ``TestReciprocalRankFusion``.
+        """
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
 
-        assert resolve_rrf_k(bad) == DEFAULT_RRF_K
+        assert resolve_rrf_k(bad) == DEFAULT_HYBRID_RRF_K
+
+    def test_an_unparseable_value_warns_without_echoing_it(self):
+        """Falling back must leave a trace, but not the value itself.
+
+        TASK-15103 (ADR-029): a hand-edited config value is user-controlled
+        and unbounded, so the warning is a fixed event — greppable by its
+        text, with the offending value kept out of the persistent log.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
+        messages = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            assert resolve_rrf_k("oops") == DEFAULT_HYBRID_RRF_K
+        finally:
+            logger.remove(sink_id)
+
+        assert any("Invalid rrf_k; using shipped default" in m for m in messages), (
+            f"the fixed fallback event must be logged: {messages}"
+        )
+        assert not any("oops" in m for m in messages), (
+            f"the rejected value must not be echoed: {messages}"
+        )
+
+    def test_a_negative_value_is_still_named_in_the_warning(self):
+        """The negative-k message survives TASK-15103 review: by the time it
+        fires the value has already parsed to a bounded int, so naming it is
+        safe and keeps the misconfiguration greppable."""
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
+        messages = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            assert resolve_rrf_k(-7) == DEFAULT_HYBRID_RRF_K
+        finally:
+            logger.remove(sink_id)
+
+        assert any("-7" in message for message in messages), (
+            f"the rejected value -7 must appear in the warning: {messages}"
+        )
+
+    @pytest.mark.parametrize("bad", ["1e309", float("inf"), float("-inf")])
+    def test_overflow_range_values_fall_back_to_the_shipped_default(self, bad):
+        """Qodo PR-1487: ``int(float(value))`` raises ``OverflowError`` --
+        not ``TypeError`` or ``ValueError`` -- once the float is infinite.
+        ``"1e309"`` parses via ``float()`` to ``inf`` (Python floats top out
+        well below that exponent), and TOML itself accepts a literal
+        ``inf``/``-inf`` float, so both are reachable straight from a
+        hand-edited config's ``rrf_k``. Before the ``OverflowError`` guard
+        this crashed every hybrid search that read such a value instead of
+        falling back like every other invalid value.
+        """
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
+        assert resolve_rrf_k(bad) == DEFAULT_HYBRID_RRF_K
+
+    def test_overflow_range_value_warns_without_echoing_it(self):
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
+        messages = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            assert resolve_rrf_k(float("inf")) == DEFAULT_HYBRID_RRF_K
+        finally:
+            logger.remove(sink_id)
+
+        # TASK-15103: fixed event only — the overflow value is not echoed.
+        assert any("Invalid rrf_k; using shipped default" in m for m in messages), (
+            f"the fixed fallback event must be logged: {messages}"
+        )
 
 
 class TestRAGServiceFusion:
@@ -462,6 +658,48 @@ class TestPipelineRrfMerge:
         assert len(parallel_steps) == 1
         assert parallel_steps[0].get("merge") == "rrf_merge"
 
+    def test_merge_with_no_step_rrf_k_inherits_the_shipped_profile_default(
+        self, monkeypatch
+    ):
+        """THE SHARED-BLEND DISCLOSURE, made executable (TASK-4110 Task 5).
+
+        The measurement that chose `rrf_k = 5` was made on the Library
+        hybrid path (`RAGService._hybrid_search`). This legacy Chat-RAG
+        merge (TASK-3501) shares `reciprocal_rank_fusion` and, since Task 3
+        gave `resolve_rrf_k` a profile fallback, inherits the same shipped
+        value without ever having been measured itself. That coupling is
+        deliberate -- two live fusion paths must not disagree on one
+        measured number -- but it must be visible, not incidental: this
+        test fails the moment the two stop moving together.
+        """
+        from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
+
+        async def fake_media(app, query, top_k, keyword_filter=None):
+            return [self._pipeline_result("media", "m1")]
+
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_media_fts5", fake_media)
+
+        step_config = {
+            "type": "parallel",
+            "functions": [{"function": "search_media_fts5", "config": {"top_k": 20}}],
+            "merge": "rrf_merge",
+            "config": {"alpha": 0.0},  # no rrf_k: the profile must supply it
+        }
+        context = {
+            "app": object(),
+            "query": "q",
+            "sources": {},
+            "params": {},
+            "results": [],
+        }
+
+        results = asyncio.run(pbs._execute_parallel_step(step_config, context))
+
+        assert results[0].metadata["hybrid_fusion"]["rrf_k"] == PROFILE_K, (
+            "the legacy pipeline merge no longer follows the shipped profile "
+            "rrf_k -- the two live fusion paths have diverged (TASK-3501)"
+        )
+
     def test_parallel_step_rrf_merge_fuses_legs(self, monkeypatch):
         from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 
@@ -519,10 +757,10 @@ class TestPipelineRrfMerge:
         # FTS leg (interleaved): m1, c1, shared -> ranks 1, 2, 3
         # Vector leg: shared, s2 -> ranks 1, 2
         expected = {
-            ("media", "m1"): 0.3 / (K + 1),
-            ("conversation", "c1"): 0.3 / (K + 2),
-            ("media", "shared"): 0.3 / (K + 3) + 0.7 / (K + 1),
-            ("media", "s2"): 0.7 / (K + 2),
+            ("media", "m1"): 0.3 / (PROFILE_K + 1),
+            ("conversation", "c1"): 0.3 / (PROFILE_K + 2),
+            ("media", "shared"): 0.3 / (PROFILE_K + 3) + 0.7 / (PROFILE_K + 1),
+            ("media", "s2"): 0.7 / (PROFILE_K + 2),
         }
         got = {(r.source, r.id): r.score for r in results}
         assert set(got) == set(expected)
@@ -606,7 +844,7 @@ class TestPipelineRrfMerge:
 
         # alpha=1.0: the vector-leg doc must rank first with a real RRF score
         assert results[0].id == "v1"
-        assert results[0].score == pytest.approx(1 / (K + 1))
+        assert results[0].score == pytest.approx(1 / (PROFILE_K + 1))
         assert {r.id for r in results} == {"v1", "m1"}
 
     def test_perform_hybrid_rag_search_end_to_end_smoke(self):
@@ -651,7 +889,7 @@ class TestPipelineRrfMerge:
         )
 
         assert [r["id"] for r in results] == ["v1"]
-        assert results[0]["score"] == pytest.approx(0.7 / (K + 1))
+        assert results[0]["score"] == pytest.approx(0.7 / (PROFILE_K + 1))
         assert results[0]["metadata"]["hybrid_fusion"]["vector_rank"] == 1
         assert isinstance(context, str)
         # The builtin definition must not have been mutated by the call
@@ -697,15 +935,22 @@ class TestPipelineRrfMerge:
         results = asyncio.run(pbs._execute_parallel_step(step_config, context))
 
         assert [r.id for r in results] == ["m1", "m2"]
-        assert results[0].score == pytest.approx(0.3 / (K + 1))
+        assert results[0].score == pytest.approx(0.3 / (PROFILE_K + 1))
 
     @pytest.mark.parametrize("bad_k", ["abc", -1])
     def test_bad_rrf_k_config_does_not_abort_pipeline(self, monkeypatch, bad_k):
-        """Misconfigured steps[].config.rrf_k must fall back to 60, not crash.
+        """Misconfigured steps[].config.rrf_k must fall back, not crash.
 
         Unguarded int() raised ValueError on non-numeric values, and a
         negative k (e.g. -1 with rank 1) divided by zero — both aborted the
-        whole pipeline at merge time.
+        whole pipeline at merge time. THAT is what this test is for; the
+        particular fallback number is incidental to its intent.
+
+        ORACLE UPDATE (TASK-4110 Task 5, review round 2), disclosed: the
+        expected value moves 60 -> the shipped default. A user's TOML
+        pipeline spec is exactly the "reachable from app config" case, so a
+        typo'd `rrf_k` must degrade to the weighting the app actually ships,
+        not to the server-parity constant this task measured away from.
         """
         from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 
@@ -731,8 +976,8 @@ class TestPipelineRrfMerge:
         results = asyncio.run(pbs._execute_parallel_step(step_config, context))
 
         assert [r.id for r in results] == ["m1"]
-        assert results[0].score == pytest.approx(1 / (K + 1))  # default k=60
-        assert results[0].metadata["hybrid_fusion"]["rrf_k"] == K
+        assert results[0].score == pytest.approx(1 / (PROFILE_K + 1))
+        assert results[0].metadata["hybrid_fusion"]["rrf_k"] == PROFILE_K
 
     def test_overlap_keeps_semantic_citation_metadata(self, monkeypatch):
         """A doc in both legs must keep the vector leg's citation metadata.

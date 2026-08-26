@@ -33,6 +33,7 @@ import pytest
 from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import persist_parsed_media
 from tldw_chatbook.RAG_Search import ingestion_indexing
 from tldw_chatbook.RAG_Search.ingestion_indexing import (
     IndexEntry,
@@ -107,6 +108,22 @@ def _add_media(
         keywords=["test"],
         overwrite=overwrite,
     )
+
+
+def _parsed_media_payload(*, content: str, url: str) -> dict[str, object]:
+    """Return the minimum real parse payload accepted by the persistence seam."""
+    return {
+        "file_type": "plaintext",
+        "title": "Suppression fixture",
+        "media_type": "plaintext",
+        "content": content,
+        "keywords": [],
+        "url": url,
+        "analysis_content": None,
+        "author": None,
+        "chunks": None,
+        "chunk_options": None,
+    }
 
 
 class FakeVectorStore:
@@ -336,6 +353,104 @@ class TestMediaPostIngestHook:
             media_db_module.unregister_media_post_delete_callback(callback)
 
         assert seen == [(media_id, media_uuid, None)]
+
+
+@pytest.mark.unit
+class TestPerIngestIndexingSuppression:
+    @staticmethod
+    def _install_capturing_hook(monkeypatch):
+        submitted: list[IndexEntry] = []
+
+        class CapturingIndexer:
+            def submit(self, entry: IndexEntry) -> bool:
+                submitted.append(entry)
+                return True
+
+        monkeypatch.setattr(
+            ingestion_indexing, "semantic_indexing_available", lambda: True
+        )
+        monkeypatch.setattr(
+            ingestion_indexing, "get_ingestion_indexer", CapturingIndexer
+        )
+        install_media_ingest_hook()
+        return submitted
+
+    def test_embeddings_disabled_suppresses_one_hook_but_persists_media(
+        self, media_db, monkeypatch
+    ):
+        """Dropping the per-write guard must make this write enqueue again."""
+        submitted = self._install_capturing_hook(monkeypatch)
+        disabled_id, _, _ = persist_parsed_media(
+            _parsed_media_payload(
+                content="embeddings disabled source", url="file:///disabled.txt"
+            ),
+            media_db,
+            generate_embeddings=False,
+        )
+        enabled_id, _, _ = persist_parsed_media(
+            _parsed_media_payload(
+                content="embeddings enabled source", url="file:///enabled.txt"
+            ),
+            media_db,
+            generate_embeddings=True,
+        )
+
+        assert disabled_id is not None
+        assert media_db.get_media_by_id(disabled_id) is not None
+        assert enabled_id is not None
+        assert [entry.item_id for entry in submitted] == [str(enabled_id)]
+
+    def test_suppression_resets_after_an_exception(self, media_db, monkeypatch):
+        """Removing the context-manager reset would keep later writes silent."""
+        submitted = self._install_capturing_hook(monkeypatch)
+
+        with pytest.raises(RuntimeError, match="expected persistence failure"):
+            with ingestion_indexing.suppress_ingestion_indexing():
+                raise RuntimeError("expected persistence failure")
+
+        media_id, _, _ = _add_media(
+            media_db,
+            content="index after failed write",
+            url="file:///after-error.txt",
+        )
+
+        assert media_id is not None
+        assert [entry.item_id for entry in submitted] == [str(media_id)]
+
+    def test_suppression_in_one_thread_does_not_suppress_another(
+        self, media_db, monkeypatch
+    ):
+        """A thread-local guard must not silence a concurrent ingest."""
+        submitted = self._install_capturing_hook(monkeypatch)
+        worker_result: dict[str, object] = {}
+
+        def _write_in_other_thread() -> None:
+            try:
+                worker_result["media_id"] = _add_media(
+                    media_db,
+                    content="other thread source",
+                    url="file:///other-thread.txt",
+                )[0]
+            except Exception as exc:  # pragma: no cover - asserted below
+                worker_result["error"] = exc
+
+        with ingestion_indexing.suppress_ingestion_indexing():
+            suppressed_id, _, _ = _add_media(
+                media_db,
+                content="suppressed thread source",
+                url="file:///suppressed-thread.txt",
+            )
+            worker = threading.Thread(target=_write_in_other_thread)
+            worker.start()
+            worker.join(timeout=5)
+
+        assert suppressed_id is not None
+        assert not worker.is_alive()
+        assert "error" not in worker_result
+        assert worker_result["media_id"] is not None
+        assert [entry.item_id for entry in submitted] == [
+            str(worker_result["media_id"])
+        ]
 
 
 # === Availability gate (AC #5) ===

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from types import SimpleNamespace
 
@@ -34,6 +35,8 @@ class FakeLibraryCollectionsService:
         self.created = []
         self.renamed = []
         self.deleted = []
+        self.restored = []
+        self._deleted_records = {}
         self._counter = len(self.records) + 1
         self._timestamp_counter = 0
 
@@ -86,11 +89,24 @@ class FakeLibraryCollectionsService:
 
     def delete_collection(self, collection_id):
         before = len(self.records)
+        self._deleted_records.update(
+            {
+                record.collection_id: record
+                for record in self.records
+                if record.collection_id == collection_id
+            }
+        )
         self.records = [
             record for record in self.records if record.collection_id != collection_id
         ]
         self.deleted.append(collection_id)
         return len(self.records) != before
+
+    def restore_collection(self, collection_id):
+        record = self._deleted_records.pop(collection_id)
+        self.records.append(record)
+        self.restored.append(collection_id)
+        return record
 
 
 class RaisingLibraryCollectionsService:
@@ -102,6 +118,18 @@ class DeleteFailsLibraryCollectionsService(FakeLibraryCollectionsService):
     def delete_collection(self, collection_id):
         self.deleted.append(collection_id)
         return False
+
+
+class DelayedRestoreLibraryCollectionsService(FakeLibraryCollectionsService):
+    def __init__(self, records=()):
+        super().__init__(records)
+        self.restore_started = asyncio.Event()
+        self.restore_release = asyncio.Event()
+
+    async def restore_collection(self, collection_id):
+        self.restore_started.set()
+        await self.restore_release.wait()
+        return super().restore_collection(collection_id)
 
 
 def _activate_server_sync_scope(app) -> None:
@@ -630,10 +658,8 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
 
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        assert (
-            "Create a local Collection record to start reviewing saved content."
-            in _visible_text(screen)
-        )
+        assert "No Collections yet." in _visible_text(screen)
+        assert "create one below to start" in _visible_text(screen)
 
         screen.query_one("#library-collection-name-input", Input).value = "Research"
         screen.query_one(
@@ -664,15 +690,102 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
         screen.query_one("#library-delete-collection", Button).press()
         await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
         assert service.deleted == []
+        confirm = screen.query_one("#library-confirm-delete-collection", Button)
+        assert "Undo" in str(confirm.tooltip)
+        assert "cannot be undone" not in str(confirm.tooltip)
 
-        screen.query_one("#library-confirm-delete-collection", Button).press()
-        await _wait_for_text(
-            screen,
-            pilot,
-            "Create a local Collection record to start reviewing saved content.",
-        )
+        confirm.press()
+        await _wait_for_selector(screen, pilot, "#library-collections-delete-receipt")
+        assert "✓ deleted · Collection · Briefing Queue" in _visible_text(screen)
+        assert "Collections (0)" in _visible_text(screen)
+
+        screen.query_one("#library-collections-delete-undo", Button).press()
+        await _wait_for_text(screen, pilot, "Briefing Queue")
+        assert not screen.query("#library-collections-delete-receipt")
+        assert "Collections (1)" in _visible_text(screen)
 
     assert service.deleted == ["collection-1"]
+    assert service.restored == ["collection-1"]
+
+
+@pytest.mark.asyncio
+async def test_library_collection_undo_blocks_concurrent_create() -> None:
+    record = LibraryCollectionRecord(
+        collection_id="collection-1",
+        name="Research",
+        description="Policy sources",
+        item_count=2,
+        source_authority="local",
+        sync_status="local-only",
+        created_at="2026-05-08T04:00:00Z",
+        updated_at="2026-05-08T04:00:00Z",
+    )
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = DelayedRestoreLibraryCollectionsService((record,))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        screen.query_one("#library-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        screen.query_one("#library-confirm-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-delete-receipt")
+
+        screen.query_one("#library-collections-delete-undo", Button).press()
+        await asyncio.wait_for(service.restore_started.wait(), timeout=2.0)
+        screen._library_collection_name_input = "New while restoring"
+        create_event = SimpleNamespace(stop=lambda: None)
+        await screen.create_library_collection(create_event)
+
+        assert service.created == []
+        service.restore_release.set()
+        await _wait_for_text(screen, pilot, "Research")
+
+
+@pytest.mark.asyncio
+async def test_library_collection_delete_receipt_dismiss_keeps_record_deleted() -> None:
+    record = LibraryCollectionRecord(
+        collection_id="collection-1",
+        name="Research",
+        description="Policy sources",
+        item_count=0,
+        source_authority="local",
+        sync_status="local-only",
+        created_at="2026-05-08T04:00:00Z",
+        updated_at="2026-05-08T04:00:00Z",
+    )
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FakeLibraryCollectionsService((record,))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        screen.query_one("#library-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        screen.query_one("#library-confirm-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-delete-receipt")
+
+        screen.query_one(
+            "#library-collections-delete-receipt-dismiss", Button
+        ).press()
+        for _ in range(20):
+            await pilot.pause()
+            if not screen.query("#library-collections-delete-receipt"):
+                break
+
+        assert not screen.query("#library-collections-delete-receipt")
+        assert service.restored == []
+        assert service.records == []
 
 
 @pytest.mark.asyncio

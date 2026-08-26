@@ -13,13 +13,17 @@ Two layers:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     SEARCH_RUN_LOG_TOOL_NAME,
     AgentConfig,
     RunBudget,
@@ -27,10 +31,18 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_service import RUN_LOG_PROMPT_SECTION, AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat import console_history_budget as budget_module
-from tldw_chatbook.Chat.console_history_budget import bound_messages_to_window
+from tldw_chatbook.Chat.console_history_budget import (
+    ProviderContinuationSidecar,
+    bound_messages_to_window,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    continuation_owner_group,
+    parse_provider_continuation_json,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.run_log_eviction import (
     DEFAULT_MIN_RECENT_ROUNDS,
@@ -610,14 +622,84 @@ def test_flag_on_and_log_unavailable_still_sends_full_history(db, tmp_path, monk
     service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "start"}],
-        config=_run_config(native_tools=False),
+        config=dataclasses.replace(
+            _run_config(native_tools=False), model="deepseek-v4-flash"
+        ),
         api_endpoint="llama_cpp",
+    )
+    assert all(
+        RUN_LOG_PROMPT_SECTION not in str(call["messages_payload"])
+        for call in chat.calls
+    )
+    assert all(
+        SEARCH_RUN_LOG_TOOL_NAME not in str(call.get("tools", ()))
+        for call in chat.calls
     )
     last_payload = chat.calls[-1]["messages_payload"]
     assert any("MARK1_" in str(m.get("content", "")) for m in last_payload), (
         "logging unavailable must suppress eviction even with the flag on"
     )
     assert not any("Context note" in str(m.get("content", "")) for m in last_payload)
+
+
+def test_writer_append_failure_disables_log_features_on_next_request(
+    db, tmp_path, monkeypatch
+):
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 50)
+
+    writer = run_log_module.RunLogWriter()
+
+    def fail_append(*args, **kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(writer, "_write_bytes", fail_append)
+    chat = ScriptedChat(_native_replies(1))
+    service = AgentService(
+        db=db,
+        registry=_make_registry(1),
+        chat_call=chat,
+        run_log_writer=writer,
+    )
+    earliest = "EARLIEST_HISTORY_SENTINEL"
+    history = [
+        {"role": "user", "content": earliest},
+        {"role": "assistant", "content": "old answer " + ("x " * 200)},
+        {"role": "user", "content": "another old question"},
+        {"role": "assistant", "content": "another old answer " + ("y " * 200)},
+        {"role": "user", "content": "start"},
+    ]
+
+    service.run_turn(
+        conversation_id="c",
+        messages=history,
+        config=_run_config(native_tools=True),
+        api_endpoint="groq",
+    )
+
+    assert len(chat.calls) == 2
+    log_tool_names = {
+        SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
+    }
+    first_tools = {
+        tool["function"]["name"] for tool in chat.calls[0].get("tools", ())
+    }
+    assert RUN_LOG_PROMPT_SECTION in str(chat.calls[0]["messages_payload"])
+    assert log_tool_names <= first_tools
+    assert writer.log_dir is not None
+    assert not writer.is_active
+
+    second = chat.calls[1]
+    second_tools = {
+        tool["function"]["name"] for tool in second.get("tools", ())
+    }
+    assert RUN_LOG_PROMPT_SECTION not in str(second["messages_payload"])
+    assert log_tool_names.isdisjoint(second_tools)
+    assert all(message in second["messages_payload"] for message in history)
+    assert "Context note" not in str(second["messages_payload"])
 
 
 def test_flag_on_and_log_active_fence_protocol_drops_old_rounds_intact(
@@ -640,7 +722,10 @@ def test_flag_on_and_log_active_fence_protocol_drops_old_rounds_intact(
         api_endpoint="llama_cpp",
     )
     assert outcome.final_text == "done."
+    first_payload = chat.calls[0]["messages_payload"]
     last_payload = chat.calls[-1]["messages_payload"]
+    assert RUN_LOG_PROMPT_SECTION in str(first_payload[0].get("content", ""))
+    assert RUN_LOG_PROMPT_SECTION in str(last_payload[0].get("content", ""))
     assert not any("MARK1_" in str(m.get("content", "")) for m in last_payload), (
         "the earliest round should have been evicted under this tiny window"
     )
@@ -1161,3 +1246,209 @@ def test_coerce_min_recent_rounds_enormous_value_passes_through():
 
 def test_coerce_min_recent_rounds_truncating_float_rounds_toward_zero():
     assert coerce_min_recent_rounds(4.9) == 4
+
+
+def _completed_continuation_group(owner_id: str):
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["PRIVATE-RUN-LOG-CANARY " * 80],
+                    "calls": [
+                        {
+                            "call_id": "call_private",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    return continuation_owner_group(
+        {"id": owner_id, "role": "assistant", "content": ""}, checkpoint
+    )
+
+
+def test_run_log_eviction_keeps_or_evicts_message_and_continuation_together() -> None:
+    payload = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {"id": "a1", "role": "assistant", "content": "old call"},
+        {"role": "tool", "tool_call_id": "old", "content": "old result"},
+        {"id": "a2", "role": "assistant", "content": "new call"},
+        {"role": "tool", "tool_call_id": "new", "content": "new result"},
+    ]
+    group = _completed_continuation_group("a1")
+
+    result = bound_history_for_send(
+        payload,
+        model="m",
+        provider="deepseek",
+        native=True,
+        enabled=True,
+        response_reservation=0,
+        window=540,
+        count_fn=_wordcount,
+        min_recent_rounds=1,
+        continuation_groups=(group,),
+    )
+
+    assert all(row.get("id") != "a1" for row in result)
+    assert not any(row.get("tool_call_id") == "old" for row in result)
+    assert any(row.get("id") == "a2" for row in result)
+    assert "PRIVATE-RUN-LOG-CANARY" not in repr(result)
+
+    detached = dataclasses.replace(group, owner_message_id="missing")
+    assert (
+        bound_history_for_send(
+            payload,
+            model="m",
+            provider="deepseek",
+            native=True,
+            enabled=True,
+            response_reservation=0,
+            window=540,
+            count_fn=_wordcount,
+            min_recent_rounds=1,
+            continuation_groups=(detached,),
+        )
+        is payload
+    )
+
+
+def test_run_log_eviction_fails_closed_without_logging_private_counter_failures(
+) -> None:
+    payload = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {"id": "a1", "role": "assistant", "content": "old call"},
+    ]
+    group = _completed_continuation_group("a1")
+    logged = []
+    handler = loguru_logger.add(logged.append, format="{message}")
+
+    def fail_count(_messages, _model):
+        raise ValueError("PRIVATE-COUNTER-FAILURE-CANARY")
+
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="provider continuation history could not be bounded",
+        ):
+            bound_history_for_send(
+                payload,
+                model="m",
+                provider="deepseek",
+                native=True,
+                enabled=True,
+                response_reservation=0,
+                window=540,
+                count_fn=fail_count,
+                min_recent_rounds=1,
+                continuation_groups=(group,),
+            )
+    finally:
+        loguru_logger.remove(handler)
+
+    diagnostic = "".join(map(str, logged))
+    assert "category=ValueError" in diagnostic
+    assert "trace=" not in diagnostic
+    assert "PRIVATE-COUNTER-FAILURE-CANARY" not in diagnostic
+
+
+def test_agent_service_run_turn_budgets_private_sidecar_on_real_send(
+    db, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setenv(_MIN_RECENT_ROUNDS_ENV_VAR, "1")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 650)
+    checkpoint = _completed_continuation_group("a1").checkpoint
+    chat = ScriptedChat(["done."])
+    service = AgentService(db=db, registry=_make_registry(0), chat_call=chat)
+    source = [
+        {"role": "user", "content": "old"},
+        {"role": "assistant", "content": "old answer", "_owner": "a1"},
+        {"role": "user", "content": "current"},
+    ]
+
+    _, outcome = service.run_turn(
+        conversation_id="c",
+        messages=source,
+        config=dataclasses.replace(
+            _run_config(native_tools=False), model="deepseek-v4-flash"
+        ),
+        api_endpoint="deepseek",
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_target=ContinuationRestoreTarget(
+            "deepseek",
+            "deepseek-v4-flash",
+            "responses",
+            "https://api.deepseek.com/v1",
+        ),
+        continuation_owner_key="_owner",
+    )
+
+    assert chat.calls, outcome
+    sent = chat.calls[0]["messages_payload"]
+    assert not any(row.get("content") == "old answer" for row in sent)
+    assert any(row.get("content") == "current" for row in sent)
+    assert all("_owner" not in row for row in sent)
+    assert "PRIVATE-RUN-LOG-CANARY" not in repr(sent)
+    assert source[1]["_owner"] == "a1"
+
+
+def test_agent_service_continuation_eviction_never_drops_task_row(
+    db, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setenv(_MIN_RECENT_ROUNDS_ENV_VAR, "1")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 650)
+    checkpoint = _completed_continuation_group("a1").checkpoint
+    chat = ScriptedChat(_fence_replies(3))
+    service = AgentService(db=db, registry=_make_registry(3), chat_call=chat)
+    task = "CURRENT TASK MUST SURVIVE"
+
+    _, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "old answer", "_owner": "a1"},
+            {"role": "user", "content": task},
+        ],
+        config=dataclasses.replace(
+            _run_config(native_tools=False), model="deepseek-v4-flash"
+        ),
+        api_endpoint="deepseek",
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_target=ContinuationRestoreTarget(
+            "deepseek",
+            "deepseek-v4-flash",
+            "responses",
+            "https://api.deepseek.com/v1",
+        ),
+        continuation_owner_key="_owner",
+    )
+
+    assert outcome.final_text == "done."
+    assert len(chat.calls) == 4
+    for call in chat.calls:
+        sent = call["messages_payload"]
+        assert any(row.get("content") == task for row in sent), repr(sent)
+        assert all("_owner" not in row for row in sent)
+        assert "PRIVATE-RUN-LOG-CANARY" not in repr(sent)
+    final_payload = chat.calls[-1]["messages_payload"]
+    assert not any(row.get("content") == "old answer" for row in final_payload)
+    assert any("MARK3_" in str(row.get("content", "")) for row in final_payload)

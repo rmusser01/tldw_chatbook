@@ -65,6 +65,7 @@ class VideoGenRequest:
 class VideoGenResult:
     content: bytes
     content_type: str
+    container: str
     bytes_len: int
     duration_seconds: float | None = None
     fps: float | None = None

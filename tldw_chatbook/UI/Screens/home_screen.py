@@ -276,7 +276,7 @@ class HomeScreen(BaseAppScreen):
         self._refresh_home_content_snapshot()
         self._refresh_home_active_work_cache()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="home-refresh-chatbook-artifact-snapshot", thread=True)
     def _refresh_home_chatbook_artifact_snapshot(self) -> None:
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         refresh_flashcards_due = getattr(

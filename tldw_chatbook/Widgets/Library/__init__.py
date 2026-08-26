@@ -2,17 +2,53 @@
 
 from .library_collections_panel import LibraryCollectionsPanel
 from .library_conversations_canvas import LibraryConversationsCanvas
+from .library_conversation_reader import LibraryConversationReader
+from .library_adaptive_reader_shell import (
+    AdaptiveReaderShellResized,
+    LibraryAdaptiveReaderPaneGrip,
+    LibraryAdaptiveReaderShell,
+)
 from .library_export_canvas import LibraryExportCanvas
+from .library_entry_canvases import (
+    LibraryLandingAttentionAction,
+    LibraryLandingCanvas,
+    LibraryLandingCanvasState,
+    LibraryLandingContinueAction,
+    LibraryLandingRecentItem,
+    LibraryStudyHandoffCanvas,
+    LibraryStudyHandoffCanvasState,
+)
 from .library_ingest_canvas import (
     LibraryIngestCanvas,
     LibraryIngestPreflightSummary,
     LibraryIngestQueuePanel,
 )
 from .library_media_canvas import LibraryMediaCanvas
+from .library_media_reader_shell import (
+    LibraryMediaPaneGrip,
+    LibraryMediaReaderShell,
+    MediaShellResized,
+    PaneToggleRequested,
+)
+from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
+from .library_note_import_canvas import LibraryNoteImportCanvas
+from .library_note_work_pane import LibraryNoteWorkPane
+from .library_notes_add_from_files_canvas import LibraryNotesAddFromFilesCanvas
 from .library_notes_canvas import LibraryNotesCanvas
-from .library_prompts_canvas import LibraryPromptsListCanvas
-from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_label_text
+from .library_notes_sync_roots_canvas import LibraryNotesSyncRootsCanvas
+from .library_prompts_canvas import (
+    PROMPT_DISCARD_TOOLTIP_BUSY,
+    PROMPT_DISCARD_TOOLTIP_CLEAN,
+    PROMPT_DISCARD_TOOLTIP_DIRTY,
+    LibraryPromptsListCanvas,
+)
+from .library_rail import (
+    LIBRARY_RAIL_ROW_PREFIX,
+    LibraryNavigationRailHandle,
+    LibraryRail,
+    library_dim_label_text,
+)
 from .library_search_rag_panel import (
     LibrarySearchRagPanel,
     library_rag_answer_children,
@@ -54,20 +90,44 @@ from .library_skills_canvas import (
 
 __all__ = [
     "LIBRARY_RAIL_ROW_PREFIX",
+    "PROMPT_DISCARD_TOOLTIP_BUSY",
+    "PROMPT_DISCARD_TOOLTIP_CLEAN",
+    "PROMPT_DISCARD_TOOLTIP_DIRTY",
     "SKILL_DISCARD_TOOLTIP_CLEAN",
     "SKILL_DISCARD_TOOLTIP_DIRTY",
+    "AdaptiveReaderShellResized",
+    "LibraryAdaptiveReaderPaneGrip",
+    "LibraryAdaptiveReaderShell",
     "LibraryCollectionsPanel",
     "LibraryConversationsCanvas",
+    "LibraryConversationReader",
     "LibraryExportCanvas",
+    "LibraryLandingAttentionAction",
+    "LibraryLandingCanvas",
+    "LibraryLandingCanvasState",
+    "LibraryLandingContinueAction",
+    "LibraryLandingRecentItem",
     "LibraryIngestCanvas",
     "LibraryIngestPreflightSummary",
     "LibraryIngestQueuePanel",
     "LibraryMediaCanvas",
+    "LibraryMediaPaneGrip",
+    "LibraryMediaReaderShell",
+    "MediaShellResized",
+    "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",
+    "LibraryNoteImportCanvas",
+    "LibraryNoteWorkPane",
+    "LibraryNotesAddFromFilesCanvas",
     "LibraryNotesCanvas",
+    "LibraryNotesSyncRootsCanvas",
+    "LibraryNavigationRailHandle",
+    "PaneToggleRequested",
     "LibraryPromptsListCanvas",
     "LibraryRail",
     "LibrarySearchRagPanel",
+    "LibraryStudyHandoffCanvas",
+    "LibraryStudyHandoffCanvasState",
     "LibrarySkillsListCanvas",
     "SKILL_MODEL_HINT_COPY",
     "next_skill_context",

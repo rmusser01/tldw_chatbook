@@ -19,7 +19,7 @@ from textual.reactive import reactive
 from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_LIBRARY
+from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_HOME, TAB_LIBRARY
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -44,6 +44,9 @@ from .study_scope_models import (
     STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLES_LIMIT,
+    STUDY_ORIGIN_HOME,
+    STUDY_ORIGIN_LIBRARY,
+    STUDY_ORIGINS,
     STUDY_SOURCE_ID_LENGTH_LIMIT,
     STUDY_SOURCE_ITEMS_LIMIT,
     StudyScopeContext,
@@ -73,20 +76,20 @@ class StudyScreen(BaseAppScreen):
     # task-2854: Study is reached from Library's Study/Flashcards/Quizzes
     # handoff rows ("Continue in Study") but is a completely separate full
     # screen -- no Library rail, no Library canvas. Escape returns to the
-    # Library staging canvas that reached it, mirroring the
-    # ``action_library_notes_files_back`` idiom Library's own Files-mode
-    # Escape binding uses (task-2850): a plain, screen-scoped Escape binding
-    # advertised in the footer (see ``on_mount``), not a new nav system.
-    BINDINGS = [("escape", "study_back_to_library", "Back to Library")]
-
-    #: Footer hint advertising the Escape binding above (task-2854), mirrors
-    #: ``LibraryScreen.LIBRARY_NOTES_FILES_SHORTCUTS``'s ``("esc", ...)`` entry.
-    STUDY_SHORTCUTS = (("esc", "back to Library"),)
+    # screen that reached it (task-4011: the Library staging canvas OR Home,
+    # per the origin threaded through ``HandoffChannel.STUDY_ORIGIN``),
+    # mirroring the ``action_library_notes_files_back`` idiom Library's own
+    # Files-mode Escape binding uses (task-2850): a plain, screen-scoped
+    # Escape binding advertised in the footer (see ``on_mount``), not a new
+    # nav system. The description stays origin-neutral because BINDINGS is
+    # class-level state; the footer hint (``_study_footer_shortcuts``) and
+    # the breadcrumb subtitle carry the origin-specific copy.
+    BINDINGS = [("escape", "study_back", "Back")]
 
     # Screen-specific state
     current_section: reactive[str] = reactive("dashboard")
     current_study_session: reactive[Optional[Dict[str, Any]]] = reactive(None)
-    study_materials: reactive[List[str]] = reactive([])
+    study_materials: reactive[List[str]] = reactive(list)
     is_studying: reactive[bool] = reactive(False)
     current_topic: reactive[str] = reactive("")
     scope_state: reactive[StudyScopeState] = reactive(StudyScopeState)
@@ -122,6 +125,12 @@ class StudyScreen(BaseAppScreen):
         # highlighted; the breadcrumb header in ``compose_content`` below
         # names where the user actually is and how to get back instead.
         self.nav_bar_active = ""
+        # task-4011: which screen handed off into Study ("home" or
+        # "library"), claimed here -- screens are constructed fresh per
+        # navigation, and the breadcrumb built in ``compose_content`` needs
+        # it before first paint. Drives the breadcrumb, the footer Esc hint,
+        # and ``action_study_back``'s destination.
+        self._study_origin = self._claim_study_origin()
         self.scope_state = StudyScopeState(backend=self._runtime_backend())
         self._effective_scope_key: ScopeKey = self._scope_key(self.scope_state)
         self.study_dashboard: Optional[StudyDashboard] = None
@@ -135,6 +144,36 @@ class StudyScreen(BaseAppScreen):
     @property
     def current_scope(self) -> StudyScopeState:
         return self.scope_state
+
+    def _claim_study_origin(self) -> str:
+        """Claim the single-use origin handoff, defaulting to Library.
+
+        Library is the fallback for every path that stages no origin
+        (direct ``NavigateToScreen("study")``, older callers): that is
+        exactly the pre-task-4011 behaviour, so unlabelled entries lose
+        nothing while Home's labelled entry stops lying.
+        """
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        claim_origin = getattr(store, "claim", None)
+        if not callable(claim_origin):
+            return STUDY_ORIGIN_LIBRARY
+        claim = claim_origin(HandoffChannel.STUDY_ORIGIN)
+        if claim is None:
+            return STUDY_ORIGIN_LIBRARY
+        store.acknowledge(claim)
+        value = claim.value
+        return value if value in STUDY_ORIGINS else STUDY_ORIGIN_LIBRARY
+
+    def _origin_display_name(self) -> str:
+        return "Home" if self._study_origin == STUDY_ORIGIN_HOME else "Library"
+
+    def _study_footer_shortcuts(self) -> tuple:
+        """Footer hint advertising the Escape binding (task-2854), phrased
+        for the actual origin (task-4011); mirrors
+        ``LibraryScreen.LIBRARY_NOTES_FILES_SHORTCUTS``'s ``("esc", ...)``
+        entry.
+        """
+        return (("esc", f"back to {self._origin_display_name()}"),)
 
     def compose_content(self) -> ComposeResult:
         """Compose the Study screen with a shell-level dashboard and study surface."""
@@ -153,10 +192,12 @@ class StudyScreen(BaseAppScreen):
                     # names where the user is -- and, since Escape is unbound
                     # anywhere else on this screen, the only VISIBLE (not
                     # just footer/F1-panel) statement of how to get back.
-                    title="Library ▸ Study",
+                    # task-4011: both halves name the ACTUAL origin (Home or
+                    # Library), matching where Escape really goes.
+                    title=f"{self._origin_display_name()} ▸ Study",
                     subtitle=(
                         "Flashcards, quizzes, and study sessions. "
-                        "Esc: back to Library."
+                        f"Esc: back to {self._origin_display_name()}."
                     ),
                     status="ready",
                 ),
@@ -1034,6 +1075,19 @@ class StudyScreen(BaseAppScreen):
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         db = getattr(self.app_instance, "chachanotes_db", None)
 
+        async def _db_off_loop(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+            """Run one sync fallback DB query off the event loop.
+
+            task-15471: these fallbacks ran synchronously in this async
+            method -- three chachanotes queries on the loop per screen
+            resume. Same `is_memory_db` guard as the Console browser-search
+            threading: a per-connection :memory: DB is only visible to the
+            thread that migrated it, so it must stay on the loop thread.
+            """
+            if bool(getattr(db, "is_memory_db", False)):
+                return func(*args, **kwargs)
+            return await asyncio.to_thread(func, *args, **kwargs)
+
         due_count = 0
         try:
             due_loader = getattr(study_service, "get_due_flashcards", None)
@@ -1045,7 +1099,9 @@ class StudyScreen(BaseAppScreen):
                     self._normalize_records(due_records) or list(due_records or [])
                 )
             elif db is not None and hasattr(db, "get_due_flashcards"):
-                due_count = len(list(db.get_due_flashcards(limit=25) or []))
+                due_count = len(
+                    list(await _db_off_loop(db.get_due_flashcards, limit=25) or [])
+                )
         except Exception:
             logger.opt(exception=True).debug("Failed to load Study due counts")
 
@@ -1063,7 +1119,9 @@ class StudyScreen(BaseAppScreen):
             elif db is not None and hasattr(db, "list_decks"):
                 recent_decks = [
                     str(deck.get("name") or "Untitled deck")
-                    for deck in list(db.list_decks(limit=3, offset=0) or [])[:3]
+                    for deck in list(
+                        await _db_off_loop(db.list_decks, limit=3, offset=0) or []
+                    )[:3]
                 ]
         except Exception:
             logger.opt(exception=True).debug("Failed to load Study deck recents")
@@ -1080,7 +1138,8 @@ class StudyScreen(BaseAppScreen):
                     for quiz in self._normalize_records(quizzes)[:3]
                 ]
             elif db is not None and hasattr(db, "list_quizzes"):
-                quizzes = db.list_quizzes(
+                quizzes = await _db_off_loop(
+                    db.list_quizzes,
                     q=None,
                     workspace_id=self.scope_state.workspace_id,
                     limit=3,
@@ -1263,16 +1322,23 @@ class StudyScreen(BaseAppScreen):
         """
         logger.info("Study screen mounted")
         # task-2854: advertise the Escape back-hint in the footer, mirroring
-        # LibraryScreen's Files-mode Escape registration (task-2850).
-        self.register_footer_shortcuts(source="study", shortcuts=self.STUDY_SHORTCUTS)
+        # LibraryScreen's Files-mode Escape registration (task-2850);
+        # task-4011: phrased for the actual origin.
+        self.register_footer_shortcuts(
+            source="study", shortcuts=self._study_footer_shortcuts()
+        )
         self.call_after_refresh(self._start_initial_load)
 
-    def action_study_back_to_library(self) -> None:
-        """Escape: leave Study for the Library staging canvas that reached it.
+    def action_study_back(self) -> None:
+        """Escape: leave Study for the screen that actually reached it.
 
-        task-2854: Study has no back affordance of its own -- it is a
-        separate full screen, not a Library canvas -- so this reuses the
-        existing ``NavigateToScreen``/nav-context seam
+        task-4011: routes on the claimed origin -- Home's flashcards-review
+        entry returns to Home; anything else keeps task-2854's Library
+        return below.
+
+        task-2854 (Library origin): Study has no back affordance of its own
+        -- it is a separate full screen, not a Library canvas -- so this
+        reuses the existing ``NavigateToScreen``/nav-context seam
         (``LIBRARY_NAV_CONTEXT_MODE``) the exact way
         ``TldwCli.open_notes_workspace`` re-enters Library's Notes list,
         landing on the "Study decks" handoff row (``LIBRARY_NAV_MODE_TO_ROW_ID``)
@@ -1282,6 +1348,9 @@ class StudyScreen(BaseAppScreen):
         Study" exit, so one shared landing spot keeps this simple rather
         than threading the originating row id through the whole handoff.
         """
+        if self._study_origin == STUDY_ORIGIN_HOME:
+            self.app_instance.post_message(NavigateToScreen(TAB_HOME))
+            return
         self.app_instance.post_message(
             NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "study"})
         )
@@ -1460,6 +1529,7 @@ class StudyScreen(BaseAppScreen):
                         scope_context, study_window=study_window
                     ),
                     exclusive=True,
+                    group="study-apply-scope-context",
                 )
                 return
         open_study = getattr(self.app_instance, "open_study_screen", None)
@@ -1495,6 +1565,7 @@ class StudyScreen(BaseAppScreen):
                         scope_context, study_window=study_window
                     ),
                     exclusive=True,
+                    group="study-apply-scope-context",
                 )
                 return
         open_study = getattr(self.app_instance, "open_study_screen", None)
@@ -1543,7 +1614,11 @@ class StudyScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#study-generate-source-pack")
     def handle_generate_source_pack(self) -> None:
-        self.run_worker(self._generate_source_study_pack(), exclusive=True)
+        self.run_worker(
+            self._generate_source_study_pack(),
+            exclusive=True,
+            group="study-generate-source-pack",
+        )
 
     @on(Button.Pressed, "#study-resume-last")
     def handle_resume_last_session(self) -> None:

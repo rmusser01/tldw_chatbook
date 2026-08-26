@@ -1,6 +1,7 @@
 # audio.cpp TTS Adapter Registry — Design
 
-**Status:** approved by the user on 2026-07-23; review amendments approved on 2026-07-23
+**Initial adapter-registry approval:** Original design and its initial review amendments approved by the user on 2026-07-23
+**Managed-lifecycle amendment approval:** Separately approved by the user on 2026-08-02 after independent specification review
 **Date:** 2026-07-23
 **Related tasks:** [TASK-561](<../../../backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md>), [TASK-560](<../../../backlog/tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>), and [TASK-569](<../../../backlog/tasks/task-569 - Complete-external-audio.cpp-STTS-Playground-vertical.md>)
 **Canonical ADR:** [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)

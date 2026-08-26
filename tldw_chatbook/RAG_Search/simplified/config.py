@@ -6,7 +6,7 @@ integrating with the existing tldw_cli configuration system while providing
 sensible defaults and easy overrides.
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from typing import Optional, Dict, Any, List, Union
 from pathlib import Path
 import os
@@ -20,7 +20,9 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-# Server-parity hybrid fusion default (alpha weights the vector leg)
+# Hybrid fusion defaults. `hybrid_alpha` keeps tldw_server's 0.7 (it weights
+# the vector leg); the RRF constant k does NOT keep the server's 60 -- see
+# `DEFAULT_HYBRID_RRF_K` below.
 from ..fusion import DEFAULT_HYBRID_ALPHA
 
 
@@ -29,6 +31,55 @@ from ..fusion import DEFAULT_HYBRID_ALPHA
 VECTOR_STORE_TYPE_AUTO = "auto"
 VECTOR_STORE_TYPE_CHROMA = "chroma"
 VECTOR_STORE_TYPE_MEMORY = "memory"
+
+# The single source of truth for SearchConfig.hybrid_pool_multiplier's
+# default (TASK-4110 review, minor b): `rag_service._resolve_hybrid_pool_
+# multiplier`'s invalid-value fallback imports this same constant rather
+# than the module-level `SEARCH_RESULT_MULTIPLIER` -- those two used to
+# collapse to the same number (2) by coincidence, not by any shared
+# definition, so a user who had tuned the undocumented
+# `[rag.service] search_result_multiplier` TOML knob (which still governs
+# `_semantic_search`'s own internal over-fetch on every search path) would
+# have silently gotten THEIR number back out of an invalid
+# hybrid_pool_multiplier, rather than this field's own default. Release
+# note: hybrid legs previously honored `search_result_multiplier` for their
+# over-fetch; they now honor `hybrid_pool_multiplier` instead -- a user who
+# set `search_result_multiplier = 4` gets the hybrid legs back to 2 until
+# they set `hybrid_pool_multiplier` explicitly.
+DEFAULT_HYBRID_POOL_MULTIPLIER = 2
+
+# The shipped RRF constant for chatbook's hybrid fusion (TASK-4110, Task 5).
+#
+# DELIBERATELY NOT `fusion.DEFAULT_RRF_K` (60). That constant is the
+# tldw_server-parity value and survives only as a PURE-LIBRARY no-config
+# fallback (`reciprocal_rank_fusion`'s own signature default and its
+# negative-k sanitization, plus `_fuse_hybrid_results`' pre-parameter
+# default); this one is the value a chatbook profile actually ships with,
+# and it is what EVERY fallback in `fusion.resolve_rrf_k` -- the app-config
+# resolver both live fusion paths go through -- now returns.
+#
+# Measured, not asserted (the full matrix is in the TASK-4110 PR): the
+# server calibrates k for candidate pools of thousands, while chatbook's
+# `_hybrid_search` only ever fuses `top_k * hybrid_pool_multiplier` rows per
+# leg -- ~20. Over a 20-row window the k=60 RRF curve is nearly flat, so an
+# FTS-only row at keyword rank 1 (score `(1-alpha)/(60+1)` = 0.00492) is
+# beaten by every vector-only row down to rank ~83 and can never enter the
+# fused top-k: hybrid could not rescue a document the vector leg missed. At
+# k=5 an FTS-only rank-1 row strictly outranks vector-only rows from rank 10
+# -- well inside the window fusion actually sees. (Rank 9 is the exact
+# equality point, `3/10 x 1/6 == 7/10 x 1/14`; the keyword row still ranks
+# above it, but by one ULP of float rounding rather than by the weighting, so
+# 10 is the honest boundary to quote.)
+#
+# On the 49-document eval corpus this moved keyword recall@10 0.938 -> 1.000
+# and keyword NDCG 0.938 -> 0.957 with no per-category cell regressing.
+# That safety half is BOUNDED TO THAT CORPUS -- k=5 makes rank position
+# matter more within each leg, which is good for a well-ordered vector leg
+# and bad for a noisy one. `hybrid_alpha` (0.7) and
+# `hybrid_pool_multiplier` (2) were measured alongside it and deliberately
+# left alone: pool widening bought +0.005 on one metric family by re-ranking
+# a document k=5 had already rescued, for a permanent +50% retrieval width.
+DEFAULT_HYBRID_RRF_K = 5
 
 # Cached result of the embeddings_rag installed-probe. Availability cannot
 # change without a restart, so probe at most once per process.
@@ -313,6 +364,41 @@ class SearchConfig:
     # tldw_server. Authoritative TOML knob:
     # [AppRAGSearchConfig.rag.retriever] hybrid_alpha
     hybrid_alpha: float = DEFAULT_HYBRID_ALPHA
+    # Hybrid fusion RRF constant k: the rank-fusion denominator
+    # (1 / (k + rank)). Default 5 -- measured for chatbook's ~20-row
+    # candidate window, NOT tldw_server's 60 (see
+    # `DEFAULT_HYBRID_RRF_K` above for the measurement and the divergence).
+    # Not range-checked here (this dataclass has no active load-time
+    # validation -- see `hybrid_alpha` above); resolved at USE time via
+    # `fusion.resolve_rrf_k`, exactly like `hybrid_alpha` is resolved via
+    # `resolve_hybrid_alpha` at its call site -- an invalid/negative value
+    # falls back to `DEFAULT_HYBRID_RRF_K` (this field's own default, 5)
+    # with a warning rather than distorting or crashing the fusion math.
+    rrf_k: int = DEFAULT_HYBRID_RRF_K
+    # Hybrid leg over-fetch multiplier: `_hybrid_search` asks each of its
+    # two legs (semantic, keyword) for `top_k * hybrid_pool_multiplier`
+    # candidates before RRF narrows back down to `top_k` -- a wider pool
+    # gives fusion more overlap between the legs to find. Scoped to the
+    # HYBRID legs only: `_semantic_search`'s own internal over-fetch
+    # multiplier (used on both the hybrid and the direct semantic-search
+    # path) is the separate module-level `SEARCH_RESULT_MULTIPLIER`
+    # constant and is untouched by this field. Resolved at use time via
+    # `rag_service._resolve_hybrid_pool_multiplier`: floored to 1 (each leg
+    # must fetch at least `top_k`), capped at a sanity ceiling, and an
+    # invalid value falls back to `DEFAULT_HYBRID_POOL_MULTIPLIER` (2,
+    # matching the prior shared `SEARCH_RESULT_MULTIPLIER` behavior
+    # byte-for-byte at THIS field's own default -- see
+    # `DEFAULT_HYBRID_POOL_MULTIPLIER`'s docstring above for the disclosure
+    # on the two knobs no longer being the same one).
+    #
+    # NOTE for the Task 4 sweep: this does not set the semantic leg's total
+    # effective over-fetch alone -- `_semantic_search` applies ITS OWN
+    # `SEARCH_RESULT_MULTIPLIER` on top of whatever top_k it is handed, so
+    # the semantic leg's raw vector-store fetch is
+    # `top_k * hybrid_pool_multiplier * SEARCH_RESULT_MULTIPLIER`
+    # (compounding), while the keyword leg's fetch is the simple
+    # `top_k * hybrid_pool_multiplier` (no second multiplier applies there).
+    hybrid_pool_multiplier: int = DEFAULT_HYBRID_POOL_MULTIPLIER
     # Re-ranking
     enable_reranking: bool = False
     reranker_model: Optional[str] = None
@@ -327,12 +413,164 @@ class SearchConfig:
     hybrid_cache_ttl: Optional[float] = None  # TTL for hybrid search results
     # Database connection settings
     fts5_connection_pool_size: int = 3  # Connection pool size for FTS5 searches
+    # Explicit override for the keyword (FTS5) leg's media database path.
+    # None (the default) means "resolve via tldw_chatbook.config.get_media_db_path()"
+    # -- the single authoritative resolver for the real on-disk media DB
+    # (honors TLDW_CONFIG_PATH scratch profiles and any user-configured
+    # custom path). Only set this to point the keyword leg at a specific
+    # file (e.g. tests); never guessed/derived from other paths.
+    media_db_path: Optional[Path] = None
+    # Explicit override for the keyword (FTS5) leg's ChaChaNotes database
+    # path -- the source of the notes and conversation sub-legs (TASK-3996).
+    # None (the default) means "resolve via
+    # tldw_chatbook.config.get_chachanotes_db_path()", the single
+    # authoritative resolver, exactly as `media_db_path` above defers to
+    # `get_media_db_path()`. The engine opens this file READ-ONLY and never
+    # through `CharactersRAGDB` (whose constructor runs schema work); only
+    # set this to point the keyword leg at a specific file (e.g. tests).
+    chachanotes_db_path: Optional[Path] = None
+    # Explicit override for the keyword (FTS5) leg's Prompts database path --
+    # the source of the prompts sub-leg (TASK-15020/B2). None (the default)
+    # means "resolve via tldw_chatbook.config.get_prompts_db_path()", the
+    # single authoritative resolver, exactly as the two paths above defer to
+    # theirs. The engine opens this file READ-ONLY and never through
+    # `PromptsDatabase` (whose constructor runs schema work); only set this to
+    # point the keyword leg at a specific file (e.g. tests).
+    prompts_db_path: Optional[Path] = None
+    # How the keyword (FTS5) leg joins a query's tokens into its MATCH
+    # expression (TASK-15400, extended by TASK-15700). One of the six
+    # candidates the two arcs' specs pre-register, resolved at USE time by
+    # `rag_service.RAGService._fts5_match_expressions`:
+    #
+    #   "and"                -- the PRE-15400 construction: implicit AND over
+    #                           EVERY token (a document must contain every
+    #                           word the user typed).
+    #   "and_stopword_trim"  -- AND over the content tokens only, falling back
+    #                           to the full AND when trimming empties the
+    #                           query. THE SHIPPED DEFAULT 2026-08-11 ->
+    #                           2026-08-13.
+    #   "or"                 -- OR over the content tokens.
+    #   "and_then_or"        -- AND first; on a ZERO-row sub-leg result,
+    #                           that sub-leg re-runs as the content-token
+    #                           OR (a non-empty AND is never widened).
+    #   "prefix"             -- the content tokens as PREFIX terms, implicitly
+    #                           ANDed (`"tok"*`). Widens as the PRIMARY form.
+    #   "and_then_prefix"    -- THE SHIPPED DEFAULT since 2026-08-13: AND
+    #                           first; on a ZERO-row sub-leg result, that
+    #                           sub-leg re-runs as the content-token PREFIX
+    #                           form (a non-empty AND is never widened).
+    #
+    # THE DECISION RECORD FOR THIS DEFAULT (TASK-15700 Task 4, 2026-08-13).
+    # Two sentences, and the second is NOT the first's conclusion:
+    #
+    # (1) WHAT THE RULE PRODUCED. The arc's pre-registered rule was applied
+    # VERBATIM to the six-row re-run matrix (Task 3, 2026-08-13): the
+    # census-maximal row `and_then_or` (29) was DISQUALIFIED on hard
+    # constraint (b) -- 8 gated cells past 0.02, 5 of them past the 0.05 fail
+    # band; `or` failed (a) and (b); the qualifying set was
+    # {`and_stopword_trim` 21, `prefix` 23, `and_then_prefix` 23}, so max
+    # census 23 TIED `prefix` against `and_then_prefix`. The two were verified
+    # MEASUREMENT-IDENTICAL on every captured axis -- all 105 gated cells
+    # unmoved, all 60 per-query hybrid top-10s and all 60 keyword-leg top-10s
+    # identical, the same rescued queries, `lost` 0 both ways. The rule's
+    # tie-break (fewest extra FTS statements, MEASURED at 240 vs 460 over the
+    # 60-query golden set) therefore selected **`prefix`**.
+    #
+    # (2) THE OWNER RULED `and_then_prefix` SHIPS INSTEAD. The standing
+    # stability-over-quick-wins ruling was applied to a dimension the
+    # tie-break PREDATES: structural immunity to intra-sub-leg
+    # self-displacement. `prefix` widens as the PRIMARY form, so its widened
+    # rows compete for their own sub-leg's bm25-ordered, LIMITED slots BEFORE
+    # the merge is consulted, and the tiered merge can protect nothing there
+    # (measured synthetically: 12 prefix-competitor docs + 1 exact-match doc,
+    # "wombat log" at top_k=5 -- the trimmed AND finds the exact doc, `prefix`
+    # returns 5 rows without it). `and_then_prefix` cannot reach that shape: a
+    # NON-EMPTY AND primary is never widened, and the widening rows are
+    # confined to tier 2 of the sub-leg merge. The measured price is 220 extra
+    # SQLite statements over the 60-query set (460 vs 240; 92% of sub-legs
+    # fall back on the 172-document eval corpus -- an upper bound that
+    # shrinks as a corpus densifies), wall time indistinguishable, and ZERO
+    # measured retrieval difference.
+    #
+    # So `and_then_prefix` is NOT the rule's own output and must never be
+    # described as such: the rule produced `prefix`, and the owner overrode
+    # the tie-break between two measurement-identical qualifiers.
+    #
+    # What the flip buys is LEG-LEVEL: keyword-leg census 21 -> 23 of the 53
+    # non-negative golden queries (+`kw-quillon-mast`, +`kw-thimble-relay`),
+    # zero-row queries 39 -> 36 of 60. NO gated cell moves in any mode (0 of
+    # 105), because both new census hits are queries the vector leg already
+    # ranks highly -- the gain is what matters when the vector leg is blind,
+    # absent or scoped away.
+    #
+    # NOT A SUPERSET BY CONSTRUCTION -- read this before claiming one. This
+    # construction's PRIMARY is the FULL AND (`_escape_fts5_query`, every
+    # token INCLUDING stopwords), not the trimmed AND the outgoing default
+    # ran. Where a sub-leg's full AND returns rows, the fallback never fires,
+    # so `and_stopword_trim`'s trim-only hits are not sought there. That
+    # nothing was lost is a MEASURED fact on this corpus (Task 3's `lost` = 0
+    # against both the control and the shipped row), never a structural
+    # guarantee. `pm-vendor-chaser` illustrates it: the outgoing default
+    # reached it by TRIMMING, this one reaches it by the PREFIX FALLBACK --
+    # one query, two mechanisms, which is why the gated prompt cell (0.200)
+    # does not move across the flip.
+    #
+    # Deliberately NOT wired to TOML/user config: both arcs measured their
+    # candidates against the golden set and ship a default, rather than
+    # handing users an unmeasured knob (spec: "the construction choice is NOT
+    # a config knob in this arc"). It is a field rather than a constant only
+    # so the sweep can vary it on a live SearchConfig -- which is exactly why
+    # it also joins the cache key (`simple_cache._make_key`); a
+    # runtime-variable retrieval parameter outside the key is how TASK-4110's
+    # sweep would have reported "the parameter doesn't matter". A consequence
+    # of BOTH flips, unchanged in kind: the cache key is VALUE-keyed on this
+    # field, so the default now renders a `fts:and_then_prefix` key part where
+    # it rendered `fts:and_stopword_trim` before 2026-08-13 and nothing at all
+    # pre-15400. Entries cached under a previous construction are keyed APART
+    # from the new one rather than invalidated in place -- correct by
+    # construction, at the cost of a one-time run of cold misses after the
+    # upgrade, which is pre-existing semantics and not new to this flip.
+    #
+    # That guarantee holds for the ASYNC cache path only. `SimpleRAGCache`'s
+    # SYNC twins (`_sync_get_impl`/`_sync_put_impl`) never pass this
+    # parameter, so they still render the legacy construction-less key --
+    # and before the flip that key was CORRECT for a default-config search,
+    # while after it a sync-path entry is labelled as if the full AND
+    # produced it. No production code calls the sync API today (verified by
+    # grep, and re-verified at the close of TASK-15400), which is the only
+    # reason this is a note rather than a defect; wiring anything to the
+    # sync twins requires passing the construction first. Escalated as
+    # **TASK-15701**, which covers all three dimensions the sync key omits
+    # (this one, `keyword_source_types` and `hybrid_fusion`) rather than
+    # only the construction.
+    #
+    # An unrecognized value warns once and behaves as "and" (fail-safe to the
+    # PRE-ARC behaviour, which is the one every escaping/pushdown pin still
+    # describes), matching how `hybrid_alpha`/`rrf_k` degrade.
+    #
+    # TASK-15700 (2026-08-13) added the last TWO values -- `prefix` and
+    # `and_then_prefix` -- for its re-run of the sweep under the form-tiered
+    # sub-leg merge, and the re-run was NOT null: it moved this default, by
+    # the decision recorded above (the rule's winner `prefix`, overridden to
+    # `and_then_prefix` by owner ruling).
+    fts_match_construction: str = "and_then_prefix"
 
-    # Parent document inclusion settings (RAG pipeline feature)
-    include_parent_docs: bool = False
-    parent_size_threshold: int = 5000  # Maximum parent doc size in characters
-    parent_inclusion_strategy: str = "size_based"  # "always", "size_based", "never"
-    max_context_size: int = 16000  # Maximum total context size in characters
+    # Maximum total context size in characters. LIVE: the Settings > Library >
+    # RAG defaults screen reads and writes it (settings_library_rag_defaults.py).
+    #
+    # RETIRED HERE (TASK-16174, Phase K): `include_parent_docs`,
+    # `parent_size_threshold` and `parent_inclusion_strategy` used to sit on this
+    # block. They were shipped, user-switchable, switched ON by three profiles --
+    # and read by NOTHING (grep-verified: 1 definition + 3 profile writes, 0
+    # reads). The decision rule was pre-registered in the arc's spec: wire them
+    # only if the capability lands engine-side. It did not -- expansion ships as a
+    # pull-based agent tool that runs AFTER retrieval, so wiring them would have
+    # changed what retrieval returns, which this arc's gate forbids. See
+    # Docs/superpowers/specs/2026-08-15-rag-agentic-expansion-design.md.
+    #
+    # Saved configs that still carry the retired keys keep loading: `from_dict`
+    # drops unknown search keys with a logged notice instead of raising TypeError.
+    max_context_size: int = 16000
 
 
 @dataclass
@@ -476,11 +714,35 @@ class RAGConfig:
                 pipeline_data["pipeline_config_file"]
             )
 
+        # `search_data` comes straight from a user-editable TOML/profile JSON, so
+        # an unknown key here is a hostile-dict problem, not a programming error:
+        # a plain `SearchConfig(**search_data)` raises TypeError and takes the
+        # whole config load down. That is exactly what a config saved BEFORE
+        # TASK-16174 retired `include_parent_docs` / `parent_size_threshold` /
+        # `parent_inclusion_strategy` would do. Drop unknown keys with a notice
+        # naming each one, so a retired or mistyped key degrades to "ignored and
+        # reported". (Same defensive posture as `rag_service.py`'s
+        # `_resolve_fts_match_construction`, for the same reason: this dict is
+        # user input.) Scope is deliberately the SEARCH section only -- the other
+        # sections have no retired fields and are out of this arc's scope.
+        known_search_fields = {f.name for f in fields(SearchConfig)}
+        known_search_data = {
+            key: value
+            for key, value in search_data.items()
+            if key in known_search_fields
+        }
+        for dropped in search_data:
+            if dropped not in known_search_fields:
+                logger.warning(
+                    f"Ignoring unknown RAG search config key '{dropped}' "
+                    "(retired or misspelled); it has no effect."
+                )
+
         return cls(
             embedding=EmbeddingConfig(**embedding_data),
             vector_store=VectorStoreConfig(**vector_store_data),
             chunking=ChunkingConfig(**chunking_data),
-            search=SearchConfig(**search_data),
+            search=SearchConfig(**known_search_data),
             query_expansion=QueryExpansionConfig(**query_expansion_data),
             pipeline=PipelineConfig(**pipeline_data),
         )

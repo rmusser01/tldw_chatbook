@@ -82,7 +82,6 @@ class VoiceProfileDialog(ModalScreen):
     
     .help-text {
         color: $text-muted;
-        font-size: 12;
     }
     """
 
@@ -151,16 +150,16 @@ class VoiceProfileDialog(ModalScreen):
                 yield Label("Language", classes="form-label")
                 yield Select(
                     options=[
-                        ("en", "English"),
-                        ("es", "Spanish"),
-                        ("fr", "French"),
-                        ("de", "German"),
-                        ("it", "Italian"),
-                        ("pt", "Portuguese"),
-                        ("ru", "Russian"),
-                        ("zh", "Chinese"),
-                        ("ja", "Japanese"),
-                        ("ko", "Korean"),
+                        ("English", "en"),
+                        ("Spanish", "es"),
+                        ("French", "fr"),
+                        ("German", "de"),
+                        ("Italian", "it"),
+                        ("Portuguese", "pt"),
+                        ("Russian", "ru"),
+                        ("Chinese", "zh"),
+                        ("Japanese", "ja"),
+                        ("Korean", "ko"),
                     ],
                     value=self.profile_data.get("language") or "en",
                     id="language-select",

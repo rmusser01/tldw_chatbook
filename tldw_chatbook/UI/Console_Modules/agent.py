@@ -35,9 +35,9 @@ already names:
    True, group="default", name="_load_console_agent_run_log")`. Those are
    the exact values `@work(thread=True)` itself passes -- the pre-move
    worker group name is preserved, per the binding rule.
-2. ...and its `self.app.call_from_thread(...)` became `self.call_from_
-   thread(...)`, reaching the framework service through this controller's
-   own property rather than through a whole `App` handle.
+2. ...and its `self.app.call_from_thread(...)` became
+   `self._screen.app.call_from_thread(...)`, reaching the canonical owning
+   `App` bridge without adding a controller-local alias.
 3. `_show_console_agent_run_log_modal`'s `self.app.push_screen(...)`
    became `self.push_screen(...)`, same reason (and the same shape
    `ConsoleMessageController` already uses).
@@ -109,6 +109,27 @@ identical twin two lines below it in `chat_screen.py`
 (`_console_native_tool_calls_enabled`, same shape, same consumers) is not
 name-matched and would have been split away from it. See the task-3 report
 for the full per-method verdict table.
+
+PR2b Task 4 (supervisor fleet, spec `Docs/superpowers/specs/2026-08-08-
+supervisor-agent-fleet-design.md` section 7) retired one method from the
+list above and added its replacement: `_toggle_console_agent_drilldown_
+from_subagents_click` (the "click the joined sub-agents line to cycle to
+the next run" affordance) is GONE, replaced by `_drill_into_console_agent_
+subagent(row_id)` -- a specific row (posted via `ConsoleInspectorSection.
+RowActivated`, caught by the screen) now resolves directly to its own run,
+rather than stepping through every run one click at a time. The three new
+row-building methods (`_console_agent_fleet_rows`,
+`_console_agent_fleet_section_state`, and the resolver
+`_console_agent_drilldown_target_run_id`) feed the `ConsoleInspectorSection`
+component (Task 3) that now renders inside the Agent rail section's body,
+replacing the old single joined-string Static. `_console_agent_section_
+lines` itself is UNCHANGED in shape (still a 3-tuple; still directly unit
+tested by `Tests/UI/test_console_agent_rail.py`/`test_console_agent_
+controller.py`) -- only its hard `[:60]` slice was retired (the component
+now owns width truncation via CSS ellipsis) -- but its third element (the
+old joined sub-agents string) is no longer painted into the DOM by
+`_console_agent_section_payload`; the fleet rows are derived independently,
+straight from `ConsoleAgentBridge.fleet_snapshot`/`historical_snapshot`.
 """
 
 from __future__ import annotations
@@ -123,14 +144,305 @@ import time
 from loguru import logger
 from textual.message_pump import NoActiveAppError
 
+from ...Agents.agent_models import (
+    AGENT_KIND_PRIMARY,
+    STEP_TOOL_CALL,
+    TERMINAL_RUN_STATUSES,
+)
+from ...Chat.cost_display import format_token_count
+from ...Widgets.Console.console_agent_steering_bar import (
+    STEERING_STATE_HIDDEN,
+    ConsoleAgentSteeringState,
+)
+from ...Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSectionState,
+    InspectorSectionRow,
+)
 from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from ...Widgets.Console.console_transcript import CONSOLE_GENERATING_PLACEHOLDER
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ...Agents.fleet_coordinator import FleetHandle
+    from ...Chat.console_agent_bridge import SubAgentSummary
     from ...Chat.console_chat_models import ConsoleChatMessage
     from ...Chat.console_rail_state import ConsoleRailState
     from ..Screens.chat_screen import ChatScreen
 
-__all__ = ["ConsoleAgentController"]
+#: Status glyph, shared by the text-only overview builder
+#: (`_console_agent_section_lines`) and the fleet row/summary builders
+#: below -- one vocabulary, one place (agent.py:354/:457-463 in the PR2b
+#: seam map). Unknown/future statuses fall back to "●" wherever this is
+#: consulted via `.get(status, "●")`.
+_AGENT_STATUS_GLYPHS: Dict[str, str] = {
+    "done": "✓",
+    "running": "●",
+    "stuck": "⚠",
+    "error": "✗",
+    "cancelled": "✗",
+}
+
+#: The ``ConsoleInspectorSection.section_id`` the fleet mini-section is
+#: constructed with (``left_rail.py``'s ``compose()``) and the id
+#: ``chat_screen.py``'s ``RowActivated`` handler matches against -- one
+#: constant so the two sides can never drift apart.
+CONSOLE_AGENT_FLEET_SECTION_ID = "agent-fleet"
+
+#: The "Cancel all agents" button's DOM id (PR3b Task 5) -- constructed
+#: in ``left_rail.py``'s ``compose()``, matched by ``chat_screen.py``'s
+#: ``@on`` selector, and written by its ``_sync_console_agent_section``
+#: apply; one constant, same drift rule as the section id above. The UI
+#: suite (``test_console_agent_cancel_all.py``) deliberately pins the
+#: LITERAL instead, so a silent rename here still fails a test.
+CONSOLE_AGENT_CANCEL_ALL_ID = "console-agent-cancel-all"
+
+#: Leading glyph for the turn-activity line's tool state. Same glyph the
+#: transcript's completed TOOL markers use (``format_agent_step_marker``),
+#: so "what is running now" and "what ran" read as one vocabulary.
+CONSOLE_TURN_ACTIVITY_TOOL_GLYPH = "⚙"
+#: The turn-activity line's between-tools state: the loop has handed the
+#: last tool result back to the model and is waiting on the next round.
+#: There is no step kind for "a model call started" (``STEP_MODEL`` is
+#: emitted AFTER the round returns, carrying its text), so this is derived
+#: from "the last primary step is not a tool call", not from an event.
+CONSOLE_TURN_ACTIVITY_THINKING = "Thinking…"
+#: Separator between the state and its elapsed segment.
+CONSOLE_TURN_ACTIVITY_SEPARATOR = " · "
+
+__all__ = [
+    "ConsoleAgentController",
+    "CONSOLE_AGENT_FLEET_SECTION_ID",
+    "CONSOLE_TURN_ACTIVITY_SEPARATOR",
+    "CONSOLE_TURN_ACTIVITY_THINKING",
+    "CONSOLE_TURN_ACTIVITY_TOOL_GLYPH",
+    "console_turn_activity_text",
+]
+
+
+def _format_fleet_elapsed(seconds: float | None) -> str:
+    """Format an already-computed duration as ``"Ns"``/``"Nm Ss"``/``"<1s"``.
+
+    Mirrors ``Library.library_ingest_state._format_elapsed``'s exact
+    grammar, but takes a precomputed duration instead of two raw
+    endpoints -- the one fleet row source that can compute elapsed at all
+    (live ``FleetHandle``s) uses ``time.monotonic()`` floats, so the
+    "compute a duration" step happens once, at the call site, before
+    reaching this shared formatter.
+
+    Args:
+        seconds: The duration to format, or ``None``/negative when there is
+            no usable base (mirrors ``_format_elapsed``'s own "no usable
+            base -> claiming a duration would be a lie" reasoning).
+
+    Returns:
+        ``""`` when ``seconds`` is ``None`` or negative -- the caller omits
+        the segment; ``"<1s"`` under one second; otherwise ``"Ns"`` under a
+        minute, or ``"Nm Ss"`` at or above a minute.
+    """
+    if seconds is None or seconds < 0:
+        return ""
+    if seconds < 1:
+        return "<1s"
+    total_seconds = int(round(seconds))
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    minutes, secs = divmod(total_seconds, 60)
+    return f"{minutes}m {secs}s"
+
+
+def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
+    """Return the live activity line for one in-flight Console turn.
+
+    **Live-only, by construction.** There is no resumed counterpart and
+    there must never be one: this line reports what an agent is doing
+    RIGHT NOW, and a finished turn's transcript already carries the TOOL
+    markers that say what it did. (Same "live rendering has no resumed
+    twin" note ``format_todo_marker`` carries -- unlike
+    ``format_agent_step_marker``, which is deliberately shared by the live
+    and resume paths so both render byte-identical text.)
+
+    The four states, derived from the primary agent's most recent step:
+
+    ===========================  ==========================================
+    situation                    line
+    ===========================  ==========================================
+    a tool is running            ``⚙ <tool> · <elapsed>``
+    between tools / after one    ``Thinking… · <elapsed>``
+    running, no primary step     ``Generating…`` (today's copy, unchanged)
+    turn ended (any non-running) ``""`` -- the caller renders nothing
+    ===========================  ==========================================
+
+    Sub-agent steps are skipped, not merely deprioritised: a child's work
+    belongs to the Agent rail's fleet rows, never to the primary assistant
+    row. This is a real path, not a defensive one -- ``ConsoleAgentBridge.
+    on_step`` routes a SUB-AGENT step whose run id is empty into the
+    PRIMARY run's own live feed (its documented "no run attributed"
+    fallback), so ``snapshot.steps[-1]`` can genuinely belong to a child.
+
+    Quiet catalog tools (``find_tools``/``load_tools``) DO appear here.
+    ``_QUIET_STEP_TOOLS`` keeps them out of the permanent, append-only TOOL
+    markers, where a discovery round would be lasting clutter; this line is
+    ephemeral and exists precisely so no working moment looks frozen, and
+    suppressing them would restore a silent gap for the whole round.
+
+    ``STEP_MODEL``'s summary is never shown. It carries the raw model turn
+    text -- mid-turn that is the tool-call fence itself -- so the state, not
+    the summary, is what the user sees.
+
+    Args:
+        snapshot: The conversation's ``AgentLiveSnapshot`` (duck-typed:
+            ``status`` plus a ``steps`` sequence).
+        now: ``time.monotonic()`` reading for this poll tick, injected so
+            the elapsed segment is testable without sleeping.
+
+    Returns:
+        The line to render, or ``""`` when nothing is live.
+    """
+    if getattr(snapshot, "status", "idle") != "running":
+        return ""
+    step = next(
+        (
+            candidate
+            for candidate in reversed(tuple(getattr(snapshot, "steps", ()) or ()))
+            if getattr(candidate, "agent_kind", "") == AGENT_KIND_PRIMARY
+        ),
+        None,
+    )
+    if step is None:
+        # Pre-first-token: the model has not come back once yet, so there is
+        # no step to name and no honest base to time from.
+        return CONSOLE_GENERATING_PLACEHOLDER
+    if step.kind == STEP_TOOL_CALL:
+        # `AgentLiveStep.text` for a tool-call step IS the tool name:
+        # `agent_runtime` adds every STEP_TOOL_CALL with `tool_name=` and
+        # neither `summary` nor `result`, and `_summarize`'s precedence
+        # (summary or result or tool_name or kind) therefore lands on it.
+        label = f"{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {step.text}"
+    else:
+        label = CONSOLE_TURN_ACTIVITY_THINKING
+    started_at = getattr(step, "started_at", None)
+    elapsed = (
+        _format_fleet_elapsed(max(0.0, now - started_at))
+        if started_at is not None
+        else ""
+    )
+    return f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else label
+
+
+def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSectionRow:
+    """Build one fleet row from a LIVE ``FleetCoordinator`` handle.
+
+    ``row_id`` is the handle's own ``handle_id`` -- stable across the
+    handle's whole life (reserved once, never reassigned), unlike its
+    ``run_id`` (empty until ``attach_run`` fires a moment later). Using a
+    value that can CHANGE mid-flight as the row's structural identity would
+    make ``ConsoleInspectorSection``'s structural key see a different row
+    the instant the run attaches, forcing an avoidable recompose right when
+    the row becomes genuinely interesting.
+
+    ``clickable`` requires a non-empty ``run_id`` -- there is nothing to
+    drill into yet for a handle whose run hasn't attached.
+
+    ``cancellable`` (PR2b Task 5) is true only while ``status`` is still
+    live (not in ``TERMINAL_RUN_STATUSES``) -- a finished/errored/cancelled
+    child has nothing left to cooperatively stop, and offering the gesture
+    for a stale row would just make ``AgentService.cancel_subagent`` no-op
+    silently on press.
+
+    The secondary line's trailing token segment (PR2b Task 5) reads
+    ``handle.total_tokens`` -- 0, and so omitted, until ``FleetCoordinator.
+    finish()`` records the child's real ``RunOutcome.total_tokens`` spend;
+    a still-running child's spend is not final, so nothing is shown for it
+    rather than a partial, growing-then-frozen number.
+    """
+    status = handle.status or "running"
+    glyph = _AGENT_STATUS_GLYPHS.get(status, "●")
+    name = handle.agent or "sub-agent"
+    primary = f"{glyph} {name}"
+    if handle.started_at:
+        end = handle.finished_at if handle.finished_at is not None else now
+        elapsed = _format_fleet_elapsed(max(0.0, end - handle.started_at))
+        if elapsed:
+            primary = f"{primary} · {elapsed}"
+    secondary = (handle.error or handle.result or handle.task or "").strip()
+    if handle.total_tokens:
+        token_segment = f"{format_token_count(handle.total_tokens)} tok"
+        secondary = f"{secondary} · {token_segment}" if secondary else token_segment
+    # PR3b Task 3 (spec §6 latency honesty): a posted steering entry is
+    # QUEUED until the child's next drain boundary consumes it, and the
+    # row says so. `queued_steering` is computed onto every coordinator
+    # copy from the mailbox itself (never stored on the live handle), so
+    # this figure can never disagree with what the drain would deliver;
+    # it defaults 0 for the historical/fallback row sources, which never
+    # reach this builder anyway. Terminal rows drop the segment (Qodo
+    # audit minor batch): a finished/errored/cancelled child never drains
+    # its mailbox again, so "steering queued (N)" on such a row is a
+    # delivery promise the app can no longer keep -- the mailbox copy
+    # still reports the count, which is exactly why the gate lives here.
+    queued_steering = int(getattr(handle, "queued_steering", 0) or 0)
+    if queued_steering and status not in TERMINAL_RUN_STATUSES:
+        steering_segment = f"steering queued ({queued_steering})"
+        secondary = (
+            f"{secondary} · {steering_segment}" if secondary else steering_segment
+        )
+    return InspectorSectionRow(
+        row_id=handle.handle_id,
+        primary_text=primary,
+        secondary_text=secondary,
+        status=status,
+        clickable=bool(handle.run_id),
+        cancellable=status not in TERMINAL_RUN_STATUSES,
+    )
+
+
+def _fleet_row_from_summary(
+    summary: "SubAgentSummary", index: int
+) -> InspectorSectionRow:
+    """Build one fleet row from a HISTORICAL/resumed ``SubAgentSummary``.
+
+    No elapsed segment: unlike a live ``FleetHandle``,
+    ``AgentLiveSnapshot.subagents`` carries no timestamps (only
+    ``text``/``status``/``run_id``/``handle_id`` -- see
+    ``SubAgentSummary``'s own docstring), so there is nothing honest to
+    compute a duration from here.
+
+    ``row_id`` prefers ``run_id`` (populated for every REAL resumed row by
+    ``ConsoleAgentBridge._derive_historical_snapshot``), falling back to
+    ``handle_id`` and then a synthetic, index-based id only for a bare test
+    double that constructs a ``SubAgentSummary`` with neither -- keeps the
+    row's structural identity non-empty and unique even then.
+    """
+    status = summary.status or "running"
+    glyph = _AGENT_STATUS_GLYPHS.get(status, "●")
+    row_id = summary.run_id or summary.handle_id or f"idx-{index}"
+    return InspectorSectionRow(
+        row_id=row_id,
+        primary_text=f"{glyph} {summary.text}".strip(),
+        secondary_text="",
+        status=status,
+        clickable=bool(summary.run_id),
+    )
+
+
+def _fleet_row_from_record(record: dict) -> InspectorSectionRow:
+    """Build one fleet row from a raw ``AgentRunsDB`` run dict.
+
+    Last-resort fallback for a bridge stub that implements only
+    ``subagent_runs`` (no ``historical_snapshot``) -- see
+    ``_console_agent_fleet_rows``'s docstring for the full precedence.
+    ``row_id`` is the record's own permanent id, so this is always
+    clickable when it has one.
+    """
+    status = str(record.get("status") or "running")
+    glyph = _AGENT_STATUS_GLYPHS.get(status, "●")
+    name = str(record.get("task") or "sub-agent")
+    row_id = str(record.get("id") or "")
+    return InspectorSectionRow(
+        row_id=row_id,
+        primary_text=f"{glyph} {name}",
+        secondary_text="",
+        status=status,
+        clickable=bool(row_id),
+    )
 
 
 class ConsoleAgentController:
@@ -159,19 +471,17 @@ class ConsoleAgentController:
         `ConsoleDictationController.__init__`'s docstring. As it applies
         here:
 
-        1. **Framework services** (`run_worker`, `push_screen`,
-           `call_from_thread`) are live-read from the screen via `@property`
-           below, never snapshotted.
+        1. **Framework services** (`run_worker`, `push_screen`) are live-read
+           from the screen via `@property` below, never snapshotted.
         2. **`app_instance`** is the one justified snapshot: it never
            changes identity over this controller's life, and
            `_ensure_console_agent_bridge` only ever `getattr`s off it.
         3. Every **app-level dependency** is a named keyword-only callable,
            wired at the call site as a late-binding lambda -- never a bound
-           method, which would freeze the screen's CURRENT method and stop
-           observing a later `monkeypatch.setattr` on the instance. Two of
-           these are patched by name in the pre-existing suite
-           (`_current_console_rail_conversation_id` and
-           `_current_console_rail_state`, both in
+           method, which would freeze the current target and stop observing
+           a later `monkeypatch.setattr`. The pre-existing suite patches
+           `_current_console_rail_conversation_id` on `screen._character`
+           and `_current_console_rail_state` on the screen (both in
            `Tests/UI/test_console_agent_rail.py`), so this is load-bearing,
            not ceremony.
 
@@ -213,11 +523,13 @@ class ConsoleAgentController:
         )
 
         # -- Moved state (was `ChatScreen.__init__`) ------------------------
-        #: The lazily-built `ConsoleAgentBridge`, or `None` once resolved to
-        #: "no agent runtime". Read-write through the screen's proxy of the
-        #: same name (`Tests/UI/test_console_agent_rail.py` replaces it on
-        #: the screen 10 times).
-        self._console_agent_bridge: Any | None = None
+        #: The lazily-built `ConsoleAgentBridge` is a PROPERTY over the
+        #: app-owned `ConsoleRuntime` (task-15860 lifetime landing) -- it has
+        #: no `__init__` slot, because a fresh screen's `None` would shadow
+        #: the surviving runtime's live bridge. Still read-write through the
+        #: screen's proxy of the same name
+        #: (`Tests/UI/test_console_agent_rail.py` replaces it on the screen
+        #: 10 times); the write now lands on the runtime.
         #: The sub-agent run currently drilled into, and the conversation
         #: that drill-in is scoped to. Both proxied read-write on the screen.
         self._console_agent_drilldown_run_id: str | None = None
@@ -250,15 +562,6 @@ class ConsoleAgentController:
         """`Screen.app.push_screen`, bound. See `__init__`'s docstring."""
         return self._screen.app.push_screen
 
-    @property
-    def call_from_thread(self) -> Any:
-        """`Screen.app.call_from_thread`, bound. See `__init__`'s docstring.
-
-        Used by `_load_console_agent_run_log`, which runs on a real thread
-        and must hop back to the UI thread to push the modal.
-        """
-        return self._screen.app.call_from_thread
-
     # -- Named constructor dependencies -------------------------------------
     #
     # Each property below is a thin wrapper around a stored callable, kept
@@ -290,7 +593,7 @@ class ConsoleAgentController:
 
     @property
     def _current_console_rail_conversation_id(self) -> Any:
-        """`ChatScreen._current_console_rail_conversation_id`, by name."""
+        """The character controller's rail-conversation accessor, by name."""
         return self._current_rail_conversation_id
 
     @property
@@ -314,6 +617,30 @@ class ConsoleAgentController:
 
     # -- Moved methods -------------------------------------------------------
 
+    def _console_runtime(self) -> Any:
+        """Return the app-owned `ConsoleRuntime` (task-15860).
+
+        Resolved through the SCREEN's own memoised accessor whenever it has
+        one, so this controller and its screen can never end up holding two
+        different runtimes.
+        """
+        screen = self._screen
+        resolver = getattr(screen, "_console_runtime", None)
+        if callable(resolver):
+            return resolver()
+        from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+
+        return ensure_console_runtime(self.app_instance, view=screen)
+
+    @property
+    def _console_agent_bridge(self) -> Any:
+        """The runtime's Console agent bridge, or `None`."""
+        return self._console_runtime().agent_bridge
+
+    @_console_agent_bridge.setter
+    def _console_agent_bridge(self, value: Any) -> None:
+        self._console_runtime().set_agent_bridge(value)
+
     def _ensure_console_agent_bridge(self) -> Any:
         """Return the native Console agent bridge, creating it lazily.
 
@@ -321,35 +648,74 @@ class ConsoleAgentController:
         ChaChaNotes DB to key the sibling ``AgentRunsDB`` file off of (e.g. an
         in-memory test harness) -- callers use the provider-direct Console
         stream in that case regardless of the config gate.
+
+        task-15860 Task 1 (pure ownership move): the bridge, its
+        ``AgentRunsDB`` and the ``register_fleet_attention`` fan-out
+        registration that must sit next to construction are now built by
+        the app-owned ``ConsoleRuntime`` (``Chat/console_runtime.py``).
+        This method keeps its name -- three test files replace it on the
+        screen instance, see this module's docstring -- and its caching.
+        The store and gateway go over as CALLABLES so the runtime can keep
+        the original ordering: the durable-DB probe still runs before
+        either of them is touched.
         """
         if self._console_agent_bridge is not None:
             return self._console_agent_bridge
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        db_path = getattr(db, "db_path", None) if db is not None else None
-        if not db_path or str(db_path) == ":memory:":
-            self._console_agent_bridge = None
-            return None
-        from pathlib import Path
-
-        from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-        runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
-        # TASK-1971 (Agent Change Review): the tracker is None when git is
-        # absent -- the bridge then skips tracking entirely, and runs behave
-        # exactly as before the feature existed (spec gating decision).
-        from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
-
-        change_tracker = ChangeTurnTracker()
-        self._console_agent_bridge = ConsoleAgentBridge(
-            agent_runs_db=runs_db,
-            store=self._ensure_console_chat_store(),
-            provider_gateway=self._ensure_console_provider_gateway(),
+        self._console_runtime().ensure_agent_bridge(
+            store_factory=self._ensure_console_chat_store,
+            provider_gateway_factory=self._ensure_console_provider_gateway,
             skills_service=getattr(self.app_instance, "skills_scope_service", None),
-            native_tools_enabled=self._console_native_tool_calls_enabled,
-            change_tracker=change_tracker if change_tracker.available else None,
+            native_tools_enabled_factory=(
+                lambda: self._console_native_tool_calls_enabled
+            ),
         )
         return self._console_agent_bridge
+
+    def console_turn_activity(self) -> str:
+        """The viewed session's live turn-activity line, or ``""``.
+
+        Read once per 0.2s Console poll tick and handed to
+        ``ConsoleTranscript.apply_turn_activity``. **No new timer**: during
+        an agent turn the viewed run's status is in
+        ``CONSOLE_ACTIVE_RUN_STATUSES``, which is exactly the condition
+        ``_start_console_transcript_sync_timer`` keeps its 0.2s tick alive
+        for, so the line already repaints for free while a turn is in
+        flight -- and never repaints when nothing is (task-15664 AC#2).
+
+        That same status check is the FIRST gate here, deliberately. The
+        bridge's published snapshot is per-conversation and only a terminal
+        publish clears it, so a run that died without one would otherwise
+        leave ``status="running"`` behind and let this line tick forever on
+        an idle transcript. ``run_state`` is the read-only facade for the
+        VIEWED session only, so it is also what keeps another session's
+        in-flight turn from writing onto this one's row.
+
+        Every bridge attribute is reached through ``getattr`` for the same
+        reason the rail's own reads are: several suites drive this cluster
+        with a bare bridge double that implements only part of the surface.
+
+        Returns:
+            The rendered line, or ``""`` when no live turn owns this view.
+        """
+        # Imported in-body for the cycle this module's docstring documents:
+        # `chat_screen` imports `Console_Modules.wiring`, which imports this
+        # module, and the constant is defined further down that file.
+        from ..Screens.chat_screen import CONSOLE_ACTIVE_RUN_STATUSES
+
+        controller = self._console_chat_controller
+        run_state = getattr(controller, "run_state", None) if controller else None
+        if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
+            return ""
+        bridge = self._console_agent_bridge
+        if bridge is None:
+            return ""
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        read_snapshot = getattr(bridge, "live_snapshot", None)
+        if read_snapshot is None:
+            return ""
+        return console_turn_activity_text(
+            read_snapshot(conversation_id), now=time.monotonic()
+        )
 
     def _console_agent_section_lines(self) -> tuple[str, str, str]:
         """Return the Agent rail's (status, steps, sub-agents) line text.
@@ -417,8 +783,41 @@ class ConsoleAgentController:
                     f"{ConsoleAgentBridge._summarize_persisted_step(s)}"
                     for s in record.get("steps", [])
                 )
+                if not steps:
+                    # PR3a-1 Task 6b (audit F1): a run's steps reach
+                    # `AgentRunsDB` in ONE write, when the run ends
+                    # (`AgentService._persist`), so this record is
+                    # step-less for the whole time a child is actually
+                    # working -- and a fleet child now keeps working after
+                    # the turn that spawned it returned, so that is no
+                    # longer a sub-second window. The bridge's own per-run
+                    # live slot is the only source for it; read it here
+                    # rather than render an empty drill-in for a child
+                    # visibly listed as running. Only when the record has
+                    # nothing: the DB row is COMPLETE once written, while
+                    # the live slot keeps only the last few steps.
+                    # `getattr` tolerates the bare bridge doubles several
+                    # tests in this module use.
+                    live_run_snapshot = getattr(bridge, "live_run_snapshot", None)
+                    live_run = (
+                        live_run_snapshot(conversation_id, drill)
+                        if live_run_snapshot is not None
+                        else None
+                    )
+                    if live_run is not None:
+                        steps = "\n".join(f"{s.kind}: {s.text}" for s in live_run.steps)
+                # PR3b Task 4: a resumed sub-agent (send_to_agent to a
+                # finished child starts a NEW run seeded with its retained
+                # transcript) carries its lineage in the header. The run
+                # row's `resumed_from_run_id` flows here for free (the
+                # bridge reads SELECT * row dicts); `.get(...) or ""`
+                # keeps pre-v11 rows (key absent or NULL) byte-identical.
+                resumed_from = str(record.get("resumed_from_run_id") or "")
+                header = f"Sub-agent · {record.get('status')}"
+                if resumed_from:
+                    header += f" · resumed from {resumed_from}"
                 return (
-                    f"Sub-agent · {record.get('status')} (Back)",
+                    f"{header} (Back)",
                     steps,
                     str(record.get("task") or ""),
                 )
@@ -454,15 +853,17 @@ class ConsoleAgentController:
         # 80 here silently overrode any configured value above 80 with no
         # visible effect, defeating the whole point of that setting.
         steps = "\n".join(f"· {s.text}" for s in snapshot.steps)
-        glyphs = {
-            "done": "✓",
-            "running": "●",
-            "stuck": "⚠",
-            "error": "✗",
-            "cancelled": "✗",
-        }
+        # PR2b Task 4: the hard `[:60]` slice this used to apply is retired
+        # -- the joined string this builds is no longer painted into any
+        # DOM Static (the mounted rail now renders per-row widgets via
+        # `_console_agent_fleet_section_state`, which owns its own CSS
+        # ellipsis truncation instead of a fixed character cap). This
+        # method's return shape stays a 3-tuple for its existing direct
+        # callers/tests (`Tests/UI/test_console_agent_rail.py`/
+        # `test_console_agent_controller.py`), just un-truncated.
         subagents = "\n".join(
-            f"{glyphs.get(s.status, '●')} {s.text[:60]}" for s in snapshot.subagents
+            f"{_AGENT_STATUS_GLYPHS.get(s.status, '●')} {s.text}"
+            for s in snapshot.subagents
         )
         return (status, steps, subagents)
 
@@ -649,7 +1050,7 @@ class ConsoleAgentController:
             return
         if not log_text:
             return
-        self.call_from_thread(
+        self._screen.app.call_from_thread(
             self._show_console_agent_run_log_modal, run_id, log_text
         )
 
@@ -664,7 +1065,17 @@ class ConsoleAgentController:
 
     def _console_agent_section_payload(
         self,
-    ) -> tuple[str, str, str, str, bool, bool, bool]:
+    ) -> tuple[
+        str,
+        str,
+        ConsoleInspectorSectionState,
+        str,
+        bool,
+        bool,
+        bool,
+        ConsoleAgentSteeringState,
+        bool,
+    ]:
         """Derive everything the mounted Agent rail should be showing.
 
         TASK-251: equality-guarded against the last successfully-applied
@@ -698,12 +1109,34 @@ class ConsoleAgentController:
         here too, which is why the derivation moved as one piece rather
         than as seven accessors the screen would have had to sequence.
 
+        PR2b Task 4: the third element used to be the joined, ``[:60]``-
+        sliced sub-agents STRING that painted straight into a single
+        Static. It is now a ``ConsoleInspectorSectionState`` (rows +
+        header summary) for the ``ConsoleInspectorSection`` component that
+        replaced that Static -- derived independently, by
+        ``_console_agent_fleet_section_state``, from the SAME live/
+        historical bridge sources, not from ``_console_agent_section_
+        lines``'s own (still-3-tuple, still separately tested) text. Both
+        this method's callers already compared the whole payload with
+        ``==``; ``ConsoleInspectorSectionState`` is a frozen dataclass of
+        immutable fields, so the equality guard keeps working unchanged.
+
         Returns:
-            ``(status_line, steps_text, subagents_text, fleet_line,
-            back_visible, section_open, full_log_visible)`` -- the exact
-            tuple the screen compares against its last applied payload.
+            ``(status_line, steps_text, fleet_section_state, fleet_line,
+            back_visible, section_open, full_log_visible, steering_state,
+            cancel_all_visible)`` -- the exact tuple the screen compares
+            against its last applied payload. ``steering_state`` (PR3b
+            Task 3) is the drill-in steering bar's
+            ``ConsoleAgentSteeringState`` -- a frozen dataclass, so the
+            payload's ``==`` equality guard keeps working unchanged, the
+            same argument PR2b Task 4 recorded for
+            ``ConsoleInspectorSectionState``. ``cancel_all_visible``
+            (PR3b Task 5) is the "Cancel all agents" affordance's
+            visibility -- extending THIS payload rather than adding a
+            second equality guard, per Task 3's landing note.
         """
-        status_line, steps_text, subagents_text = self._console_agent_section_lines()
+        status_line, steps_text, _subagents_text = self._console_agent_section_lines()
+        fleet_section_state = self._console_agent_fleet_section_state()
         fleet_line = self._console_agent_fleet_summary_line()
         back_visible = bool(self._console_agent_drilldown_run_id)
         try:
@@ -730,39 +1163,375 @@ class ConsoleAgentController:
         return (
             status_line,
             steps_text,
-            subagents_text,
+            fleet_section_state,
             fleet_line,
             back_visible,
             section_open,
             full_log_visible,
+            # Derived AFTER `_console_agent_section_lines` above, which
+            # self-heals a stale drill-in scope first (Finding C) -- though
+            # the derivation re-checks the scope itself defensively.
+            self._console_agent_steering_state(),
+            self._console_agent_cancel_all_visible(),
         )
 
-    def _toggle_console_agent_drilldown_from_subagents_click(self) -> None:
-        """Step the drill-in through this conversation's sub-agent runs.
+    # -- PR2b Task 4: the fleet mini-section (states 1/2, spec §7) ---------
 
-        Finding D: a conversation can have more than one sub-agent run,
-        but the combined ``subagents`` rail line only ever opened
-        ``runs[0]`` no matter how many times it was clicked, leaving every
-        other sub-agent unreachable. Repeated clicks now cycle through
-        ``runs[0], runs[1], ..., runs[n-1]`` (newest first, matching
-        ``AgentRunsDB.list_runs``' order) and then back to the overview,
-        rather than adding a new per-row widget for what is usually a
-        small N. The dedicated Back button always returns to the overview
-        directly, regardless of where the cycle currently is.
+    def _console_agent_fleet_rows(self) -> tuple[InspectorSectionRow, ...]:
+        """Build one row per sub-agent for the ``ConsoleInspectorSection``.
+
+        Three sources, tried in order, matching the same live-over-
+        historical precedence ``_console_agent_section_lines`` already
+        uses:
+
+        1. ``bridge.fleet_snapshot(conversation_id)`` (PR2b Task 1): the
+           REAL, live ``FleetCoordinator`` handles for a run in flight in
+           THIS process -- real per-child status, plus ``started_at``/
+           ``finished_at`` (monotonic floats), which is the only source
+           that can render an "elapsed" segment.
+        2. ``bridge.historical_snapshot(conversation_id).subagents``: the
+           durable, DB-re-derived fallback for a resumed conversation (no
+           live coordinator this process has ever seen) -- cached by the
+           bridge itself, so this costs no extra DB round trip beyond what
+           ``_console_agent_section_lines`` already pays each tick.
+        3. ``bridge.subagent_runs(conversation_id)``: a last-resort raw-
+           record fallback for a bridge stub that implements only the
+           oldest surface (no ``historical_snapshot``) -- several test
+           doubles in ``Tests/UI/test_console_agent_rail.py`` predate
+           Task 1-3 and only carry this method.
+
+        ``getattr`` guards every optional method the same way
+        ``_console_agent_full_log_run_id`` already does for
+        ``latest_primary_run_id`` -- a bare test double implementing only
+        part of the bridge surface must degrade to "no rows", never raise.
+
+        Returns:
+            Rows in source order (fleet-reservation order, or
+            ``AgentRunsDB.list_runs``' newest-first order for the two
+            fallback tiers) -- empty when there is no bridge, no active
+            conversation, or no sub-agent has ever run for it.
         """
         bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return ()
         conversation_id = self._current_console_rail_conversation_id() or ""
-        runs = bridge.subagent_runs(conversation_id) if bridge is not None else []
-        run_ids = [run.get("id") for run in runs]
-        current = self._console_agent_drilldown_run_id
-        if not run_ids:
-            next_run_id = None
-        elif current in run_ids:
-            next_index = run_ids.index(current) + 1
-            next_run_id = run_ids[next_index] if next_index < len(run_ids) else None
-        else:
-            next_run_id = run_ids[0]
-        self._console_agent_drilldown_run_id = next_run_id
+        if not conversation_id:
+            return ()
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        handles = fleet_snapshot(conversation_id) if fleet_snapshot is not None else []
+        if handles:
+            now = time.monotonic()
+            return tuple(_fleet_row_from_handle(handle, now=now) for handle in handles)
+        historical_snapshot = getattr(bridge, "historical_snapshot", None)
+        if historical_snapshot is not None:
+            return tuple(
+                _fleet_row_from_summary(summary, index)
+                for index, summary in enumerate(
+                    historical_snapshot(conversation_id).subagents
+                )
+            )
+        subagent_runs = getattr(bridge, "subagent_runs", None)
+        if subagent_runs is None:
+            return ()
+        return tuple(
+            _fleet_row_from_record(record) for record in subagent_runs(conversation_id)
+        )
+
+    def _console_agent_fleet_token_total(self) -> int:
+        """Sum the active conversation's LIVE fleet's measured token spend.
+
+        PR2b Task 5 (cost rollup): the aggregate the Console cost ticker
+        reaches for -- feeds ``build_cost_snapshot``'s ``fleet_tokens``
+        keyword (see ``chat_screen.py``'s ``_build_console_cost_state``).
+        Sums ``FleetHandle.total_tokens`` directly off
+        ``bridge.fleet_snapshot(conversation_id)`` -- the SAME live source
+        ``_console_agent_fleet_rows`` reads for its live tier, so the
+        aggregate here and each row's own token segment can never disagree.
+        A still-running handle's ``total_tokens`` is 0 (see
+        ``_fleet_row_from_handle``'s docstring), so it naturally contributes
+        nothing until it finishes -- no separate "only count terminal rows"
+        filter is needed.
+
+        Returns 0 -- never raises -- when there is no bridge, no active
+        conversation, or (the common historical/resumed case) no LIVE
+        fleet for it: this deliberately does NOT fall back to the
+        historical/DB-derived tiers `_console_agent_fleet_rows` also reads,
+        since per-child spend is not persisted there (see `FleetHandle.
+        total_tokens`'s docstring) -- there is nothing honest to sum for a
+        resumed conversation this process has never run.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return 0
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return 0
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        if fleet_snapshot is None:
+            return 0
+        return sum(handle.total_tokens for handle in fleet_snapshot(conversation_id))
+
+    def _cancel_console_agent_fleet_row(self, row_id: str) -> bool:
+        """Cooperatively cancel a LIVE fleet row's child (PR2b Task 5).
+
+        ``row_id`` is the row's structural identity as built by
+        ``_fleet_row_from_handle`` -- the ``FleetCoordinator`` handle id --
+        so this reaches ``ConsoleAgentBridge.cancel_subagent`` with NO
+        resolution step, unlike drill-in's ``_console_agent_drilldown_
+        target_run_id`` (which must also accept a historical row's run id).
+        A historical/fallback row is never cancellable (``_fleet_row_from_
+        summary``/``_fleet_row_from_record`` leave ``cancellable`` at its
+        ``False`` default), so in practice ``row_id`` reaching this method
+        is always a live handle id.
+
+        Routes through ``ConsoleAgentBridge.cancel_subagent`` ->
+        ``AgentService.cancel_subagent`` -> the SAME ``_cancel_fleet_
+        handles`` cooperative-cancel + approval-revoke path
+        ``_settle_fleet`` already uses at end of turn (PR 2a's guarantee
+        that cancelling a child revokes its pending approval cards) -- no
+        second cancellation mechanism.
+
+        Returns:
+            Whether the handle was live and the cancel request was
+            actually issued -- ``False`` for no bridge, no active
+            conversation, or an unknown/already-terminal handle.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return False
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id or not row_id:
+            return False
+        cancel_subagent = getattr(bridge, "cancel_subagent", None)
+        if cancel_subagent is None:
+            return False
+        return bool(cancel_subagent(conversation_id, row_id))
+
+    def _console_agent_cancel_all_visible(self) -> bool:
+        """Whether the "Cancel all agents" affordance should be offered.
+
+        PR3b Task 5: visible exactly while the conversation has at least
+        one LIVE child -- read from ``bridge.fleet_snapshot``, the SAME
+        live source the fleet rows and the steering-bar visibility read,
+        so the three surfaces can never disagree about whether live work
+        exists. A fleet of finished children (rows still on screen) hides
+        it: offering a kill switch for work that already ended would be
+        a lie.
+
+        Returns:
+            ``True`` only with a bridge, an active conversation, and a
+            live (non-terminal) handle in its fleet snapshot; ``False``
+            -- never raises -- otherwise.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return False
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return False
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        if fleet_snapshot is None:
+            return False
+        return any(
+            handle.status not in TERMINAL_RUN_STATUSES
+            for handle in fleet_snapshot(conversation_id)
+        )
+
+    def _cancel_all_console_agents(self) -> int:
+        """Cancel every live child of the active conversation (PR3b Task 5).
+
+        The exact shape of ``_cancel_console_agent_fleet_row`` above, for
+        the same reasons: ``getattr`` guards degrade a bare test double
+        to "nothing cancelled", never a raise, and no enumeration happens
+        here -- ``ConsoleAgentBridge.cancel_all_subagents`` owns the
+        owner walk and delegates each handle to the existing per-handle
+        revocation path (no second mechanism).
+
+        Returns:
+            The number of children actually cancelled -- 0 for no
+            bridge, no active conversation, or an idle fleet.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return 0
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return 0
+        cancel_all = getattr(bridge, "cancel_all_subagents", None)
+        if cancel_all is None:
+            return 0
+        return int(cancel_all(conversation_id))
+
+    def _console_agent_steering_state(self) -> ConsoleAgentSteeringState:
+        """Derive the drill-in steering bar's state (PR3b Task 3).
+
+        Visible ONLY while drilled into a LIVE child (spec §1's owner
+        pin: the panel watches/steers, never launches) -- never a
+        finished/historical child, never the overview. The drill-in
+        target (``_console_agent_drilldown_run_id``, a RUN id) is matched
+        against the live fleet snapshot in both vocabularies, the same
+        pair ``_console_agent_drilldown_target_run_id`` accepts; the
+        state then carries the matched handle's HANDLE id as the steering
+        target -- the mailbox's own key, the panel rows' identity, and
+        the vocabulary ``ConsoleAgentBridge.steer_subagent`` resolves
+        first.
+
+        ``queued`` is the handle copy's ``queued_steering`` -- computed
+        from the coordinator's mailbox at snapshot time (PR3b Task 1), so
+        the bar's "steering queued (N)" line can never disagree with what
+        the child's next drain would actually deliver.
+
+        Returns:
+            The bar's ``ConsoleAgentSteeringState``; the hidden state --
+            never raises -- when not drilled in, the drill-in is scoped to
+            another conversation, there is no bridge/fleet surface, the
+            target cannot be found among live handles, or it has gone
+            terminal.
+        """
+        drill = self._console_agent_drilldown_run_id
+        if not drill:
+            return STEERING_STATE_HIDDEN
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return STEERING_STATE_HIDDEN
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if (
+            not conversation_id
+            or conversation_id != self._console_agent_drilldown_conversation_id
+        ):
+            return STEERING_STATE_HIDDEN
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        if fleet_snapshot is None:
+            return STEERING_STATE_HIDDEN
+        for handle in fleet_snapshot(conversation_id):
+            if drill not in (handle.run_id, handle.handle_id):
+                continue
+            if handle.status in TERMINAL_RUN_STATUSES:
+                return STEERING_STATE_HIDDEN
+            return ConsoleAgentSteeringState(
+                visible=True,
+                target_id=handle.handle_id,
+                queued=int(getattr(handle, "queued_steering", 0) or 0),
+            )
+        return STEERING_STATE_HIDDEN
+
+    def _steer_console_agent_drilldown_child(self, target_id: str, text: str) -> bool:
+        """Route one validated steering submit to the bridge (PR3b Task 3).
+
+        The exact shape of ``_cancel_console_agent_fleet_row`` above, for
+        the same reasons: ``getattr`` guards degrade a bare test double to
+        "no", never a raise, and no resolution happens here --
+        ``ConsoleAgentBridge.steer_subagent`` owns both id vocabularies
+        and the boundary validation (the bar already refused
+        empty/oversize drafts with its own copy before posting).
+
+        Args:
+            target_id: The steering target the bar's submit message
+                carried (the drilled-in child's handle id).
+            text: The stripped steering text.
+
+        Returns:
+            Whether the entry was actually queued -- ``False`` for no
+            bridge, no active conversation, an empty target, or a bridge
+            refusal (unknown/terminal target, invalid text).
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return False
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id or not target_id:
+            return False
+        steer_subagent = getattr(bridge, "steer_subagent", None)
+        if steer_subagent is None:
+            return False
+        return bool(steer_subagent(conversation_id, target_id, str(text or "")))
+
+    def _console_agent_fleet_section_state(self) -> ConsoleInspectorSectionState:
+        """Build the fleet mini-section's rows + header summary (states 1/2).
+
+        Returns an empty state (no rows, no summary) while drilled into a
+        specific sub-agent: the drilled-in status/steps Statics already
+        show that one child's own detail (state 3, unchanged -- see
+        ``_console_agent_section_lines``), so the aggregate fleet list
+        would be redundant right beside it. ``_sync_console_agent_section``
+        hides the mounted section entirely whenever this returns no rows,
+        via the same visibility toggle the Back/View-full-log buttons
+        already use.
+
+        The header summary is a glyph cluster (one glyph per row, in row
+        order) plus ``"N working, M done"`` (spec §7 state 1) -- "working"
+        is ``status not in TERMINAL_RUN_STATUSES`` (i.e. still
+        ``"running"``; every other status this codebase's fleet vocabulary
+        uses -- ``done``/``error``/``stuck``/``cancelled`` -- is terminal
+        per ``SubAgentSummary.status``'s own docstring), "done" is
+        everything else. Returns an empty state when there are zero rows
+        (never a hollow "0 working, 0 done" summary).
+        """
+        if self._console_agent_drilldown_run_id:
+            return ConsoleInspectorSectionState(rows=(), summary="")
+        rows = self._console_agent_fleet_rows()
+        if not rows:
+            return ConsoleInspectorSectionState(rows=(), summary="")
+        working = sum(1 for row in rows if row.status not in TERMINAL_RUN_STATUSES)
+        done = len(rows) - working
+        glyphs = "".join(_AGENT_STATUS_GLYPHS.get(row.status, "●") for row in rows)
+        summary = f"{glyphs} {working} working, {done} done"
+        return ConsoleInspectorSectionState(rows=rows, summary=summary)
+
+    def _console_agent_drilldown_target_run_id(self, row_id: str) -> str | None:
+        """Resolve a clicked fleet row's id to the run id to drill into.
+
+        ``row_id`` may be either a live ``FleetCoordinator`` handle id (the
+        identity ``_fleet_row_from_handle`` stamps on a LIVE row -- stable
+        across a handle's life even before ``attach_run`` gives it a real
+        run id) or an ``AgentRunsDB`` run id directly (every historical/
+        fallback row's identity). Both are tried, matching whichever
+        source actually built the row -- the caller does not have to know
+        which one that was.
+
+        Returns:
+            The run id to drill into, or ``None`` when ``row_id`` cannot be
+            resolved to a run belonging to the ACTIVE conversation (a stale
+            click after the fleet already cleared, a handle whose run
+            hasn't attached yet, or a foreign/unknown id).
+        """
+        if not row_id:
+            return None
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return None
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        if fleet_snapshot is not None:
+            for handle in fleet_snapshot(conversation_id):
+                if handle.handle_id == row_id:
+                    return handle.run_id or None
+        record = bridge.subagent_run(row_id)
+        if record is not None and record.get("conversation_id") == conversation_id:
+            return row_id
+        return None
+
+    def _drill_into_console_agent_subagent(self, row_id: str) -> None:
+        """Drill into ONE specific sub-agent row's transcript (TASK-4).
+
+        Replaces the old cycling toggle (``_toggle_console_agent_drilldown_
+        from_subagents_click``, which stepped through every sub-agent run
+        one click at a time, newest first, then back to the overview): the
+        row the user actually clicked now resolves directly to its own run
+        via ``_console_agent_drilldown_target_run_id``, whichever source
+        built it. The dedicated Back button (unchanged) always returns to
+        the overview directly.
+
+        No-ops when the row cannot be resolved to a run belonging to the
+        active conversation -- the rail simply stays on whatever it was
+        already showing, the same defensive posture the old cycling method
+        had for an empty run list.
+        """
+        target_run_id = self._console_agent_drilldown_target_run_id(row_id)
+        if not target_run_id:
+            return
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        self._console_agent_drilldown_run_id = target_run_id
         self._console_agent_drilldown_conversation_id = conversation_id
         self.run_worker(
             self._sync_native_console_chat_ui,

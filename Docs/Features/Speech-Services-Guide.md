@@ -98,8 +98,8 @@ loading the store.
 
 Character authority acquisition, character assignment, roleplay voice routing,
 legacy-provider profile execution, and profile/card portability or
-synchronization remain deferred. This slice also does not manage an audio.cpp
-server process.
+synchronization remain deferred. Voice profiles do not own provider connection
+or process settings; configure those once in **Global Settings → Speech & TTS**.
 
 Profiles are owned locally and contain generation choices, not provider
 connection details. They exclude server origins, credentials and API keys,
@@ -108,6 +108,128 @@ provider health observations. Names compare uniquely after Unicode
 normalization and case folding. A saved edit must use the revision originally
 loaded, so a concurrent change is reported as a conflict instead of being
 silently overwritten.
+
+#### Private clone-reference storage boundary
+
+The profile database can now retain one canonical reference recording and its
+transcript for a profile. The source path is never persisted. Reference audio
+and transcript are local plaintext protected by owner-only filesystem access;
+this is not encryption. Profile database backups contain the same sensitive
+reference audio and transcript, so protect and share those backups accordingly.
+Removal is best-effort deletion, not forensic erasure: copies may remain in
+backups, filesystem snapshots, SQLite recovery data, or storage media. The
+Windows privacy posture remains unverified until TASK-13208.
+
+Profiles that contain a reference can use it for compatible Guided Managed
+audio.cpp generation. Speech Lab provides the supported setup path for a
+reviewed reference-required Guided model. Ordinary profile/card export remains
+the safe default: reference-free profiles use wire version 1, while a profile
+with a reference uses sanitized wire version 2 with an explicit
+`reference: omitted` marker. Neither format contains reference metadata,
+audio, transcript, digest, recipe provenance, or source paths. Do not treat an
+ordinary profile export as a reference backup.
+
+To intentionally transfer a saved clone voice on a supported POSIX host, open
+the Voice Profile library and choose **Export → Export portable voice bundle**.
+Chatbook warns that the file contains plaintext voice audio and transcript and
+does not enable Continue until you acknowledge that warning. The bundle is a
+strict four-file container (`manifest.json`, `profile.json`, `reference.wav`,
+and `reference.txt`), is created owner-only, and never overwrites an existing
+destination. Its checksums detect byte changes; they are not a signature,
+speaker-identity check, authenticity proof, or consent proof.
+
+**Import bundle** shows its own plaintext warning before opening the picker.
+Chatbook validates the unchanged source as hostile input, then shows bounded
+UUID, name, recipe, model, dependency, and conflict facts. You must explicitly
+choose Create, exact Reuse, or Import as copy. Import never overwrites, assigns
+a character, changes a default, installs a model, or retargets to another
+recipe. If the exact dependency is absent, Create/Copy is available only after
+you separately accept an inactive **Needs compatible model** result. Install or
+configure that exact Guided package in audio.cpp Settings, apply the saved
+Speech Lab configuration when prompted, then refresh the library. A migrated
+profile that says **Recipe provenance unavailable** must be previewed/generated
+and saved as a new profile before it can be bundled.
+
+For clone generation, Chatbook freezes the exact profile/reference revision,
+then verifies a reviewed clone-capable Guided recipe and the exact
+application-owned managed process generation. Only after acceptance does it
+create an opaque owner-private temporary WAV below Chatbook's user-data area.
+The local request sends typed `voice_ref` and `reference_text` fields to that
+owned child. The file remains available through audio-response cleanup and is
+then removed before Chatbook releases the provider operation.
+
+External audio.cpp servers and Managed setups using your own `server.json`
+never receive a client-local reference path. A reference-bearing profile used
+with either setup fails safely without switching provider, model, or voice. Use
+a reviewed Guided Managed package that declares clone support, or edit/select a
+profile that does not require a reference.
+
+The temporary reference is local plaintext, not encrypted. On supported POSIX
+hosts Chatbook uses owner-only directories, no-follow descriptor checks, and a
+live ownership lock. Startup cleanup removes only recognized unlocked
+Chatbook-owned operation directories; unknown paths and live owners are left
+alone. Chatbook rechecks the path identity immediately before the request, but
+audio.cpp must still open that pathname, so other processes running as your
+same OS user are outside this isolation boundary. Child-output content is
+suppressed for a process generation after its first clone admission so delayed
+path or transcript echoes do not enter the diagnostics view. Windows managed
+materialization remains deferred; use an External server there, which
+intentionally cannot receive local references.
+
+#### Create and assign a cloned Voice Profile
+
+1. Configure a reviewed clone-capable package under **Global Settings → Speech
+   & TTS → audio.cpp → Managed local server → Guided setup**. Saving remains
+   passive and does not start audio.cpp.
+2. Open **Speech Services → Playground**, select audio.cpp and the
+   reference-required Guided model, then use **Start & Set Up Voice** if the
+   child is not running.
+3. Choose a bounded PCM16 WAV and enter the exact bounded transcript. Chatbook
+   shows no source path and warns that the reference, transcript, profile
+   database, and temporary request file are local plaintext, not encrypted.
+4. Choose **Create Voice & Generate**. Chatbook starts or joins its one managed
+   child lazily, verifies the exact recipe/model/process generation, creates a
+   private short-lived request materialization, and keeps the previous playable
+   result if this attempt fails. On success, use the normal **Play** control.
+5. Choose **Save as Voice Profile**. Review the name, then either save it
+   unassigned or continue to Roleplay. The saved profile uses the exact
+   successful reference and transcript; Chatbook does not reopen your source
+   file or copy the current selectors.
+6. In Roleplay, select a character and explicitly choose the suggested Voice
+   Profile. Opening the page or seeing the suggestion does not assign it and
+   does not change the app-wide default.
+7. Start or continue that character's Console session and use **Speak** on a
+   response. The exact assigned profile revision wins over global defaults; the
+   first request starts or joins the compatible child and produces the normal
+   complete-WAV playback result.
+
+Changing the message, assignment, profile/reference, Guided configuration, or
+managed child before admission causes a stale/refusal result rather than a
+silent provider/model/voice switch. A later edit affects the next Speak only.
+Discarding/replacing the result or closing Chatbook removes Chatbook-owned
+temporary audio and materializations; it never deletes the WAV you selected.
+
+This workflow does not send client-local references to External audio.cpp or a
+Managed setup that uses your own `server.json`. It does not export reference
+bytes in ordinary profiles/cards, claim Windows bundle or managed-reference
+parity, or enable a recipe that is not in the reviewed release-0.5.1 registry.
+
+The profile store is now schema version 4. Migration advances every supported
+older store through validated private candidates and retains stable downgrade
+siblings at the applicable boundaries: `<profile-db>.pre-v3.sqlite3` and
+`<profile-db>.pre-v4.sqlite3`. Version 3 references migrate without invented
+recipe provenance. Older builds refuse the newer active database. To downgrade
+to a version-3-capable build, fully close Chatbook, restore the stable
+`<profile-db>.pre-v4.sqlite3` sibling as the configured profile database, then
+start the older build. Accept that all post-migration profile changes and recipe
+provenance will be lost. Never copy over an open profile database.
+
+Bundle inspection, archive work, publication, and cleanup are owned by one
+application service. On shutdown Chatbook first seals and joins that service,
+then closes the profile repository, then closes TTS runtime ownership. A
+restart that finds unexplained portability residue fails closed and asks you to
+exit Chatbook and inspect the app-owned portability directory manually; it does
+not guess that a pathname is safe to delete.
 
 **Database Tools → Backup All Databases** includes the profile store when its
 repository is available. Chatbook creates that entry with SQLite's online
@@ -129,13 +251,36 @@ See
 [ADR-028](../../backlog/decisions/028-character-tts-generation-profile-ownership.md)
 for the ownership, privacy, backup, and deferred-scope decisions.
 
-### Using an Existing audio.cpp Server
+### Setting up audio.cpp
 
-Chatbook can connect the Playground to one compatible `audiocpp_server` that
-you start and manage yourself:
+Open **Global Settings → Speech & TTS → audio.cpp** and choose the setup path
+that matches who owns the server process and configuration:
+
+- **External server** connects to a compatible `audiocpp_server` that you start
+  and manage yourself. Chatbook never stops or adopts that process.
+- **Managed local server → Guided setup — no JSON editing** launches and
+  supervises one local process from a separately installed server and one or
+  more reviewed model packages. Chatbook creates an owner-private runtime
+  configuration only when a deliberate Speech Lab action needs it.
+- **Managed local server → Use an existing server.json** launches and supervises one
+  local process from a prebuilt binary and existing configuration that you
+  provide. Chatbook does not edit that file.
+
+Chatbook never downloads or updates `audiocpp_server`. Installing the server
+and obtaining model files remain explicit user actions. Guided compatibility
+claims apply only to the exact package recipes and server release shown in the
+package review; finding another GGUF file does not imply support.
+
+Managed local server is currently offered on qualified POSIX hosts. On
+Windows, use External server until the native managed-process lifecycle is
+qualified there.
+
+#### External server
+
+To connect to a server you manage yourself:
 
 1. Start your compatible `audiocpp_server` and note its HTTP or HTTPS origin.
-2. Open **Speech Services → TTS Settings → audio.cpp External Server**.
+2. Select **External server** in the audio.cpp global settings.
 3. Enter the server's **Base URL** and review the timeout and safety bounds.
 4. Choose audio.cpp as the default provider. Select **First available** or an
    exact model, then choose **Server default** or an exact voice.
@@ -152,6 +297,139 @@ you start and manage yourself:
    validated, use **Play** or **Export**.
 10. In Console, use **Speak** on a response to synthesize and play it with the
     same saved defaults.
+
+#### Guided managed setup — no JSON editing
+
+Guided setup is the shortest supported first-time path:
+
+1. Install a compatible `audiocpp_server` separately and obtain a reviewed
+   model package. The package review identifies the exact supported audio.cpp
+   release, model family, and variant.
+2. Select **Managed local server**, then **Guided setup — no JSON editing**.
+   Choose **Use detected audiocpp_server** to fill the unsaved draft from the
+   command search path, or use **Browse** to select the executable.
+3. Choose **Add local package…** and select the package directory; selection
+   starts the bounded scan. Review every accepted candidate. The review shows
+   its exact family/variant, task capabilities,
+   compatibility evidence, public model ID, a path-safe package summary, and
+   lazy-loading/resident-memory behavior. Multiple matches are never selected
+   silently; remove any package you do not want in the shared server.
+   A standalone PocketTTS GGUF is registered but marked **voice setup
+   required** because it does not include a usable voice embedding. Choose a
+   text-ready Supertonic package as the default for the one-click first sample.
+   Alternatively, choose **Open Model Library** to review and install a curated
+   package into Chatbook's shared artifact store. Installation verifies the
+   exact pinned package but remains inactive: it neither installs
+   `audiocpp_server` nor starts audio.cpp. Return to Settings, review the added
+   package in the still-unsaved draft, then choose Save. The catalog also names
+   local-only variants; those must be supplied through **Add local package…**
+   and are never presented as downloadable. Across the pinned 21-family,
+   67-package inventory, 45 reviewed variants are downloadable, 8 approved
+   variants are local-only, and 14 are explicitly unsupported; those states
+   describe artifact availability separately from recipe support.
+4. Choose the default Guided model and backend. **Auto** selects only the
+   reviewed portable CPU baseline; it does not infer an accelerated backend
+   from the host. An unavailable or unevidenced model/backend combination is
+   rejected with recovery guidance.
+5. Choose **Save Settings**. Saving revalidates the selected package identities
+   and persists configuration, but it does not launch a process, open a socket,
+   contact audio.cpp, generate a runtime `server.json`, synthesize speech, or
+   modify model files. The panel reports **Configuration saved — ready to
+   test**.
+6. For a text-ready default, choose **Open Speech Lab & Hear a Sample**. A
+   voice-required default instead offers **Open Speech Lab to Test
+   Connection** and does not promise generation. The handoff focuses Speech
+   Lab's one current primary action, which may be **Start & Generate Sample**,
+   **Restart & Apply Settings**, **Retry Sample**, or **Test Connection**.
+   Inflect Micro v2 additionally requires eSpeak-ng with English data. Before
+   testing, verify that the server process can resolve both by their default
+   names; installation alone does not prove loader/data discoverability. Guided
+   setup does not discover or persist private library/data paths. If explicit
+   paths are required, use an advanced `server.json` you control and follow the
+   pinned upstream Inflect session-option guidance.
+7. Run **Start & Generate Sample**. Chatbook lazily creates one private,
+   generation-local configuration, starts one child, verifies the selected
+   catalog entry, and generates one complete validated WAV.
+8. The current result exposes **Play/Pause**, duration and validation status,
+   safe provider/model/voice/configuration/process provenance, **Generate
+   again**, and **Save WAV**. Optional automatic playback is a separate Speech
+   Studio preference; Guided setup never changes it.
+
+All accepted models are registered in the same lazy child. Selecting another
+accepted model reuses that child rather than launching a second server. A model
+loaded by audio.cpp may remain resident in memory until **Shut down server**;
+the interface does not promise per-model unloading.
+
+Model Library removal first previews every Settings, profile, character,
+runtime, and shared-store owner. Busy or referenced packages remain installed
+until every blocker has an explicit resolution. If interruption or a changed
+package prevents commit, reopen the preview after the active operation ends;
+Chatbook rechecks the exact fingerprint and never silently retargets a model or
+deletes a private clone reference as a side effect.
+
+#### Managed local server with your server.json
+
+The manual source is for a local build and configuration you trust. Review the
+executable and JSON provenance before allowing Chatbook to run them, then:
+
+1. Make sure you already have a compatible prebuilt `audiocpp_server` binary
+   and its existing `server.json`. Chatbook never downloads, updates, or edits
+   either artifact.
+2. Select **Managed local server**, then **Use an existing server.json**.
+   Choose **Use detected audiocpp_server** to fill the draft from your command
+   search path, or use **Browse** to select the executable yourself. Detection
+   changes only the unsaved form.
+3. Browse to the existing `server.json`. It must be a strict JSON object that
+   binds exactly to `127.0.0.1` and declares an unused port. Remote or wildcard
+   hosts are intentionally rejected in Managed mode.
+4. Check relative paths in `server.json` yourself. Chatbook launches the child
+   with the JSON file's directory as its working directory, so relative model
+   and resource paths resolve from there.
+5. Review **Advanced** for startup, health-check, shutdown, timeout, response,
+   and catalog safety bounds, then choose **Save Settings**. Saving validates
+   the active Managed fields and persists them; it does not launch, probe, or
+   contact audio.cpp.
+6. Open **Speech Services → Playground**, select audio.cpp, and inspect the
+   runtime card. Choose **Start & Test Connection**. The asynchronous action
+   lazily launches one child, waits for its speech contract, and refreshes the
+   configured multi-model catalog.
+7. Select a model and optional voice, enter text, and choose **Generate
+   Speech**. Chatbook validates the complete WAV before exposing **Play** and
+   **Export**.
+
+The runtime card separates durable and live truth. **Saved generation** is the
+latest configuration on disk, **Active generation** is the configuration held
+by the current adapter, and **Process generation** identifies the exact child.
+If you save new Managed settings while speech or a child is active, that child
+keeps its immutable launch configuration and the card shows the new settings
+as pending. Choose **Restart & Apply Settings** to drain admitted speech, stop
+that exact child, apply the latest saved generation, and start one replacement.
+
+**Shut down server** is a process action and is distinct from playback
+**Stop**. Shutdown drains and reaps the managed child without immediately
+starting another one. A later deliberate Start/Test, catalog refresh, or
+generation request starts it lazily again. Merely opening Settings, mounting
+the Playground, expanding details, or reading diagnostics never launches it.
+
+If a managed child exits unexpectedly, Chatbook marks its endpoint unavailable.
+If the live child becomes unhealthy, Chatbook keeps its endpoint visible but
+marks its catalog evidence stale. Neither case triggers a restart loop. Correct
+the binary/configuration or port problem if needed, then use **Start & Test
+Connection** or **Restart**. The collapsed **Recent managed diagnostics**
+section contains only bounded, best-effort-sanitized in-memory child output.
+Treat it as potentially sensitive; it is cleared when a new process generation
+starts and is never saved to provider settings.
+
+To return to a server you manage yourself, select **External server**, enter its
+origin, and save. If a managed child is still active, Speech Lab shows the
+pending handoff; choose **Apply Settings & Stop Managed Server**. The next
+External test or generation contacts only the saved external origin.
+
+Global Settings owns connection details, reviewed Guided packages, and global
+defaults used by ordinary consumers such as Console. **Speech Studio
+preferences** are a separate, Studio-only layer: they may override selections
+and optional auto-play for Studio without changing Global Settings. Speech Lab
+links back to Global Settings instead of duplicating durable connection fields.
 
 Console offers **Speak** only on completed assistant responses. When selected,
 Chatbook captures the exact visible response and selected variant in a
@@ -191,17 +469,9 @@ audio.cpp server. Chatbook avoids putting that text, the configured origin or
 settings values, credentials, raw remote responses, and unsafe remote
 identifiers in normal UI diagnostics or application logs.
 
-This release does not download, launch, monitor, restart, or stop audio.cpp and
-does not accept a binary path or `server.json` path. User-provided binary plus
-user-provided `server.json` launch and supervision are deferred to later
-managed-mode slices.
-
-Release validation used an isolated clean configuration and a user-owned
-audio.cpp server at `127.0.0.1:8080`. A deterministic Mira Console response
-produced one complete owner-only WAV, played once through `/usr/bin/afplay`, and
-left the same external listener healthy after Chatbook shut down. A later
-post-rebase live rerun was not attempted because no server was listening;
-Chatbook did not start the installed binary.
+External mode preserves its ownership boundary: application shutdown leaves a
+user-owned server running. Managed mode stops only the exact child Chatbook
+launched and never scans for, adopts, or signals another process.
 
 ### AudioBook Generator
 
@@ -1133,6 +1403,11 @@ max_catalog_models = 1000
 max_voices_per_model = 1000
 max_identifier_characters = 256
 ```
+
+Use **Global Settings → Speech & TTS → audio.cpp** to switch to Managed mode
+and choose the executable and `server.json`; the UI validates those artifacts
+without launching them. Dormant External and Managed values are retained when
+you switch modes, but only the selected mode is applied at runtime.
 
 ## Support & Feedback
 

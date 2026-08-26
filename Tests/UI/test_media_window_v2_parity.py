@@ -8,6 +8,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Select, Static
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Event_Handlers.media_events import (
     MediaAnalysisRequestEvent,
     MediaAnalysisSaveEvent,
@@ -16,6 +17,8 @@ from tldw_chatbook.Event_Handlers.media_events import (
     MediaReadingHighlightUpdateEvent,
     MediaReadItLaterToggleEvent,
 )
+from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.UI.MediaWindow_v2 import MEDIA_EMPTY_STATE_COPY, MediaWindow
 from tldw_chatbook.Widgets.Media.media_list_panel import (
     MediaItemSelectedEvent,
@@ -516,10 +519,11 @@ async def test_media_window_routes_reading_highlight_crud_through_scope_service(
         note="Created note",
         anchor_strategy="fuzzy_quote",
     )
+    # task-15768: `quote` is not forwarded -- it is not an updatable field on
+    # either backend's highlight-update contract.
     scope_service.update_reading_highlight.assert_awaited_once_with(
         mode="server",
         highlight_id="6",
-        quote="Created quote",
         color="blue",
         note="Updated note",
         state="active",
@@ -529,6 +533,156 @@ async def test_media_window_routes_reading_highlight_crud_through_scope_service(
         highlight_id="6",
     )
     assert window.viewer_panel.load_media.call_args.args[0]["reading_highlights"] == []
+
+
+@pytest.mark.asyncio
+async def test_media_window_local_highlight_crud_end_to_end_against_real_service():
+    """task-15768: local-mode Media hub highlight CRUD against the real seam.
+
+    Every scope call runs through a REAL ``MediaReadingScopeService`` wired to
+    a REAL ``LocalMediaReadingService`` on a real ``MediaDatabase`` -- a mocked
+    scope service is exactly what hid the ``reading_``-prefixed leaf-name
+    mismatch that made all four local-mode CRUD paths ``AttributeError`` in
+    production (list swallowed to an empty panel; create/update/delete
+    surfaced as error toasts).
+    """
+    db = MediaDatabase(":memory:", client_id="media_window_local_highlights")
+    try:
+        media_id, _, _ = db.add_media_with_keywords(
+            title="Hub Local Article",
+            content="Important local content for the media hub.",
+            media_type="article",
+            keywords=[],
+        )
+        local_service = LocalMediaReadingService(db)
+        seeded = local_service.create_highlight(
+            media_id, quote="Important", start_offset=0, end_offset=9
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=local_service, server_service=None
+        )
+        window, app = _build_media_window(
+            runtime_backend="local", scope_service=scope_service
+        )
+        record = {
+            "id": f"local:media:{media_id}",
+            "backend": "local",
+            "source_id": str(media_id),
+            "backing_media_id": media_id,
+            "title": "Hub Local Article",
+        }
+        window.runtime_state.detail_by_record_id[record["id"]] = record
+
+        # Item detail's highlight load shows the pre-existing highlight.
+        highlights = await window.load_reading_highlights(record)
+        assert [h["source_id"] for h in highlights] == [str(seeded["id"])]
+        assert highlights[0]["quote"] == "Important"
+
+        # Create.
+        await window._handle_reading_highlight_create_async(
+            MediaReadingHighlightCreateEvent(
+                media_id=str(media_id),
+                record_id=record["id"],
+                quote="local content",
+                color="yellow",
+                note="revisit",
+                media_data=record,
+            )
+        )
+        stored = local_service.list_highlights(media_id)
+        assert len(stored) == 2
+        created_id = next(h["id"] for h in stored if h["quote"] == "local content")
+        presented = window.viewer_panel.load_media.call_args.args[0]
+        assert {h["quote"] for h in presented["reading_highlights"]} == {
+            "Important",
+            "local content",
+        }
+
+        # Update.
+        await window._handle_reading_highlight_update_async(
+            MediaReadingHighlightUpdateEvent(
+                media_id=str(media_id),
+                record_id=record["id"],
+                highlight_id=created_id,
+                color="blue",
+                note="done",
+                state="stale",
+                media_data=record,
+            )
+        )
+        updated_row = next(
+            h for h in local_service.list_highlights(media_id) if h["id"] == created_id
+        )
+        assert updated_row["color"] == "blue"
+        assert updated_row["note"] == "done"
+        assert updated_row["state"] == "stale"
+
+        # Delete.
+        await window._handle_reading_highlight_delete_async(
+            MediaReadingHighlightDeleteEvent(
+                media_id=str(media_id),
+                record_id=record["id"],
+                highlight_id=created_id,
+                media_data=record,
+            )
+        )
+        assert [h["id"] for h in local_service.list_highlights(media_id)] == [
+            seeded["id"]
+        ]
+        presented = window.viewer_panel.load_media.call_args.args[0]
+        assert [h["source_id"] for h in presented["reading_highlights"]] == [
+            str(seeded["id"])
+        ]
+
+        app.notify.assert_any_call("Reading highlight created", severity="information")
+        app.notify.assert_any_call("Reading highlight updated", severity="information")
+        app.notify.assert_any_call("Reading highlight deleted", severity="information")
+        error_calls = [
+            call
+            for call in app.notify.call_args_list
+            if call.kwargs.get("severity") == "error"
+        ]
+        assert error_calls == []
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_media_window_logs_highlight_contract_drift_with_traceback():
+    """task-15768 AC4: a naming/contract drift must be loudly visible.
+
+    An ``AttributeError`` from the highlights seam previously produced only a
+    message-text log line (no exception type, no traceback) and an empty
+    panel. The drift branch must log the traceback so the next contract drift
+    cannot masquerade as 'this item has no highlights'.
+    """
+    from loguru import logger as loguru_logger
+
+    scope_service = Mock()
+    scope_service.list_reading_highlights = Mock(
+        side_effect=AttributeError(
+            "'LocalMediaReadingService' object has no attribute "
+            "'list_reading_highlights'"
+        )
+    )
+    window, _app = _build_media_window(
+        runtime_backend="local", scope_service=scope_service
+    )
+    captured: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: captured.append(str(message)), level="ERROR"
+    )
+    try:
+        result = await window.load_reading_highlights(
+            {"id": "local:media:1", "backend": "local", "backing_media_id": 1}
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert result == []
+    joined = "".join(captured)
+    assert "contract" in joined.lower()
+    assert "AttributeError" in joined
 
 
 @pytest.mark.asyncio
@@ -1249,8 +1403,11 @@ async def test_media_analysis_llm_failure_surfaces_error_not_sentinel():
 
     captured = {}
 
-    def _run_worker(coro, exclusive=True):
+    # TASK-19559: analysis generation now names its own group, so a
+    # sibling media worker cannot cancel it mid-flight.
+    def _run_worker(coro, exclusive=True, group=None):
         captured["coro"] = coro
+        captured["group"] = group
 
     window.run_worker = _run_worker
 
@@ -1320,8 +1477,11 @@ async def test_media_analysis_missing_response_text_clears_stale_analysis_state(
 
     captured = {}
 
-    def _run_worker(coro, exclusive=True):
+    # TASK-19559: analysis generation now names its own group, so a
+    # sibling media worker cannot cancel it mid-flight.
+    def _run_worker(coro, exclusive=True, group=None):
         captured["coro"] = coro
+        captured["group"] = group
 
     window.run_worker = _run_worker
 

@@ -130,7 +130,9 @@ class AvFrameSource:
         next_emit = 0.0
         try:
             for frame in container.decode(video=0):
-                timestamp = float(frame.pts * frame.time_base) if frame.pts is not None else 0.0
+                timestamp = (
+                    float(frame.pts * frame.time_base) if frame.pts is not None else 0.0
+                )
                 now = time.monotonic() - started
                 if now < next_emit:
                     # Decode outruns the wall clock: pace by sleeping until the
@@ -147,15 +149,11 @@ class AvFrameSource:
             # Pause/stop abandoned the iterator mid-stream -- normal path.
             logger.debug("AvFrameSource: iteration abandoned (pause/stop)")
             raise
-        except Exception as exc:
-            logger.warning("AvFrameSource: decode stopped early: {}", exc)
 
     def close(self) -> None:
-        if self._container is not None:
-            try:
-                self._container.close()
-            except Exception:
-                pass
+        container = self._container
         self._container = None
         self._stream = None
         self._opened = False
+        if container is not None:
+            container.close()

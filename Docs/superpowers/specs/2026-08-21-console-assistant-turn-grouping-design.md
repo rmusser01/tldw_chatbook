@@ -1,7 +1,7 @@
 # Console Assistant Turn Grouping Design
 
-**Task:** TASK-16324  
-**Date:** 2026-08-21  
+**Task:** TASK-19426
+**Date:** 2026-08-21
 **Status:** Approved interaction direction; implementation pending
 
 ## Goal
@@ -63,14 +63,17 @@ The new turn/disclosure widgets live in a focused Console widget module rather t
 
 Collapsed headers must not parse user-facing marker strings. Live and resume marker builders attach a session-only `ConsoleActivityPresentation` value to each display-only TOOL message. It carries a bounded enum-like kind, a literal label, and a terminal status (`success`, `blocked`, `failed`, or `done`). Existing `content`, `tool_output_full`, `tool_diff`, and `change_review_run_id` fields remain the detail/action payloads.
 
-The presentation value is never persisted in the conversation database and never enters provider history. `AgentStep` has no outcome field, so live and resume builders use one bridge-owned `classify_activity_status(step_kind, result)` helper before constructing the presentation value:
+The presentation value is never persisted in the conversation database and never enters provider history. Every known TOOL-marker builder attaches it: step results/spawns/errors/timeouts, task snapshots, live and resumed change summaries, concurrent/sub-agent change notices, change-tracking failures, and live/resumed diff-feedback disclosures. Only truly legacy or unknown markers use the neutral fallback.
 
-- `STEP_TOOL_RESULT` whose result starts with the runtime's exact `ERROR:` convention is `failed`;
-- the canonical `tool call denied by the user:` and `tool call blocked:` refusal prefixes are `blocked`;
-- every other `STEP_TOOL_RESULT` is `success`;
+Step-driven status follows [ADR-078](../../../backlog/decisions/078-structured-agent-tool-outcome-provenance.md). `ToolResult.outcome` optionally identifies a provider-owned policy refusal, while `AgentStep.tool_outcome` optionally carries `success`, `failed`, or `blocked` across the runtime-to-bridge boundary. The runtime sets the step fact before flattening content into `AgentStep.result`:
+
+- a non-`proceed` controller review verdict is `blocked`;
+- a dispatched `ToolResult(ok=True)` is `success`, regardless of whether its valid content begins with `ERROR:` or resembles denial copy;
+- a dispatched `ToolResult(ok=False)` with provider-owned blocked provenance is `blocked`;
+- every other dispatched `ToolResult(ok=False)` is `failed`;
 - `STEP_APPROVAL_TIMEOUT` is `blocked`, `STEP_ERROR` is `failed`, and non-tool activity is `done`.
 
-This classifier reads the agent-step protocol result, not the rendered `⚙ … → …` marker string. Tests pin it to the controller's canonical denial and kill-switch messages so copy drift cannot silently change status. No `AgentStep`, run-log, or persisted-step contract changes. Unknown or legacy transcript markers with no derived presentation value receive a neutral `Activity · done` header while preserving their original content; they are not hidden or guessed into a tool identity.
+Live and resumed presentation builders trust a valid structured outcome. Missing or unknown values use the earlier conservative result-text classifier so legacy and malformed persisted steps remain readable without raising. That fallback reads the step protocol result, never the rendered `⚙ … → …` marker string: direct controller refusal copy is matched before success; `ERROR:` is removed before canonical provider refusal matching; other enveloped errors are failed. Payload parsing is compatibility behavior, not the authority for new runtime steps. Unknown or legacy transcript markers with no derived presentation value receive a neutral `Activity · done` header while preserving their original content; they are not hidden or guessed into a tool identity.
 
 ### Activity disclosure
 
@@ -82,7 +85,7 @@ The existing `o` full-output action and mouse/Enter disclosure toggle converge o
 
 ### Reasoning disclosure
 
-The agent bridge adds one `Thinking` activity marker for every safe intermediate primary-agent `STEP_MODEL` immediately followed by that model turn's tool-call work. It must not create a marker for the final answer turn. Live rendering buffers the primary `STEP_MODEL` until the next primary step determines whether it led to a tool call; resume rendering performs the equivalent look-ahead over persisted steps. This makes live and resumed marker order identical without changing the agent-step schema.
+The agent bridge adds one `Thinking` activity marker for every safe intermediate primary-agent `STEP_MODEL` whose following primary step proves that model turn initiated tool work. The proving step may be `STEP_TOOL_CALL`, `STEP_SPAWN`, or a direct `STEP_TOOL_RESULT` produced by a pre-dispatch review/continuation refusal. It must not create a marker for the final answer turn. Live rendering buffers the primary `STEP_MODEL` until the next primary step determines whether it led to tool work; resume rendering performs the equivalent look-ahead over persisted steps. This makes live and resumed marker order identical; the optional ADR-078 outcome fact changes status provenance, not sequence derivation.
 
 Reasoning disclosure does not expose hidden chain-of-thought. It may show only a safe, already-visible intermediate preamble from `STEP_MODEL.summary`. Sanitization is conservative: strip tool-call fence payloads, reject thinking-tag/provider-private-reasoning shapes, flatten control markup, and apply the existing display cap. Provider-private reasoning content is never inferred or surfaced.
 
@@ -108,6 +111,7 @@ Live and resumed runs must derive the same Thinking marker order from the record
 
 ```text
 Agent runtime steps
+  (optional structured tool outcome provenance)
   -> ConsoleAgentBridge display-only activity markers
   -> ConsoleChatStore active-path view (assistant + anchored TOOL markers)
   -> ConsoleTranscript turn derivation
@@ -116,7 +120,7 @@ Agent runtime steps
        -> visible assistant answer
 ```
 
-No database migration, provider contract change, or persisted message-role change is required.
+No SQLite migration, external provider-wire change, or persisted message-role change is required. `AgentService` already serializes `AgentStep` with `dataclasses.asdict` into the existing schemaless per-step dictionaries in the run's steps JSON; new rows carry the optional key, while old rows omit it and use fallback classification. The internal `ToolResult`/`AgentStep` boundary changes as recorded by ADR-078.
 
 ## Error and Edge Cases
 
@@ -150,10 +154,10 @@ Live verification will run against an isolated scratch profile and inspect the r
 
 ## Implementation Isolation
 
-The design was authored while the primary checkout was on an unrelated dirty video-generation branch. Implementation must not continue in that checkout. Create a dedicated `codex/` worktree from the latest fetched `origin/dev`, carry the TASK-16324 task/spec commits into it, and perform all code/test work there. This prevents unrelated user changes and feature history from entering the implementation diff.
+The design was authored while the primary checkout was on an unrelated dirty video-generation branch. Implementation must not continue in that checkout. Create a dedicated `codex/` worktree from the latest fetched `origin/dev`, carry the TASK-19426 task/spec commits into it, and perform all code/test work there. This prevents unrelated user changes and feature history from entering the implementation diff.
 
 ## ADR Check
 
-**ADR required:** no  
-**ADR path:** N/A  
-**Reason:** this is a focused transcript presentation and interaction change. It preserves existing storage, marker ownership, agent-step/run-log contracts, provider/runtime boundaries, security policy, and application navigation. Activity status is derived at the existing bridge presentation seam rather than added to the runtime contract. ADR-031 remains applicable for keybinding and footer-hint truthfulness.
+**ADR required:** yes
+**ADR path:** `backlog/decisions/078-structured-agent-tool-outcome-provenance.md`
+**Reason:** the transcript work remains presentation-focused, but collision-safe status required an additive internal provider/runtime contract: optional `ToolResult.outcome` and `AgentStep.tool_outcome` facts carried through persisted run-step JSON. ADR-078 records that boundary, compatibility fallback, and the decision not to add a SQLite or external provider-wire migration. ADR-031 remains applicable for keybinding and footer-hint truthfulness.

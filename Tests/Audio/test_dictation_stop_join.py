@@ -113,7 +113,51 @@ class _FakeRecorder:
 
     def feed(self, chunk: bytes) -> None:
         assert self.callback is not None, "recording was never started"
-        self.callback(chunk)
+        if self.is_recording:
+            self.callback(chunk)
+
+
+class _BatchDelayedHandle:
+    """Models dictation waiting behind an event-controlled active batch."""
+
+    waiting_for_executor = True
+
+    def __init__(self, batch_release: threading.Event) -> None:
+        self._batch_release = batch_release
+        self.appended: List[bytes] = []
+        self.finished = False
+        self.wait_entered = threading.Event()
+        self.callback: Optional[Callable[[int, str], None]] = None
+
+    def append_segment(self, audio: bytes) -> str:
+        self.appended.append(audio)
+        return "accepted"
+
+    def finish(self) -> None:
+        self.finished = True
+
+    def wait(self) -> None:
+        self.wait_entered.set()
+        assert self._batch_release.wait(timeout=5), "batch was never released"
+        assert self.callback is not None
+        self.callback(0, "delayed dictation")
+
+    def cancel(self, *, force: bool = False) -> bool:
+        return True
+
+
+class _DeferredFacade:
+    uses_deferred_local_stt_dispatch = True
+
+    def __init__(self, handle: _BatchDelayedHandle) -> None:
+        self.handle = handle
+
+    def begin_dictation_capture(self, **kwargs: Any) -> _BatchDelayedHandle:
+        self.handle.callback = kwargs["on_logical_segment"]
+        return self.handle
+
+    def create_streaming_transcriber(self, **kwargs: Any) -> None:
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -179,7 +223,9 @@ def test_join_timeout_defaults_to_the_class_default(monkeypatch):
     """No config key set: the default must be a real transcription budget."""
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
 
-    service = _build_service(monkeypatch, _InstantTranscriptionService(), _FakeRecorder())
+    service = _build_service(
+        monkeypatch, _InstantTranscriptionService(), _FakeRecorder()
+    )
 
     assert (
         service.stop_join_timeout_seconds
@@ -198,6 +244,60 @@ def test_join_timeout_is_read_from_config(monkeypatch):
     )
 
     assert service.stop_join_timeout_seconds == 7.5
+
+
+def test_deferred_stop_joins_only_the_processing_thread_then_waits_off_loop(
+    monkeypatch,
+):
+    """The 50ms processing join must not include queued/native inference."""
+    _stub_settings(
+        monkeypatch,
+        **{"dictation.stop_join_timeout_seconds": 0.05},
+    )
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    batch_release = threading.Event()
+    handle = _BatchDelayedHandle(batch_release)
+    facade = _DeferredFacade(handle)
+    recorder = _FakeRecorder()
+    service = LazyLiveDictationService(
+        transcription_provider="parakeet-onnx",
+        transcription_model=None,
+        language="en",
+        enable_commands=False,
+        transcription_service_factory=lambda: facade,
+    )
+    service._audio_service = recorder
+    service.reserve_deferred_dictation(11)
+    _start(service)
+    audio = b"\x00\x01" * 320
+    recorder.feed(audio)
+    result_box: Dict[str, Any] = {}
+
+    stop_thread = threading.Thread(
+        target=lambda: result_box.setdefault("result", service.stop_dictation()),
+        daemon=True,
+    )
+    stop_thread.start()
+
+    assert handle.wait_entered.wait(timeout=1), "stop never reached deferred wait"
+    assert service.processing_thread is not None
+    assert service.processing_thread.is_alive() is False
+    assert recorder.is_recording is False
+    assert handle.appended == [audio]
+    recorder.feed(b"\x02\x03" * 80)
+    assert service.captured_bytes == len(audio)
+    assert stop_thread.is_alive() is True
+    assert "result" not in result_box
+
+    batch_release.set()
+    stop_thread.join(timeout=1)
+
+    assert stop_thread.is_alive() is False
+    result = result_box["result"]
+    assert result.transcription_complete is True
+    assert result.transcript == "delayed dictation"
+    assert result.captured_bytes == len(audio)
 
 
 @pytest.mark.parametrize(

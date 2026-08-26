@@ -12,6 +12,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.timer import Timer
 from textual.widgets import Button, DataTable, Input, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
@@ -24,6 +25,7 @@ from ....Scheduling.events import (
     DisableTaskRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    RunReminderNowRequested,
     SyncCompleted,
     SyncFailed,
 )
@@ -38,6 +40,7 @@ from .task_detail import (
     _format_next_run,
     _task_status,
     _task_type_label,
+    _was_missed_while_away,
     status_badge_text,
 )
 
@@ -50,6 +53,11 @@ logger = logger.bind(module="SchedulesWorkbench")
 
 SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH = 120
 
+#: Debounce for the queue filter `Input` -- mirrors the console picker
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). A full render
+#: pass clears and rebuilds the whole `DataTable` (task-15476).
+QUEUE_FILTER_DEBOUNCE_SECONDS = 0.2
+
 
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
@@ -57,6 +65,7 @@ class SchedulesWorkbench(BaseAppScreen):
     BINDINGS = [
         Binding("c", "create_reminder", "Create"),
         Binding("e", "edit_task", "Edit"),
+        Binding("r", "run_task_now", "Run now"),
         Binding("space", "toggle_enabled", "Enable/Disable"),
         Binding("d", "delete", "Delete"),
         Binding("x", "mark_task", "Mark"),
@@ -70,6 +79,7 @@ class SchedulesWorkbench(BaseAppScreen):
     SCHEDULES_SHORTCUTS = (
         ("c", "create"),
         ("e", "edit"),
+        ("r", "run now"),
         ("space", "toggle"),
         ("d", "delete"),
         ("x", "mark"),
@@ -84,6 +94,11 @@ class SchedulesWorkbench(BaseAppScreen):
         self._tasks: list[ReminderTask | ScheduledTask] = []
         self._visible_tasks: list[ReminderTask | ScheduledTask] = []
         self._filter_text = ""
+        self._filter_debounce_timer: Timer | None = None
+        # task-15476: the task id currently shown in the detail/inspector
+        # panes, tracked independently of row index so a filter keystroke
+        # can restore the same selection instead of always jumping to row 0.
+        self._selected_task_id: str | None = None
         self._marked_ids: set[str] = set()
         self._sync_running = False
         self._current_console_follow_item = None
@@ -186,11 +201,11 @@ class SchedulesWorkbench(BaseAppScreen):
         self._refresh_conflicts_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
-        self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
-
-    def on_resize(self, event: Any) -> None:
-        """Compact the three-pane layout when its normal minima cannot fit."""
-        self._sync_responsive_workbench()
+        self.run_worker(
+            self.load_tasks,
+            exclusive=True,
+            group="schedules-load-tasks",
+        )  # type: ignore[arg-type]
 
     def _sync_responsive_workbench(self) -> None:
         """Keep the primary queue and detail action visible at narrow widths."""
@@ -230,7 +245,14 @@ class SchedulesWorkbench(BaseAppScreen):
         await self._refresh_console_context()
 
     def _render_table(self) -> None:
-        """Rebuild the queue rows from the current tasks + filter text."""
+        """Rebuild the queue rows from the current tasks + filter text.
+
+        Restores the previously selected task's row (by id) when it is
+        still visible after the filter narrows, instead of always jumping
+        the detail/inspector panes back to row 0 (task-15476): a filter
+        keystroke must not discard what the user was looking at.
+        """
+        previous_selected_id = self._selected_task_id
         text = self._filter_text.strip().lower()
         self._visible_tasks = [
             task
@@ -240,10 +262,19 @@ class SchedulesWorkbench(BaseAppScreen):
             or text in _task_type_label(task).lower()
             or text in _task_status(task).value.lower().replace("_", " ")
             or text in _task_status(task).value.lower()
+            # task-18937: filtering for "missed" finds late-dispatch rows too,
+            # not just handler-failure ones -- both are honest matches for a
+            # user asking "what went wrong while I wasn't looking".
+            or (
+                _was_missed_while_away(task)
+                and "missed" in text
+            )
         ]
         rows: list[tuple[str, str, Text, str]] = [
             (
-                ("● " if task.id in self._marked_ids else "") + task.title,
+                ("● " if task.id in self._marked_ids else "")
+                + ("◇ " if _was_missed_while_away(task) else "")
+                + task.title,
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 _format_next_run(task),
@@ -257,8 +288,17 @@ class SchedulesWorkbench(BaseAppScreen):
             table.add_row(*row)
 
         if rows:
-            self._update_detail_for_index(0)
+            target_index = 0
+            if previous_selected_id is not None:
+                for index, task in enumerate(self._visible_tasks):
+                    if task.id == previous_selected_id:
+                        target_index = index
+                        break
+            if table.row_count:
+                table.move_cursor(row=target_index)
+            self._update_detail_for_index(target_index)
         else:
+            self._selected_task_id = None
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=not self._tasks
             )
@@ -274,8 +314,20 @@ class SchedulesWorkbench(BaseAppScreen):
 
     @on(Input.Changed, "#scheduling-queue-filter")
     def _on_queue_filter_changed(self, event: Input.Changed) -> None:
-        """Filter the queue rows by title substring."""
+        """Filter the queue rows by title substring (debounced).
+
+        A settled render clears and rebuilds the whole `DataTable`, so it
+        must not run on every keystroke (task-15476).
+        """
         self._filter_text = event.value
+        if self._filter_debounce_timer is not None:
+            self._filter_debounce_timer.stop()
+        self._filter_debounce_timer = self.set_timer(
+            QUEUE_FILTER_DEBOUNCE_SECONDS, self._apply_queue_filter_debounced
+        )
+
+    def _apply_queue_filter_debounced(self) -> None:
+        self._filter_debounce_timer = None
         self._render_table()
 
     @on(DataTable.RowHighlighted)
@@ -286,6 +338,7 @@ class SchedulesWorkbench(BaseAppScreen):
     def _update_detail_for_index(self, index: int) -> None:
         """Render task details in the detail and inspector panes."""
         if not (0 <= index < len(self._visible_tasks)):
+            self._selected_task_id = None
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=not self._tasks
             )
@@ -293,6 +346,7 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         task = self._visible_tasks[index]
+        self._selected_task_id = task.id
         self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
@@ -445,7 +499,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             await self.load_tasks()
 
-        self.run_worker(_delete_and_refresh, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _delete_and_refresh,
+            exclusive=True,
+            group="schedules-delete-task",
+        )  # type: ignore[arg-type]
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
@@ -528,7 +586,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             await self.load_tasks()
 
-        self.run_worker(_save_and_refresh, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _save_and_refresh,
+            exclusive=True,
+            group="schedules-save-reminder",
+        )  # type: ignore[arg-type]
 
     @on(EditTaskRequested)
     def _on_edit_task_requested(self, event: EditTaskRequested) -> None:
@@ -552,6 +614,74 @@ class SchedulesWorkbench(BaseAppScreen):
         """Disable the requested reminder and refresh the queue."""
         event.stop()
         self._set_reminder_enabled(event.task, False)
+
+    @on(RunReminderNowRequested)
+    def _on_run_reminder_now_requested(self, event: RunReminderNowRequested) -> None:
+        """Dispatch the requested reminder immediately."""
+        event.stop()
+        self._run_reminder_now(event.task)
+
+    def action_run_task_now(self) -> None:
+        """Run the highlighted reminder immediately (``r`` key)."""
+        task = self._selected_reminder_task()
+        if task is not None:
+            self._run_reminder_now(task)
+
+    def _selected_reminder_task(self) -> ReminderTask | None:
+        """Return the highlighted task when it is a reminder (not a projection)."""
+        for task in self._visible_tasks:
+            if task.id == self._selected_task_id and isinstance(task, ReminderTask):
+                return task
+        return None
+
+    def _run_reminder_now(self, task: ReminderTask) -> None:
+        """Dispatch one reminder through the scheduler's own path (task-18938)."""
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot run the reminder.",
+                severity="warning",
+            )
+            return
+        loop = getattr(self.app_instance, "scheduler_loop", None)
+        if loop is None:
+            self.app_instance.notify(
+                "The scheduler is not running; cannot run reminders manually.",
+                severity="warning",
+            )
+            return
+
+        was_disabled = not bool(getattr(task, "enabled", True))
+
+        async def _run_and_refresh() -> None:
+            try:
+                result = await service.run_reminder_now(task.id, loop=loop)
+                if result is None:
+                    self.app_instance.notify(
+                        f"'{task.title}' did not run -- it is missing, the "
+                        "reminder handler is unavailable, or its handler "
+                        "failed (the task's status shows which).",
+                        severity="warning",
+                    )
+                else:
+                    suffix = " (still disabled)" if was_disabled else ""
+                    self.app_instance.notify(
+                        f"'{task.title}' ran now{suffix}.",
+                        severity="information",
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to run reminder now")
+                self.app_instance.notify(
+                    f"Failed to run '{task.title}'.",
+                    severity="error",
+                )
+            await self.load_tasks()
+
+        self.run_worker(
+            _run_and_refresh,
+            exclusive=True,
+            group="schedules-run-reminder-now",
+        )  # type: ignore[arg-type]
 
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
         """Update a reminder's enabled state and refresh the queue."""
@@ -578,7 +708,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             await self.load_tasks()
 
-        self.run_worker(_update_and_refresh, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _update_and_refresh,
+            exclusive=True,
+            group="schedules-set-reminder-enabled",
+        )  # type: ignore[arg-type]
 
     def _refresh_owner_select(self) -> None:
         status = self.query_one("#scheduling-sync-status", SyncStatusWidget)
@@ -637,6 +771,7 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def on_resize(self) -> None:
         """Hide side panes (with a notice) instead of clipping them."""
+        self._sync_responsive_workbench()
         try:
             width = self.size.width
             inspector = self.query_one("#scheduling-inspector-pane")
@@ -691,7 +826,7 @@ class SchedulesWorkbench(BaseAppScreen):
             app_config=self.app_instance.app_config,
         )
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
 
     @on(Button.Pressed, "#scheduling-clear-error")
@@ -707,7 +842,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._sync_running = False
         self.app_instance.notify("Sync completed.", severity="information")
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
 
     @on(SyncFailed)
@@ -715,12 +850,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._sync_running = False
         self.app_instance.notify(f"Sync failed: {event.error}", severity="error")
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
 
     @on(ConflictsTab.ConflictResolved)
     def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
 
     def _refresh_conflicts_tab(self) -> None:
@@ -797,7 +932,11 @@ class SchedulesWorkbench(BaseAppScreen):
             self._marked_ids.clear()
             await self.load_tasks()
 
-        self.run_worker(_bulk_delete, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _bulk_delete,
+            exclusive=True,
+            group="schedules-bulk-delete",
+        )  # type: ignore[arg-type]
 
     def _selected_task(self) -> ReminderTask | ScheduledTask | None:
         """Return the task under the queue cursor, if any."""
@@ -886,7 +1025,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 self._marked_ids.clear()
                 await self.load_tasks()
 
-            self.run_worker(_bulk_toggle, exclusive=True)  # type: ignore[arg-type]
+            self.run_worker(
+                _bulk_toggle,
+                exclusive=True,
+                group="schedules-bulk-toggle",
+            )  # type: ignore[arg-type]
             return
 
         task = self._selected_task()
@@ -924,7 +1067,7 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         self._sync_running = True
-        self.run_worker(self._run_sync, exclusive=True)
+        self.run_worker(self._run_sync, exclusive=True, group="schedules-sync-now")
 
     async def _run_sync(self) -> None:
         service = self._service()

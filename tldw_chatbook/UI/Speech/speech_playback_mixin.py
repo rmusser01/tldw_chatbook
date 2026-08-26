@@ -22,6 +22,7 @@ import math
 from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Optional
+import unicodedata
 
 from loguru import logger
 from textual.css.query import NoMatches
@@ -34,7 +35,7 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileSave as FileSave,
 )
 
-from tldw_chatbook.TTS import STTSGeneratedAudio
+from tldw_chatbook.TTS import STTSGeneratedAudio, STTSPlaygroundResultProjection
 from tldw_chatbook.TTS.playground_types import PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS
 
 
@@ -46,15 +47,44 @@ EXAMPLE_TEXTS = [
     "Good morning! Today's weather is sunny with a high of 75 degrees. Perfect for a walk in the park.",
 ]
 
+_PROVENANCE_FIELD_MAX_CHARACTERS = 80
+
+
+def _safe_provenance_field(value: object, fallback: str) -> str:
+    """Return one bounded control-safe field for literal provenance display.
+
+    Args:
+        value: Provider-controlled identifier to render.
+        fallback: Copy used when ``value`` is not a usable string.
+
+    Returns:
+        A single-line value capped at the provenance field limit.
+    """
+
+    if type(value) is not str:
+        return fallback
+    flattened = "".join(
+        " " if unicodedata.category(character) in {"Cc", "Cf", "Cs"} else character
+        for character in value
+    )
+    flattened = " ".join(flattened.split())
+    if not flattened:
+        return fallback
+    if len(flattened) <= _PROVENANCE_FIELD_MAX_CHARACTERS:
+        return flattened
+    return flattened[: _PROVENANCE_FIELD_MAX_CHARACTERS - 1].rstrip() + "…"
+
 
 class SpeechPlaybackMixin:
     """Transport, export and picker behaviour, independent of the layout."""
 
     def _generation_complete(
         self,
-        artifact: STTSGeneratedAudio | None,
+        artifact: STTSGeneratedAudio | STTSPlaygroundResultProjection | None,
     ) -> None:
-        """Store one delivered artifact independently of current selectors."""
+        """Store only sanitized result facts independently of selectors."""
+        if type(artifact) is STTSGeneratedAudio:
+            artifact = STTSPlaygroundResultProjection.from_artifact(artifact)
         if (
             artifact is not None
             and artifact.operation_id == self._retired_profile_operation_id
@@ -74,7 +104,11 @@ class SpeechPlaybackMixin:
                 self._generation_operation_id = artifact.operation_id
                 self._result_transition_operation_id = artifact.operation_id
                 self._sync_generate_enabled()
-                self.query_one("#audio-play-btn", Button).disabled = True
+                play = self.query_one("#audio-play-btn", Button)
+                play.disabled = True
+                play.tooltip = (
+                    "Wait for current playback to stop before playing the new result"
+                )
                 self.run_worker(
                     self._replace_result_after_playback(artifact),
                     name="replace_tts_result_after_playback",
@@ -93,6 +127,9 @@ class SpeechPlaybackMixin:
             self._sync_save_profile_action()
             log = self.query_one("#tts-generation-log", RichLog)
             log.write("[bold red]✗ TTS generation failed![/bold red]")
+            result_hook = getattr(self, "_on_generation_result", None)
+            if callable(result_hook):
+                result_hook(None)
 
     def _playback_transition_required(self) -> bool:
         """Return whether replacing the result must first retire playback."""
@@ -107,7 +144,7 @@ class SpeechPlaybackMixin:
 
     async def _replace_result_after_playback(
         self,
-        artifact: STTSGeneratedAudio,
+        artifact: STTSPlaygroundResultProjection,
     ) -> None:
         """Retire older playback before publishing and optionally playing a result."""
 
@@ -154,10 +191,16 @@ class SpeechPlaybackMixin:
                 self._generation_operation_id = None
                 self._sync_generate_enabled()
 
-    def _publish_delivered_artifact(self, artifact: STTSGeneratedAudio) -> None:
+    def _publish_delivered_artifact(
+        self,
+        artifact: STTSPlaygroundResultProjection,
+    ) -> None:
         """Publish one result only after prior playback ownership is settled."""
 
         self._store_delivered_artifact(artifact, announce=True)
+        result_hook = getattr(self, "_on_generation_result", None)
+        if callable(result_hook):
+            result_hook(artifact)
         preferences = getattr(self, "studio_preferences", None)
         if getattr(preferences, "auto_play", False) is True:
             self._play_audio()
@@ -178,7 +221,7 @@ class SpeechPlaybackMixin:
         """
         #: The most recent generated file and its artifact handle.
         self.current_audio_file: Any = None
-        self.current_audio_artifact: STTSGeneratedAudio | None = None
+        self.current_audio_artifact: STTSPlaygroundResultProjection | None = None
         #: In-flight playback and its progress ticker, so both can be
         #: cancelled when a new take starts or the pane unmounts.
         self._progress_timer_task: Any = None
@@ -212,8 +255,10 @@ class SpeechPlaybackMixin:
         if self.is_mounted:
             self.query_one("#generation-status-container").add_class("hidden")
             if self.current_audio_artifact is None:
-                self.query_one("#audio-play-btn", Button).disabled = True
-                self.query_one("#audio-export-btn", Button).disabled = True
+                self._sync_idle_transport_actions()
+                export = self.query_one("#audio-export-btn", Button)
+                export.disabled = True
+                export.tooltip = "Generate audio before saving a current result"
             self._sync_generate_enabled()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -223,7 +268,9 @@ class SpeechPlaybackMixin:
             self._generate_tts()
             event.stop()  # Prevent event from bubbling up
         elif event.button.id == "tts-test-connection-btn":
-            if self._selected_provider_id is not None:
+            lifecycle_handler = getattr(self, "_handle_connection_action", None)
+            handled = bool(callable(lifecycle_handler) and lifecycle_handler())
+            if not handled and self._selected_provider_id is not None:
                 self._load_provider_catalog(
                     self._selected_provider_id,
                     refresh=True,
@@ -256,6 +303,9 @@ class SpeechPlaybackMixin:
         elif event.button.id == "audio-export-btn":
             self._export_audio()
             event.stop()
+        elif event.button.id == "audio-generate-again-btn":
+            self._generate_tts()
+            event.stop()
         elif event.button.id == "audio-save-profile-btn":
             event.button.disabled = True
             self.run_worker(
@@ -281,10 +331,12 @@ class SpeechPlaybackMixin:
 
     def _store_delivered_artifact(
         self,
-        artifact: STTSGeneratedAudio,
+        artifact: STTSGeneratedAudio | STTSPlaygroundResultProjection,
         *,
         announce: bool,
     ) -> None:
+        if type(artifact) is STTSGeneratedAudio:
+            artifact = STTSPlaygroundResultProjection.from_artifact(artifact)
         self.current_audio_artifact = artifact
         self.current_audio_file = artifact.path
         self._profile_save_suppressed = False
@@ -292,10 +344,14 @@ class SpeechPlaybackMixin:
             self.query_one("#tts-generation-log", RichLog).write(
                 "[bold green]✓ TTS generation complete![/bold green]"
             )
-        self.query_one("#audio-play-btn", Button).disabled = False
-        self.query_one("#pause-audio-btn", Button).disabled = True
-        self.query_one("#stop-audio-btn", Button).disabled = True
+        self._sync_idle_transport_actions()
         self.query_one("#audio-export-btn", Button).disabled = False
+        repeat = self.query_one("#audio-generate-again-btn", Button)
+        repeat.disabled = False
+        repeat.tooltip = "Generate another result with the current Speech Lab controls"
+        save = self.query_one("#audio-export-btn", Button)
+        save.label = f"Save {artifact.audio_format.upper()} as…"
+        save.tooltip = f"Save the current {artifact.audio_format.upper()} result"
         self._sync_save_profile_action()
         self.query_one("#audio-player-status", Static).update(
             self._current_result_status_copy()
@@ -303,6 +359,9 @@ class SpeechPlaybackMixin:
         try:
             self.query_one("#audio-result-lifecycle", Static).update(
                 self._result_lifecycle_copy(artifact)
+            )
+            self.query_one("#audio-result-provenance", Static).update(
+                self._current_result_provenance_copy(artifact)
             )
             self.query_one("#audio-player-transport").add_class("hidden")
             self.query_one("#audio-progress-bar").add_class("hidden")
@@ -312,9 +371,51 @@ class SpeechPlaybackMixin:
         except NoMatches:
             pass
 
+    def _sync_idle_transport_actions(self) -> None:
+        """Project current-result transport controls in a truthful idle state."""
+
+        has_result = self._current_generated_audio_path() is not None
+        play = self.query_one("#audio-play-btn", Button)
+        pause = self.query_one("#pause-audio-btn", Button)
+        stop = self.query_one("#stop-audio-btn", Button)
+        play.disabled = not has_result
+        play.tooltip = (
+            "Play the current result"
+            if has_result
+            else "Generate audio before playing the current result"
+        )
+        pause.label = "Pause"
+        pause.disabled = True
+        pause.tooltip = (
+            "Start playback before pausing"
+            if has_result
+            else "Generate audio before pausing playback"
+        )
+        stop.disabled = True
+        stop.tooltip = (
+            "Start playback before stopping"
+            if has_result
+            else "Generate audio before stopping playback"
+        )
+
+    def _sync_active_transport_actions(self) -> None:
+        """Project current-result transport controls while playback is active."""
+
+        play = self.query_one("#audio-play-btn", Button)
+        pause = self.query_one("#pause-audio-btn", Button)
+        stop = self.query_one("#stop-audio-btn", Button)
+        play.disabled = True
+        play.tooltip = "Playback is already in progress"
+        pause.disabled = False
+        pause.tooltip = (
+            "Resume playback" if str(pause.label) == "Resume" else "Pause playback"
+        )
+        stop.disabled = False
+        stop.tooltip = "Stop playback"
+
     @staticmethod
     def _artifact_duration_seconds(
-        artifact: STTSGeneratedAudio | None,
+        artifact: STTSPlaygroundResultProjection | None,
     ) -> float | None:
         """Return a positive duration from bounded artifact metadata, if known."""
 
@@ -331,6 +432,19 @@ class SpeechPlaybackMixin:
             duration = float(value) * scale
             if math.isfinite(duration) and duration > 0:
                 return duration
+        frame_count = artifact.metadata.get("frame_count")
+        sample_rate = artifact.metadata.get("sample_rate")
+        if (
+            not isinstance(frame_count, bool)
+            and isinstance(frame_count, Real)
+            and not isinstance(sample_rate, bool)
+            and isinstance(sample_rate, Real)
+            and math.isfinite(float(frame_count))
+            and math.isfinite(float(sample_rate))
+            and float(frame_count) > 0
+            and float(sample_rate) > 0
+        ):
+            return float(frame_count) / float(sample_rate)
         return None
 
     @staticmethod
@@ -347,14 +461,51 @@ class SpeechPlaybackMixin:
         artifact = self.current_audio_artifact
         if artifact is None:
             return "No audio generated yet"
-        parts = ["Ready", artifact.audio_format.upper()]
+        format_copy = artifact.audio_format.upper()
+        if (
+            artifact.audio_format.casefold() == "wav"
+            and artifact.metadata.get("delivery") == "complete_wav"
+        ):
+            format_copy = "Complete WAV"
+        parts = ["Ready", format_copy]
         duration = self._artifact_duration_seconds(artifact)
         if duration is not None:
             parts.append(self._format_result_duration(duration))
         return " · ".join(parts)
 
     @staticmethod
-    def _result_lifecycle_copy(artifact: STTSGeneratedAudio) -> str:
+    def _current_result_provenance_copy(
+        artifact: STTSPlaygroundResultProjection,
+    ) -> str:
+        """Return path-free provenance captured with the delivered artifact."""
+
+        provider = (
+            "audio.cpp"
+            if artifact.provider_id == "audio_cpp"
+            else _safe_provenance_field(
+                artifact.provider_id,
+                "Unknown provider",
+            )
+            .replace("_", " ")
+            .title()
+        )
+        model = _safe_provenance_field(artifact.model_id, "Unknown model")
+        voice = _safe_provenance_field(artifact.voice_id, "Server default")
+        parts = [
+            f"Provider: {provider}",
+            f"Model: {model}",
+            f"Voice: {voice}",
+        ]
+        selection = artifact.requested_selection
+        if selection is not None:
+            parts.append(f"configuration revision {selection.configuration_revision}")
+        process_generation = artifact.metadata.get("process_generation")
+        if type(process_generation) is int and process_generation >= 0:
+            parts.append(f"process generation {process_generation}")
+        return " · ".join(parts)
+
+    @staticmethod
+    def _result_lifecycle_copy(artifact: STTSPlaygroundResultProjection) -> str:
         """State the file's lifecycle, and why Save is missing when it is.
 
         An unexplained missing Save affordance is the chrome-honesty defect
@@ -407,12 +558,12 @@ class SpeechPlaybackMixin:
             return audio_path, lambda: None
 
         handler = getattr(self.app, "_stts_handler", None)
-        acquire = getattr(handler, "lease_playground_artifact", None)
-        release = getattr(handler, "release_playground_artifact", None)
+        acquire = getattr(handler, "lease_playground_result", None)
+        release = getattr(handler, "release_playground_result", None)
         if not callable(acquire) or not callable(release):
             return audio_path, lambda: None
         try:
-            if not acquire(artifact):
+            if not acquire(artifact.operation_id, artifact.path):
                 return None
         except Exception as error:
             logger.debug(
@@ -429,7 +580,7 @@ class SpeechPlaybackMixin:
                 return
             released = True
             try:
-                release(artifact)
+                release(artifact.operation_id, artifact.path)
             except Exception as error:
                 logger.debug(
                     "Could not release Playground artifact ({})",
@@ -488,9 +639,7 @@ class SpeechPlaybackMixin:
                 self._progress_timer_task = None
                 logger.debug("Cancelled existing progress timer")
 
-            # Enable pause and stop buttons
-            self.query_one("#pause-audio-btn", Button).disabled = False
-            self.query_one("#stop-audio-btn", Button).disabled = False
+            self._sync_active_transport_actions()
             self.query_one("#audio-player-status", Static).update(
                 "Playing current result…"
             )
@@ -581,9 +730,7 @@ class SpeechPlaybackMixin:
                         logger.error("Failed to start playback - play() returned False")
                         self.app.notify("Failed to start playback", severity="error")
                         # Reset button states on failure
-                        self.query_one("#audio-play-btn", Button).disabled = False
-                        self.query_one("#pause-audio-btn", Button).disabled = True
-                        self.query_one("#stop-audio-btn", Button).disabled = True
+                        self._sync_idle_transport_actions()
                         self.query_one("#audio-player-status", Static).update(
                             "Playback failed"
                         )
@@ -599,9 +746,7 @@ class SpeechPlaybackMixin:
             logger.opt(exception=True).error(f"Error playing audio: {e}")
             self.app.notify(f"Playback error: {str(e)}", severity="error")
             # Reset button states on error
-            self.query_one("#audio-play-btn", Button).disabled = False
-            self.query_one("#pause-audio-btn", Button).disabled = True
-            self.query_one("#stop-audio-btn", Button).disabled = True
+            self._sync_idle_transport_actions()
             self.query_one("#audio-player-status", Static).update("Playback error")
         finally:
             if release_artifact is not None:
@@ -653,6 +798,7 @@ class SpeechPlaybackMixin:
                 if success:
                     # Update button states
                     self.query_one("#pause-audio-btn", Button).label = "Resume"
+                    self._sync_active_transport_actions()
                     self.app.notify("Playback paused", severity="information")
                 else:
                     self.app.notify("Failed to pause playback", severity="warning")
@@ -661,6 +807,7 @@ class SpeechPlaybackMixin:
                 if success:
                     # Update button states
                     self.query_one("#pause-audio-btn", Button).label = "Pause"
+                    self._sync_active_transport_actions()
                     self.app.notify("Playback resumed", severity="information")
                     # Cancel any existing timer and restart
                     if (
@@ -716,12 +863,7 @@ class SpeechPlaybackMixin:
 
             # Always reset button states regardless of success
             # (audio may have already finished playing)
-            self.query_one(
-                "#audio-play-btn", Button
-            ).disabled = False  # Re-enable play button
-            self.query_one("#pause-audio-btn", Button).label = "Pause"
-            self.query_one("#pause-audio-btn", Button).disabled = True
-            self.query_one("#stop-audio-btn", Button).disabled = True
+            self._sync_idle_transport_actions()
             self.query_one("#audio-player-transport").add_class("hidden")
 
             if success:
@@ -995,10 +1137,7 @@ class SpeechPlaybackMixin:
                         self.query_one("#audio-player-transport").add_class("hidden")
 
                         # Reset button states when playback finishes
-                        self.query_one("#audio-play-btn", Button).disabled = False
-                        self.query_one("#pause-audio-btn", Button).disabled = True
-                        self.query_one("#pause-audio-btn", Button).label = "Pause"
-                        self.query_one("#stop-audio-btn", Button).disabled = True
+                        self._sync_idle_transport_actions()
                         self.query_one("#audio-player-status", Static).update(
                             self._current_result_status_copy()
                         )
@@ -1020,9 +1159,7 @@ class SpeechPlaybackMixin:
         # Ensure UI is reset on exit
         try:
             if self._result_transition_operation_id is None:
-                self.query_one("#audio-play-btn", Button).disabled = False
-                self.query_one("#pause-audio-btn", Button).disabled = True
-                self.query_one("#stop-audio-btn", Button).disabled = True
+                self._sync_idle_transport_actions()
                 self.query_one("#audio-player-transport").add_class("hidden")
                 self.query_one("#audio-player-status", Static).update(
                     self._current_result_status_copy()
@@ -1039,6 +1176,23 @@ class SpeechPlaybackMixin:
     async def on_unmount(self) -> None:
         """Clean up resources when widget is unmounted"""
         try:
+            invalidate_profile_mount = getattr(
+                self,
+                "invalidate_profile_mount_callbacks",
+                None,
+            )
+            if callable(invalidate_profile_mount):
+                invalidate_profile_mount()
+            retire_profile_test = getattr(
+                self,
+                "_retire_profile_test_authority",
+                None,
+            )
+            if callable(retire_profile_test):
+                retire_profile_test()
+            close_clone_setup = getattr(self, "_close_clone_setup", None)
+            if callable(close_clone_setup):
+                await close_clone_setup()
             self.app.workers.cancel_group(self, "stts-catalog-discovery")
             self.app.workers.cancel_group(self, "stts-voice-discovery")
             self.app.workers.cancel_group(self, "stts-playback")

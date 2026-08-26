@@ -1,10 +1,9 @@
 """Tests for ``ConsoleStylePickerModal`` and its Console palette wiring
 (image-gen P2b, Task 4).
 
-Modal-level tests mirror ``Tests/UI/test_console_skill_picker.py``'s
-``ModalHarness`` (bare ``App[None]`` subclass + ``push_screen(...,
-callback=...)``), since this picker is a deliberate structural copy of
-``ConsoleSkillPickerModal`` -- filter ``Input``, synthetic Up/Down
+Modal-level tests use a bare ``App[None]`` harness with ``push_screen(...,
+callback=...)``. The picker follows the shared Console picker interaction
+shape -- filter ``Input``, synthetic Up/Down
 highlight, Enter-selects, Escape-cancels -- minus the injected async
 search callable (the searched set is the small, static, in-memory
 ``BUILTIN_TEMPLATES`` table, so filtering is synchronous with no debounce).
@@ -141,7 +140,9 @@ async def test_modal_typing_filters_rows_by_id_prefix():
 
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
         filter_input.value = "style_"
-        await pilot.pause(0.1)
+        # Debounced (task-15476): the row list only re-renders once the
+        # filter settles, not on every keystroke.
+        await pilot.pause(picker_module.SEARCH_DEBOUNCE_SECONDS + 0.1)
 
         rows = app.screen.query(".console-style-picker-row")
         assert len(rows) == 3
@@ -159,7 +160,9 @@ async def test_modal_unmatched_filter_shows_empty_copy():
 
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
         filter_input.value = "zzz-no-such-style"
-        await pilot.pause(0.1)
+        # Debounced (task-15476): the empty state only appears once the
+        # filter settles.
+        await pilot.pause(picker_module.SEARCH_DEBOUNCE_SECONDS + 0.1)
 
         empty = app.screen.query_one("#console-style-picker-empty", Static)
         assert str(empty.renderable) == EMPTY_STORE_COPY
@@ -258,7 +261,9 @@ async def test_modal_detail_shows_placeholder_when_no_matches():
 
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
         filter_input.value = "zzz-no-such-style"
-        await pilot.pause(0.1)
+        # Debounced (task-15476): the detail preview only clears once the
+        # filter settles.
+        await pilot.pause(picker_module.SEARCH_DEBOUNCE_SECONDS + 0.1)
 
         detail = app.screen.query_one(f"#{DETAIL_STATIC_ID}", Static)
         assert str(detail.renderable) == DETAIL_EMPTY_COPY

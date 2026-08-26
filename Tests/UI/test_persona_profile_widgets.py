@@ -4,6 +4,10 @@ import importlib.util
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
 from tldw_chatbook.tldw_api.character_persona_schemas import (
@@ -31,13 +35,13 @@ PROFILE = {
 }
 
 
-class WidgetApp(App):
+class WidgetApp(ConsolidatedCSSApp):
     def compose(self):
         yield PersonaProfileCardWidget()
         yield PersonaProfileEditorWidget()
 
 
-class EditorOnlyApp(App):
+class EditorOnlyApp(ConsolidatedCSSApp):
     """Isolated harness for editor-only tests — keeps card off-screen concerns away."""
 
     def compose(self):

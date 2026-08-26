@@ -26,6 +26,9 @@ from tldw_chatbook.Utils.path_validation import get_safe_relative_path
 
 MAX_FILE_BYTES = 8_000_000
 MAX_FILE_CHARS = 2_000_000
+INTERACTIVE_FILE_CHARS = 200_000
+LARGE_FILE_EXCERPT_CHARS = 100_000
+EXACT_EXPORT_CHUNK_BYTES = 64 * 1024
 SUPPORTED_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".text"})
 UTF8_BOM = b"\xef\xbb\xbf"
 
@@ -86,6 +89,8 @@ class OpenedFileNote:
     read_only_reason: str | None
     protected: bool
     raw_bytes: bytes
+    character_count: int
+    is_excerpt: bool
     replica_warning: str | None = None
 
 
@@ -478,6 +483,139 @@ class FileNotesService:
             destination_path,
             path,
             raw_bytes,
+            content_hash=content_hash,
+        )
+
+    @_serialized
+    def export_exact_file(
+        self,
+        opened: OpenedFileNote,
+        destination_path: str,
+    ) -> OperationResult:
+        """Stream the current exact source bytes to one absent root path.
+
+        The source digest is compared with the opened baseline after streaming
+        to a same-directory temporary file. Only a matching stream is linked
+        to the absent destination, so a changed source never publishes a
+        partial copy and an existing destination is never replaced.
+
+        Args:
+            opened: Exact disk baseline returned by :meth:`open_file`.
+            destination_path: New path relative to the notes root.
+
+        Returns:
+            Export status and the exact streamed content hash.
+        """
+        if opened.root != self.root_key:
+            return _result(
+                "unsafe",
+                destination_path,
+                "Opened note belongs to another root",
+            )
+        if not self._root_is_online():
+            return _result("offline", destination_path)
+        try:
+            source_path = self._safe_path(opened.relative_path)
+            destination = self._safe_path(destination_path)
+        except ValueError as error:
+            return _result("unsafe", destination_path, str(error))
+        if not self._is_supported(destination):
+            return _result("unsupported", destination_path)
+
+        source_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            source_descriptor = os.open(source_path, source_flags)
+        except FileNotFoundError:
+            return _result("missing", destination_path)
+        except OSError as error:
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                return _result("unsafe", destination_path, str(error))
+            return _result("error", destination_path, str(error))
+
+        temporary_descriptor = -1
+        temporary_path: str | None = None
+        digest = hashlib.sha256()
+        try:
+            source_stat = os.fstat(source_descriptor)
+            if not stat.S_ISREG(source_stat.st_mode):
+                return _result(
+                    "unsafe",
+                    destination_path,
+                    f"unsafe non-regular file: {opened.relative_path}",
+                )
+            try:
+                temporary_descriptor, temporary_path = tempfile.mkstemp(
+                    prefix=f".{destination.name}.",
+                    suffix=".tmp",
+                    dir=destination.parent,
+                )
+            except OSError as error:
+                return _result("error", destination_path, str(error))
+            assert temporary_path is not None
+            with os.fdopen(source_descriptor, "rb") as source:
+                source_descriptor = -1
+                with os.fdopen(temporary_descriptor, "wb") as target:
+                    temporary_descriptor = -1
+                    while chunk := source.read(EXACT_EXPORT_CHUNK_BYTES):
+                        target.write(chunk)
+                        digest.update(chunk)
+                    target.flush()
+                    fchmod = getattr(os, "fchmod", None)
+                    if fchmod is not None:
+                        fchmod(target.fileno(), stat.S_IMODE(source_stat.st_mode))
+            if fchmod is None:
+                os.chmod(temporary_path, stat.S_IMODE(source_stat.st_mode))
+            content_hash = digest.hexdigest()
+            current_source_stat = os.lstat(source_path)
+            source_identity = (
+                source_stat.st_dev,
+                source_stat.st_ino,
+                source_stat.st_size,
+                source_stat.st_mtime_ns,
+            )
+            current_source_identity = (
+                current_source_stat.st_dev,
+                current_source_stat.st_ino,
+                current_source_stat.st_size,
+                current_source_stat.st_mtime_ns,
+            )
+            if (
+                content_hash != opened.content_hash
+                or current_source_identity != source_identity
+            ):
+                return _result(
+                    "conflict",
+                    destination_path,
+                    "Source bytes changed during exact export",
+                )
+            try:
+                os.link(temporary_path, destination, follow_symlinks=False)
+            except FileExistsError:
+                return _result("exists", destination_path)
+            except OSError as error:
+                if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    return _result("unsafe", destination_path, str(error))
+                return _result("error", destination_path, str(error))
+        except OSError as error:
+            return _result("error", destination_path, str(error))
+        finally:
+            if source_descriptor >= 0:
+                os.close(source_descriptor)
+            if temporary_descriptor >= 0:
+                os.close(temporary_descriptor)
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except OSError as error:
+                    logger.warning(
+                        "Could not remove a File Notes export temporary: {}",
+                        type(error).__name__,
+                    )
+
+        self._record_session_change(SessionChange("created", destination_path))
+        return OperationResult(
+            status="ok",
+            relative_path=destination_path,
             content_hash=content_hash,
         )
 
@@ -1373,6 +1511,8 @@ def _parse_opened(
         body_bytes = content
     reason: str | None = None
     body = ""
+    character_count = 0
+    is_excerpt = False
     newline: Literal["\n", "\r\n"] = "\n"
     has_final_newline = False
     try:
@@ -1384,23 +1524,29 @@ def _parse_opened(
         reason = "undecodable-utf8"
 
     if reason is None:
+        character_count = len(decoded_content)
+        body_character_count = len(body_text)
         newline, mixed = _body_newline(body_text, prefix)
         body = body_text.replace("\r\n", "\n")
         has_final_newline = body.endswith("\n")
         if mixed:
             reason = "mixed-newlines"
-        elif len(decoded_content) > MAX_FILE_CHARS:
+        elif character_count > MAX_FILE_CHARS:
             reason = "too-many-chars"
         elif len(raw_bytes) > MAX_FILE_BYTES:
             reason = "too-many-bytes"
+        elif body_character_count > INTERACTIVE_FILE_CHARS:
+            reason = "interactive-limit"
+        if body_character_count > INTERACTIVE_FILE_CHARS:
+            body = body[:LARGE_FILE_EXCERPT_CHARS]
+            is_excerpt = True
     elif len(raw_bytes) > MAX_FILE_BYTES:
         reason = "too-many-bytes"
 
     if len(raw_bytes) > MAX_FILE_BYTES:
         reason = "too-many-bytes"
         body = ""
-    elif reason == "too-many-chars":
-        body = ""
+        is_excerpt = False
 
     return OpenedFileNote(
         root=root,
@@ -1416,6 +1562,8 @@ def _parse_opened(
         read_only_reason=reason,
         protected=False,
         raw_bytes=raw_bytes,
+        character_count=character_count,
+        is_excerpt=is_excerpt,
     )
 
 

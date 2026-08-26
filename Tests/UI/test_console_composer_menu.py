@@ -22,6 +22,10 @@ from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
     build_generate_image_command,
 )
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 
 @pytest.mark.unit
 def test_menu_lists_the_requested_actions_in_order():
@@ -72,14 +76,30 @@ def test_narrate_stays_out_of_the_menu_until_implemented():
 
 @pytest.mark.unit
 def test_prompts_entry_is_stable_visible_and_descriptive():
-    """Prompt discovery is a stable first-class composer-menu action."""
+    """Library discovery remains explicit when no draft can be improved."""
     entries = build_composer_menu_entries()
 
     prompts = entries[0]
     assert prompts.action_id == "prompts"
-    assert prompts.label == "Prompts"
+    assert prompts.label == "Browse Prompt Library…"
     assert prompts.enabled is True
-    assert prompts.description == "Browse, improve, or build reusable prompts"
+    assert prompts.description == "Browse saved Prompts and Recipes"
+
+
+@pytest.mark.unit
+def test_nonblank_draft_adds_a_direct_improve_destination_before_library():
+    """Draft improvement and Library browsing remain separate destinations."""
+    empty = build_composer_menu_entries(draft_available=False)
+    drafted = build_composer_menu_entries(draft_available=True)
+
+    assert "improve-current-draft" not in {entry.action_id for entry in empty}
+    assert [entry.action_id for entry in drafted[:2]] == [
+        "improve-current-draft",
+        "prompts",
+    ]
+    assert drafted[0].label == "Improve current draft…"
+    assert drafted[0].enabled is True
+    assert drafted[1].label == "Browse Prompt Library…"
 
 
 @pytest.mark.unit
@@ -130,7 +150,10 @@ def test_prompt_improvement_undo_is_conditional_and_stays_in_hamburger_menu():
         action_undo,
     ]
     undo = actionable[3]
-    assert undo.label == "Undo prompt improvement"
+    assert undo.label == "Undo Prompt change"
+    assert undo.description == (
+        "Restore the draft captured before the latest Prompt change."
+    )
     assert undo.enabled is True
 
     temporary = build_composer_menu_entries(
@@ -225,6 +248,7 @@ def test_caption_entry_requires_an_IMAGE_attachment():
 @pytest.mark.unit
 def test_attachment_kind_reads_the_staged_records():
     """The screen classifies real staged attachments, not the chip label."""
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     class _A:
@@ -284,6 +308,7 @@ def test_impersonate_appends_then_replaces_its_own_text():
     appended on a new line after existing text, and a second suggestion
     replaces the first rather than stacking.
     """
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     class _Composer:
@@ -324,6 +349,7 @@ def test_impersonate_appends_then_replaces_its_own_text():
 @pytest.mark.unit
 def test_impersonate_appends_when_the_user_edited_our_text():
     """If the user changed our suggestion, appending beats rewriting it."""
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     class _Composer:
@@ -366,6 +392,7 @@ def test_draft_addition_never_doubles_a_newline():
 
     That put inserted text after a blank line instead of on the next one.
     """
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     assert ChatScreen._draft_addition("", "x") == "x"
@@ -383,14 +410,13 @@ async def test_menu_opens_from_the_composer_button_and_returns_an_action():
     menu in a running app, presses the Generate Image row, and asserts the
     screen receives that action id.
     """
-    from textual.app import App
     from textual.widgets import Button
 
     from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
         ConsoleComposerMenuModal,
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         pass
 
     received: list[str | None] = []
@@ -417,14 +443,13 @@ async def test_menu_opens_from_the_composer_button_and_returns_an_action():
 @pytest.mark.asyncio
 async def test_generate_image_modal_returns_the_composed_command():
     """Integration: type a prompt, accept, and get the command back."""
-    from textual.app import App
     from textual.widgets import Input
 
     from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
         ConsoleGenerateImageModal,
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         pass
 
     received: list[str | None] = []
@@ -445,31 +470,52 @@ async def test_generate_image_modal_returns_the_composed_command():
 
 
 def _fake_controller_with(messages):
-    """Build a controller stub whose transcript is ``messages``."""
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    """Build a controller stub whose transcript is ``messages``.
 
-    class _Msg:
-        def __init__(self, role, content, status="ok"):
-            self.role = role
-            self.content = content
-            self.status = status
+    The stub bypasses ``__init__`` deliberately (it supplies only a store),
+    so every controller collaborator the subject reaches has to be wired
+    here by hand. task-14803 (commit 5be9e6a04) made ``impersonate_user_reply``
+    resolve its provider selection through
+    ``resolve_turn_execution_context`` -> ``_turn_context_provider``, which
+    this stub then lacked entirely; the screen wires that seam in production,
+    so wire the same production seam here rather than reaching past it.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+        ConsoleProviderSelection,
+    )
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 
     class _Store:
         def messages_for_session(self, session_id):
+            # The REAL transcript row type, not a three-attribute stand-in:
+            # the hand-rolled one drifted twice (`metadata`, read by
+            # `_context_content_for` since commit c2038dfe3, was the second),
+            # and a stand-in for a dataclass whose fields all have defaults
+            # buys nothing but drift.
             return [
-                _Msg(
-                    ConsoleMessageRole.USER
-                    if r == "user"
-                    else ConsoleMessageRole.ASSISTANT,
-                    c,
-                    s,
+                ConsoleChatMessage(
+                    role=(
+                        ConsoleMessageRole.USER
+                        if r == "user"
+                        else ConsoleMessageRole.ASSISTANT
+                    ),
+                    content=c,
+                    status=s,
                 )
                 for r, c, s in messages
             ]
 
     controller = ConsoleChatController.__new__(ConsoleChatController)
     controller.store = _Store()
+    controller._turn_context_provider = lambda session_id: (
+        ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session_id,
+            provider_selection=ConsoleProviderSelection(provider="test-provider"),
+        )
+    )
     return controller
 
 
@@ -482,7 +528,6 @@ async def test_impersonate_payload_obeys_the_provider_contract():
     providers reject (task-427); a completed turn leaves the transcript
     ending on an assistant row, which user-final providers reject.
     """
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
     captured: dict[str, list] = {}
@@ -509,9 +554,12 @@ async def test_impersonate_payload_obeys_the_provider_contract():
     controller.provider_gateway = type(
         "_G", (), {"resolve_for_send": staticmethod(_resolve)}
     )()
-    controller._provider_selection = lambda: None
     controller._collect_summary_completion = _collect
-    controller._seeded_greeting_text = ConsoleChatController._seeded_greeting_text
+    # `_seeded_greeting_text` used to be a @staticmethod(session_messages),
+    # which is why it was re-bound onto the instance here; commit c2038dfe3
+    # (roleplay identity) made it an ordinary method taking (session_id,
+    # session_messages), so the re-bind dropped `self` and the real method on
+    # the class is now the right -- and only correct -- way to reach it.
 
     result = await controller.impersonate_user_reply("s1")
     assert result.text == "drafted reply"
@@ -561,6 +609,7 @@ def test_temporary_tab_has_no_chord_but_keeps_the_palette_entry():
     and that both remaining paths (palette entry, underlying action) are
     still wired, so nobody re-adds a chord that doesn't work.
     """
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 
@@ -615,9 +664,14 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
     """
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
+    # The `_console_chat_store` setter below reaches
+    # `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` (TASK-21381).
+    stub_fleet_controller(screen, context="composer menu bare screen")
     screen._console_chat_store = None
     session = ConsoleSessionController.__new__(ConsoleSessionController)
     session._current_chat_store_accessor = lambda: screen._console_chat_store
@@ -737,11 +791,11 @@ async def test_character_picker_new_chat_clears_a_stale_temporary_chip():
 
         # Bypass the real character-card DB lookup (irrelevant to this
         # regression) while exercising the real create/switch/notify body.
-        console._fetch_character_card_for_avatar = lambda character_id: {
+        console._character._fetch_character_card_for_avatar = lambda character_id: {
             "name": "Nova",
             "first_message": "",
         }
-        await console._apply_console_character_choice_async(
+        await console._character._apply_console_character_choice_async(
             ConsoleCharacterChoice(character_id=1, name="Nova", placement="new")
         )
         await pilot.pause()
@@ -926,9 +980,14 @@ def _bare_promote_screen(store):
     runs against the same fakes as before.
     """
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
+    # The `_console_chat_store` setter below reaches
+    # `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` (TASK-21381).
+    stub_fleet_controller(screen, context="composer menu bare screen")
     screen._console_chat_store = store
     screen._ensure_console_chat_store = lambda: store
 
@@ -960,7 +1019,9 @@ def _bare_promote_screen(store):
     # and closed) -- mirrors the pre-move test, which relied on the real
     # `ChatScreen._sync_native_console_chat_ui` bound method for the exact
     # same reason: calling it only creates the coroutine, it never runs.
-    session._sync_native_console_chat_ui_fn = lambda: screen._sync_native_console_chat_ui()
+    session._sync_native_console_chat_ui_fn = lambda: (
+        screen._sync_native_console_chat_ui()
+    )
     screen._session = session
 
     return screen, chip_calls, invalidated, dispatched, notifications
@@ -1140,13 +1201,14 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
     dispatch path (F5: now a worker-kicking wrapper, not the save coroutine
     itself)."""
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     calls: list[bool] = []
-    screen._session._dispatch_promote_console_temporary_session = (
-        lambda: calls.append(True)
+    screen._session._dispatch_promote_console_temporary_session = lambda: calls.append(
+        True
     )
 
     screen._handle_console_composer_menu_choice(ACTION_SAVE_CHAT)
@@ -1157,6 +1219,7 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
 @pytest.mark.unit
 def test_prompts_menu_choice_opens_exactly_one_browse_modal():
     """The existing callback dispatch owns the one modal entry point."""
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -1173,6 +1236,7 @@ def test_temporary_chip_save_requested_reaches_the_promote_handler():
     """The chip's activation message (task-7) drives the same save
     dispatch path (F5: now a worker-kicking wrapper)."""
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Widgets.Console.console_status_chips import (
         ConsoleTemporaryChip,
@@ -1181,8 +1245,8 @@ def test_temporary_chip_save_requested_reaches_the_promote_handler():
     screen = ChatScreen.__new__(ChatScreen)
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     calls: list[bool] = []
-    screen._session._dispatch_promote_console_temporary_session = (
-        lambda: calls.append(True)
+    screen._session._dispatch_promote_console_temporary_session = lambda: calls.append(
+        True
     )
 
     event = ConsoleTemporaryChip.SaveRequested()
@@ -1206,6 +1270,7 @@ def test_dispatch_promote_console_temporary_session_uses_its_own_worker_group():
     cancelled by an overlapping sync kick).
     """
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -1260,13 +1325,11 @@ async def test_menu_dismisses_on_backdrop_click_but_not_on_inside_click():
     for the backdrop. A click INSIDE the menu chrome (header, padding)
     must not dismiss -- only the backdrop is an exit surface.
     """
-    from textual.app import App
-
     from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
         ConsoleComposerMenuModal,
     )
 
-    class BackdropHost(App):
+    class BackdropHost(ConsolidatedCSSApp):
         pass
 
     received: list[str | None] = []
@@ -1289,7 +1352,9 @@ async def test_menu_dismisses_on_backdrop_click_but_not_on_inside_click():
         # A click with no screen coordinates (synthesized clicks under
         # textual-web arrive that way) cannot be located: it must keep the
         # menu open rather than guess, and must not raise.
-        modal.on_click(SimpleNamespace(screen_x=None, screen_y=None))
+        await modal.on_click(
+            SimpleNamespace(screen_x=None, screen_y=None, widget=None, button=1)
+        )
         await pilot.pause()
         assert app.screen is modal
         assert received == []

@@ -1,0 +1,63 @@
+name: TASK-2062.2 GGUF source evidence
+
+on:
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gguf-source-evidence:
+    name: GGUF source evidence - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded test dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout
+
+      - name: Run exact GGUF source evidence nodes
+        run: |
+          python -m pytest \
+            Tests/Model_Artifacts/test_gguf_admission.py::test_open_local_gguf_rejects_symlink \
+            Tests/Model_Artifacts/test_gguf_admission.py::test_open_local_gguf_rejects_windows_reparse_point \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_external_identity_change_after_inspection_fails_final_recheck_before_popen \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_external_source_validation_is_worker_thread_store_free_and_read_only \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_handlers_reject_source_overrides_before_reserving_claim \
+            Tests/LLM_Management/test_gguf_source_modes.py::test_acquire_managed_gguf_returns_exact_declared_payload_and_open_lease \
+            Tests/Model_Artifacts/test_service.py::test_acquire_preserves_retryable_shared_lease_timeout_from_real_contention \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_managed_transfer_precedes_popen_and_spawn_failure_closes_once \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_cancel_before_managed_preparation_releases_claim_without_acquire \
+            Tests/LLM_Management/test_server_lifecycle_resources.py::test_process_exit_closes_resource_only_after_exact_death \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_real_managed_lease_blocks_delete_until_exact_claim_and_process_death \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_real_stop_terminates_reaps_and_releases_managed_lease_for_delete \
+            Tests/LLM_Management/test_server_lifecycle_resources.py::test_stale_release_and_clear_cannot_close_any_generation_resource \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_source_command_matrix_uses_only_active_authority \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_gguf_nonzero_exit_presents_sanitized_runtime_compatibility_copy \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_real_managed_contention_delivers_busy_recovery_without_spawning \
+            Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection \
+            Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable \
+            Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_vllm_command_snapshot_is_unchanged \
+            Tests/LLM_Management/test_gguf_server_sources.py::test_mlx_command_snapshot_is_unchanged \
+            --timeout=60 \
+            -q

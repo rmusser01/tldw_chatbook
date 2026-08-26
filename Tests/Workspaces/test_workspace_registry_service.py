@@ -9,6 +9,8 @@ from typing import Iterator
 
 import pytest
 
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import (
     DEFAULT_WORKSPACE_ID,
@@ -215,6 +217,81 @@ def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> 
     memberships = service.get_item_memberships("note", "note-1")
 
     assert {membership.workspace_id for membership in memberships} == {"ws-a", "ws-b"}
+
+
+def test_unlink_membership_removes_only_matching_membership_and_scope_item(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    media_db = MediaDatabase(tmp_path / "media.sqlite", client_id="client-1")
+    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+        url="file:///research-source.txt",
+        title="Canonical source",
+        media_type="document",
+        content="Canonical content must survive workspace unlink.",
+    )
+    assert media_id is not None
+    item_id = str(media_id)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.link_membership("ws-a", item_type="media", item_id=item_id, role="source")
+    service.link_membership(
+        "ws-a", item_type="media", item_id=item_id, role="reference"
+    )
+    service.link_membership("ws-b", item_type="media", item_id=item_id, role="source")
+    service.set_workspace_scope(
+        "ws-a",
+        RagScope(
+            items=(
+                ScopeItem("media", item_id),
+                ScopeItem("media", "42"),
+                ScopeItem("note", item_id),
+            ),
+            updated_at="2026-08-24T12:00:00Z",
+        ),
+    )
+
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id=item_id
+    ) is True
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id=item_id
+    ) is False
+
+    assert {
+        (membership.workspace_id, membership.role)
+        for membership in service.get_item_memberships("media", item_id)
+    } == {("ws-a", "reference"), ("ws-b", "source")}
+    scope = service.get_workspace_scope("ws-a")
+    assert scope is not None
+    assert scope.items == (ScopeItem("media", "42"), ScopeItem("note", item_id))
+    canonical = media_db.get_media_by_id(media_id)
+    assert canonical is not None
+    assert canonical["content"] == "Canonical content must survive workspace unlink."
+
+
+def test_unlink_reference_membership_keeps_source_scope_selected(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.link_membership("ws-a", item_type="media", item_id="41", role="source")
+    service.link_membership(
+        "ws-a", item_type="media", item_id="41", role="reference"
+    )
+    scope = RagScope(
+        items=(ScopeItem("media", "41"),),
+        updated_at="2026-08-24T12:00:00Z",
+    )
+    service.set_workspace_scope("ws-a", scope)
+
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id="41", role="reference"
+    ) is True
+
+    assert service.get_workspace_scope("ws-a") == scope
+    memberships = service.get_item_memberships("media", "41")
+    assert [(membership.workspace_id, membership.role) for membership in memberships] == [
+        ("ws-a", "source")
+    ]
 
 
 def test_registry_persists_runtime_bindings_without_secrets(tmp_path: Path) -> None:
@@ -710,3 +787,164 @@ def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) 
 
     assert index_row is not None
     assert len({n.strip().casefold() for n in names}) == len(names)
+
+
+# ---------------------------------------------------------------------------
+# TASK-21118: switch-seam repair + mutation generation
+# ---------------------------------------------------------------------------
+
+
+def _insert_stale_default_binding(db: WorkspaceDB, binding_id: str) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO workspace_runtime_bindings (
+                binding_id,
+                workspace_id,
+                binding_kind,
+                label,
+                locator,
+                status,
+                metadata_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                binding_id,
+                DEFAULT_WORKSPACE_ID,
+                RuntimeBindingKind.LOCAL_FILESYSTEM.value,
+                "Unsafe local files",
+                "/tmp",
+                RuntimeBindingStatus.READY.value,
+                "{}",
+                "2026-06-08T00:00:00Z",
+                "2026-06-08T00:00:00Z",
+            ),
+        )
+
+
+def test_switching_to_default_strips_stale_runtime_bindings(tmp_path: Path) -> None:
+    """The workspace-switch seam owns the Default-binding repair (TASK-21118).
+
+    The repair used to run inside `ensure_default_workspace` on every
+    Console context read (~1.25x per keystroke). The keystroke path is now
+    read-only, so activating Default must strip stale bindings itself --
+    otherwise a Settings/Console switch straight to Default would leave a
+    capability-granting binding live until the next boot.
+    """
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+    _insert_stale_default_binding(service.db, "stale-default-binding")
+
+    service.set_active_workspace(DEFAULT_WORKSPACE_ID)
+
+    assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
+    assert service.get_runtime_binding("stale-default-binding") is None
+
+
+def test_mutation_generation_bumps_on_every_record_mutator(tmp_path: Path) -> None:
+    """Every workspace-record mutator must advance `mutation_generation`.
+
+    The Console keystroke memo revalidates against this counter instead of
+    re-reading SQLite, so a mutator that forgets to bump would serve a
+    STALE workspace context after that mutation -- the exact defect class
+    AC "invalidated by workspace-change events" exists to prevent.
+    """
+    service = build_test_registry(tmp_path)
+
+    generation = service.mutation_generation
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.set_active_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.rename_workspace("ws-a", "Workspace A2")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.clear_active_workspace()
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.ensure_default_workspace()  # restores + activates Default
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.archive_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.unarchive_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+
+def test_mutation_generation_is_stable_across_pure_reads(tmp_path: Path) -> None:
+    """Reads must NOT advance the generation, or the memo never serves a hit."""
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+
+    generation = service.mutation_generation
+    service.get_active_workspace()
+    service.get_workspace(DEFAULT_WORKSPACE_ID)
+    service.list_workspaces()
+    service.list_runtime_bindings(DEFAULT_WORKSPACE_ID)
+    service.list_workspace_memberships(DEFAULT_WORKSPACE_ID)
+    # ensure with an active workspace already resting on Default and no
+    # stale bindings changes nothing -- and must therefore bump nothing.
+    service.ensure_default_workspace()
+    assert service.mutation_generation == generation
+
+
+def test_mutation_generation_bumps_on_binding_and_membership_mutators(
+    tmp_path: Path,
+) -> None:
+    """Binding and membership mutators must advance `mutation_generation`.
+
+    TASK-22201 widened the generation contract to the Console context
+    build's whole display read set: the run tick serves
+    `list_runtime_bindings` / `list_workspace_memberships` from a
+    generation-keyed view, so a binding or membership write that forgot to
+    bump would leave the Console rail's runtime/handoff rows STALE until
+    the next unrelated workspace mutation.
+    """
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+
+    generation = service.mutation_generation
+    service.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="ws-a",
+            binding_id="binding-1",
+            binding_kind=RuntimeBindingKind.GIT_WORKTREE,
+            label="Repo",
+            locator="/tmp/repo",
+            status=RuntimeBindingStatus.INSPECT_ONLY,
+            metadata={"branch": "dev"},
+        )
+    )
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conversation-1",
+        title="Linked conversation",
+    )
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.remove_runtime_binding("binding-1")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.remove_runtime_binding("binding-1")  # already gone
+    assert service.mutation_generation == generation

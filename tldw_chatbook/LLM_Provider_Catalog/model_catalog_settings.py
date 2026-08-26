@@ -16,6 +16,7 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "MistralAI",
     "Moonshot",
     "OpenRouter",
+    "QwenCloud",
     "ZAI",
 )
 
@@ -31,6 +32,9 @@ class ModelCatalogSettings:
     stale_after_hours: float = DEFAULT_STALE_AFTER_HOURS
     auto_refresh_disabled: frozenset[str] = frozenset()
     write_to_config: frozenset[str] = frozenset()
+    # Privacy gate (ADR-020 amendment): startup refresh stays behind a
+    # one-time user confirmation until this is explicitly true.
+    refresh_consent_recorded: bool = False
 
 
 def _normalized_key_set(value: object) -> frozenset[str]:
@@ -50,12 +54,20 @@ class _ModelCatalogSection(BaseModel):
     stale_after_hours: float = DEFAULT_STALE_AFTER_HOURS
     auto_refresh_disabled: frozenset[str] = frozenset()
     write_to_config: frozenset[str] = frozenset()
+    refresh_consent_recorded: bool = False
 
     @field_validator("auto_refresh_enabled", mode="before")
     @classmethod
     def _fallback_enabled(cls, value: object) -> bool:
         # Non-bool garbage keeps the safe default (refresh enabled).
         return value if isinstance(value, bool) else True
+
+    @field_validator("refresh_consent_recorded", mode="before")
+    @classmethod
+    def _fallback_consent(cls, value: object) -> bool:
+        # Privacy-safe: garbage never counts as consent; only an explicit
+        # boolean true does.
+        return value is True
 
     @field_validator("stale_after_hours", mode="before")
     @classmethod
@@ -82,8 +94,8 @@ def load_model_catalog_settings(settings: Mapping[str, Any] | None) -> ModelCata
     Returns:
         ModelCatalogSettings: Validated settings. Missing section or garbage
         values fall back to safe defaults field by field (refresh enabled,
-        24h staleness, empty provider sets); provider sets hold
-        provider_config_key-normalized names.
+        24h staleness, empty provider sets, consent not recorded); provider
+        sets hold provider_config_key-normalized names.
     """
     section = (settings or {}).get("model_catalog", {})
     if not isinstance(section, Mapping):
@@ -94,4 +106,5 @@ def load_model_catalog_settings(settings: Mapping[str, Any] | None) -> ModelCata
         stale_after_hours=parsed.stale_after_hours,
         auto_refresh_disabled=parsed.auto_refresh_disabled,
         write_to_config=parsed.write_to_config,
+        refresh_consent_recorded=parsed.refresh_consent_recorded,
     )

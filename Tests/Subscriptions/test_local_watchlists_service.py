@@ -1,7 +1,9 @@
 import json
 import logging
+import threading
 from inspect import isawaitable
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -11,9 +13,32 @@ from tldw_chatbook.Notifications import (
     NotificationDispatchService,
 )
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
-from tldw_chatbook.Subscriptions.watchlist_content_alert_service import WatchlistContentAlertService
-from tldw_chatbook.Subscriptions.watchlist_filter_service import WatchlistFilterService
+from tldw_chatbook.Subscriptions import monitoring_engine
+from tldw_chatbook.Subscriptions.monitoring_engine import ContentExtractor
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+
+
+def test_local_watchlists_service_publishes_create_form_source_types():
+    assert LocalWatchlistsService.CREATE_FORM_SOURCE_TYPES == ("rss", "atom", "url")
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_rejects_invalid_type_before_opening_db():
+    db_factory = Mock()
+    service = LocalWatchlistsService(db_factory=db_factory)
+
+    with pytest.raises(
+        ValueError, match="Unsupported local watchlist source type: playlist"
+    ):
+        await service.create_source(
+            {
+                "name": "Playlist",
+                "url": "https://example.com/playlist",
+                "source_type": "playlist",
+            }
+        )
+
+    db_factory.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -248,6 +273,156 @@ async def test_local_watchlists_service_persists_source_execution_settings(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_url_list_offloads_cpu_work_for_every_url_in_order(tmp_path, monkeypatch):
+    urls = ["https://example.com/a", "https://example.com/b"]
+    bodies = {
+        "a:baseline": "<html><body><p>URL A baseline body.</p></body></html>",
+        "b:baseline": "<html><body><p>URL B baseline body.</p></body></html>",
+        "a:changed": "<html><body><p>URL A changed body.</p></body></html>",
+        "b:changed": "<html><body><p>URL B changed body.</p></body></html>",
+    }
+    text_markers = {
+        "URL A baseline body.": "a:baseline",
+        "URL B baseline body.": "b:baseline",
+        "URL A changed body.": "a:changed",
+        "URL B changed body.": "b:changed",
+    }
+    phase = "baseline"
+    calls: list[tuple[str, str, int]] = []
+
+    async def serve(url, **_kwargs):
+        marker = f"{url.rsplit('/', 1)[-1]}:{phase}"
+        calls.append(("fetch", marker, threading.get_ident()))
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "text/html"},
+            text=bodies[marker],
+            final_url=url,
+            raise_for_status=lambda: None,
+        )
+
+    real_extract = ContentExtractor.extract_text_from_html
+    real_percentage = ContentExtractor.calculate_change_percentage
+    real_details = monitoring_engine._build_significant_change_details
+
+    def recording_extract(html, ignore_selectors=None):
+        marker = next(key for key, body in bodies.items() if body == html)
+        calls.append(("extract", marker, threading.get_ident()))
+        return real_extract(html, ignore_selectors)
+
+    # Both spies forward the pre-built segment lists `check_url` now passes
+    # (TASK-16839 fix round: one segmentation per side, shared across hops).
+    def recording_percentage(old_content, new_content, **kwargs):
+        marker = f"{text_markers[old_content]}->{text_markers[new_content]}"
+        calls.append(("percentage", marker, threading.get_ident()))
+        return real_percentage(old_content, new_content, **kwargs)
+
+    def recording_details(previous_text, current_text, **kwargs):
+        marker = f"{text_markers[previous_text]}->{text_markers[current_text]}"
+        calls.append(("details", marker, threading.get_ident()))
+        return real_details(previous_text, current_text, **kwargs)
+
+    monkeypatch.setattr(monitoring_engine, "guarded_fetch_httpx_async", serve)
+    monkeypatch.setattr(
+        ContentExtractor,
+        "extract_text_from_html",
+        staticmethod(recording_extract),
+    )
+    monkeypatch.setattr(
+        ContentExtractor,
+        "calculate_change_percentage",
+        staticmethod(recording_percentage),
+    )
+    monkeypatch.setattr(
+        monitoring_engine,
+        "_build_significant_change_details",
+        recording_details,
+    )
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    output_orders: list[list[str]] = []
+    real_apply_filters = service._apply_filters_and_alerts
+
+    def recording_apply_filters(items, filters, content_alert_rules, run_id):
+        output_orders.append([item["url"] for item in items])
+        return real_apply_filters(items, filters, content_alert_rules, run_id)
+
+    monkeypatch.setattr(service, "_apply_filters_and_alerts", recording_apply_filters)
+    source = await service.create_source(
+        {
+            "name": "Docs",
+            "source_type": "url_list",
+            "extraction_rules": {"urls": urls},
+            "change_threshold": 0.0,
+        }
+    )
+    loop_thread = threading.get_ident()
+
+    baseline_run = await service.launch_run(source_id=source["source_id"])
+    baseline = await service.execute_run(baseline_run["run_id"])
+    phase = "changed"
+    changed_run = await service.launch_run(source_id=source["source_id"])
+    changed = await service.execute_run(changed_run["run_id"])
+
+    expected_call_order = [
+        ("fetch", "a:baseline"),
+        ("extract", "a:baseline"),
+        ("fetch", "b:baseline"),
+        ("extract", "b:baseline"),
+        ("fetch", "a:changed"),
+        ("extract", "a:changed"),
+        ("percentage", "a:baseline->a:changed"),
+        ("details", "a:baseline->a:changed"),
+        ("fetch", "b:changed"),
+        ("extract", "b:changed"),
+        ("percentage", "b:baseline->b:changed"),
+        ("details", "b:baseline->b:changed"),
+    ]
+    assert [(kind, marker) for kind, marker, _thread in calls] == expected_call_order
+    assert all(
+        thread == loop_thread for kind, _marker, thread in calls if kind == "fetch"
+    )
+    assert all(
+        thread != loop_thread for kind, _marker, thread in calls if kind != "fetch"
+    )
+
+    assert baseline["stats"]["items_found"] == 0
+    assert baseline["stats"]["dispositions"]["baseline"] == 2
+    assert changed["status"] == "completed"
+    assert changed["stats"]["items_found"] == 2
+    assert changed["stats"]["items_ingested"] == 2
+    assert changed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+        "error": 0,
+        # task-16838: no URL was skipped by the in-flight guard.
+        "skipped": 0,
+    }
+    assert output_orders == [[], urls]
+
+    snapshots = db.conn.execute(
+        "SELECT url, extracted_content FROM url_snapshots "
+        "WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert [(row["url"], row["extracted_content"]) for row in snapshots] == [
+        (urls[0], "URL A baseline body."),
+        (urls[1], "URL B baseline body."),
+        (urls[0], "URL A changed body."),
+        (urls[1], "URL B changed body."),
+    ]
+    stored_items = db.conn.execute(
+        "SELECT url FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert [row["url"] for row in stored_items] == urls
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_executes_url_list_sources_with_default_url_monitor(
     tmp_path, monkeypatch
 ):
@@ -307,6 +482,8 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
         "rebaselined": 0,
         # task-1394: no URL raised in this run.
         "error": 0,
+        # task-16838: no URL was skipped by the in-flight guard.
+        "skipped": 0,
     }, "the url_list arm must aggregate one disposition per URL checked"
     assert seen_urls == ["https://example.com/a", "https://example.com/b"]
     assert [dict(row) for row in stored_items] == [
@@ -383,6 +560,8 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
             "processing_options": {"max_urls": 2},
         }
     )
+    assert source["source_type"] == "sitemap"
+    assert "sitemap" not in LocalWatchlistsService.CREATE_FORM_SOURCE_TYPES
     launched = await service.launch_run(source_id=source["source_id"])
 
     completed = await service.execute_run(launched["run_id"])
@@ -403,6 +582,8 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
         "rebaselined": 0,
         # task-1394: no URL raised in this run.
         "error": 0,
+        # task-16838: no URL was skipped by the in-flight guard.
+        "skipped": 0,
     }, "the sitemap arm must aggregate one disposition per URL checked"
     assert [dict(row) for row in stored_items] == [
         {
@@ -520,6 +701,8 @@ async def test_local_watchlists_service_url_list_isolates_one_failing_url(
         "baseline": 0,
         "rebaselined": 0,
         "error": 1,
+        # task-16838: no URL was skipped by the in-flight guard.
+        "skipped": 0,
     }
 
 
@@ -629,6 +812,8 @@ async def test_local_watchlists_service_sitemap_isolates_one_failing_url(
         "baseline": 0,
         "rebaselined": 0,
         "error": 1,
+        # task-16838: no URL was skipped by the in-flight guard.
+        "skipped": 0,
     }
 
 
@@ -709,6 +894,8 @@ async def test_local_watchlists_service_url_list_all_error_advances_breaker_and_
         "baseline": 0,
         "rebaselined": 0,
         "error": 2,
+        # task-16838: no URL was skipped by the in-flight guard.
+        "skipped": 0,
     }
     row = db.get_subscription(source_id)
     assert row["consecutive_failures"] == 2, (
@@ -1535,3 +1722,88 @@ async def test_a_queued_run_has_no_duration_yet(tmp_path):
     assert launched["status"] == "queued"
     assert launched["duration"] is None
     assert launched["source_title"] == "Feed"
+
+
+@pytest.mark.asyncio
+async def test_list_items_filters_by_is_flagged(tmp_path):
+    """task-3072: the Starred feed's item page.
+
+    Falsey (`None`, the default) means NO flag filter -- the same convention
+    the TASK-2513 scope kwargs established; `True` narrows to starred rows,
+    and the normalized dicts carry the flag as a real bool.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    with db.transaction() as conn:
+        for index in range(3):
+            conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title) "
+                "VALUES (?, ?, ?)",
+                (source["source_id"], f"https://example.com/{index}", f"Item {index}"),
+            )
+    starred_id = db.conn.execute(
+        "SELECT id FROM subscription_items WHERE url = ?", ("https://example.com/1",)
+    ).fetchone()[0]
+    db.set_item_flagged(starred_id, True)
+
+    starred = await service.list_items(status=None, is_flagged=True)
+    everything = await service.list_items(status=None)
+
+    assert [item["item_id"] for item in starred] == [starred_id]
+    assert starred[0]["is_flagged"] is True
+    assert len(everything) == 3, "falsey is_flagged must not filter at all"
+
+
+@pytest.mark.asyncio
+async def test_resolve_watchlist_name_is_not_limited_to_the_first_10000_rows(
+    tmp_path,
+):
+    """ADR-043 reuse remains correct beyond the old list-scan cap.
+
+    Replacing the direct lookup with ``list_watchlists(limit=10000)`` makes
+    this create ``Target (2)`` instead of returning the existing final row.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    with db.transaction() as conn:
+        conn.executemany(
+            "INSERT INTO watchlists (name) VALUES (?)",
+            [(f"Filler {index:05d}",) for index in range(10001)]
+            + [("Target",)],
+        )
+        target_id = conn.execute(
+            "SELECT id FROM watchlists WHERE name = ?", ("Target",)
+        ).fetchone()[0]
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    resolved, created = await service.resolve_or_create_watchlist("  TARGET  ")
+
+    assert created is False
+    assert resolved["id"] == target_id
+    assert resolved["name"] == "Target"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM watchlists WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))",
+        ("Target",),
+    ).fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_watchlist_name_keeps_unicode_case_insensitive_reuse(tmp_path):
+    """The direct SQL lookup preserves the former Python ``lower`` rule.
+
+    SQLite's built-in ``LOWER`` is ASCII-only, so using it directly misses
+    this row and creates a visually duplicate watchlist.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    existing = WatchlistBundleService(db).create("ÄI")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    resolved, created = await service.resolve_or_create_watchlist("äi")
+
+    assert created is False
+    assert resolved["id"] == existing["id"]
+    assert [row["name"] for row in WatchlistBundleService(db).list_watchlists()] == [
+        "ÄI"
+    ]

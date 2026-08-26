@@ -915,3 +915,39 @@ git commit -m "docs: complete ComfyUI H3 adapter task"
 ```
 
 Expected: all ACs checked, notes present, status Done, and no unrelated file staged.
+
+---
+
+## Final-review remediation addendum (2026-08-09)
+
+This addendum supersedes Task 4's filename-list style helper. Console
+compatibility is determined by loading the selected confined graph off the UI
+loop and checking for `MiniMaxH3ImageToVideo`; classification itself makes no
+network request. The positive style suffix remains intact, only a style-derived
+negative is suppressed for H3, and explicit programmatic negatives continue to
+the adapter for rejection.
+
+The final-review round also:
+
+1. builds wheel and sdist in validated temporary directories, checks that each
+   contains exactly the two approved H3 JSON assets and no Wan/SVD asset, then
+   proves both graphs load from a fresh wheel install;
+2. rejects H3 reference images before object-info or upload side effects while
+   preserving the generic input-image path;
+3. keeps polling through pending preview/unrelated outputs, distinguishes
+   terminal failure from terminal success without media, and budgets HTTP calls
+   and waits against one bounded deadline;
+4. validates effective width, height, duration, FPS, and seed before queueing;
+5. pins the exact Base/Spectrum model, sampler, audio, and frame-grid topology,
+   plus the live-observed node `92` / `images` history shape; and
+6. runs only the user-authorized touched-file tests and targeted static,
+   distribution, diff, and provenance gates. Existing live UAT is reused; no
+   live generation, RuntimePolicy, full collection, or full repository suite is
+   rerun.
+
+ADR required: no new ADR
+
+ADR path: `backlog/decisions/044-ephemeral-generated-video-storage-playback-and-streaming.md`
+
+Reason: remediation preserves ADR-044's established ComfyUI provider,
+trusted-origin, request/result, and ephemeral-storage boundaries.

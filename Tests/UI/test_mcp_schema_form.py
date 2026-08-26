@@ -15,6 +15,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Checkbox, Input, Select, Static, TextArea
 
 import tldw_chatbook
@@ -129,7 +133,7 @@ UNRENDERABLE_SCHEMA: dict[str, Any] = {
 }
 
 
-class SchemaFormApp(App):
+class SchemaFormApp(ConsolidatedCSSApp):
     def __init__(self, *, schema: dict | None) -> None:
         super().__init__()
         self._schema = schema
@@ -593,7 +597,7 @@ BOOLEAN_SCHEMA = {
 }
 
 
-class StyledSchemaFormApp(App):
+class StyledSchemaFormApp(ConsolidatedCSSApp):
     """Schema-form harness WITH the production stylesheet loaded."""
 
     CSS_PATH = str(

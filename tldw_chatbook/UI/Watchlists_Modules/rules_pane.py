@@ -46,13 +46,15 @@ class RuleFormVisibilityChanged(Message):
     """Posted whenever the rule form opens or closes, and which rule (if any)
     it is editing.
 
-    `RulesPane` lives inside a `WatchlistsWorkbench` region, and that
-    workbench's `region_layout` reactive is `recompose=True` — collapsing or
-    expanding *any* region (including one unrelated to Rules, e.g. `[` on the
-    left rail) rebuilds the whole workbench and constructs a brand new
-    `RulesPane`. Without this message the screen has no way to know an edit
-    was in progress, so an open edit form would be silently destroyed on the
-    next such rebuild — the same failure `CreateFormVisibilityChanged` in
+    `RulesPane` lives inside a `WatchlistsWorkbench` region, and that region
+    is swapped for a freshly built one whenever it collapses or expands, or
+    whenever the section switches — each of which constructs a brand new
+    `RulesPane`. (Until task-15461 the trigger was wider still: `region_
+    layout` was `recompose=True`, so `[` on the left rail — a region
+    unrelated to Rules — rebuilt this pane too.) Without this message the
+    screen has no way to know an edit was in progress, so an open edit form
+    would be silently destroyed on the next such rebuild — the same failure
+    `CreateFormVisibilityChanged` in
     sources_pane.py already fixes for the Sources create form. The owning
     screen mirrors this into its own state and re-seeds it into the
     freshly-constructed pane via `RulesPane.edit_rule`.
@@ -67,7 +69,7 @@ class RuleFormVisibilityChanged(Message):
 class RulesPane(RecomposeCaptureGuard, Vertical):
     """Alert rule list and editor for watchlists."""
 
-    rules = reactive[list[dict[str, Any]]]([], recompose=True)
+    rules = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_rule = reactive[dict[str, Any] | None](None)
     show_rule_form = reactive(False, recompose=True)
     runtime_backend = reactive("local", recompose=True)
@@ -329,7 +331,26 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
         self._editing_rule_id = None
 
     def edit_rule(self, rule: dict[str, Any]) -> None:
-        """Open the rule form pre-filled for editing."""
+        """Open the rule form pre-filled for editing.
+
+        Two routes on purpose (task-15778). Mounted (the interactive
+        `EditRuleRequested` path), the plain assignments are the point:
+        `show_rule_form`'s recompose renders the form and
+        `watch_selected_rule` tells the screen. Unmounted (the
+        `_build_detail_pane` factory re-seeding an in-progress edit across
+        a region rebuild), both watchers are `is_mounted`-gated no-ops and
+        `compose()` reads the same reactives, so the plain assignments
+        bought nothing there but a queued `_check_recompose` that tore the
+        freshly mounted pane straight back down -- the pre-mount seeding
+        recompose that task removes.
+
+        Args:
+            rule: The rule row to pre-fill the form with.
+        """
         self._editing_rule_id = str(rule.get("id") or "")
-        self.selected_rule = rule
-        self.show_rule_form = True
+        if self.is_mounted:
+            self.selected_rule = rule
+            self.show_rule_form = True
+            return
+        self.set_reactive(RulesPane.selected_rule, rule)
+        self.set_reactive(RulesPane.show_rule_form, True)

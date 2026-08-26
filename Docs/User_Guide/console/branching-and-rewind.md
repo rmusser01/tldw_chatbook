@@ -155,13 +155,5 @@ action row are covered in [chat basics](chat-basics.md), globals in the
   turns and keep the recent ones verbatim, but not the reverse. (task-575)
 - `/rewind` is only reachable by typing the command; it isn't in the command
   palette or the message actions yet. (task-576)
-- Esc-cancelling the Rewind menu leaves "/rewind" sitting in the composer —
-  clear it with `Ctrl+U`. (task-2705)
-- In some terminals the **Edit Message** modal's **Cancel** / **Save** /
-  **Edit & resend** buttons don't render — the space below the editor stays
-  blank — even though they still work: press **Tab** to step onto them
-  (Cancel, then Save, then Edit & resend) and **Enter** to activate, or
-  **Esc** to cancel. (task-2703)
-
 —
 *Verified against dev @ ff435772c — 2026-07-31*

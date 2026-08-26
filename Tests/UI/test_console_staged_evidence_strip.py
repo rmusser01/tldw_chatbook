@@ -36,13 +36,14 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
 )
 from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
 )
 from tldw_chatbook.Widgets.Console.console_staged_evidence_strip import (
     ConsoleStagedEvidenceStrip,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 
 STRIP_ID = "#console-staged-evidence-strip"
 UNSTAGE_ID = "#console-unstage-evidence"
@@ -387,12 +388,13 @@ async def test_strip_has_no_blank_filler_rows_for_small_staged_counts() -> None:
 @pytest.mark.asyncio
 async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
         assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
 
-        screen._stage_console_library_rag_launch(_launch(4))
+        screen._retrieval._stage_console_library_rag_launch(_launch(4))
         await pilot.pause()
 
         strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
@@ -401,16 +403,21 @@ async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None
         assert "Source 1" in text
         assert "+1 more" in text
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 4 staged" in str(sources_chip.renderable)
+        # task-15791: 7dbbc401b (TASK-2154 UX remediation, owner-driven)
+        # shortened the chip to "Sources: N" -- the truthful COUNT is the
+        # contract; the " staged" suffix went with the same pass that
+        # renamed "RAG:" to "Library search:".
+        assert "Sources: 4" in str(sources_chip.renderable)
 
 
 @pytest.mark.asyncio
 async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
-        screen._stage_console_library_rag_launch(_launch(3))
+        screen._retrieval._stage_console_library_rag_launch(_launch(3))
         await pilot.pause()
 
         screen.query_one(UNSTAGE_ID, Button).press()
@@ -420,7 +427,7 @@ async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
         assert screen._pending_console_launch_context is None
         assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 0 staged" in str(sources_chip.renderable)
+        assert "Sources: 0" in str(sources_chip.renderable)
         tray = screen.query_one(
             "#console-staged-context-tray", ConsoleStagedContextTray
         )
@@ -439,10 +446,11 @@ async def test_console_unstage_click_heals_a_stale_strip_when_context_already_no
     behind) and assert the click still heals the strip instead of dead-ending.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
-        screen._stage_console_library_rag_launch(_launch(3))
+        screen._retrieval._stage_console_library_rag_launch(_launch(3))
         await pilot.pause()
         strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
         assert strip.display is True
@@ -466,6 +474,8 @@ async def test_console_library_u_key_handoff_populates_the_strip() -> None:
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,
         _launch(2).to_pending_payload(),
@@ -476,7 +486,7 @@ async def test_console_library_u_key_handoff_populates_the_strip() -> None:
         assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is True
         assert "Source 1" in _strip_text(screen)
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 2 staged" in str(sources_chip.renderable)
+        assert "Sources: 2" in str(sources_chip.renderable)
 
 
 async def _submit(screen, draft: str):
@@ -491,6 +501,7 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _launch(2)
     capture = AsyncMock(
         return_value=LocalRagContextResult(
@@ -499,13 +510,13 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         )
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         result = await _submit(screen, "question")
@@ -517,7 +528,7 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         assert screen._pending_console_launch_context is None
         assert "Evidence sent with this message · 2 sources" in _strip_text(screen)
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 0 staged" in str(sources_chip.renderable)
+        assert "Sources: 0" in str(sources_chip.renderable)
 
         # A SECOND send captures nothing: the evidence no longer rides along.
         await _submit(screen, "follow up")
@@ -535,6 +546,7 @@ async def test_console_sent_notice_counts_only_what_reached_the_model(
 ) -> None:
     """4 staged, 2 promptable -- the notice must claim 2, not 4."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _mixed_launch()
     capture = AsyncMock(
         return_value=LocalRagContextResult(
@@ -543,16 +555,16 @@ async def test_console_sent_notice_counts_only_what_reached_the_model(
         )
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 4 staged" in str(sources_chip.renderable)
+        assert "Sources: 4" in str(sources_chip.renderable)
 
         await _submit(screen, "question")
         await pilot.pause()
@@ -569,6 +581,8 @@ async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
     from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     launch = _mixed_launch()
     context = "[S1] MEDIA — Source 1\nBody 1"
     capture = AsyncMock(
@@ -585,13 +599,13 @@ async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
         )
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         await _submit(screen, "question")
@@ -611,19 +625,20 @@ async def test_console_surface_refresh_failure_never_costs_the_send_its_evidence
     release would send the message WITHOUT the evidence it just consumed.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _launch(2)
     context = "[S1] MEDIA — Source 1\nBody 1"
     capture = AsyncMock(
         return_value=LocalRagContextResult(context=context, citation_builder=None)
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         def _explode() -> bool:
@@ -652,6 +667,8 @@ async def test_console_use_in_console_handoff_reaches_the_strip() -> None:
     from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 
     app = _build_test_app()
+
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
@@ -685,10 +702,11 @@ async def test_console_rail_badge_and_chip_report_the_same_staged_count() -> Non
     """The rail badge and settings estimate read the workspace context; the
     chip reads the bundle. Both must land on the same number."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
-        screen._stage_console_library_rag_launch(_launch(4))
+        screen._retrieval._stage_console_library_rag_launch(_launch(4))
         await pilot.pause()
 
         workspace_context = screen._workspace._current_console_workspace_context()
@@ -700,7 +718,7 @@ async def test_console_rail_badge_and_chip_report_the_same_staged_count() -> Non
             "Source 4",
         ]
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 4 staged" in str(sources_chip.renderable)
+        assert "Sources: 4" in str(sources_chip.renderable)
 
 
 def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> None:
@@ -733,6 +751,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
     been staged. Staging a large source must move `used_tokens` off its
     pre-staging baseline."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
@@ -763,7 +782,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
             payload={"query": "question", "evidence_bundle": bundle.to_payload()},
             status="staged",
         )
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         staged = screen._active_console_settings_context_estimate()
@@ -778,16 +797,17 @@ async def test_console_capture_without_prompt_context_keeps_staging(
 ) -> None:
     """No prompt context reached the provider -- discarding would lose evidence."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _launch(2)
     capture = AsyncMock(return_value=LocalRagContextResult(None, None))
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         await _submit(screen, "question")
@@ -800,12 +820,13 @@ async def test_console_capture_without_prompt_context_keeps_staging(
 @pytest.mark.asyncio
 async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
     app = _build_test_app()
+    attach_chachanotes_db(app)
     launch = _launch(2)
     capture = AsyncMock(
         return_value=LocalRagContextResult(context="ctx", citation_builder=None)
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     class _BlockedGateway:
@@ -819,7 +840,7 @@ async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         controller = screen._ensure_console_chat_controller()
@@ -851,6 +872,7 @@ async def test_console_send_blocked_reason_sendable_for_library_staged_one_ref()
     sendable -- the same shape `library_screen.py`'s own "Use in Console"
     produces for a single selected result."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.app_config = {
         "chat_defaults": {
             "provider": "OpenAI",
@@ -865,7 +887,7 @@ async def test_console_send_blocked_reason_sendable_for_library_staged_one_ref()
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         assert screen._console_send_blocked_reason() == ""
@@ -879,6 +901,7 @@ async def test_console_send_blocked_reason_blocks_for_library_staged_zero_availa
     evidence must still block with the EXISTING copy -- unchanged by
     attaching real bundles to Library launches."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     bundle = EvidenceBundle(
         bundle_id="bundle-blocked",
         query="question",
@@ -895,11 +918,13 @@ async def test_console_send_blocked_reason_blocks_for_library_staged_zero_availa
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         reason = screen._console_send_blocked_reason()
         assert (
-            "Console send blocked: Library Search/RAG has no available evidence"
-            in reason
+            # task-15791: same TASK-2154 rename as the chip ("RAG" -> "Library
+            # search") reached this blocked-reason copy.
+            "Console send blocked: Library search has no available evidence. "
+            "Review source authority before sending." in reason
         )

@@ -8,6 +8,7 @@ import json
 import os
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -16,13 +17,23 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
+from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
-from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
-from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.Agents.builtin_tool_gate import (
+    LOCAL_TOOLS_DEFAULT_ENABLED,
+    builtin_permission_rows,
+    tool_gate_breadcrumb,
+)
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.config import (
+    coerce_bool_setting,
+    get_cli_setting,
+    save_setting_to_cli_config,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -32,6 +43,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
 )
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
+from tldw_chatbook.MCP.local_server_tools import resolve_server_workspace_root
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_DEFAULT_STATE,
@@ -70,7 +82,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
-from tldw_chatbook.Utils.path_validation import is_safe_path
+from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
 
 # Sentinel distinguishing "key absent from a restore blob" from "key present
 # with value None" -- see `_apply_view_state()`'s scope_ref handling.
@@ -299,7 +311,7 @@ _LEGACY_SECTIONS = [
 
 # F-057: terminal-width threshold (cols) below which `#mcp-hub-grid` gets
 # the `.mcp-compact` class and the triad rebalances toward the canvas (see
-# DEFAULT_CSS and its _agentic_terminal.tcss mirror).
+# BUNDLED_CSS and its _agentic_terminal.tcss mirror).
 _COMPACT_WIDTH = 120
 
 # T5: local-profile lifecycle actions this workbench can dispatch, keyed by
@@ -634,7 +646,7 @@ class MCPWorkbench(Container):
             super().__init__()
             self.mode = mode
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPWorkbench {
         width: 100%;
         height: 1fr;
@@ -967,7 +979,7 @@ class MCPWorkbench(Container):
     def _sync_compact_class(self) -> None:
         """Toggle `.mcp-compact` on `#mcp-hub-grid` below ~120 cols (F-057).
 
-        The class drives the triad-rebalancing rules in DEFAULT_CSS (and
+        The class drives the triad-rebalancing rules in BUNDLED_CSS (and
         their _agentic_terminal.tcss mirror): narrower rail/inspector
         shares so the canvas keeps its primary columns in-viewport. Width
         0 (pre-layout) means "not compact" -- the full triad renders first
@@ -1037,6 +1049,15 @@ class MCPWorkbench(Container):
         """Run the mount-time reload without letting a failure strand the UI."""
         try:
             await self._mount_deferred_canvases()
+            if not self.query(MCPToolsMode):
+                # Textual 8.2.8 can deliver the first after-refresh callback
+                # before this widget's composed ContentSwitcher is queryable.
+                # In that case _mount_deferred_canvases() deliberately returns;
+                # queue one message-pump turn instead of letting reload() query
+                # canvases that do not exist yet. The current exclusive worker
+                # completes before this callback starts its replacement.
+                self.call_later(self._start_initial_load)
+                return
             await self.reload()
         except Exception as exc:
             # `reload()` clears `is_loading` in its own `finally`, but only for
@@ -1431,6 +1452,15 @@ class MCPWorkbench(Container):
         handlers just mutated the store itself).
         """
         async with self._sync_children_lock:
+            # Lifecycle and restore workers may request a sync during the same
+            # Textual-floor pre-mount window as the initial load. Establish the
+            # deferred-canvas invariant at this shared boundary, under the lock
+            # that already serializes every sync pass. If even the parent
+            # switcher is not queryable yet, the initial-load retry will paint
+            # the current state on the next message-pump turn.
+            await self._mount_deferred_canvases()
+            if not self.query(MCPToolsMode):
+                return
             display_snapshots = [self._display_snapshot(snap) for snap in self._snapshots]
             rail = self.query_one(MCPRail)
             rail.sync_state(
@@ -1601,18 +1631,54 @@ class MCPWorkbench(Container):
         input.
         """
         diagnosis = None if tools else self._empty_tools_diagnosis()
-        await self.query_one(MCPToolsMode).update_tools(
+        canvas = self.query_one(MCPToolsMode)
+        enabled, workspace_root = self._local_tools_config_values()
+        canvas.update_local_config(
+            enabled=enabled,
+            workspace_root=workspace_root,
+            visible=self._source == "local",
+        )
+        await canvas.update_tools(
             tools, empty_diagnosis=diagnosis, states=states
         )
+
+    @staticmethod
+    def _local_tools_config_values() -> tuple[bool, str]:
+        """Read the persisted values rendered by Tools mode."""
+        enabled = coerce_bool_setting(
+            get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            ),
+            LOCAL_TOOLS_DEFAULT_ENABLED,
+        )
+        raw_root = get_cli_setting("console", "workspace_root", "")
+        workspace_root = raw_root.strip() if isinstance(raw_root, str) else ""
+        return enabled, workspace_root
+
+    def _refresh_local_tools_controls(self) -> MCPToolsMode | None:
+        """Reset Tools-mode controls to persisted config after a failed save."""
+        if not self.query(MCPToolsMode):
+            return None
+        canvas = self.query_one(MCPToolsMode)
+        enabled, workspace_root = self._local_tools_config_values()
+        canvas.update_local_config(
+            enabled=enabled,
+            workspace_root=workspace_root,
+            visible=self._source == "local",
+        )
+        return canvas
 
     def _collect_hub_tools(self) -> list[HubTool]:
         """Derive the current source's cross-server `HubTool` catalog.
 
         Local source: every local profile's discovered tools
         (`self._catalog_records`, populated by `_collect_snapshots()` --
-        reused here, not re-fetched) plus the built-in server's inventory
+        reused here, not re-fetched), the built-in server's inventory
         (`service.local_service.get_inventory()`, guarded by getattr since
-        test fakes and a still-initializing service may not expose it).
+        test fakes and a still-initializing service may not expose it),
+        and the workspace, web, and Watchlists agent tool set
+        (`_local_agent_hub_tools()`,
+        task-2838 -- keyed `local:__local__`, non-executable hub-side).
 
         Server source: each external-server record's own embedded `tools`
         list (when the backend includes one -- `ReadinessSnapshot.detail
@@ -1641,6 +1707,11 @@ class MCPWorkbench(Container):
                     inventory = None
                 if isinstance(inventory, Mapping):
                     tools.extend(builtin_tools_from_inventory(inventory))
+            # task-2838: the workspace, web, and Watchlists agent tool set
+            # is a first-class Hub catalog source too -- same shared
+            # permission store the Console gates on, resolved by the same
+            # `effective_tool_states()` pass as every other row.
+            tools.extend(self._local_agent_hub_tools())
         else:
             for snap in self._snapshots:
                 if snap.source != "server" or not self._is_external_record_key(snap.server_key):
@@ -1652,6 +1723,58 @@ class MCPWorkbench(Container):
                         server_tools_from_inventory(raw, target_id=remainder, target_label=snap.label)
                     )
         return tools
+
+    def _local_agent_hub_tools(self) -> list[HubTool]:
+        """The workspace, web, and Watchlists agent tool set as HubTools.
+
+        task-2838: the Hub catalog's fourth source. The provider is built
+        catalog-view only -- no Console ``SessionTodoStore``, so
+        ``todo_create``, ``todo_update``, ``todo_get``, and ``todo_list`` stay
+        unregistered and the retired ``todo_write`` remains absent. There are
+        no approval callbacks: state resolution happens hub-side, via the same
+        `_sync_children()` `effective_tool_states()` pass against the same
+        `mcp_permissions.json` store the Console agent gates on
+        (`local:__local__` server key, `Agents/local_tool_provider.py`).
+
+        `executable` is downgraded to False at THIS layer (the provider's
+        own view stays invocation-capable): the Hub has no execution path
+        for these tools yet -- Test Tool routing through a fail-closed
+        provider is the deliberate follow-up -- and
+        `mcp_inspector._test_gate_state()` renders the honest
+        "not_executable" state from this flag.
+
+        Fail-soft (mirrors the built-in-inventory read above): ANY failure
+        -- workspace-root resolution, provider construction, a spec that
+        breaks `hub_tool_for` -- degrades to "no Local workspace group"
+        with a warning log; the profile/built-in catalog must never be
+        broken or emptied by the local tool view.
+
+        Master switch: the group lists only when
+        ``[console] local_tools_enabled`` is on -- the SAME opt-in the
+        Console composition (`_compose_local_provider()`) and the external
+        MCP exposure (`[mcp] expose_local_tools`) already apply to this
+        workspace, web, and Watchlists tool set. When the feature is off
+        everywhere, the management surface does not advertise it either.
+        Coerced at read time: a quoted ``"false"`` in the TOML must not fail
+        this OPEN.
+        """
+        if not coerce_bool_setting(
+            get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            ),
+            LOCAL_TOOLS_DEFAULT_ENABLED,
+        ):
+            return []
+        try:
+            provider = LocalToolProvider(
+                workspace_root=resolve_server_workspace_root()
+            )
+            return [
+                replace(hub, executable=False) for hub in provider.hub_tools()
+            ]
+        except Exception as exc:  # noqa: BLE001 -- catalog view must never break the hub
+            logger.warning(f"MCP local agent tool catalog unavailable: {exc}")
+            return []
 
     def _empty_tools_diagnosis(self) -> tuple[str, str]:
         """Diagnose why the Tools mode catalog is currently empty.
@@ -1675,18 +1798,43 @@ class MCPWorkbench(Container):
         cache-invalidating resync (`_refresh_server_discovery()`, see
         `on_mcp_tools_mode_empty_action_requested()`) rather than a bare
         mode switch.
+
+        task-3240 (SECONDARY/partial discoverability breadcrumb): whenever
+        one or more `[tools]`/`[console]` registration gates are off, that
+        is APPENDED to whichever message above applies. Honestly partial,
+        not a full breadcrumb: this method only ever runs when the whole
+        Tools-mode catalog is empty (see the caller, `_sync_tools_mode()`),
+        so it stays silent whenever ANY unrelated local tool source (an MCP
+        server, a connected local profile) already produced tools -- the
+        PRIMARY breadcrumb (the Permissions matrix's always-visible legend,
+        `_sync_permissions_mode()`) has no such blind spot.
         """
         if self._source == "server":
-            return (
+            message, action = (
                 "No tools visible from this server — refresh or check the server.",
                 "refresh",
             )
-        relevant = [snap for snap in self._snapshots if snap.source == self._source]
-        if not relevant:
-            return ("No servers configured — add one to see its tools.", "add_server")
-        if all(snap.state is ReadinessState.NEEDS_SETUP for snap in relevant):
-            return ("No tools discovered yet — connect or refresh a server.", "connect")
-        return ("No tools found — try refreshing a server's discovery.", "refresh")
+        else:
+            relevant = [snap for snap in self._snapshots if snap.source == self._source]
+            if not relevant:
+                message, action = (
+                    "No servers configured — add one to see its tools.",
+                    "add_server",
+                )
+            elif all(snap.state is ReadinessState.NEEDS_SETUP for snap in relevant):
+                message, action = (
+                    "No tools discovered yet — connect or refresh a server.",
+                    "connect",
+                )
+            else:
+                message, action = (
+                    "No tools found — try refreshing a server's discovery.",
+                    "refresh",
+                )
+        breadcrumb = tool_gate_breadcrumb()
+        if breadcrumb:
+            message = f"{message} {breadcrumb}"
+        return (message, action)
 
     # -- T6: Permissions mode (matrix, kill switch, policy preview) -----------
 
@@ -2004,8 +2152,16 @@ class MCPWorkbench(Container):
         # `_last_effective_states` immediately above.
         self._last_cascade = cascade_map
         rows = rows + builtin_rows
+        # task-3240 PRIMARY breadcrumb: computed fresh every pass (cheap --
+        # the same settings-time-enumeration cost `_builtin_permission_
+        # matrix_rows()` above already pays every pass) so it can never
+        # drift from the gates' actual current state.
         await self.query_one(MCPPermissionsMode).update_matrix(
-            rows, kill_switch=kill_switch, preview=preview, echo=echo
+            rows,
+            kill_switch=kill_switch,
+            preview=preview,
+            echo=echo,
+            gate_breadcrumb=tool_gate_breadcrumb(),
         )
         await self.query_one(MCPPermissionsMode).update_server_profiles(
             await self._server_governance_profiles(service, refresh=refresh_governance)
@@ -2858,6 +3014,138 @@ class MCPWorkbench(Container):
     ) -> None:
         event.stop()
         await self._open_add_server(notify_if_gated=False)
+
+    def on_mcp_tools_mode_local_tools_enabled_changed(
+        self, event: MCPToolsMode.LocalToolsEnabledChanged
+    ) -> None:
+        """Persist the workspace, web, and Watchlists master switch."""
+        event.stop()
+        self.run_worker(
+            self._save_tools_mode_local_enabled(event.enabled),
+            group="mcp-tools-local-enabled",
+            exclusive=True,
+        )
+
+    async def _save_tools_mode_local_enabled(self, enabled: bool) -> None:
+        try:
+            saved = await asyncio.to_thread(
+                save_setting_to_cli_config,
+                "console",
+                "local_tools_enabled",
+                enabled,
+            )
+        except Exception as exc:
+            logger.warning(
+                "MCP Tools-mode local master save failed (error_type={}).",
+                type(exc).__name__,
+            )
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Save failed. The persisted setting is shown.", error=True
+                )
+            self.app.notify(
+                _toast(f"Failed to save local tool setting: {exc}"),
+                severity="error",
+            )
+            return
+        if not saved:
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Save failed. The persisted setting is shown.", error=True
+                )
+            self.app.notify("Failed to save local tool setting.", severity="error")
+            return
+
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
+        canvas = self.query_one(MCPToolsMode)
+        state = "Enabled" if enabled else "Disabled"
+        canvas.set_local_config_status(
+            f"{state}. The next Console agent run will use this setting; "
+            "calls still follow Ask, Allow, or Off permissions.",
+            error=False,
+        )
+
+    def on_mcp_tools_mode_workspace_root_save_requested(
+        self, event: MCPToolsMode.WorkspaceRootSaveRequested
+    ) -> None:
+        """Validate and persist Tools mode's workspace confinement root."""
+        event.stop()
+        self.run_worker(
+            self._save_tools_mode_workspace_root(event.workspace_root),
+            group="mcp-tools-workspace-root",
+            exclusive=True,
+        )
+
+    async def _save_tools_mode_workspace_root(self, raw_root: str) -> None:
+        requested = raw_root.strip()
+        stored = ""
+        display = "the app folder"
+        if requested:
+            try:
+                candidate = Path(requested).expanduser()
+                if not candidate.is_absolute():
+                    candidate = Path.cwd() / candidate
+                resolved = validate_path(
+                    candidate,
+                    candidate.parent,
+                    redact_paths=True,
+                    allow_hidden=True,
+                )
+                if not resolved.is_dir():
+                    raise ValueError("path is not an existing directory")
+            except (OSError, RuntimeError, ValueError) as exc:
+                canvas = self.query_one(MCPToolsMode)
+                canvas.set_local_config_status(
+                    f"Workspace root not saved: {exc}.", error=True
+                )
+                self.app.notify(
+                    _toast(f"Workspace root not saved: {exc}."), severity="error"
+                )
+                return
+            stored = str(resolved)
+            display = stored
+
+        try:
+            saved = await asyncio.to_thread(
+                save_setting_to_cli_config,
+                "console",
+                "workspace_root",
+                stored,
+            )
+        except Exception as exc:
+            logger.warning(
+                "MCP Tools-mode workspace root save failed (error_type={}).",
+                type(exc).__name__,
+            )
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Save failed. The persisted workspace root is shown.",
+                    error=True,
+                )
+            self.app.notify(
+                _toast(f"Failed to save workspace root: {exc}"), severity="error"
+            )
+            return
+        if not saved:
+            canvas = self._refresh_local_tools_controls()
+            if canvas is not None:
+                canvas.set_local_config_status(
+                    "Save failed. The persisted workspace root is shown.",
+                    error=True,
+                )
+            self.app.notify("Failed to save workspace root.", severity="error")
+            return
+
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
+        self.query_one(MCPToolsMode).set_local_config_status(
+            f"Saved. The next Console agent run is confined to {display}.",
+            error=False,
+        )
 
     async def on_mcp_tools_mode_empty_action_requested(
         self, event: MCPToolsMode.EmptyActionRequested
@@ -3896,6 +4184,49 @@ class MCPWorkbench(Container):
             saved = await asyncio.to_thread(save_setting_to_cli_config, "mcp", key, value)
         except Exception as exc:
             logger.warning(f"MCP built-in flag save failed: {exc}")
+            self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
+            return
+        if not saved:
+            self.app.notify(f"Failed to save {key}.", severity="error")
+            return
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
+
+    def on_mcp_servers_mode_tool_gate_changed(
+        self, event: MCPServersMode.ToolGateChanged
+    ) -> None:
+        """Dispatch a `[tools]`/`[console]` gate toggle in the background.
+
+        task-3240 sibling of `on_mcp_servers_mode_builtin_flag_changed()` --
+        identical shape (sync handler, `exclusive=True` group so a rapid
+        second toggle simply cancels and restarts from the latest event),
+        just routed to `_save_tool_gate()` instead of `_save_builtin_flag()`
+        so the write targets the event's own `section`, not a hardcoded
+        `"mcp"`.
+        """
+        event.stop()
+        self.run_worker(
+            self._save_tool_gate(event.section, event.key, event.value),
+            group="mcp-tool-gate",
+            exclusive=True,
+        )
+
+    async def _save_tool_gate(self, section: str, key: str, value: bool) -> None:
+        """Persist one `[tools]`/`[console]` registration gate, then reload.
+
+        Mirrors `_save_builtin_flag()` exactly (same offload-then-resync
+        shape) except `section` is a parameter rather than hardcoded --
+        task-3240's gates span both `[tools]` (the `_GATEABLE_BUILTINS` rows
+        plus `web_deep_search`) and `[console]` (the local group's master
+        switch, `local_tools_enabled`). The resync's `_show_selected_detail()`
+        call rebuilds the gate checkboxes fresh from `all_tool_gates()`
+        (via `MCPServersMode._rebuild_tool_gate_checkboxes()`), so a failed
+        write shows the truth rather than an optimistic local flip.
+        """
+        try:
+            saved = await asyncio.to_thread(save_setting_to_cli_config, section, key, value)
+        except Exception as exc:
+            logger.warning(f"MCP tool gate save failed: {exc}")
             self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
             return
         if not saved:

@@ -93,9 +93,13 @@ FIRST_WINDOW_DAYS = 7
 #: Total items handed to one LLM call (spec: "~40").
 DEFAULT_ITEM_CAP = 40
 
-# `SELECT i.*` mirrors `get_new_items`, so rows arrive with every column
-# `normalize_watchlist_item` reads (including `queued_for_briefing`); the two
-# joined columns are the source name/type it also reports.
+# `SELECT i.*` is a DELIBERATE divergence from `get_new_items` (task-15464
+# narrowed that one to an explicit column list excluding `content`): this
+# path selects an item into an LLM-summarized briefing, which needs the full
+# body `get_new_items`'s list-page projection now deliberately omits. Rows
+# still arrive with every column `normalize_watchlist_item` reads (including
+# `queued_for_briefing`); the two joined columns are the source name/type it
+# also reports.
 #
 # `created_at_utc` is `created_at` normalized by SQLite for COMPARISON only:
 # `created_at` is genuinely mixed-format in this table (a

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
 
@@ -12,11 +12,33 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, Select, Static
 
 from ...TTS import ProfileAvailabilityState
-from ...TTS.profile_service import ProfileRecoveryAction
-from .personas_pane_messages import CharacterTTSActionRequested
+from ...TTS.profile_service import (
+    ProfileRecoveryAction,
+    TTSProfileDependencyProjection,
+)
+from ...UI.tts_profile_recovery import dependency_recovery_actions
+from .personas_pane_messages import CharacterTTSAction, CharacterTTSActionRequested
 
 _GLOBAL_PROFILE_VALUE = "__global__"
 _CONTEXTS = frozenset({"card", "editor"})
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterTTSProfileSuggestion:
+    """Bounded non-authoritative identity offered by a Speech Lab save."""
+
+    profile_id: UUID
+    repository_generation: int
+    profile_revision: int
+
+    def __post_init__(self) -> None:
+        if type(self.profile_id) is not UUID:
+            raise TypeError("profile_id must be a UUID")
+        for name in ("repository_generation", "profile_revision"):
+            value = getattr(self, name)
+            minimum = 1 if name == "profile_revision" else 0
+            if type(value) is not int or value < minimum:
+                raise ValueError(f"{name} is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +59,9 @@ class CharacterTTSProfileOption:
     display_name: str
     availability: ProfileAvailabilityState
     recovery_action: ProfileRecoveryAction = "refresh"
+    dependency: TTSProfileDependencyProjection = field(
+        default_factory=TTSProfileDependencyProjection
+    )
 
     def __post_init__(self) -> None:
         if (
@@ -48,8 +73,15 @@ class CharacterTTSProfileOption:
             or self.availability not in {"available", "unavailable", "unverified"}
             or type(self.recovery_action) is not str
             or self.recovery_action not in {"none", "refresh", "edit"}
+            or type(self.dependency) is not TTSProfileDependencyProjection
         ):
             raise ValueError("invalid character TTS profile option")
+
+    @property
+    def assignable(self) -> bool:
+        """Return the same blocker truth used by the Profile Library."""
+
+        return self.availability != "unavailable" and self.dependency.reason == "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +93,7 @@ class CharacterTTSPresentationState:
     status: str
     controls_enabled: bool
     assignment_count: int | None = None
+    suggested_profile_id: UUID | None = None
 
     def __post_init__(self) -> None:
         profiles = tuple(self.profiles)
@@ -70,6 +103,11 @@ class CharacterTTSPresentationState:
             or (
                 self.selected_profile_id is not None
                 and self.selected_profile_id
+                not in {profile.profile_id for profile in profiles}
+            )
+            or (
+                self.suggested_profile_id is not None
+                and self.suggested_profile_id
                 not in {profile.profile_id for profile in profiles}
             )
             or type(self.status) is not str
@@ -112,6 +150,10 @@ def _character_tts_option_suffix(option: CharacterTTSProfileOption) -> str:
     `TTS/profile_service.py`).
     """
 
+    if option.dependency.display:
+        return option.dependency.display
+    if option.dependency.advisory_display:
+        return f"{option.availability} · {option.dependency.advisory_display}"
     if option.availability == "unverified" and option.recovery_action == "none":
         return "no catalog check"
     return option.availability
@@ -120,7 +162,7 @@ def _character_tts_option_suffix(option: CharacterTTSProfileOption) -> str:
 class PersonasCharacterTTSWidget(Container):
     """Render character profile state and emit identity-free action intents."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasCharacterTTSWidget {
         width: 100%;
         height: auto;
@@ -144,6 +186,11 @@ class PersonasCharacterTTSWidget(Container):
 
     PersonasCharacterTTSWidget .personas-character-tts-actions {
         width: 100%;
+        height: auto;
+    }
+
+    PersonasCharacterTTSWidget .personas-character-tts-ordinary-actions {
+        width: 100%;
         height: 1;
     }
 
@@ -155,6 +202,16 @@ class PersonasCharacterTTSWidget(Container):
         border: none;
         padding: 0 1;
         margin-right: 1;
+    }
+
+    PersonasCharacterTTSWidget .personas-character-tts-recovery-actions {
+        width: 100%;
+        height: auto;
+    }
+
+    PersonasCharacterTTSWidget .personas-character-tts-recovery-actions Button {
+        width: 100%;
+        margin-right: 0;
     }
     """
 
@@ -191,27 +248,56 @@ class PersonasCharacterTTSWidget(Container):
                 classes="personas-character-tts-status",
                 markup=False,
             )
-            with Horizontal(classes="personas-character-tts-actions"):
-                yield Button(
-                    "Preview",
-                    classes=("console-action-subdued personas-character-tts-preview"),
-                    disabled=True,
-                )
-                yield Button(
-                    "Create",
-                    classes="console-action-subdued personas-character-tts-create",
-                    disabled=True,
-                )
-                yield Button(
-                    "Edit",
-                    classes="console-action-subdued personas-character-tts-edit",
-                    disabled=True,
-                )
-                yield Button(
-                    "Remove",
-                    classes="console-action-subdued personas-character-tts-remove",
-                    disabled=True,
-                )
+            with Vertical(classes="personas-character-tts-actions"):
+                with Horizontal(classes="personas-character-tts-ordinary-actions"):
+                    yield Button(
+                        "Preview",
+                        classes=(
+                            "console-action-subdued personas-character-tts-preview"
+                        ),
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Create",
+                        classes="console-action-subdued personas-character-tts-create",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Edit",
+                        classes="console-action-subdued personas-character-tts-edit",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Remove",
+                        classes="console-action-subdued personas-character-tts-remove",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Dismiss",
+                        classes=(
+                            "console-action-subdued "
+                            "personas-character-tts-dismiss-suggestion hidden"
+                        ),
+                        disabled=True,
+                        tooltip="Dismiss the saved Voice Profile suggestion.",
+                    )
+                with Vertical(classes="personas-character-tts-recovery-actions"):
+                    yield Button(
+                        "Recovery",
+                        classes=(
+                            "console-action-subdued "
+                            "personas-character-tts-dependency-primary hidden"
+                        ),
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Recovery",
+                        classes=(
+                            "console-action-subdued "
+                            "personas-character-tts-dependency-advisory hidden"
+                        ),
+                        disabled=True,
+                    )
 
     def apply_state(self, state: CharacterTTSPresentationState) -> None:
         """Render one immutable screen-owned presentation snapshot."""
@@ -219,11 +305,19 @@ class PersonasCharacterTTSWidget(Container):
         if type(state) is not CharacterTTSPresentationState:
             raise TypeError("state must be CharacterTTSPresentationState")
         self._state = state
+        has_suggestion = state.suggested_profile_id is not None
         selector = self.query_one(".personas-character-tts-profile", Select)
         options = [("Use global default", _GLOBAL_PROFILE_VALUE)]
         options.extend(
             (
-                f"{profile.display_name} · {_character_tts_option_suffix(profile)}",
+                (
+                    f"{profile.display_name} · {_character_tts_option_suffix(profile)}"
+                    + (
+                        " · Suggested"
+                        if profile.profile_id == state.suggested_profile_id
+                        else ""
+                    )
+                ),
                 str(profile.profile_id),
             )
             for profile in state.profiles
@@ -251,26 +345,65 @@ class PersonasCharacterTTSWidget(Container):
             None,
         )
         broken = selected is not None and selected.availability == "unavailable"
-        self.query_one(
+        preview = self.query_one(
             ".personas-character-tts-preview",
             Button,
-        ).disabled = not (state.controls_enabled and assigned)
-        self.query_one(
+        )
+        preview_visible = assigned and not has_suggestion
+        preview.set_class(not preview_visible, "hidden")
+        preview.display = preview_visible
+        preview.disabled = has_suggestion or not (state.controls_enabled and assigned)
+        create = self.query_one(
             ".personas-character-tts-create",
             Button,
-        ).disabled = not state.controls_enabled
+        )
+        create_visible = not assigned and not has_suggestion
+        create.set_class(not create_visible, "hidden")
+        create.display = create_visible
+        create.disabled = not (create_visible and state.controls_enabled)
         edit = self.query_one(".personas-character-tts-edit", Button)
+        edit_visible = assigned and not has_suggestion
+        edit.set_class(not edit_visible, "hidden")
+        edit.display = edit_visible
         # "Repair" is reserved for a genuinely unavailable profile. An
         # unverified one is not confirmed broken -- it works, this slice just
         # has no catalog check backing that claim yet (task-2450 amendment) --
         # so it keeps the ordinary "Edit" label rather than being presented
         # as needing repair.
         edit.label = "Repair" if broken else "Edit"
-        edit.disabled = not (state.controls_enabled and assigned)
-        self.query_one(
+        edit.disabled = has_suggestion or not (state.controls_enabled and assigned)
+        remove = self.query_one(
             ".personas-character-tts-remove",
             Button,
-        ).disabled = not (state.controls_enabled and assigned)
+        )
+        remove_visible = assigned and not has_suggestion
+        remove.set_class(not remove_visible, "hidden")
+        remove.display = remove_visible
+        remove.disabled = has_suggestion or not (state.controls_enabled and assigned)
+        dismiss = self.query_one(
+            ".personas-character-tts-dismiss-suggestion",
+            Button,
+        )
+        dismiss.set_class(not has_suggestion, "hidden")
+        dismiss.display = has_suggestion
+        dismiss.disabled = not has_suggestion
+        recovery_actions = (
+            () if selected is None else dependency_recovery_actions(selected.dependency)
+        )
+        actions_by_role = {action.role: action for action in recovery_actions}
+        role_selectors: tuple[tuple[Literal["blocker", "advisory"], str], ...] = (
+            ("blocker", ".personas-character-tts-dependency-primary"),
+            ("advisory", ".personas-character-tts-dependency-advisory"),
+        )
+        for role, selector in role_selectors:
+            button = self.query_one(selector, Button)
+            action = actions_by_role.get(role)
+            visible = action is not None and not has_suggestion
+            button.set_class(not visible, "hidden")
+            button.display = visible
+            button.disabled = not (visible and state.controls_enabled)
+            button.label = "Recovery" if action is None else action.label
+            button.tooltip = None if action is None else action.tooltip
 
     def _restore_selected_value(self) -> None:
         selector = self.query_one(".personas-character-tts-profile", Select)
@@ -306,7 +439,7 @@ class PersonasCharacterTTSWidget(Container):
             ),
             None,
         )
-        if option is None or option.availability == "unavailable":
+        if option is None or not option.assignable:
             self._restore_selected_value()
             return
         self.post_message(CharacterTTSActionRequested("assign", profile_id))
@@ -318,11 +451,45 @@ class PersonasCharacterTTSWidget(Container):
         if button.has_class("personas-character-tts-create"):
             self.post_message(CharacterTTSActionRequested("create", None))
             return
+        if button.has_class("personas-character-tts-dismiss-suggestion"):
+            self.post_message(CharacterTTSActionRequested("dismiss_suggestion", None))
+            return
         profile_id = self._state.selected_profile_id
         if profile_id is None:
             return
+        selected = next(
+            (
+                option
+                for option in self._state.profiles
+                if option.profile_id == profile_id
+            ),
+            None,
+        )
+        if button.has_class("personas-character-tts-dependency-primary"):
+            role = "blocker"
+        elif button.has_class("personas-character-tts-dependency-advisory"):
+            role = "advisory"
+        else:
+            role = None
+        if role is not None:
+            if selected is None:
+                return
+            projected = next(
+                (
+                    action
+                    for action in dependency_recovery_actions(selected.dependency)
+                    if action.role == role
+                ),
+                None,
+            )
+            if projected is None:
+                return
+            self.post_message(
+                CharacterTTSActionRequested(projected.operation, profile_id)
+            )
+            return
         if button.has_class("personas-character-tts-preview"):
-            action = "preview"
+            action: CharacterTTSAction = "preview"
         elif button.has_class("personas-character-tts-edit"):
             action = "edit"
         elif button.has_class("personas-character-tts-remove"):
@@ -333,6 +500,7 @@ class PersonasCharacterTTSWidget(Container):
 
 
 __all__ = [
+    "CharacterTTSProfileSuggestion",
     "CharacterTTSProfileOption",
     "CharacterTTSPresentationState",
     "PersonasCharacterTTSWidget",

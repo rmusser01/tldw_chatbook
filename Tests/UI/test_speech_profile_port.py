@@ -27,10 +27,13 @@ PORTED = (
     "_clear_profile_voice_validation",
     "_dismiss_profile_name_modal",
     "_end_profile_preset",
+    "_handle_profile_generation_result",
+    "_mark_profile_test_axes",
     "_prime_profile_preset_controls",
     "_profile_preview_blocked_presentation",
     "_project_profile_preset_controls",
     "_save_current_result_as_profile",
+    "_retain_profile_generation_artifact",
     "_sync_profile_preview_status",
     "_sync_save_profile_action",
 )
@@ -98,5 +101,11 @@ async def test_the_profile_state_exists_before_any_action():
             "_profile_save_suppressed",
             "_active_profile_name_modal",
             "_profile_voice_validation_token",
+            "_profile_test_context_token",
+            "_profile_test_context",
+            "_profile_exact_artifacts",
+            "_profile_matching_artifact_operation",
+            "_profile_evidence_generation",
+            "_profile_test_error",
         ):
             assert hasattr(pane, attribute), attribute

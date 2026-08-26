@@ -256,8 +256,11 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
 
     # A3's "top_k" claim is only accurate for keyword mode's per-source
     # fan-out; rag mode drops the "per source" suffix outright.
-    assert results_heading_text(rag_state) == "Evidence · top 5"
-    assert results_heading_text(search_state) == "Evidence · top 5 per source"
+    # TASK-15020/B3: the depth itself is the active RAG profile's
+    # `search.default_top_k` (15 on the shipped default profile), not the
+    # old hardcoded 5.
+    assert results_heading_text(rag_state) == "Evidence · top 15"
+    assert results_heading_text(search_state) == "Evidence · top 15 per source"
 
     rag_children = library_rag_results_body_children(rag_state)
     coverage_statics = [
@@ -271,8 +274,20 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
         str(coverage_statics[0].renderable)
         == "Semantic search found nothing from: Notes."
     )
-    # It renders directly under the heading -- the first body child.
-    assert rag_children[0] is coverage_statics[0]
+    # It renders above the evidence cards, directly under the "N results
+    # for 'query'." headline task-2859 item 10 added between it and the
+    # Evidence heading (this assertion read `rag_children[0]` until that
+    # headline landed, and has been failing on dev ever since -- the
+    # ordering it was written to pin is "ahead of every row card", which is
+    # what it now says).
+    count_lines = [
+        child
+        for child in rag_children
+        if getattr(child, "id", None) == "library-rag-results-count-line"
+    ]
+    assert len(count_lines) == 1
+    assert rag_children[0] is count_lines[0]
+    assert rag_children[1] is coverage_statics[0]
 
     # Keyword mode's diagnostics never carry `semantic_scope_coverage` (no
     # coverage claim to make) -> no widget mounted at all.
@@ -332,6 +347,48 @@ def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
     dump_text = str(dump_static.renderable)
     assert "Owner: Library retrieval." in dump_text
     assert "Unavailable: Library Search/RAG retrieval." in dump_text
+
+
+def test_empty_status_still_renders_the_routing_disclosure() -> None:
+    """(RAG-port P0 review, I2) A zero-result search under a plain (BM25)
+    profile is precisely when "vectors were never consulted" is the most
+    diagnostic fact on screen -- without it the quiet "No evidence matched"
+    line reads as a verdict on the semantic index that was never queried.
+    The disclosure rides the SAME coverage-note line (quiet register, same
+    id), above the unchanged no-match copy."""
+    from tldw_chatbook.Library.library_rag_state import (
+        LIBRARY_RAG_ROUTE_NOTES_KEY,
+        LibraryRagPanelState,
+    )
+    from tldw_chatbook.Widgets.Library import library_rag_results_body_children
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="unicorn migration guide",
+        retrieval_status="empty",
+        provider_name="openai",
+        diagnostics={
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "Profile 'BM25 Only': keyword search (no vectors)"
+            ]
+        },
+    )
+
+    children = library_rag_results_body_children(state)
+
+    note = children[0]
+    assert note.id == "library-rag-coverage-note"
+    assert note.has_class("library-rag-quiet-line")
+    assert (
+        str(note.renderable) == "Profile 'BM25 Only': keyword search (no vectors)."
+    )
+    # The no-match copy itself is untouched, and still follows the note.
+    quiet_static = children[1]
+    assert quiet_static.id == "library-rag-empty-state"
+    assert str(quiet_static.renderable) == (
+        "No evidence matched 'unicorn migration guide'.\nTry broader terms."
+    )
+    assert len(children) == 2
 
 
 # --- Task 13: honest re-run hint on history rows (RAG-38) ------------------
@@ -1771,6 +1828,92 @@ async def test_library_search_rag_query_updates_action_and_survives_recompose() 
         assert screen.query_one("#library-rag-run-query", Button).disabled is False
 
 
+def test_hybrid_result_row_renders_the_vector_leg_band_not_the_fused_score() -> None:
+    """(RAG-port P0/Task 6) End of the thread: a *service-shaped* hybrid
+    result -- fused RRF score ~0.016, strong vector leg preserved in
+    `provenance["hybrid_fusion"]["vector_score"]` (Task 2) -- must compose
+    the STRONG band into the row's title line.
+
+    Before this, every hybrid search rendered a wall of
+    "match: weak (0.02)": RRF fused scores top out at `1/(rrf_k + 1)`
+    ~= 0.016 at the `rrf_k=60` of the time (~0.167 at the shipped k of 5
+    since TASK-4110 -- still under the 0.2 weak boundary, and still not a
+    similarity), so the panel banded excellent results as barely matching.
+    Banding is chosen by score KIND, so this row's number stays
+    representative. This pins the whole path -- service row shape -> row
+    normalization -> composed title -- not just the pure band function.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_result_row_children,
+    )
+
+    row = LibraryRagResultRow.from_result(
+        {
+            "document_title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "score": 0.016393442622950824,
+            "source_id": "media-42",
+            "chunk_id": "chunk-7",
+            "provenance": {
+                "source_type": "media",
+                "hybrid_fusion": {
+                    "fts_rank": 1,
+                    "vector_rank": 1,
+                    "fts_score": 0.001,
+                    "vector_score": 0.83,
+                    "alpha": 0.7,
+                    "rrf_k": 60,
+                },
+            },
+        }
+    )
+    card = library_rag_result_row_children(row, 0, "")[0]
+    title = next(
+        child
+        for child in _answer_region_children(card)
+        if child.id == "library-rag-result-0"
+    )
+    assert str(title.renderable) == "1. Incident Review | match: strong"
+
+
+def test_fts_only_hybrid_result_row_renders_keyword_match_not_a_band() -> None:
+    """(RAG-port P0/Task 6) The other hybrid shape: an FTS-leg-only row has
+    no similarity at all, so the title discloses "keyword match" rather
+    than inventing a band or exposing the fused 0.0x number."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_result_row_children,
+    )
+
+    row = LibraryRagResultRow.from_result(
+        {
+            "document_title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "score": 0.004918032786885246,
+            "source_id": "media-42",
+            "provenance": {
+                "source_type": "media",
+                "hybrid_fusion": {
+                    "fts_rank": 1,
+                    "vector_rank": None,
+                    "fts_score": 0.001,
+                    "vector_score": None,
+                    "alpha": 0.7,
+                    "rrf_k": 60,
+                },
+            },
+        }
+    )
+    card = library_rag_result_row_children(row, 0, "")[0]
+    title = next(
+        child
+        for child in _answer_region_children(card)
+        if child.id == "library-rag-result-0"
+    )
+    assert str(title.renderable) == "1. Incident Review | keyword match"
+
+
 @pytest.mark.asyncio
 async def test_library_search_rag_run_query_renders_service_results_and_calls_scope() -> (
     None
@@ -1821,7 +1964,11 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
                 "query": query,
                 "scope": ("notes", "media", "conversations"),
                 "mode": "search",
-                "top_k": 5,
+                # TASK-15020/B3: the run's depth is the active RAG profile's
+                # `default_top_k` (15 on the shipped default profile) --
+                # the window used to ask for 5 no matter what the profile
+                # said, which is what this pins end to end.
+                "top_k": 15,
                 "include_citations": True,
             }
         ]
@@ -1875,7 +2022,7 @@ async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() ->
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(150):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: Search ⇄ ✓ RAG Answer":
                 break
             await pilot.pause(0.02)
         else:
@@ -1889,7 +2036,7 @@ async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() ->
         visible_text = _visible_text(screen)
         # Scout item 3: the semantic leg is one merged query, not a
         # per-source fan-out -- the heading must not claim "per source".
-        assert "Evidence · top 5" in visible_text
+        assert "Evidence · top 15" in visible_text
         assert "per source" not in visible_text
         assert (
             "Semantic search found nothing from: Notes, Conversations."
@@ -1934,7 +2081,7 @@ async def test_library_search_rag_keyword_mode_never_renders_coverage_note() -> 
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
 
         visible_text = _visible_text(screen)
-        assert "Evidence · top 5 per source" in visible_text
+        assert "Evidence · top 15 per source" in visible_text
         assert not screen.query("#library-rag-coverage-note")
 
 
@@ -2659,7 +2806,7 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
         # label rather than assuming a fixed number of pauses is enough.
         for _ in range(150):
             toggles = list(screen.query("#library-rag-mode-toggle"))
-            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+            if toggles and str(toggles[0].label) == "mode: Search ⇄ ✓ RAG Answer":
                 break
             await pilot.pause(0.02)
         else:
@@ -2848,7 +2995,7 @@ async def _switch_to_rag_mode(screen, pilot) -> None:
     screen.query_one("#library-rag-mode-toggle", Button).press()
     for _ in range(150):
         toggles = list(screen.query("#library-rag-mode-toggle"))
-        if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+        if toggles and str(toggles[0].label) == "mode: Search ⇄ ✓ RAG Answer":
             await pilot.pause()
             return
         await pilot.pause(0.02)
@@ -3648,3 +3795,66 @@ async def test_library_search_rag_uncited_answer_renders_recovery_callout_end_to
         assert "does not cite available staged evidence" in caution_text
         # The clean-answer note must never also render alongside a caution.
         assert not screen.query("#library-rag-answer-citation-note")
+
+
+# --- TASK-3502 note-(a): the reranker's disclosure tags get their first UI
+# consumer -- the Evidence region's existing one quiet note line. ---
+
+
+def test_reranking_disclosure_tags_render_one_evidence_notice_line() -> None:
+    """A tagged outcome (either tag) puts ONE quiet line under the Evidence
+    heading naming what failed and what it means for the order below; an
+    untagged outcome renders nothing extra. Same Static, same
+    `library-rag-quiet-line` styling as every other coverage/routing
+    disclosure -- one note channel, never two competing ones."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_results_body_children
+
+    def _panel(**provenance) -> LibraryRagPanelState:
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "Note doc",
+                "score": 0.6,
+                "source_id": "note-1",
+                "provenance": {"source_type": "notes", **provenance},
+            }
+        )
+        return LibraryRagPanelState.from_values(
+            source_counts={"notes": 1, "media": 1},
+            query="cake",
+            mode="rag",
+            results=(row,),
+        )
+
+    def _notice_lines(state: LibraryRagPanelState) -> list[str]:
+        return [
+            str(child.renderable)
+            for child in library_rag_results_body_children(state)
+            if getattr(child, "id", None) == "library-rag-coverage-note"
+        ]
+
+    skipped = _notice_lines(_panel(reranking_skipped="No API key found for openai"))
+    assert skipped == [
+        "Reranking was skipped (No API key found for openai) — these "
+        "results are in their original retrieval order."
+    ]
+
+    degraded = _notice_lines(_panel(reranking_degraded="14/15 scorings failed"))
+    assert degraded == [
+        "Reranking was degraded (14/15 scorings failed) — these results are "
+        "in their original retrieval order."
+    ]
+
+    # Control: reranking off, or on and working -> the line is absent
+    # entirely (no widget mounted, not an empty one).
+    assert _notice_lines(_panel()) == []
+
+    tagged_children = library_rag_results_body_children(
+        _panel(reranking_degraded="14/15 scorings failed")
+    )
+    notice = next(
+        child
+        for child in tagged_children
+        if getattr(child, "id", None) == "library-rag-coverage-note"
+    )
+    assert notice.has_class("library-rag-quiet-line")

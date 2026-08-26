@@ -23,6 +23,8 @@ _UNSET = object()
 class ServerWatchlistsService:
     """First-slice server watchlist source CRUD service."""
 
+    CREATE_FORM_SOURCE_TYPES = ("rss", "site", "forum")
+
     def __init__(
         self,
         client: Optional[TLDWAPIClient],
@@ -362,10 +364,10 @@ class ServerWatchlistsService:
             "rule_id": payload.get("rule_id", rule_id),
         }
 
-    @staticmethod
-    def _validate_source_type(source_type: Any) -> str:
+    @classmethod
+    def _validate_source_type(cls, source_type: Any) -> str:
         normalized = str(source_type or "").strip()
-        if normalized not in {"rss", "site", "forum"}:
+        if normalized not in cls.CREATE_FORM_SOURCE_TYPES:
             raise ValueError(
                 "Only rss, site, and forum watchlist sources are supported in this slice."
             )

@@ -1,6 +1,7 @@
 # Tests/Agents/test_agent_runtime.py
 """Pure loop tests with deterministic fake callables."""
 
+import itertools
 import json
 from collections import deque
 
@@ -127,6 +128,68 @@ def test_tool_error_is_not_fatal_and_feeds_back():
     assert "ERROR: boom" in seen[1][-1]["content"]
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
     assert result_steps and "boom" in result_steps[0].result
+
+
+def test_tool_result_step_records_success_before_flattening_collision_payload() -> None:
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult(
+            ok=True, content="ERROR: harmless successful payload"
+        ),
+    )
+
+    result = next(step for step in out.steps if step.kind == STEP_TOOL_RESULT)
+    assert result.tool_outcome == "success"
+
+
+def test_tool_result_step_distinguishes_failure_and_provider_block() -> None:
+    ordinary = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "bad"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult(ok=False, error="division failed"),
+    )
+    blocked = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult.blocked(
+            "tool execution is disabled by the kill switch"
+        ),
+    )
+
+    assert (
+        next(
+            step for step in ordinary.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "failed"
+    )
+    assert (
+        next(
+            step for step in blocked.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "blocked"
+    )
+
+
+def test_direct_review_refusal_records_blocked_without_dispatch() -> None:
+    deps = make_deps(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.review_tool_calls = lambda _calls: {"calculator": "review refused"}
+
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    result = next(step for step in out.steps if step.kind == STEP_TOOL_RESULT)
+    assert result.tool_outcome == "blocked"
 
 
 def test_spawn_result_and_budget():
@@ -280,7 +343,10 @@ def test_console_budget_reaches_its_model_turn_cap_before_step_cap():
         ModelTurn(text=fence("calculator", {"expression": f"{i}+{i}"}))
         for i in range(turns + 5)
     ]
-    tick = iter(float(i) for i in range(1000))
+    # Unbounded clock: TASK-18600 raised the Console turn cap to 2000, and a
+    # fixed-size tick iterator sized for the old 30-turn cap ran out
+    # mid-run and surfaced as StopIteration instead of a budget verdict.
+    tick = itertools.count(0.0)
     out = run(
         scripted,
         config=AgentConfig(
@@ -440,9 +506,24 @@ def test_cancel_recognized_after_final_answer_with_no_tool_call():
     # re-polls should_cancel at step/tool-call boundaries, and a no-tool-call
     # turn used to return RUN_DONE immediately without one more recheck.
     flags = iter([False, True])
-    out = run([ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True))
+    trace_steps = []
+    deps = make_deps(
+        [ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True)
+    )
+    deps.on_trace_step = trace_steps.append
+    out = run_agent_loop(
+        CFG, [{"role": "user", "content": "hi"}], [CALC], deps
+    )
     assert out.status == RUN_CANCELLED
     assert out.final_text == "Tokyo."
+    assert [step.kind for step in trace_steps] == [
+        "model_request_started",
+        "model_response_completed",
+        "model_cancelled",
+    ]
+    request, completed, cancelled = trace_steps
+    assert cancelled.parent_step_index == completed.index
+    assert cancelled.source_step_index == request.index
 
 
 # --- G1/Q9: load_tools `ids` coercion must never crash and must not
@@ -887,5 +968,38 @@ def test_console_budget_bounds_spend_not_only_time():
     """
     from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
 
-    assert CONSOLE_RUN_BUDGET.max_model_turns == 30
+    # TASK-18600 raised this 30 -> 2000. It is now a BACKSTOP, not the
+    # primary limiter: max_total_tokens is what actually stops a long
+    # run (the whole history is re-sent every turn, so spend is
+    # quadratic in turn count). Asserted as a floor rather than an
+    # equality so a future raise does not need a test edit.
+    assert CONSOLE_RUN_BUDGET.max_model_turns >= 2000
     assert CONSOLE_RUN_BUDGET.max_total_tokens > 0
+
+
+def test_spawn_passes_agent_kwarg_only_when_present():
+    seen = []
+
+    def spawn(task, **kwargs):
+        seen.append((task, kwargs))
+        return ToolResult(ok=True, content="ok")
+
+    out = run(
+        [
+            ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "plain"})),
+            ModelTurn(
+                text=fence(
+                    SPAWN_TOOL_NAME, {"task": "named", "agent": "researcher"}
+                )
+            ),
+            ModelTurn(text="done"),
+        ],
+        spawn=spawn,
+    )
+    assert out.status == RUN_DONE
+    assert seen[0] == ("plain", {})
+    assert seen[1] == ("named", {"agent": "researcher"})
+    spawn_steps = [s for s in out.steps if s.kind == STEP_SPAWN]
+    assert len(spawn_steps) == 2
+    assert spawn_steps[0].summary == "plain"
+    assert spawn_steps[1].summary.startswith("[researcher] ")

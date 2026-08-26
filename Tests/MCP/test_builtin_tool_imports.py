@@ -38,6 +38,18 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
 
+@pytest.fixture(autouse=True)
+def _offline_unused_rag_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep import/DB smoke tests off the optional embedding download path."""
+    import tldw_chatbook.MCP.tools as tools_module
+
+    monkeypatch.setattr(
+        tools_module,
+        "SimplifiedRAGSearchService",
+        lambda _media_db: object(),
+    )
+
+
 def test_mcp_tools_resources_prompts_server_modules_import_without_importerror():
     """Direct regression net for the literal defect: at HEAD (pre-fix) each
     of these raised `ImportError: cannot import name 'ChaChaNotes_DB' from
@@ -157,3 +169,104 @@ def test_get_conversation_history_executes_against_real_db(tmp_path):
     assert len(result["messages"]) == 1
     assert result["messages"][0]["content"] == "Hello there"
     assert result["messages"][0]["role"] == "user"
+
+
+# -- task-1337 (plan Task 9): compatibility of the extended local MCP surface --
+
+_LEGACY_TOOL_NAMES_IN_ORDER = [
+    "chat_with_llm",
+    "chat_with_character",
+    "search_rag",
+    "search_conversations",
+    "create_note",
+    "search_notes",
+    "list_characters",
+    "get_conversation_history",
+    "export_conversation",
+]
+
+
+def test_implemented_legacy_manifest_tool_names_and_order_are_stable():
+    """The 18 appended Library tools must not rename, reorder, or reshape the
+    9 implemented legacy AST-derived manifest entries (TASK-4000): existing
+    clients key off these names and payload schemas."""
+    from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
+
+    tools = describe_local_mcp_capabilities()["tools"]
+    legacy_entries = tools[: len(_LEGACY_TOOL_NAMES_IN_ORDER)]
+
+    assert [entry["name"] for entry in legacy_entries] == _LEGACY_TOOL_NAMES_IN_ORDER
+
+    by_name = {entry["name"]: entry for entry in legacy_entries}
+    # Spot-lock the AST-derived schema shapes of the search/read tools whose
+    # payload contracts QA exercised live.
+    assert set(by_name["search_notes"]["inputSchema"]["properties"]) == {
+        "query",
+        "limit",
+    }
+    assert by_name["search_notes"]["inputSchema"]["required"] == ["query"]
+    assert set(by_name["search_conversations"]["inputSchema"]["properties"]) == {
+        "query",
+        "limit",
+        "character_id",
+    }
+    assert set(by_name["get_conversation_history"]["inputSchema"]["properties"]) == {
+        "conversation_id",
+        "limit",
+    }
+    assert set(by_name["export_conversation"]["inputSchema"]["properties"]) == {
+        "conversation_id",
+        "format",
+    }
+    search_rag = by_name["search_rag"]
+    assert list(search_rag["inputSchema"]["properties"]) == [
+        "query",
+        "limit",
+        "media_types",
+        "use_semantic",
+    ]
+    use_semantic = search_rag["inputSchema"]["properties"]["use_semantic"]
+    assert use_semantic["default"] is True
+    assert (
+        use_semantic["description"]
+        == "False forces media keyword search; true or omission follows the active RAG profile's plain, semantic, or hybrid search mode."
+    )
+    assert (
+        search_rag["description"]
+        == "Search media using the active RAG profile unless keyword search is forced."
+    )
+
+
+@pytest.mark.parametrize("setting_value", [False, True])
+@pytest.mark.asyncio
+async def test_console_direct_library_tools_setting_has_no_effect_on_mcp(
+    monkeypatch, setting_value
+):
+    """The Console retrieval-mode toggle (``[console].direct_library_tools``)
+    selects between Console agent providers only. The local MCP inventory and
+    direct-runtime execution must be identical either way (plan Task 9
+    Step 8)."""
+    import tldw_chatbook.MCP.local_runtime_delegate as delegate_module
+    import tldw_chatbook.UI.Screens.settings_library_rag_defaults as settings_module
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+    from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
+
+    monkeypatch.setattr(
+        settings_module, "load_direct_library_tools", lambda: setting_value
+    )
+
+    manifest = describe_local_mcp_capabilities()
+    names = [entry["name"] for entry in manifest["tools"]]
+    assert names[: len(_LEGACY_TOOL_NAMES_IN_ORDER)] == _LEGACY_TOOL_NAMES_IN_ORDER
+    for descriptor_name in LIBRARY_TOOL_DESCRIPTORS:
+        assert descriptor_name in names
+
+    class _FakeLibraryService:
+        def invoke(self, tool_name, arguments):
+            return {"echo": tool_name, "arguments": dict(arguments)}
+
+    delegate = delegate_module.LocalMCPRuntimeDelegate(
+        library_service=_FakeLibraryService()
+    )
+    result = await delegate.execute_tool("library_list_media", {"limit": 2})
+    assert result == {"echo": "library_list_media", "arguments": {"limit": 2}}

@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, cast
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
 
 _ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
+_SQLITE_INTEGER_MAX = (1 << 63) - 1
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.citation_legacy_migration import (
@@ -188,6 +189,10 @@ def normalize_message_row(
         "image_mime_type": message_row.get("image_mime_type"),
         "usage_json": message_row.get("usage_json"),
         "metadata_json": message_row.get("metadata_json"),
+        "provider_continuation_json": message_row.get("provider_continuation_json"),
+        "assistant_generation_state": message_row.get(
+            "assistant_generation_state"
+        ),
         "topology": topology,
         "variant": variant,
     }
@@ -473,6 +478,39 @@ class ChatConversationService:
             for conversation_id in conversation_ids
         }
 
+    def _normalize_conversation_rows(
+        self,
+        rows: Iterable[Mapping[str, Any]],
+        *,
+        include_deleted: bool,
+    ) -> list[dict[str, Any]]:
+        rows = list(rows)
+        conversation_ids = [
+            row.get("id") for row in rows if row.get("id") is not None
+        ]
+        message_counts = {}
+        if conversation_ids:
+            message_counts = self.db.count_messages_for_conversations(
+                conversation_ids,
+                include_deleted=include_deleted,
+                include_deleted_conversation=include_deleted,
+            )
+        keyword_map = self._fetch_keywords_for_conversations(conversation_ids)
+
+        items = []
+        for row in rows:
+            conversation_id = row.get("id")
+            item = normalize_conversation_row(
+                row,
+                keywords=keyword_map.get(conversation_id, []),
+                message_count=message_counts.get(
+                    conversation_id, row.get("message_count", 0)
+                ),
+            )
+            if item is not None:
+                items.append(item)
+        return items
+
     def get_conversation_keywords(self, conversation_id: str) -> list[str]:
         keyword_rows = self.db.get_keywords_for_conversation(conversation_id)
         return _normalize_keywords(keyword_rows)
@@ -632,6 +670,19 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
     ) -> dict[str, Any]:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= _SQLITE_INTEGER_MAX
+        ):
+            raise ValueError("limit must be a positive integer.")
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or not 0 <= offset <= _SQLITE_INTEGER_MAX
+        ):
+            raise ValueError("offset must be a non-negative integer.")
+
         effective_scope = scope_type
         if effective_scope is None:
             effective_scope = "workspace" if workspace_id is not None else "global"
@@ -662,28 +713,9 @@ class ChatConversationService:
             offset=offset,
         )
 
-        conversation_ids = [row.get("id") for row in rows if row.get("id") is not None]
-        message_counts = {}
-        if conversation_ids:
-            message_counts = self.db.count_messages_for_conversations(
-                conversation_ids,
-                include_deleted=include_deleted or deleted_only,
-                include_deleted_conversation=include_deleted or deleted_only,
-            )
-        keyword_map = self._fetch_keywords_for_conversations(conversation_ids)
-
-        items = []
-        for row in rows:
-            conversation_id = row.get("id")
-            item = normalize_conversation_row(
-                row,
-                keywords=keyword_map.get(conversation_id, []),
-                message_count=message_counts.get(
-                    conversation_id, row.get("message_count", 0)
-                ),
-            )
-            if item is not None:
-                items.append(item)
+        items = self._normalize_conversation_rows(
+            rows, include_deleted=include_deleted or deleted_only
+        )
 
         pagination = {
             "limit": limit,
@@ -692,6 +724,200 @@ class ChatConversationService:
             "has_more": offset + len(items) < total,
         }
         return {"items": items, "pagination": pagination}
+
+    def locate_conversation_page(
+        self,
+        conversation_id: str,
+        query: str | None = None,
+        *,
+        limit: int = 20,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        state: str | None = None,
+        topic_label: str | None = None,
+        character_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit != 20:
+            raise ValueError("limit must be exactly 20.")
+
+        effective_scope = scope_type
+        if effective_scope is None:
+            effective_scope = "workspace" if workspace_id is not None else "global"
+        if workspace_id is not None:
+            effective_scope = "workspace"
+
+        if str(effective_scope).strip().lower() == CONVERSATION_SCOPE_ALL:
+            normalized_scope: str = CONVERSATION_SCOPE_ALL
+            normalized_workspace_id: str | None = None
+        else:
+            normalized_scope, normalized_workspace_id = _normalize_scope(
+                effective_scope, workspace_id
+            )
+        located = self.db.locate_conversation_page(
+            conversation_id,
+            query=query,
+            scope_type=normalized_scope,
+            workspace_id=normalized_workspace_id,
+            include_deleted=include_deleted,
+            deleted_only=deleted_only,
+            state=_normalize_state(state) if state is not None else None,
+            topic_label=_clean_text(topic_label),
+            character_id=character_id,
+            limit=limit,
+        )
+        if located is None:
+            return None
+
+        rows = located.get("rows")
+        offset = located.get("offset")
+        target_index = located.get("target_index")
+        total = located.get("total")
+        coordinates = (limit, offset, target_index, total)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in coordinates
+        ):
+            raise ValueError("Conversation locator coordinates must be integers.")
+        expected_offset = (target_index // limit) * limit if limit > 0 else -1
+        if (
+            limit <= 0
+            or target_index < 0
+            or total <= target_index
+            or offset != expected_offset
+        ):
+            raise ValueError("Conversation locator offset is not page-aligned.")
+        if not isinstance(rows, list) or len(rows) != min(limit, total - offset):
+            raise ValueError("Conversation locator returned an invalid bounded page.")
+        local_index = target_index - offset
+        if (
+            local_index < 0
+            or local_index >= len(rows)
+            or not isinstance(rows[local_index], Mapping)
+            or rows[local_index].get("id") != conversation_id
+        ):
+            raise ValueError("Conversation locator target identity is invalid.")
+        row_ids = [row.get("id") for row in rows if isinstance(row, Mapping)]
+        if (
+            len(row_ids) != len(rows)
+            or any(
+                not isinstance(row_id, str) or not row_id.strip()
+                for row_id in row_ids
+            )
+            or len(set(row_ids)) != len(row_ids)
+        ):
+            raise ValueError("Conversation locator page identity is invalid.")
+
+        items = self._normalize_conversation_rows(
+            rows, include_deleted=include_deleted or deleted_only
+        )
+        if len(items) != len(rows) or items[local_index].get("id") != conversation_id:
+            raise ValueError(
+                "Conversation locator target identity changed during normalization."
+            )
+        pagination = {
+            "limit": limit,
+            "offset": offset,
+            "page": offset // limit + 1,
+            "total": total,
+            "target_index": target_index,
+            "has_more": offset + len(items) < total,
+        }
+        return {"items": items, "pagination": pagination}
+
+    # --- Library read seams (task-1337, plan Task 4) ---
+    #
+    # Thin, agent-facing delegates over the additive DB library read seams.
+    # RAG context lives in a JSON sidecar adjunct store owned by this
+    # service; library reads never join it, so message responses always
+    # carry ``include_rag_context: False``.
+
+    def list_library_conversations(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Page active local conversations for Library agent tools.
+
+        Args:
+            limit: Maximum number of conversations to return.
+            offset: Number of conversations to skip.
+
+        Returns:
+            A bounded page containing items, exact total, offset, and limit.
+
+        Raises:
+            CharactersRAGDBError: If the local conversation store cannot be read.
+        """
+        payload = self.db.list_library_conversations_page(limit=limit, offset=offset)
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def search_library_conversations(
+        self, *, query: str, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search active local conversations for Library agent tools.
+
+        Args:
+            query: Literal case-insensitive search text.
+            limit: Maximum number of conversations to return.
+            offset: Number of matching conversations to skip.
+
+        Returns:
+            A bounded page with exact total and match evidence.
+
+        Raises:
+            CharactersRAGDBError: If the local conversation store cannot be read.
+        """
+        payload = self.db.search_library_conversations_page(
+            query=query, limit=limit, offset=offset
+        )
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def get_library_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        message_offset: int = 0,
+        message_limit: int = 20,
+        max_chars: int = 8000,
+        message_id: str | None = None,
+        char_start: int = 0,
+    ) -> dict[str, Any] | None:
+        """Read a text-only, windowed message page for one active conversation.
+
+        Returns None when no active conversation matches ``conversation_id``.
+
+        Args:
+            conversation_id: Stable conversation identifier.
+            message_offset: Number of messages to skip in page mode.
+            message_limit: Maximum messages to return in page mode.
+            max_chars: Maximum characters to return per message.
+            message_id: Optional single-message continuation target.
+            char_start: Zero-based character offset into message text.
+
+        Returns:
+            Bounded conversation metadata and messages, or None when absent.
+
+        Raises:
+            CharactersRAGDBError: If the local conversation store cannot be read.
+        """
+        return self.db.get_library_conversation_messages(
+            conversation_id,
+            message_offset=message_offset,
+            message_limit=message_limit,
+            max_chars=max_chars,
+            message_id=message_id,
+            char_start=char_start,
+        )
 
     def get_conversation_tree(
         self,
@@ -716,25 +942,43 @@ class ChatConversationService:
                 "depth_cap": depth_cap,
             }
 
-        total_root_threads = self.db.count_root_messages_for_conversation(
+        # TASK-22206: ONE conversation-scoped query (no BLOB hydration),
+        # then a purely in-memory, iterative tree assembly. The old shape
+        # issued one get_messages_for_conversation_by_parent_ids call per
+        # node -- each a full-conversation scan under the production query
+        # plan (sqlite_stat1 absent) -- and recursed once per message.
+        rows = self.db.get_message_tree_rows_for_conversation(
             conversation_id,
-            include_deleted_conversation=False,
-        )
-        root_rows = self.db.get_root_messages_for_conversation(
-            conversation_id,
-            limit=root_limit,
-            offset=root_offset,
             order_by_timestamp=order_by_timestamp,
             include_deleted_conversation=False,
         )
-        root_threads = self._build_message_tree(
-            conversation_id,
-            root_rows,
-            order_by_timestamp=order_by_timestamp,
+        children_by_parent: dict[Any, list[Mapping[str, Any]]] = {}
+        root_rows: list[Mapping[str, Any]] = []
+        for row in rows:
+            parent_id = row.get("parent_message_id")
+            if parent_id is None:
+                root_rows.append(row)
+            else:
+                children_by_parent.setdefault(parent_id, []).append(row)
+        # Same predicate the old COUNT query used, computed from the same
+        # fetch (conversation-scoped, live rows, live conversation).
+        total_root_threads = len(root_rows)
+        # Replicate SQL LIMIT/OFFSET semantics for non-positive inputs:
+        # a negative OFFSET is 0, a negative LIMIT means "no limit".
+        effective_offset = max(0, root_offset)
+        if root_limit < 0:
+            paged_root_rows = root_rows[effective_offset:]
+        else:
+            paged_root_rows = root_rows[
+                effective_offset : effective_offset + root_limit
+            ]
+
+        root_threads, image_pending = self._build_message_tree(
+            paged_root_rows,
+            children_by_parent,
             depth_cap=depth_cap,
-            depth=1,
-            seen_message_ids=set(),
         )
+        self._hydrate_tree_images(image_pending)
 
         return {
             "conversation": conversation,
@@ -743,7 +987,7 @@ class ChatConversationService:
                 "limit": root_limit,
                 "offset": root_offset,
                 "total_root_threads": total_root_threads,
-                "has_more": root_offset + len(root_rows) < total_root_threads,
+                "has_more": root_offset + len(paged_root_rows) < total_root_threads,
             },
             "depth_cap": depth_cap,
         }
@@ -909,50 +1153,98 @@ class ChatConversationService:
 
     def _build_message_tree(
         self,
-        conversation_id: str,
-        rows: Iterable[Mapping[str, Any]],
+        paged_root_rows: Sequence[Mapping[str, Any]],
+        children_by_parent: Mapping[Any, Sequence[Mapping[str, Any]]],
         *,
-        order_by_timestamp: str,
         depth_cap: int,
-        depth: int,
-        seen_message_ids: set[str],
-    ) -> list[dict[str, Any]]:
-        nodes: list[dict[str, Any]] = []
-        for row in rows:
+    ) -> tuple[list[dict[str, Any]], list[tuple[Any, dict[str, Any]]]]:
+        """Assemble nested tree nodes iteratively from one row fetch.
+
+        TASK-22206: replaces the recursive one-query-per-node walk (O(N^2)
+        row scans, RecursionError at ~1000-deep linear conversations).
+        Semantics preserved exactly: per-parent child order is the fetch's
+        timestamp order (a stable partition of one ``ORDER BY m.timestamp``
+        result); a node at ``depth >= depth_cap`` or whose id was already
+        visited keeps ``children=[]`` with ``truncated=True``; a row
+        ``normalize_message_row`` rejects is dropped along with its subtree;
+        a row without an id gets no children. The visited set is global
+        rather than the old per-path copy -- the two differ only on inputs a
+        real DB cannot produce (a duplicated primary key), and the global
+        set is what makes the walk O(N).
+
+        BLOB columns are never touched here: rows carry ``has_image`` and
+        image-bearing nodes are returned for one batched hydration pass
+        (``_hydrate_tree_images``).
+
+        Args:
+            paged_root_rows: The page of root rows, in fetch order.
+            children_by_parent: All non-root rows, bucketed by
+                ``parent_message_id``, each bucket in fetch order.
+            depth_cap: Maximum depth; roots are depth 1.
+
+        Returns:
+            The nested root nodes, and ``(message_id, node)`` pairs for
+            every node whose row carries an image.
+        """
+        roots: list[dict[str, Any]] = []
+        image_pending: list[tuple[Any, dict[str, Any]]] = []
+        seen_message_ids: set[Any] = set()
+        # (row, depth, parent's children list); explicit stack keeps
+        # arbitrary-depth conversations off the Python recursion limit.
+        stack: list[tuple[Mapping[str, Any], int, list[dict[str, Any]]]] = [
+            (row, 1, roots) for row in reversed(paged_root_rows)
+        ]
+        while stack:
+            row, depth, siblings = stack.pop()
             message_id = row.get("id")
             normalized_row = normalize_message_row(row)
             if normalized_row is None:
                 continue
+            if message_id is not None and row.get("has_image"):
+                image_pending.append((message_id, normalized_row))
             if message_id is not None and message_id in seen_message_ids:
                 normalized_row["children"] = []
                 normalized_row["truncated"] = True
-                nodes.append(normalized_row)
+                siblings.append(normalized_row)
                 continue
-
-            next_seen = set(seen_message_ids)
             if message_id is not None:
-                next_seen.add(message_id)
-
+                seen_message_ids.add(message_id)
             if depth >= depth_cap:
                 normalized_row["children"] = []
                 normalized_row["truncated"] = True
-                nodes.append(normalized_row)
+                siblings.append(normalized_row)
                 continue
-
-            child_rows = self.db.get_messages_for_conversation_by_parent_ids(
-                conversation_id,
-                [message_id] if message_id is not None else [],
-                order_by_timestamp=order_by_timestamp,
-                include_deleted_conversation=False,
-            )
-            normalized_row["children"] = self._build_message_tree(
-                conversation_id,
-                child_rows,
-                order_by_timestamp=order_by_timestamp,
-                depth_cap=depth_cap,
-                depth=depth + 1,
-                seen_message_ids=next_seen,
-            )
+            children: list[dict[str, Any]] = []
+            normalized_row["children"] = children
             normalized_row["truncated"] = False
-            nodes.append(normalized_row)
-        return nodes
+            siblings.append(normalized_row)
+            if message_id is not None:
+                for child_row in reversed(children_by_parent.get(message_id, ())):
+                    stack.append((child_row, depth + 1, children))
+        return roots, image_pending
+
+    def _hydrate_tree_images(
+        self, image_pending: Sequence[tuple[Any, dict[str, Any]]]
+    ) -> None:
+        """Fill image BLOBs into built tree nodes, one batched fetch.
+
+        TASK-22206: nodes leave ``_build_message_tree`` with
+        ``image_data=None``; the actual BLOBs are read here, once, only for
+        the messages that have one. A conversation without images performs
+        zero BLOB reads. Skipped silently for DB objects (test fakes) that
+        do not expose the batched fetch -- their rows carry ``image_data``
+        inline and ``normalize_message_row`` already passed it through.
+        """
+        if not image_pending:
+            return
+        fetcher = getattr(self.db, "get_message_images_by_ids", None)
+        if not callable(fetcher):
+            return
+        images = fetcher([message_id for message_id, _node in image_pending])
+        for message_id, node in image_pending:
+            image_row = images.get(message_id)
+            if image_row is None:
+                # Deleted between the two reads; the node keeps image_data
+                # None, matching a snapshot taken a moment later.
+                continue
+            node["image_data"] = image_row.get("image_data")

@@ -19,13 +19,24 @@ from typing import Any, Literal, Sequence
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, Static
+
+from ...UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 CharacterPlacement = Literal["swap", "new"]
 
 #: Bounds the result list so a large card library cannot mount hundreds of
 #: rows into a modal (the switcher modal caps its own list the same way).
 CHARACTER_PICKER_MAX_RESULTS = 40
+CHARACTER_PICKER_NAME_MAX_CHARACTERS = 180
+
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`). A full result refresh
+#: removes and remounts up to `CHARACTER_PICKER_MAX_RESULTS` `Static` rows,
+#: which should not happen on every keystroke (task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -80,7 +91,9 @@ def filter_character_options(
     return tuple((primary + secondary)[:limit])
 
 
-class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
+class ConsoleCharacterPickerModal(
+    SafeModalDismissMixin, ModalScreen["ConsoleCharacterChoice | None"]
+):
     """Search saved characters, then place the pick in this chat or a new one."""
 
     DEFAULT_CSS = """
@@ -121,10 +134,11 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
     """
 
     BINDINGS = [
-        ("escape", "dismiss_picker", "Cancel"),
+        ("escape", "request_safe_cancel", "Cancel"),
         ("down", "cursor_down", "Next"),
         ("up", "cursor_up", "Previous"),
     ]
+    SAFE_MODAL_CONTENT = "#console-character-picker"
 
     def __init__(
         self,
@@ -148,6 +162,7 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
         self._results: tuple[ConsoleCharacterOption, ...] = ()
         self._selected_index = 0
         self._pending: ConsoleCharacterOption | None = None
+        self._query_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-character-picker"):
@@ -172,7 +187,9 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
                 markup=False,
             )
 
-    async def on_mount(self) -> None:
+    # Textual 8 composes same-named sync/async MRO message handlers; this is not
+    # an ordinary OO override of the mixin hook.
+    async def on_mount(self) -> None:  # type: ignore[override]
         self.query_one("#console-character-picker-query", Input).focus()
         await self._refresh_results("")
 
@@ -218,9 +235,13 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             current = "  (current)" if option.character_id == (
                 self._current_character_id
             ) else ""
+            display_name = sanitize_character_display_label(
+                option.name,
+                max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
+            )
             rows.append(
                 Static(
-                    f"{marker}{option.name}{current}",
+                    f"{marker}{display_name}{current}",
                     id=f"console-character-picker-row-{option.character_id}",
                     classes="console-character-picker-result",
                     markup=False,
@@ -233,16 +254,34 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
         self._pending = option
         placement = self.query_one("#console-character-picker-placement", Horizontal)
         placement.display = True
+        display_name = sanitize_character_display_label(
+            option.name,
+            max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
+        )
         self.query_one("#console-character-picker-hint", Static).update(
-            f"{option.name}: swap into this chat, or start a new one?"
+            f"{display_name}: swap into this chat, or start a new one?"
         )
         self.query_one("#console-character-placement-swap", Button).focus()
 
-    async def on_input_changed(self, event: Input.Changed) -> None:
+    def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "console-character-picker-query":
             return
         event.stop()
-        await self._refresh_results(event.value)
+        query = event.value
+        self._cancel_query_debounce()
+        self._query_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS,
+            lambda: self.run_worker(
+                self._refresh_results(query),
+                exclusive=True,
+                group="console-character-picker-search",
+            ),
+        )
+
+    def _cancel_query_debounce(self) -> None:
+        if self._query_debounce_timer is not None:
+            self._query_debounce_timer.stop()
+            self._query_debounce_timer = None
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "console-character-picker-query":
@@ -263,6 +302,7 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
 
     def _finish(self, placement: CharacterPlacement) -> None:
         assert self._pending is not None
+        self._cancel_query_debounce()
         self.dismiss(
             ConsoleCharacterChoice(
                 character_id=self._pending.character_id,
@@ -289,13 +329,26 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             current = "  (current)" if option.character_id == (
                 self._current_character_id
             ) else ""
+            display_name = sanitize_character_display_label(
+                option.name,
+                max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
+            )
             try:
                 row = self.query_one(
                     f"#console-character-picker-row-{option.character_id}", Static
                 )
             except Exception:
                 continue
-            row.update(f"{marker}{option.name}{current}")
+            row.update(f"{marker}{display_name}{current}")
 
-    def action_dismiss_picker(self) -> None:
-        self.dismiss(None)
+    async def action_dismiss_picker(self) -> None:
+        await self.request_safe_cancel(source="visible")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+
+        async def cancel_debounce() -> None:
+            self._cancel_query_debounce()
+
+        await self.run_cancel_effect_once(cancel_debounce)
+        self.dismiss_safe_once(None)

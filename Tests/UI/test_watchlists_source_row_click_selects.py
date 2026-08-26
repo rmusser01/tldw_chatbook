@@ -37,7 +37,10 @@ from Tests.UI.full_app_destination_context import (
     full_app_destination_context as _visual_destination_harness,
 )
 from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import (
+    ArticleListPane,
+    _ArticleRow,
+)
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
@@ -232,21 +235,11 @@ async def test_focused_table_keeps_click_metadata_on_its_last_row():
 
 # Every centre section that lists rows. Each is populated with TWO rows and
 # the SECOND is clicked, for the same reason the Sources fixture has two.
+# The items pane is absent: TASK-3072 replaced its DataTable with a ListView
+# (`ArticleListPane`), whose highlight event carries the ListItem itself --
+# a different shape this DataTable-parametrized test cannot fabricate, so it
+# has its own test right below.
 OTHER_TABLES = (
-    (
-        "items",
-        "#watchlists-items-pane",
-        ItemsPane,
-        "items",
-        "#items-table",
-        "selected_item",
-        [
-            {"id": "local:watchlist_item:1", "item_id": 1, "title": "First post",
-             "source_name": "Summit Route", "status": "new"},
-            {"id": "local:watchlist_item:2", "item_id": 2, "title": "Second post",
-             "source_name": "Summit Route", "status": "new"},
-        ],
-    ),
     (
         "runs",
         "#watchlists-runs-pane",
@@ -302,7 +295,6 @@ def test_every_watchlists_highlight_handler_selects_requested_row(
 ):
     """AC#5: every pane maps a focused row highlight to that stable row id."""
     select_methods = {
-        ItemsPane: ("select_item_by_id", ItemsPane.select_item_by_id),
         RunsPane: ("select_run_by_id", RunsPane.select_run_by_id),
         RulesPane: ("select_rule_by_id", RulesPane.select_rule_by_id),
         NotificationsPane: (
@@ -330,4 +322,42 @@ def test_every_watchlists_highlight_handler_selects_requested_row(
     assert selected is not None, f"{section}: highlighting a row selected nothing"
     assert str(selected["id"]) == str(rows[1]["id"]), (
         f"{section}: the highlight must select the requested stable row id"
+    )
+
+
+ITEM_ROWS = [
+    {"id": "local:watchlist_item:1", "item_id": 1, "title": "First post",
+     "source_name": "Summit Route", "status": "new"},
+    {"id": "local:watchlist_item:2", "item_id": 2, "title": "Second post",
+     "source_name": "Summit Route", "status": "new"},
+]
+
+
+def test_article_list_highlight_selects_requested_row():
+    """AC#5's items case, TASK-3072 shape: the ListView highlight event.
+
+    Same contract as the DataTable panes above -- a focused highlight of the
+    SECOND row selects that row's stable id -- fabricated against
+    `ListView.Highlighted`'s own payload (the `ListItem`, not a row key),
+    with the focus gate satisfied by a stubbed `query_one`.
+    """
+    pane = SimpleNamespace(
+        items=list(ITEM_ROWS),
+        selected_item=None,
+        _suppressed_highlight_item_id=None,
+        query_one=lambda *a, **k: SimpleNamespace(has_focus=True),
+    )
+    pane.select_item_by_id = MethodType(ArticleListPane.select_item_by_id, pane)
+    stopped = []
+    event = SimpleNamespace(
+        item=_ArticleRow(ITEM_ROWS[1]),
+        stop=lambda: stopped.append(True),
+    )
+
+    ArticleListPane.on_list_view_highlighted(pane, event)
+
+    assert stopped == [True]
+    assert pane.selected_item is not None, "items: highlighting a row selected nothing"
+    assert str(pane.selected_item["id"]) == str(ITEM_ROWS[1]["id"]), (
+        "items: the highlight must select the requested stable row id"
     )

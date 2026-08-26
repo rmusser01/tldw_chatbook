@@ -20,7 +20,7 @@ class CCPLoadingWidget(Static):
     Can be used as an overlay or inline loading indicator.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     CCPLoadingWidget {
         height: auto;
         width: auto;
@@ -384,7 +384,7 @@ class InlineLoadingIndicator(Static):
         self._loading = False
         self._dots = 0
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="ccp-loading-indicator-animate")
     async def animate(self):
         """Animate the loading dots."""
         import asyncio

@@ -23,6 +23,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.message import Message
 
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
@@ -81,7 +85,7 @@ class SlowHubService:
         return []
 
 
-class SlowWorkbenchApp(App):
+class SlowWorkbenchApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = SlowHubService()
@@ -117,7 +121,7 @@ class Navigate(Message):
     """Stands in for NavigateToScreen."""
 
 
-class NavigatingApp(App):
+class NavigatingApp(ConsolidatedCSSApp):
     """Mirrors the real freeze path: an App-level handler that AWAITS the mount.
 
     This is the shape that matters. `handle_screen_navigation` is an `@on`
@@ -235,7 +239,7 @@ async def test_chatbooks_scan_does_not_block_the_event_loop(monkeypatch):
 
     monkeypatch.setattr(chatbooks_module, "secure_chatbook_directory", blocking_secure)
 
-    class ChatbooksHostApp(App):
+    class ChatbooksHostApp(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.pings_handled = 0
@@ -346,7 +350,7 @@ async def test_study_mount_does_not_block_on_scoped_data(monkeypatch):
 
     app_instance = _build_test_app()
 
-    class StudyHost(App):
+    class StudyHost(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.pings_handled = 0
@@ -398,7 +402,7 @@ class FailingHubService(SlowHubService):
         raise RuntimeError("backing service is down")
 
 
-class FailingWorkbenchApp(App):
+class FailingWorkbenchApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = FailingHubService()

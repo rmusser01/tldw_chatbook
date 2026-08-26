@@ -27,7 +27,11 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Subscriptions_DB import ensure_site_configs_schema
 from ..Utils.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter
-from ..config import CLI_APP_CLIENT_ID, get_subscriptions_db_path
+from ..config import (
+    CLI_APP_CLIENT_ID,
+    get_subscriptions_db_path,
+    load_console_library_migration_seed,
+)
 #
 ########################################################################################################################
 #
@@ -263,7 +267,11 @@ class SiteConfigManager:
         # `CREATE TABLE IF NOT EXISTS` keeps it idempotent per construction.
         ensure_site_configs_schema(db_path)
 
-        self.db = CharactersRAGDB(db_path, CLI_APP_CLIENT_ID)
+        self.db = CharactersRAGDB(
+            db_path,
+            CLI_APP_CLIENT_ID,
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         self.encryption = ConfigEncryption()
         self.rate_limiter = RateLimiter()
         self._config_cache = {}

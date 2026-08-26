@@ -19,6 +19,13 @@ ConsoleActionStatus = Literal[
     "continue_requested",
     "edit_requested",
 ]
+ConsoleSpeechPresentationState = Literal[
+    "idle",
+    "generating",
+    "playing",
+    "stopped",
+    "failed",
+]
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,71 @@ class ConsoleMessageAction:
     label: str
     enabled: bool = True
     disabled_reason: str = ""
+
+
+@dataclass(frozen=True)
+class ConsoleHeaderSpeechPresentation:
+    """Visible speech action and bounded lifecycle copy for one message header."""
+
+    action: ConsoleMessageAction | None
+    status_label: str = ""
+
+
+def _speech_visible(message: ConsoleChatMessage) -> bool:
+    """Return whether a message may expose trusted Manual Speak."""
+    return (
+        message.role is ConsoleMessageRole.ASSISTANT
+        and message.status == "complete"
+        and bool(message.content.strip())
+    )
+
+
+def resolve_console_header_speech(
+    message: ConsoleChatMessage,
+    state: ConsoleSpeechPresentationState,
+    *,
+    selected: bool = False,
+) -> ConsoleHeaderSpeechPresentation:
+    """Resolve the header speech presentation for a Console message.
+
+    The header never hosts the idle Speak action: speak lives in the
+    selected-message action row with the other per-message options. The
+    header shows only active-playback lifecycle status (generating/playing)
+    and its terminal states (stopped/failed), which must stay visible even
+    when the message is deselected so playback remains controllable.
+    """
+    if not _speech_visible(message):
+        return ConsoleHeaderSpeechPresentation(action=None)
+    if state == "idle":
+        return ConsoleHeaderSpeechPresentation(action=None)
+    if state == "generating":
+        return ConsoleHeaderSpeechPresentation(
+            action=ConsoleMessageAction(
+                "speak-stop",
+                "⏹",
+                enabled=False,
+                disabled_reason="Speech audio is being generated.",
+            ),
+            status_label="Generating",
+        )
+    if state == "playing":
+        return ConsoleHeaderSpeechPresentation(
+            action=ConsoleMessageAction("speak-stop", "⏹"),
+            status_label="Playing",
+        )
+    if state == "stopped":
+        return ConsoleHeaderSpeechPresentation(
+            action=ConsoleMessageAction("speak", "🔊"),
+            status_label="Stopped",
+        )
+    if state == "failed":
+        return ConsoleHeaderSpeechPresentation(
+            action=ConsoleMessageAction("speak", "🔊"),
+            status_label="Failed",
+        )
+    return ConsoleHeaderSpeechPresentation(
+        action=ConsoleMessageAction("speak", "🔊")
+    )
 
 
 @dataclass(frozen=True)
@@ -182,11 +254,7 @@ class ConsoleMessageActionService:
     @staticmethod
     def _speak_visible(message: ConsoleChatMessage) -> bool:
         """Offer speech only for trusted completed assistant text."""
-        return (
-            message.role is ConsoleMessageRole.ASSISTANT
-            and message.status == "complete"
-            and bool(message.content.strip())
-        )
+        return _speech_visible(message)
 
     def __init__(
         self,
@@ -344,6 +412,35 @@ class ConsoleMessageActionService:
     def plain_action_labels(self, message: ConsoleChatMessage) -> list[str]:
         """Return terminal-width labels for a message action row."""
         return self.expand_plain_action_labels(self.available_actions(message))
+
+    def selected_row_actions(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+        speaking_message_id: str | None = None,
+        original_attempt_available: bool = False,
+        ephemeral: bool = False,
+        video_file_available: bool = False,
+    ) -> list[ConsoleMessageAction]:
+        """Return the selected-message action row, including Speak/Stop.
+
+        Speak is a per-message option like copy/edit: it renders in the
+        action row of the SELECTED message and swaps to speak-stop while
+        that message is the active TTS speaking message. The header keeps
+        only active-playback lifecycle status (generating/playing/stopped/
+        failed) so playback stays controllable after deselection.
+        """
+        return self.available_actions(
+            message,
+            generation_variant_count=generation_variant_count,
+            generation_browsed_index=generation_browsed_index,
+            speaking_message_id=speaking_message_id,
+            original_attempt_available=original_attempt_available,
+            ephemeral=ephemeral,
+            video_file_available=video_file_available,
+        )
 
     def plain_action_row(self, message: ConsoleChatMessage) -> str:
         """Return a terminal-readable action row for plain transcript exports."""

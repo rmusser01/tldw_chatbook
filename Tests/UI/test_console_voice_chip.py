@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.app import App
 from textual.widgets import Static
@@ -18,6 +20,17 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBa
 class ComposerApp(App):
     def compose(self):
         yield ConsoleComposerBar(id="console-native-composer")
+
+
+class ProductionCssComposerApp(ComposerApp):
+    """Mount the composer with the generated production stylesheet."""
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
 
 
 def _visible(widget) -> bool:
@@ -190,6 +203,211 @@ async def test_preparing_and_error_states_render_their_message():
         composer.set_voice_status(STATE_ERROR, message="No microphone access.")
         await pilot.pause()
         assert "No microphone access." in _painted(chip)
+
+
+@pytest.mark.asyncio
+async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        message = "Local transcription busy — dictation will run next."
+        presentation = [
+            composer.query_one(selector)
+            for selector in (
+                "#console-composer-collapse",
+                "#console-composer-menu",
+                "#console-command-visible-text",
+                "#console-send-disabled-reason",
+            )
+        ]
+        actions = composer.query_one("#console-composer-actions")
+        mic = composer.query_one("#console-dictation")
+        idle_action_width = actions.region.width
+        idle_mic_width = mic.region.width
+        assert all(_visible(widget) for widget in presentation)
+
+        composer.sync_dictation_state("starting")
+        composer.set_voice_preparing_message(message)
+        await pilot.pause()
+        chip = composer.query_one("#console-voice-status", Static)
+
+        assert message in _painted(chip)
+        assert _visible(chip)
+        assert all(not _visible(widget) for widget in presentation)
+        assert idle_action_width == 25
+        assert actions.region.width == idle_action_width
+        assert mic.region.width == idle_mic_width
+        assert actions.region.right <= composer.region.right <= app.size.width
+        assert mic.region.right <= composer.region.right
+        assert _visible(mic)
+        assert await pilot.click(mic) is True
+
+        # An ordinary control-bar refresh must not erase the busy status.
+        composer.sync_dictation_state("starting")
+        await pilot.pause()
+        assert message in _painted(chip)
+
+        composer.sync_dictation_state("idle")
+        await pilot.pause()
+        assert chip.styles.width.value == 0
+        assert _painted(chip) == ""
+        assert all(_visible(widget) for widget in presentation)
+
+
+@pytest.mark.asyncio
+async def test_busy_presentation_preserves_draft_and_caret_then_restores_recording():
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+        for _ in range(5):
+            composer.move_cursor_left()
+        before_text = composer.draft_text()
+        before_caret = composer.cursor_index
+        controls = [
+            composer.query_one(selector)
+            for selector in (
+                "#console-composer-collapse",
+                "#console-composer-menu",
+                "#console-command-visible-text",
+            )
+        ]
+        reason = composer.query_one("#console-send-disabled-reason")
+
+        composer.sync_dictation_state("starting")
+        composer.set_voice_preparing_message(
+            "Local transcription busy — dictation will run next."
+        )
+        await pilot.pause()
+
+        assert all(not _visible(widget) for widget in (*controls, reason))
+        assert composer.draft_text() == before_text
+        assert composer.cursor_index == before_caret
+
+        composer.sync_dictation_state("recording")
+        await pilot.pause()
+
+        assert all(_visible(widget) for widget in controls)
+        assert not _visible(reason)
+        assert composer.draft_text() == before_text
+        assert composer.cursor_index == before_caret
+
+
+@pytest.mark.asyncio
+async def test_busy_presentation_suppresses_and_restores_staged_attachment():
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        indicator = composer.query_one("#console-attachment-indicator", Static)
+        clear_button = composer.query_one("#console-clear-attachment")
+        actions = composer.query_one("#console-composer-actions")
+
+        composer.set_pending_attachment_label("2 files", count=2, total=5)
+        await pilot.pause()
+        assert "2 files" in _painted(indicator)
+        assert _visible(indicator)
+        assert _visible(clear_button)
+        assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+        assert actions.region.width == 29
+
+        composer.set_voice_status(
+            STATE_PREPARING,
+            message="Local transcription busy — dictation will run next.",
+        )
+        # A production control-bar refresh may reapply this setter while the
+        # deferred capture still owns the full-width preparing presentation.
+        composer.set_pending_attachment_label("2 files", count=2, total=5)
+        await pilot.pause()
+
+        assert not _visible(indicator)
+        assert not _visible(clear_button)
+        assert actions.region.width == 25
+        assert "2 files" in str(indicator.renderable)
+        assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+
+        expanded = composer.query_one("#console-composer-expanded")
+        collapsed = composer.query_one("#console-composer-collapsed")
+        composer.set_collapsed(True)
+        composer.set_pending_attachment_label("2 files", count=2, total=5)
+        assert not expanded.display
+        assert collapsed.display
+        composer.set_collapsed(False)
+
+        composer.set_voice_status(STATE_LISTENING, elapsed_seconds=0)
+        await pilot.pause()
+
+        assert "2 files" in _painted(indicator)
+        assert _visible(indicator)
+        assert _visible(clear_button)
+        assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+        assert actions.region.width == 29
+
+        composer.set_pending_attachment_label(None)
+        await pilot.pause()
+        assert not _visible(indicator)
+        assert not _visible(clear_button)
+        assert actions.region.width == 25
+
+
+@pytest.mark.asyncio
+async def test_production_css_busy_status_stays_meaningful_at_narrow_width():
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(48, 12)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+
+        composer.sync_dictation_state("starting")
+        composer.set_voice_preparing_message(
+            "Local transcription busy — dictation will run next."
+        )
+        await pilot.pause()
+
+        chip = composer.query_one("#console-voice-status", Static)
+        painted = _painted(chip)
+        assert painted.startswith("Local trans")
+        assert painted.endswith("…")
+        assert _visible(chip)
+        assert chip.region.x + chip.region.width <= composer.region.right
+
+
+@pytest.mark.asyncio
+async def test_production_css_ordinary_voice_states_restore_normal_padding():
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        chip = composer.query_one("#console-voice-status", Static)
+
+        composer.set_voice_status(
+            STATE_PREPARING,
+            message="Local transcription busy — dictation will run next.",
+        )
+        composer.set_voice_status(STATE_PREPARING, message="Loading model…")
+        await pilot.pause()
+        assert "Loading model…" in _painted(chip)
+        assert chip.styles.padding.left == 1
+        assert chip.styles.padding.right == 1
+        assert chip.styles.margin.left == 0
+        assert chip.styles.margin.right == 0
+
+        composer.set_voice_status(STATE_ERROR, message="No microphone access.")
+        await pilot.pause()
+        assert "No microphone access." in _painted(chip)
+        assert chip.styles.padding.left == 1
+        assert chip.styles.padding.right == 1
+        assert chip.styles.margin.left == 0
+        assert chip.styles.margin.right == 0
+
+        composer.set_voice_status(
+            STATE_LISTENING,
+            partial="ordinary listening partial",
+            elapsed_seconds=7,
+        )
+        await pilot.pause()
+        assert "0:07" in _painted(chip)
+        assert "ordinary listening partial" in _painted(chip)
+        assert chip.styles.padding.left == 1
+        assert chip.styles.padding.right == 1
+        assert chip.styles.margin.left == 0
+        assert chip.styles.margin.right == 0
 
 
 @pytest.mark.asyncio

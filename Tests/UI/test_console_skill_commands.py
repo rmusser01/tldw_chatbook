@@ -33,10 +33,10 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_skill_resolver import SKILLS_EMPTY_LIST_ROW
-from tldw_chatbook.UI.Screens.chat_screen import (
+from tldw_chatbook.UI.Console_Modules.skill import (
     CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE,
-    ChatScreen,
 )
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
@@ -364,34 +364,10 @@ async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_h
 
 
 @pytest.mark.asyncio
-async def test_run_resolved_console_skill_composes_dollar_command():
-    """The skill-picker submit path (`_run_resolved_console_skill`, the sole
-    remaining consumer of a resolved skill name) composes a `$name [args]`
-    draft, not `/name [args]` -- verified directly since the picker is no
-    longer reachable through any live `/skills` or bare-word composer
-    input (both were hard-removed above)."""
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-
-    async with app.run_test(size=(160, 48)) as pilot:
-        console = await _wait_for_production_chat_screen(app, pilot)
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        dispatch_spy = AsyncMock(return_value=True)
-        console._dispatch_console_draft_send = dispatch_spy
-
-        await console._run_resolved_console_skill("code-review", "fix it")
-        dispatch_spy.assert_awaited_once_with("$code-review fix it")
-
-        dispatch_spy.reset_mock()
-        await console._run_resolved_console_skill("code-review", "")
-        dispatch_spy.assert_awaited_once_with("$code-review")
-
-
-@pytest.mark.asyncio
 async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_prefix():
     """Same static hint even when the typed name is a prefix matching only
     needs-review skills -- `/skills <name>` no longer distinguishes any
-    resolution outcome, and never opens the (now-unreachable) picker."""
+    resolution outcome and never starts a skill run."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.skills_scope_service = FakeSkillsScopeService(

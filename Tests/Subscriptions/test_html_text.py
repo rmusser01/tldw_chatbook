@@ -8,14 +8,14 @@ into prose a person can read, not a mangled mess).
 
 import pytest
 
-pytestmark = pytest.mark.unit
-
 from tldw_chatbook.Subscriptions.html_text import (
     html_to_display_text,
     looks_like_html,
     readable_body_text,
     strip_control_characters,
 )
+
+pytestmark = pytest.mark.unit
 
 
 # --- looks_like_html ---------------------------------------------------
@@ -412,3 +412,56 @@ def test_a_self_closed_void_tag_is_bracket_shaped_text_that_still_survives_inert
     markup must reach the caller as literal characters."""
     out = html_to_display_text('<img alt="[bold red]not a style[/]"/>')
     assert "[bold red]not a style[/]" in out
+
+
+def test_body_snippet_collapses_whitespace():
+    from tldw_chatbook.Subscriptions.html_text import body_snippet
+
+    assert body_snippet("line one\n\nline two\t with   gaps") == "line one line two with gaps"
+
+
+def test_body_snippet_strips_tags():
+    from tldw_chatbook.Subscriptions.html_text import body_snippet
+
+    assert body_snippet("<p>Hello <b>world</b></p>") == "Hello world"
+
+
+def test_body_snippet_truncates_on_a_word_boundary_with_ellipsis():
+    from tldw_chatbook.Subscriptions.html_text import body_snippet
+
+    text = " ".join(f"word{i}" for i in range(60))  # 350+ chars
+    snippet = body_snippet(text, max_chars=50)
+
+    assert snippet.endswith("…")
+    assert len(snippet) <= 51  # ellipsis included, boundary-trimmed
+    assert not snippet[:-1].endswith("wor"), "must not cut mid-word"
+
+
+def test_body_snippet_short_text_is_untouched():
+    from tldw_chatbook.Subscriptions.html_text import body_snippet
+
+    assert body_snippet("short and sweet") == "short and sweet"
+
+
+def test_body_snippet_empty_input():
+    from tldw_chatbook.Subscriptions.html_text import body_snippet
+
+    assert body_snippet(None) == ""
+    assert body_snippet("") == ""
+    assert body_snippet("   \n  ") == ""
+
+
+def test_body_snippet_hostile_input_is_inert():
+    """Row snippets are remote text in a terminal: script bodies vanish,
+    control bytes are stripped, markup-shaped brackets survive as literal
+    characters (escaping is the ROW's render-boundary job, not the
+    snippet's)."""
+    from tldw_chatbook.Subscriptions.html_text import body_snippet
+
+    snippet = body_snippet(
+        '<script>alert("x")</script><p>[bold red]real text[/]\x1b[31m</p>'
+    )
+
+    assert "alert" not in snippet
+    assert "\x1b" not in snippet
+    assert "[bold red]real text[/]" in snippet

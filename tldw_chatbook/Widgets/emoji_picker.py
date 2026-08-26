@@ -1,6 +1,7 @@
 # emoji_picker.py
 #
 # Imports
+from functools import partial
 from typing import List, Dict, Tuple, Optional, Set, Any
 from pathlib import Path
 
@@ -798,10 +799,7 @@ class EmojiPickerScreen(ModalScreen[str]):
         Binding("ctrl+left", "prev_category", "Previous Category", show=False),
         Binding("ctrl+right", "next_category", "Next Category", show=False),
     ]
-    CSS = """
-    /* Local fallbacks so this CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
+    BUNDLED_SCREEN_CSS = """
 
     EmojiPickerScreen { align: center middle; }
     #dialog { 
@@ -853,11 +851,8 @@ class EmojiPickerScreen(ModalScreen[str]):
     EmojiButton.emoji_button:hover { 
         background: $primary-background; 
     }
-    EmojiButton.emoji_button:focus { 
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
+    /* EmojiButton :focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
     .no_emojis_message { 
         width: 100%; 
         content-align: center middle; 
@@ -1031,10 +1026,33 @@ class EmojiPickerScreen(ModalScreen[str]):
             else:  # Should not be reached, fallback to search input
                 self.query_one("#search-input", Input).focus()
 
+    def _save_recent_emoji_off_loop(self, emoji_char: str) -> None:
+        """Persist a recently-used emoji without blocking the event loop.
+
+        task-15471: `save_recent_emoji` re-reads and rewrites the recents
+        JSON file per selection, and used to do it synchronously in the
+        press handler. The worker is app-owned deliberately -- the picker
+        dismisses immediately after, and a screen-owned worker would be
+        cancelled before the write ran.
+
+        Ordering is deliberately unserialised last-write-wins (review
+        minor 5): two saves in flight can lose one entry, and a picker
+        reopened inside the write window can read pre-write recents. Both
+        need a human to race a microsecond-scale JSON write, and the file
+        is a cosmetic recents list whose writer already swallows every
+        error -- not worth a lock.
+        """
+        self.app.run_worker(
+            partial(save_recent_emoji, emoji_char),
+            group="emoji-recents-save",
+            thread=True,
+            exit_on_error=False,
+        )
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if isinstance(event.button, EmojiButton):
             emoji_char = event.button.emoji_data["char"]
-            save_recent_emoji(emoji_char)  # Save to recently used
+            self._save_recent_emoji_off_loop(emoji_char)  # Save to recently used
             self.dismiss(emoji_char)
         elif event.button.id == "cancel-button":
             self.action_dismiss_picker()  # Corrected: call the action method
@@ -1050,7 +1068,7 @@ class EmojiPickerScreen(ModalScreen[str]):
             recent_emojis = self._categorized_emojis["Recently Used"]
             if index < len(recent_emojis):
                 emoji_char = recent_emojis[index]["char"]
-                save_recent_emoji(emoji_char)
+                self._save_recent_emoji_off_loop(emoji_char)
                 self.dismiss(emoji_char)
 
     def action_select_recent_1(self) -> None:

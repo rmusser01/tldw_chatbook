@@ -73,11 +73,20 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
     #: `str` content") cannot bite here the way it could for a title or URL.
     _QUEUED_GLYPH = "●"
 
-    items = reactive[list[dict[str, Any]]]([], recompose=True)
+    items = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_item = reactive[dict[str, Any] | None](None)
-    status_filter = reactive("all", recompose=True)
-    search_query = reactive("", recompose=True)
-    runtime_backend = reactive("local", recompose=True)
+    #: task-15460: plain reactives, all three. The two filters were
+    #: `recompose=True`, so every character typed into the search box tore
+    #: this pane down and rebuilt it -- toolbar, table and all -- which
+    #: `recompose()` below then had to paper over by re-focusing the
+    #: destroyed input. A `DataTable`'s rows
+    #: are data, not widgets, so re-populating it (`_refresh_table_rows`)
+    #: costs no widget construction at all and leaves the toolbar, the
+    #: focused `Input` and its caret untouched. `runtime_backend` is read by
+    #: nothing in `compose()`; it was rebuilding the pane for free.
+    status_filter = reactive("all")
+    search_query = reactive("")
+    runtime_backend = reactive("local")
 
     # Task 5 fix round 1 (Minor): "Reviewed" -> "Read". The underlying value
     # is still the "reviewed" status (no schema change -- see
@@ -184,10 +193,10 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
                 placeholder="Search items...",
                 id="items-search-input",
                 value=self.search_query,
-                # `select_on_focus=False` is load-bearing, not taste. This
-                # pane recomposes on every keystroke (`search_query` is
-                # `reactive(..., recompose=True)`) and `recompose()` restores
-                # focus to the fresh input; with Textual's default
+                # `select_on_focus=False` is load-bearing, not taste. A
+                # rebuild of this pane (an `items` reload; before
+                # task-15460, every keystroke) makes `recompose()` restore
+                # focus to the fresh input, and with Textual's default
                 # `select_on_focus=True` that programmatic focus selects ALL
                 # the text, so the next keystroke REPLACES the query instead
                 # of appending to it ("f", space, "o" ended as "o"). A
@@ -217,6 +226,31 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         self._column_keys = table.add_columns(
             "Title", "Source", "Status", "Published", "Queued"
         )
+        self._populate_table(table)
+        yield table
+        # TASK-2313, AC#6: the Queued column was a bare glyph or a blank
+        # cell with no discoverable meaning anywhere on screen -- UAT. A
+        # persistent legend, matching Sources' rail-count legend
+        # (TASK-2304) for the identical reason: a per-row suffix would
+        # cost width on every row, one caption line costs it once.
+        yield Static(
+            f"{self._QUEUED_GLYPH} = queued for the next briefing "
+            "(toggle from the Inspector).",
+            id="items-queued-legend",
+            classes="watchlists-hint-line",
+        )
+
+    def _populate_table(self, table: DataTable) -> None:
+        """Add one row per filtered item, and record what was rendered.
+
+        Shared by `compose()` (the initial paint and any `items` reload) and
+        `_refresh_table_rows` (a filter change), so the two can never drift
+        into painting a row differently.
+
+        Args:
+            table: The items table, already carrying its columns and empty
+                of rows.
+        """
         filtered = self._filtered_items()
         self._rendered_items = filtered
         for item in filtered:
@@ -241,18 +275,25 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
                 self._QUEUED_GLYPH if item.get("queued_for_briefing") else "",
                 key=str(item.get("id") or id(item)),
             )
-        yield table
-        # TASK-2313, AC#6: the Queued column was a bare glyph or a blank
-        # cell with no discoverable meaning anywhere on screen -- UAT. A
-        # persistent legend, matching Sources' rail-count legend
-        # (TASK-2304) for the identical reason: a per-row suffix would
-        # cost width on every row, one caption line costs it once.
-        yield Static(
-            f"{self._QUEUED_GLYPH} = queued for the next briefing "
-            "(toggle from the Inspector).",
-            id="items-queued-legend",
-            classes="watchlists-hint-line",
-        )
+
+    def _refresh_table_rows(self) -> None:
+        """Re-populate the table for a filter change, without a recompose.
+
+        task-15460. `DataTable` rows are data rather than widgets, so
+        clearing and re-adding them mounts and destroys nothing: the
+        toolbar, the focused search `Input` and its caret all survive, which
+        is exactly what the per-keystroke recompose could not manage.
+        `clear()` keeps the columns, so `_column_keys` stays valid for the
+        single-cell repaints below.
+        """
+        try:
+            table = self.query_one("#items-table", DataTable)
+        except NoMatches:
+            # Seeded before mount by `_build_detail_pane`; `compose()` will
+            # apply the filter when it builds the table.
+            return
+        table.clear()
+        self._populate_table(table)
 
     def _filtered_items(self) -> list[dict[str, Any]]:
         """Apply the status filter and search query, pinning the open item.
@@ -303,30 +344,39 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         event.stop()
 
     def watch_status_filter(self, status_filter: str) -> None:
+        self._refresh_table_rows()
         self._post_filter_changed()
 
     def watch_search_query(self, search_query: str) -> None:
+        self._refresh_table_rows()
         self._post_filter_changed()
 
     async def recompose(self) -> None:
-        """Preserve search-box focus across the recompose that typing triggers.
+        """Preserve search-box focus across a rebuild of this pane.
 
-        `search_query` is `reactive(..., recompose=True)`, so EVERY keystroke
-        in `#items-search-input` tears the whole pane down and rebuilds it --
-        and the focused input goes with it (`Widget.recompose()` removes all
-        children; Textual has no focus preservation). The user-visible
-        symptom was that only the first character of a search ever landed in
-        the box: the rest fell through to the table, where they fired the
-        reader verb keys. Textual schedules the teardown via
-        `call_next(_check_recompose)`, so a `call_after_refresh` from the
-        watcher can fire BEFORE the rebuild and refocus a doomed widget --
-        the only ordering-proof place to restore focus is here, after the
-        teardown's `await` completes. Capture WHO was focused before the
-        teardown (not a "was typing" flag: with two fast keystrokes the
-        second recompose would already have consumed a one-shot flag and
-        dropped focus again), and restore it to the fresh input afterwards.
-        Any focus other than the search box is left exactly as Textual
-        leaves it, so programmatic rebuilds never steal focus.
+        task-15460 narrowed what this covers. Typing no longer rebuilds
+        anything (`search_query`/`status_filter` are plain reactives that
+        re-populate the table in place), so the only recompose left is the
+        `items` data arrival -- which can still land while the search box is
+        focused, because the screen's reload is debounced 0.3 s behind the
+        last keystroke. The mechanism below is unchanged and still earns its
+        place for exactly that case.
+
+        The original defect, kept here because it is what the shape defends
+        against: `Widget.recompose()` removes all children and Textual has
+        no focus preservation, so the focused input went with them and only
+        the first character of a search ever landed in the box -- the rest
+        fell through to the table, where they fired the reader verb keys.
+        Textual schedules the teardown via `call_next(_check_recompose)`, so
+        a `call_after_refresh` from a watcher can fire BEFORE the rebuild
+        and refocus a doomed widget; the only ordering-proof place to
+        restore focus is here, after the teardown's `await` completes.
+        Capture WHO was focused before the teardown (not a "was typing"
+        flag: with two fast keystrokes the second recompose would already
+        have consumed a one-shot flag and dropped focus again), and restore
+        it to the fresh input afterwards. Any focus other than the search
+        box is left exactly as Textual leaves it, so programmatic rebuilds
+        never steal focus.
 
         `self.screen.focused`, NOT `self.app.focused`: `App.focused` goes
         through `App.screen`, which RAISES `ScreenStackError` while the app

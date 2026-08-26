@@ -23,7 +23,7 @@ see the extraction report's delegation table).
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.widgets import Button
@@ -41,6 +41,7 @@ from Tests.UI.test_console_native_chat_flow import (
 )
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 
@@ -200,3 +201,96 @@ def test_console_message_select_variant_moves_active_leaf():
 
     assert target == first.id
     assert store.active_leaf(session.id) == first.id
+
+
+@pytest.mark.asyncio
+async def test_roleplay_character_greeting_actions_use_live_presentation():
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    app.post_message = Mock()
+    app.notes_scope_service = SimpleNamespace(
+        save_note=AsyncMock(return_value={"id": "note-1"})
+    )
+    app.media_db = SimpleNamespace(
+        add_media_with_keywords=Mock(return_value=(7, "media-7", "saved"))
+    )
+    app.prompts_db = SimpleNamespace(
+        add_prompt=Mock(return_value=(8, "prompt-8", "saved"))
+    )
+    app.local_chatbook_service = SimpleNamespace(
+        create_chatbook=AsyncMock(return_value={"id": "chatbook-9"})
+    )
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(
+        title="Garden",
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Hello User.",
+        metadata=MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{user}}.",
+        ),
+    )
+    session.user_display_name_override = "Captain Rowan"
+
+    presentation = screen._console_message_presentation(greeting)
+    assert presentation.content == "Hello Captain Rowan."
+    assert presentation.speaker_label == "Alraune"
+
+    copy_event = SimpleNamespace(
+        button=SimpleNamespace(id=f"console-message-action-copy-{greeting.id}"),
+        stop=Mock(),
+    )
+    assert await screen.handle_console_message_action(copy_event) is True
+    app.copy_to_clipboard.assert_called_once_with("Hello Captain Rowan.")
+
+    screen._message._open_console_message_edit_modal = AsyncMock()
+    edit_event = SimpleNamespace(
+        button=SimpleNamespace(id=f"console-message-action-edit-{greeting.id}"),
+        stop=Mock(),
+    )
+    assert await screen.handle_console_message_action(edit_event) is True
+    screen._message._open_console_message_edit_modal.assert_awaited_once_with(
+        message_id=greeting.id,
+        content="Hello Captain Rowan.",
+    )
+
+    screen._message._sync_native_console_chat_ui_fn = AsyncMock()
+    speak_event = SimpleNamespace(
+        button=SimpleNamespace(id=f"console-message-action-speak-{greeting.id}"),
+        stop=Mock(),
+    )
+    assert await screen.handle_console_message_action(speak_event) is True
+    speech_event = next(
+        call.args[0]
+        for call in app.post_message.call_args_list
+        if call.args and hasattr(call.args[0], "snapshot")
+    )
+    assert speech_event.snapshot.raw_content == "Hello Captain Rowan."
+    assert speech_event.validator(speech_event.snapshot) == "Hello Captain Rowan."
+
+    await screen._message._save_console_message_as_note(greeting.id)
+    await screen._message._save_console_message_as_media(greeting.id)
+    await screen._message._save_console_message_as_prompt(greeting.id)
+    await screen._message._save_console_message_as_chatbook(greeting.id)
+
+    assert (
+        app.notes_scope_service.save_note.await_args.kwargs["content"]
+        == "Hello Captain Rowan."
+    )
+    assert (
+        app.media_db.add_media_with_keywords.call_args.kwargs["content"]
+        == "Hello Captain Rowan."
+    )
+    assert (
+        app.prompts_db.add_prompt.call_args.kwargs["system_prompt"]
+        == "Hello Captain Rowan."
+    )
+    chatbook_payload = app.local_chatbook_service.create_chatbook.await_args.kwargs
+    assert chatbook_payload["metadata"]["content"] == "Hello Captain Rowan."
+    assert chatbook_payload["metadata"]["message_role"] == "Alraune"

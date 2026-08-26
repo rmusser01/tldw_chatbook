@@ -145,6 +145,12 @@ from ...Chat.reply_sentence_sequencer import SentenceSequencer
 from ...Widgets.Console import ConsoleComposerBar
 
 if TYPE_CHECKING:
+    from ...TTS.profile_types import CharacterRef
+    from ...Widgets.Console.console_control_bar import (
+        ConsoleAutoSpeakResumeRequested,
+        ConsoleAutoSpeakRetryRequested,
+    )
+    from ...Widgets.Console.console_speech_controls import ConsoleAutoSpeakChanged
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -270,6 +276,11 @@ class ConsoleHandsFreeController:
         run_pending_voice_action: Callable[[str | None], Any],
         realtime_session_accessor: Callable[[], Any],
         enter_realtime_loop: Callable[..., None],
+        request_auto_speak_enabled: Callable[[bool], None],
+        request_auto_speak_resume: Callable[[], None],
+        request_auto_speak_retry: Callable[[], None],
+        sync_auto_speak_controls: Callable[[bool, bool, bool], None],
+        sync_hands_free_state: Callable[[bool], None],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -333,6 +344,11 @@ class ConsoleHandsFreeController:
                 the realtime engine's own entry point -- called only from
                 the fork (`_enter_console_hands_free_loop`), which picks
                 exactly one engine per loop entry.
+            request_auto_speak_enabled: Late-bound coordinator enable request.
+            request_auto_speak_resume: Late-bound coordinator resume request.
+            request_auto_speak_retry: Late-bound coordinator retry request.
+            sync_auto_speak_controls: Presentation-only auto-speak state edge.
+            sync_hands_free_state: Presentation-only Hands-free state edge.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -348,6 +364,11 @@ class ConsoleHandsFreeController:
         self._run_pending_voice_action_fn = run_pending_voice_action
         self._realtime_session_accessor = realtime_session_accessor
         self._enter_realtime_loop_fn = enter_realtime_loop
+        self._request_auto_speak_enabled_fn = request_auto_speak_enabled
+        self._request_auto_speak_resume_fn = request_auto_speak_resume
+        self._request_auto_speak_retry_fn = request_auto_speak_retry
+        self._sync_auto_speak_controls_fn = sync_auto_speak_controls
+        self._sync_hands_free_state_fn = sync_hands_free_state
 
         # The pipeline engine's own state, moved verbatim from
         # `ChatScreen.__init__`.
@@ -357,6 +378,11 @@ class ConsoleHandsFreeController:
         #: itself is a lazily-created singleton for this screen instance
         #: (`_ensure_console_chat_store`), so this only ever needs doing once.
         self._console_hands_free_store_tap_installed = False
+        #: `(store, {seam: (had_own_attr, original)}, {seam: wrapper})` while
+        #: this screen's tap is installed -- see
+        #: `uninstall_console_hands_free_store_tap`. The store OUTLIVES the
+        #: screen since task-15860, so the tap has to come back off.
+        self._console_hands_free_store_tap_undo: Any | None = None
         #: Set once (per app run) by a `VoiceVadUnavailable` event, via
         #: dictation's injected `set_hands_free_vad_degraded` callable. Read
         #: by `_enter_console_hands_free_pipeline_loop`, which shows a
@@ -364,6 +390,79 @@ class ConsoleHandsFreeController:
         #: do in degraded mode, and by `_console_pipeline_hands_free_
         #: blocker`, the realtime engine's own loud-fallback check.
         self._console_hands_free_vad_degraded = False
+
+    def _sync_hands_free_switch(self, active: bool) -> None:
+        """Mirror hands-free session state through the presentation edge.
+
+        task-18911 (fix 2): the Switch is the soft-keyboard-only user's
+        entry/exit for the mode; every session lifecycle change repaints it
+        so it never disagrees with reality. No-op when the header controls
+        are not mounted (pre-mount, mid-teardown).
+        """
+        self._sync_hands_free_state_fn(active)
+
+    async def _resolve_console_auto_speak_destination(
+        self,
+        assistant_kind: str | None,
+        character_ref: "CharacterRef | None",
+    ) -> Any:
+        """Resolve the same effective TTS authority used by synthesis."""
+        ensure_handler = getattr(self.app_instance, "_ensure_tts_handler", None)
+        if not callable(ensure_handler):
+            return None
+        handler = await ensure_handler()
+        resolver = getattr(handler, "resolve_console_speech_destination", None)
+        if not callable(resolver):
+            return None
+        try:
+            return await resolver(assistant_kind, character_ref)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to resolve the Console auto-speak destination."
+            )
+            return None
+
+    def _sync_console_auto_speak_controls(
+        self,
+        enabled: bool,
+        paused: bool,
+        retry_available: bool = False,
+    ) -> None:
+        """Push authoritative state through the presentation-only edge."""
+        self._sync_auto_speak_controls_fn(enabled, paused, retry_available)
+
+    def on_console_auto_speak_changed(
+        self,
+        event: "ConsoleAutoSpeakChanged",
+    ) -> None:
+        """Request the durable per-conversation auto-speak state.
+
+        Args:
+            event: Change event carrying the requested enabled state.
+        """
+        self._request_auto_speak_enabled_fn(event.enabled)
+
+    def on_console_auto_speak_resume_requested(
+        self,
+        event: "ConsoleAutoSpeakResumeRequested",
+    ) -> None:
+        """Resume future automatic speech after a failure.
+
+        Args:
+            event: Resume request from the Console speech controls.
+        """
+        self._request_auto_speak_resume_fn()
+
+    def on_console_auto_speak_retry_requested(
+        self,
+        event: "ConsoleAutoSpeakRetryRequested",
+    ) -> None:
+        """Retry the failed automatic reply.
+
+        Args:
+            event: Retry request from the Console speech controls.
+        """
+        self._request_auto_speak_retry_fn()
 
     @property
     def is_mounted(self) -> bool:
@@ -558,6 +657,7 @@ class ConsoleHandsFreeController:
         session = ConsoleHandsFreeSession(controller=controller, sequencer=sequencer)
         sequencer.on_drained = self._on_console_hands_free_sequencer_drained
         self._console_hands_free = session
+        self._sync_hands_free_switch(True)
         self._install_console_hands_free_store_tap()
         session.tick_timer = self.set_interval(0.1, self._tick_console_hands_free)
         controller.enter(capture_live=capture_live)
@@ -576,6 +676,7 @@ class ConsoleHandsFreeController:
         if session.tick_timer is not None:
             session.tick_timer.stop()
         self._console_hands_free = None
+        self._sync_hands_free_switch(False)
         composer = self._console_composer_or_none()
         if composer is not None:
             # Repaints over whatever hands-free's own `set_voice_status`
@@ -884,8 +985,10 @@ class ConsoleHandsFreeController:
         every wrapper calls the original method FIRST and returns its
         result unchanged; the tap only observes. Idempotent -- installed at
         most once per screen instance, and stays installed across loop
-        exit/re-entry (uninstalling would need to reach back into a store
-        that outlives any one loop session). `append_message` is the
+        exit/re-entry. task-15860: it is now REMOVED at `on_unmount`
+        (`uninstall_console_hands_free_store_tap`), because the store
+        outlives the screen and an un-removed tap would both strand a dead
+        screen and re-wrap once per Console visit. `append_message` is the
         EARLIEST of the five seams -- it fires the instant the assistant
         row is created, before any streaming (task-5 final review I3).
         """
@@ -940,12 +1043,55 @@ class ConsoleHandsFreeController:
             )
             return result
 
-        store.append_message = _append_message
-        store.append_stream_chunk = _append_stream_chunk
-        store.mark_message_complete = _mark_message_complete
-        store.mark_message_failed = _mark_message_failed
-        store.mark_message_stopped = _mark_message_stopped
+        wrappers = {
+            "append_message": _append_message,
+            "append_stream_chunk": _append_stream_chunk,
+            "mark_message_complete": _mark_message_complete,
+            "mark_message_failed": _mark_message_failed,
+            "mark_message_stopped": _mark_message_stopped,
+        }
+        # task-15860: remember what to put back. The store is app-owned and
+        # now OUTLIVES this screen, so a tap left installed would (a) keep a
+        # dead screen alive through five closures and (b) be wrapped AGAIN
+        # by the next visit's controller -- one nesting level per Console
+        # visit, forever. `on_unmount` calls
+        # `uninstall_console_hands_free_store_tap`.
+        self._console_hands_free_store_tap_undo = (
+            store,
+            {
+                name: (name in store.__dict__, getattr(store, name))
+                for name in wrappers
+            },
+            wrappers,
+        )
+        for name, wrapper in wrappers.items():
+            setattr(store, name, wrapper)
         self._console_hands_free_store_tap_installed = True
+
+    def uninstall_console_hands_free_store_tap(self) -> None:
+        """Restore the five store seams this screen wrapped, if it wrapped them.
+
+        Idempotent, and conservative: a seam that no longer holds THIS
+        screen's wrapper (something else re-wrapped it afterwards) is left
+        exactly as it is rather than clobbered.
+        """
+        undo = getattr(self, "_console_hands_free_store_tap_undo", None)
+        self._console_hands_free_store_tap_undo = None
+        self._console_hands_free_store_tap_installed = False
+        if undo is None:
+            return
+        store, originals, wrappers = undo
+        for name, wrapper in wrappers.items():
+            if store.__dict__.get(name) is not wrapper:
+                continue
+            had_own, original = originals[name]
+            if had_own:
+                setattr(store, name, original)
+            else:
+                try:
+                    delattr(store, name)
+                except AttributeError:  # pragma: no cover - already gone
+                    pass
 
     def _console_hands_free_marshal(
         self, callback: Callable[..., None], *args: Any

@@ -2,11 +2,11 @@
 
 Mirrors ``Tests/UI/test_console_edit_resend_wiring.py``'s harness style:
 ``ConsoleHarness`` mounts a real ``ChatScreen`` over a real
-``ConsoleChatStore``/``ConsoleChatController`` pair, and each test drives the
-screen's own restore machinery directly (``_console_command_rewind`` /
-``_apply_console_rewind_choice``) rather than clicking through the modal --
-the modal's own click/dismiss behavior is covered by
-``Tests/Chat/test_console_rewind_modal.py``.
+``ConsoleChatStore``/``ConsoleChatController`` pair. Legacy wiring tests drive
+the screen's restore machinery directly (``_console_command_rewind`` /
+``_apply_console_rewind_choice``); the TASK-2705 regressions use the mounted
+keyboard/Send product paths and real modal interactions. Focused modal behavior
+is also covered by ``Tests/Chat/test_console_rewind_modal.py``.
 
 Restore is pure tree navigation (SP1 primitives): the selected USER prompt's
 PARENT (found by an id lookup in ``active_path_message_ids``, never
@@ -18,7 +18,10 @@ seam ``/prompt`` uses.
 from unittest.mock import MagicMock
 
 import pytest
+from textual.events import Key
+from textual.widgets import Button
 
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -31,13 +34,20 @@ from tldw_chatbook.Chat.console_chat_models import (
     derive_console_session_title,
 )
 from tldw_chatbook.Chat.console_command_grammar import CommandParse
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_rewind_modal import (
     ConsoleRewindChoice,
     ConsoleRewindModal,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 CONSOLE_RUN_ALREADY_RUNNING_COPY = "A run is already running in this tab."
+
+
+def _press_enter_synchronously(console) -> None:
+    """Deliver Enter to the screen key handler without pumping messages."""
+    console.on_key(Key(key="enter", character="\r"))
 
 
 async def _seed_u1_a1_u2_a2(console):
@@ -59,6 +69,7 @@ async def _seed_u1_a1_u2_a2(console):
 @pytest.mark.asyncio
 async def test_restore_mid_path_truncates_active_path_and_refills_composer():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -83,6 +94,7 @@ async def test_restore_mid_path_truncates_active_path_and_refills_composer():
 @pytest.mark.asyncio
 async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -108,6 +120,7 @@ async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path():
 @pytest.mark.asyncio
 async def test_restore_blocked_while_a_run_is_streaming_makes_no_mutation():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -145,6 +158,7 @@ async def test_restore_blocked_while_a_run_is_streaming_makes_no_mutation():
 @pytest.mark.asyncio
 async def test_none_choice_just_refocuses_composer_without_mutation():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -170,6 +184,7 @@ async def test_summarize_up_to_choice_dispatches_console_run_worker_without_muta
     the exclusive per-session ``console-run-{session_id}`` worker group (see
     the parallel-agents spec Sec3) and never does tree surgery."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -192,8 +207,13 @@ async def test_summarize_up_to_choice_dispatches_console_run_worker_without_muta
         )
         await pilot.pause()
 
-    assert spy_worker.call_count == 1
-    group = spy_worker.call_args.kwargs.get("group")
+    run_calls = [
+        call
+        for call in spy_worker.call_args_list
+        if call.kwargs.get("group") == f"console-run-{session.id}"
+    ]
+    assert len(run_calls) == 1
+    group = run_calls[0].kwargs.get("group")
     assert isinstance(group, str) and group.startswith("console-run-"), group
     assert group == f"console-run-{session.id}", group
     # Summarize never mutates the transcript tree, and nothing is stored until
@@ -206,6 +226,7 @@ async def test_summarize_up_to_choice_dispatches_console_run_worker_without_muta
 async def test_summarize_up_to_choice_blocked_while_a_run_is_streaming():
     """A summarize refuses (no worker) while a run streams, like restore does."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -235,7 +256,10 @@ async def test_summarize_up_to_choice_blocked_while_a_run_is_streaming():
         )
         await pilot.pause()
 
-    assert spy_worker.call_count == 0
+    assert not any(
+        call.kwargs.get("group") == f"console-run-{session.id}"
+        for call in spy_worker.call_args_list
+    )
     assert (CONSOLE_RUN_ALREADY_RUNNING_COPY, "warning") in notices
     assert store.active_path_message_ids(session.id) == original_path
     assert store.session_context_summary(session.id) == (None, None)
@@ -244,6 +268,7 @@ async def test_summarize_up_to_choice_blocked_while_a_run_is_streaming():
 @pytest.mark.asyncio
 async def test_console_command_rewind_notifies_when_no_prompts_yet():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -271,6 +296,7 @@ async def test_restore_refills_composer_with_full_prompt_not_truncated_preview()
     prompt over the preview's `max_length` silently clipped the re-edit.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     long_prompt = "A" * 120
@@ -312,6 +338,7 @@ async def test_restore_to_a_stale_message_id_makes_no_mutation_and_notifies():
     task adds, so this documents that guard still holds.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -355,6 +382,7 @@ async def test_restore_choice_guards_against_changed_active_session():
     instead of mutating the now-different active session's tree.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -399,6 +427,7 @@ async def test_summarize_choice_guards_against_changed_active_session():
     """Same session-changed guard covers the summarize-up-to branch: no
     worker is dispatched and nothing is stored."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -439,6 +468,7 @@ async def test_summarize_choice_guards_against_changed_active_session():
 @pytest.mark.asyncio
 async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -456,3 +486,273 @@ async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
             ids["u1"].id,
         ]
         assert [row.index_label for row in modal._prompts] == ["#2", "#1"]
+
+
+@pytest.mark.asyncio
+async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft():
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _seed_u1_a1_u2_a2(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("/rewind")
+        console._sync_console_workbench_actions_from_draft()
+        console._sync_console_command_popup()
+        assert console._dismiss_console_command_popup()
+        _press_enter_synchronously(console)
+        composer.insert_text("next draft")
+        assert composer.draft_text() == "next draft"
+
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleRewindModal)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is console
+        assert composer.draft_text() == "next draft"
+        assert composer.has_focus
+
+
+@pytest.mark.asyncio
+async def test_visible_send_rewind_cancel_clears_command_and_refocuses_empty_composer():
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _seed_u1_a1_u2_a2(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/rewind")
+        console._sync_console_workbench_actions_from_draft()
+        await pilot.pause()
+
+        send = console.query_one("#console-send-message", Button)
+        assert not send.disabled
+        await pilot.click("#console-send-message")
+        await pilot.pause()
+
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleRewindModal)
+        assert composer.draft_text() == ""
+
+        await pilot.click("#console-rewind-row-0")
+        await pilot.pause()
+        await pilot.click("#console-rewind-action-cancel")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is console
+        assert send.disabled
+        assert console._is_descendant_or_self(host.focused, composer)
+
+
+@pytest.mark.asyncio
+async def test_rewind_restore_replaces_late_keyboard_text_with_full_prompt():
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+    full_prompt = "selected full prompt " + ("x" * 100)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content=full_prompt,
+        )
+        await console._sync_native_console_chat_ui()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("/rewind")
+        console._sync_console_workbench_actions_from_draft()
+        console._sync_console_command_popup()
+        assert console._dismiss_console_command_popup()
+        _press_enter_synchronously(console)
+        composer.insert_text("late text")
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConsoleRewindModal)
+
+        await pilot.click("#console-rewind-row-0")
+        await pilot.pause()
+        await pilot.click("#console-rewind-action-restore")
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is console
+        assert composer.draft_text() == full_prompt
+
+
+@pytest.mark.asyncio
+async def test_rewind_no_prompts_restores_keyboard_stash_ahead_of_late_text():
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+    notices: list[tuple[str, str]] = []
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Existing response without a USER prompt.",
+        )
+        await console._sync_native_console_chat_ui()
+        console.app_instance.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("/rewind")
+        console._sync_console_workbench_actions_from_draft()
+        console._sync_console_command_popup()
+        assert console._dismiss_console_command_popup()
+
+        _press_enter_synchronously(console)
+        composer.insert_text("next")
+        for _ in range(40):
+            if notices:
+                break
+            await pilot.pause(0.01)
+
+        assert host.screen_stack[-1] is console
+        assert composer.draft_text() == "/rewindnext"
+        assert ("Nothing to rewind.", "warning") in notices
+
+
+@pytest.mark.asyncio
+async def test_rewind_with_args_keeps_restore_before_dispatch_behavior():
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _seed_u1_a1_u2_a2(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("/rewind anything")
+        console._sync_console_workbench_actions_from_draft()
+        console._sync_console_command_popup()
+
+        _press_enter_synchronously(console)
+        composer.insert_text("next")
+        await pilot.pause()
+
+        assert isinstance(host.screen_stack[-1], ConsoleRewindModal)
+        assert composer.draft_text() == "/rewind anythingnext"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["keyboard", "visible-send"])
+async def test_rewind_modal_launch_failure_preserves_draft(source, monkeypatch):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Existing prompt.",
+        )
+        await console._sync_native_console_chat_ui()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/rewind")
+
+        if source == "keyboard":
+            stash = composer.stash_draft_for_send()
+            assert stash is not None and stash.text == "/rewind"
+            console._console_pending_send_stash = stash
+            composer.insert_text("late")
+
+        real_push_screen = console.app.push_screen
+
+        def fail_rewind_modal(screen, *args, **kwargs):
+            if isinstance(screen, ConsoleRewindModal):
+                raise RuntimeError("rewind modal launch failed")
+            return real_push_screen(screen, *args, **kwargs)
+
+        monkeypatch.setattr(console.app, "push_screen", fail_rewind_modal)
+
+        with pytest.raises(RuntimeError, match="rewind modal launch failed"):
+            await console._send_console_message_from_visible_action()
+
+        expected = "/rewindlate" if source == "keyboard" else "/rewind"
+        assert composer.draft_text() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["identity", "edit-retype", "generation"])
+async def test_visible_rewind_cleanup_preserves_a_changed_composer(
+    mutation, monkeypatch
+):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/rewind")
+        opening_snapshot = composer.capture_draft_snapshot()
+        replacement = MagicMock(spec=ConsoleComposerBar)
+
+        async def succeed_after_mutation(_parse):
+            if mutation == "identity":
+                monkeypatch.setattr(
+                    console, "_console_composer_or_none", lambda: replacement
+                )
+            elif mutation == "edit-retype":
+                composer.insert_text("x")
+                composer.delete_left()
+            else:
+                composer.load_draft("/rewind")
+            return True
+
+        clear_draft = MagicMock()
+        monkeypatch.setattr(console, "_console_command_rewind", succeed_after_mutation)
+        monkeypatch.setattr(console, "_clear_console_composer_draft", clear_draft)
+
+        assert not await console._send_console_message_from_visible_action()
+
+        current_snapshot = composer.capture_draft_snapshot()
+        assert composer.draft_text() == "/rewind"
+        clear_draft.assert_not_called()
+        if mutation == "identity":
+            assert console._console_composer_or_none() is replacement
+            assert replacement is not composer
+            assert current_snapshot.edit_serial == opening_snapshot.edit_serial
+            assert current_snapshot.generation == opening_snapshot.generation
+        elif mutation == "edit-retype":
+            assert console._console_composer_or_none() is composer
+            assert current_snapshot.edit_serial > opening_snapshot.edit_serial
+            assert current_snapshot.generation == opening_snapshot.generation
+        else:
+            assert console._console_composer_or_none() is composer
+            assert current_snapshot.edit_serial == opening_snapshot.edit_serial
+            assert current_snapshot.generation > opening_snapshot.generation

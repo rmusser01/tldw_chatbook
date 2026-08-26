@@ -4,6 +4,8 @@ from textual.message import Message
 from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+    STARRED_BUCKET,
+    TODAY_BUCKET,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -602,3 +604,124 @@ async def test_a_blocked_verb_posts_nothing_even_if_it_is_pressed_directly():
         )
         await pilot.pause()
         assert app.write_requests == []
+
+
+# --- TASK-3072 plan task 6: the Starred smart feed ---------------------------
+#
+# NNW's first-class smart feed: one root above the watchlists whose badge is
+# `SubscriptionsDB.get_flagged_items_count` (starred items, status-agnostic)
+# and whose scope maps to `{"is_flagged": True}` in the items query.
+
+
+def _starred_data(flagged: int):
+    data = _tree_data()
+    data["counts"][STARRED_BUCKET] = {"total": flagged, "unread": flagged}
+    return data
+
+
+@pytest.mark.asyncio
+async def test_starred_root_renders_above_the_watchlists_with_its_count():
+    app = _TreeApp(_starred_data(5))
+    async with app.run_test():
+        starred = app.query_one("#wl-tree-node-starred", Button)
+        assert str(starred.label) == "★ Starred  5"
+        # DOM order is the rail's reading order: starred sits with the roots,
+        # above every watchlist node.
+        ids = [node.id for node in app.query(Button)]
+        assert ids.index("wl-tree-node-starred") < ids.index(
+            "wl-tree-node-watchlist-1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_starred_root_without_a_count_renders_zero():
+    """Before any item is starred there is no STARRED_BUCKET entry at all --
+    the badge must read 0, not crash the rail."""
+    app = _TreeApp(_tree_data())
+    async with app.run_test():
+        starred = app.query_one("#wl-tree-node-starred", Button)
+        assert str(starred.label) == "★ Starred  0"
+
+
+@pytest.mark.asyncio
+async def test_starred_root_tooltip_says_starred_not_unread():
+    """The legend row labels the rail's numbers "unread items"; the starred
+    badge counts STARRED items, so its own tooltip must say the true word --
+    the TASK-2304 AC#3 honesty rule applied to the one node the legend does
+    not describe."""
+    app = _TreeApp(_starred_data(5))
+    async with app.run_test():
+        starred = app.query_one("#wl-tree-node-starred", Button)
+        tooltip = starred.tooltip or ""
+        assert "5 starred items" in tooltip
+        assert "unread" not in tooltip
+
+
+@pytest.mark.asyncio
+async def test_selecting_starred_posts_the_starred_scope():
+    app = _TreeApp(_starred_data(5))
+    async with app.run_test() as pilot:
+        await pilot.click("#wl-tree-node-starred")
+        await pilot.pause()
+        assert app.scopes[-1] == TreeScope(kind="starred")
+
+
+@pytest.mark.asyncio
+async def test_active_scope_starred_marks_the_starred_root_active():
+    app = _TreeApp(_starred_data(5), active_scope=TreeScope(kind="starred"))
+    async with app.run_test():
+        assert app.query_one("#wl-tree-node-starred", Button).has_class("is-active")
+        assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
+
+
+# --- TASK-3791 plan task 4: All Unread + Today smart feeds ---------------------
+
+
+def _phase3_data(today: int = 2):
+    data = _starred_data(5)
+    data["counts"][TODAY_BUCKET] = {"total": today, "unread": today}
+    return data
+
+
+@pytest.mark.asyncio
+async def test_unread_and_today_roots_render_in_the_smart_feed_cluster():
+    """NNW's standing smart feeds: All Unread and Today sit with Starred,
+    above the watchlists. All Unread's badge is the same unread count the
+    All sources root shows (one fact, two angles); Today's is the
+    unread-since-local-midnight count the screen inserts."""
+    app = _TreeApp(_phase3_data())
+    async with app.run_test():
+        assert str(app.query_one("#wl-tree-node-unread", Button).label) == "All Unread  37"
+        assert str(app.query_one("#wl-tree-node-today", Button).label) == "Today  2"
+        ids = [node.id for node in app.query(Button)]
+        assert ids.index("wl-tree-node-unassigned") < ids.index("wl-tree-node-unread")
+        assert ids.index("wl-tree-node-unread") < ids.index("wl-tree-node-today")
+        assert ids.index("wl-tree-node-today") < ids.index("wl-tree-node-starred")
+        assert ids.index("wl-tree-node-starred") < ids.index("wl-tree-node-watchlist-1")
+
+
+@pytest.mark.asyncio
+async def test_today_root_without_a_count_renders_zero():
+    app = _TreeApp(_starred_data(5))
+    async with app.run_test():
+        assert str(app.query_one("#wl-tree-node-today", Button).label) == "Today  0"
+
+
+@pytest.mark.asyncio
+async def test_selecting_unread_and_today_post_their_scopes():
+    app = _TreeApp(_phase3_data())
+    async with app.run_test() as pilot:
+        await pilot.click("#wl-tree-node-unread")
+        await pilot.pause()
+        assert app.scopes[-1] == TreeScope(kind="unread")
+        await pilot.click("#wl-tree-node-today")
+        await pilot.pause()
+        assert app.scopes[-1] == TreeScope(kind="today")
+
+
+@pytest.mark.asyncio
+async def test_active_scope_today_marks_the_today_root_active():
+    app = _TreeApp(_phase3_data(), active_scope=TreeScope(kind="today"))
+    async with app.run_test():
+        assert app.query_one("#wl-tree-node-today", Button).has_class("is-active")
+        assert not app.query_one("#wl-tree-node-unread", Button).has_class("is-active")

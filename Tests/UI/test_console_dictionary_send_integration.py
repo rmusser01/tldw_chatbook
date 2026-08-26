@@ -24,7 +24,10 @@ from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
     LocalChatDictionaryService,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.console_provider_doubles import with_destination
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 @pytest.fixture
@@ -45,12 +48,19 @@ class _CapturingGateway:
     def __init__(self):
         self.captured = None
 
-    async def resolve_for_send(self, _selection):
-        class _R:
-            ready = True
-            visible_copy = ""
-
-        return _R()
+    async def resolve_for_send(self, selection):
+        return with_destination(ConsoleProviderResolution(
+            provider=selection.provider,
+            base_url=selection.base_url or "",
+            model=(
+                selection.explicit_model
+                or selection.configured_model
+                or "test-model"
+            ),
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+        ))
 
     async def stream_chat(self, _resolution, provider_messages, **kwargs):
         self.captured = [dict(m) for m in provider_messages]
@@ -69,6 +79,8 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
     dictionary_db,
 ):
     app = _build_test_app()
+    attach_chachanotes_db(app)
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = ChatDictionaryScopeService(
         local_service=LocalChatDictionaryService(dictionary_db), server_service=None
@@ -90,8 +102,6 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
         controller = screen._ensure_console_chat_controller()
         gateway = _CapturingGateway()
         controller.provider_gateway = gateway
-        controller._agent_runtime_enabled = False  # force the provider branch
-
         result = await controller.submit_draft("The Warden nods.")
         assert result.accepted
 
@@ -110,6 +120,7 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
 @pytest.mark.asyncio
 async def test_native_send_applies_conversation_dictionary_agent_branch(dictionary_db):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = ChatDictionaryScopeService(
         local_service=LocalChatDictionaryService(dictionary_db), server_service=None
@@ -148,23 +159,9 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
         # runs unmodified against a real placeholder message.
         def _fake_run_reply(
             *,
-            conversation_id,
-            session_id,
-            resolution,
             assistant_message_id,
-            model,
-            session_system_prompt,
             agent_messages,
-            should_cancel,
-            provider_stream_signals=None,
-            supersede_previous=False,
-            mcp_provider=None,
-            builtin_gate=None,
-            review_tool_calls=None,
-            turn_skill_bindings=(),
-            turn_bundle_block="",
-            request_skill_install_confirm=None,
-            request_skill_script_confirm=None,
+            **_kwargs,
         ):
             captured["agent_messages"] = [dict(m) for m in agent_messages]
             from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
@@ -175,9 +172,16 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
 
         class _Bridge:
             run_reply = staticmethod(_fake_run_reply)
+            # task-15791: the conversation browser's poll now batch-reads
+            # sub-agent counts through the bridge (perf finding A); the
+            # double predates it -- the stale-double class.
+            subagent_counts = staticmethod(
+                lambda conversation_ids: {}
+            )
 
-        controller._agent_bridge = _Bridge()
-        controller._agent_runtime_enabled = True
+        bridge = _Bridge()
+        screen._ensure_console_agent_bridge = lambda: bridge
+        controller.update_agent_runtime(enabled=True, bridge=bridge)
 
         result = await controller.submit_draft("The Warden nods.")
         assert result.accepted

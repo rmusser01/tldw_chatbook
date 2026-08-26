@@ -266,6 +266,7 @@ def test_log_origin_ipv6_host_is_bracketed():
         "http://",
         "://bad",
     ],
+    ids=lambda url: "token-query" if "?token=" in url else None,
 )
 def test_log_origin_never_raises_for_non_http_or_unparseable_input(url):
     """Non-http(s) scheme, hostless, and unparseable input all redact to a fixed
@@ -585,6 +586,12 @@ def test_httpx_same_origin_redirect_allowed_and_followed():
 
 
 def test_httpx_cross_origin_hop_strips_credentials(monkeypatch):
+    """Credentials do not follow a redirect off the original origin.
+
+    Args:
+        monkeypatch: pytest fixture -- pins DNS resolution to a public IP so
+            this stays a transport-only test.
+    """
     _resolve_to(monkeypatch, ["93.184.216.34"])
     seen = []
     routes = {
@@ -596,14 +603,24 @@ def test_httpx_cross_origin_hop_strips_credentials(monkeypatch):
             "https://a.example/start",
             client=client,
             max_bytes=1024,
-            headers={"Authorization": "Bearer secret", "Cookie": "sid=1", "X-Keep": "y"},
+            headers={
+                "Authorization": "Bearer secret",
+                "Cookie": "sid=1",
+                "X-Keep": "y",
+                "Accept": "text/html",
+            },
         )
     assert resp.content == b"done"
     first, second = seen[0], seen[1]
     assert first.headers.get("authorization") == "Bearer secret"
     assert "authorization" not in second.headers
     assert "cookie" not in second.headers
-    assert second.headers.get("x-keep") == "y"
+    # task-19733: "X-Keep" used to be asserted PRESENT here, encoding the old
+    # denylist rule (drop four known names, forward everything else). The
+    # credential header name is user-supplied in this app, so that rule could
+    # never be safe; the hop now carries only the explicit allowlist.
+    assert "x-keep" not in second.headers
+    assert second.headers.get("accept") == "text/html"
 
 
 def test_httpx_same_host_scheme_downgrade_strips_credentials(monkeypatch):
@@ -951,6 +968,132 @@ def test_requests_sink_cap_still_enforced():
 
 
 # ---------------------------------------------------------------------------
+# Default-timeout session factory (task-19830)
+# ---------------------------------------------------------------------------
+from tldw_chatbook.Utils.egress import (
+    DEFAULT_SESSION_CONNECT_TIMEOUT,
+    DEFAULT_SESSION_READ_TIMEOUT,
+    DefaultTimeoutSession,
+    create_default_session,
+    default_session_timeout,
+)
+
+
+class _TimeoutRecordingAdapter(BaseAdapter):
+    """Records the ``timeout`` kwarg ``Session.send()`` hands the adapter on
+    every request, without touching the network."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen_timeouts = []
+
+    def send(self, request, **kwargs):
+        self.seen_timeouts.append(kwargs.get("timeout"))
+        resp = RequestsResponse()
+        resp.status_code = 200
+        resp.raw = io.BytesIO(b"ok")
+        resp.url = request.url
+        resp.request = request
+        return resp
+
+    def close(self):
+        pass
+
+
+def _default_session_with_recorder(**factory_kwargs):
+    sess = create_default_session(**factory_kwargs)
+    adapter = _TimeoutRecordingAdapter()
+    sess.mount("http://", adapter)
+    sess.mount("https://", adapter)
+    return sess, adapter
+
+
+def test_create_default_session_returns_a_default_timeout_session():
+    sess = create_default_session()
+    assert isinstance(sess, DefaultTimeoutSession)
+    assert isinstance(sess, requests_lib.Session)
+
+
+def test_default_session_applies_default_timeout_when_get_omits_one():
+    sess, adapter = _default_session_with_recorder()
+    sess.get("https://example.com/")
+    assert adapter.seen_timeouts == [
+        (DEFAULT_SESSION_CONNECT_TIMEOUT, DEFAULT_SESSION_READ_TIMEOUT)
+    ]
+
+
+def test_default_session_applies_default_timeout_to_post_too():
+    sess, adapter = _default_session_with_recorder()
+    sess.post("https://example.com/", json={"a": 1})
+    assert adapter.seen_timeouts == [
+        (DEFAULT_SESSION_CONNECT_TIMEOUT, DEFAULT_SESSION_READ_TIMEOUT)
+    ]
+
+
+def test_explicit_timeout_keyword_wins_over_default():
+    sess, adapter = _default_session_with_recorder()
+    sess.get("https://example.com/", timeout=5)
+    assert adapter.seen_timeouts == [5]
+
+
+def test_explicit_timeout_none_is_respected_not_overridden():
+    """``timeout=None`` is a deliberate 'no timeout' from the caller -- the
+    session must not paper over it with its own default."""
+    sess, adapter = _default_session_with_recorder()
+    sess.get("https://example.com/", timeout=None)
+    assert adapter.seen_timeouts == [None]
+
+
+def test_explicit_positional_timeout_on_request_wins_over_default():
+    """``Session.request(method, url, params, data, headers, cookies, files,
+    auth, timeout, ...)`` -- a caller passing timeout as the 9th positional
+    argument (7th after method/url) must not get it overridden either."""
+    sess, adapter = _default_session_with_recorder()
+    sess.request("GET", "https://example.com/", None, None, None, None, None, None, 7)
+    assert adapter.seen_timeouts == [7]
+
+
+def test_default_session_timeout_reads_config_not_hardcoded(monkeypatch):
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: {
+            "request_connect_timeout_seconds": 3,
+            "request_read_timeout_seconds": 45,
+        }.get(key, default),
+    )
+    assert default_session_timeout() == (3.0, 45.0)
+
+
+def test_create_default_session_honours_config_default(monkeypatch):
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: {
+            "request_connect_timeout_seconds": 2,
+            "request_read_timeout_seconds": 9,
+        }.get(key, default),
+    )
+    sess, adapter = _default_session_with_recorder()
+    sess.get("https://example.com/")
+    assert adapter.seen_timeouts == [(2.0, 9.0)]
+
+
+def test_explicit_factory_timeout_overrides_config(monkeypatch):
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: {
+            "request_connect_timeout_seconds": 2,
+            "request_read_timeout_seconds": 9,
+        }.get(key, default),
+    )
+    sess, adapter = _default_session_with_recorder(timeout=(1.0, 1.0))
+    sess.get("https://example.com/")
+    assert adapter.seen_timeouts == [(1.0, 1.0)]
+
+
+# ---------------------------------------------------------------------------
 # Guarded aiohttp helper + Playwright chain validation
 # ---------------------------------------------------------------------------
 from tldw_chatbook.Utils.egress import (
@@ -1145,10 +1288,16 @@ def test_hop_headers_strips_x_goog_api_key_cross_origin():
     # host would forward the real API key verbatim.
     from tldw_chatbook.Utils.egress import _hop_headers
 
-    headers = {"x-goog-api-key": "secret-key", "X-Keep": "y"}
+    headers = {"x-goog-api-key": "secret-key", "X-Keep": "y", "Accept": "*/*"}
     stripped = _hop_headers(headers, False)
     assert "x-goog-api-key" not in stripped
-    assert stripped.get("X-Keep") == "y"
+    # task-19733 inverted the rule: an unrecognised custom header ("X-Keep")
+    # no longer survives a cross-origin hop either, because nothing here can
+    # tell a user-named credential from a user-named non-credential. What
+    # survives is the explicit allowlist -- see
+    # Tests/Utils/test_egress_cross_origin_header_allowlist.py.
+    assert "X-Keep" not in stripped
+    assert stripped.get("Accept") == "*/*"
 
 
 def test_hop_headers_keeps_x_goog_api_key_same_origin():

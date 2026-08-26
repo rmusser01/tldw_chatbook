@@ -3,7 +3,7 @@
 
 This module is the pool's target module: ``multiprocessing.get_context("spawn")``
 re-imports it fresh in every worker process, so **module scope here must
-import stdlib only**. Every actually-heavy import (``local_file_ingestion``
+import stdlib only, plus the stdlib-only progress contract**. Every actually-heavy import (``local_file_ingestion``
 and everything it pulls in for a given file type -- PDF/docling, ebook,
 audio/video transcription, LLM analysis, ...) is deferred into
 ``run_parse_job``'s function body. Importing this module must never pull in
@@ -29,32 +29,44 @@ process boundary -- workers never touch the media DB):
         "perform_analysis": bool,
         "api_name": str | None,
         "api_key": str | None,
+        "analysis_keyless_ok": bool,
+        "analysis_call": dict | None,
         "chunk_options": dict | None,
         "metadata": dict | None,
+        "encoding": str | None,
+        "analysis_skipped_reason": str | None,
     }
 
-The Library ingest queue coordinator (F3 Task 4) builds this dict
-mechanically from a ``LibraryIngestJob``'s fields -- ``title``, ``author``,
-``keywords``, ``perform_analysis``, ``chunk_enabled``, ``chunk_size`` -- the
-same one-step translation ``app.py``'s (pre-F3-pool) queue-runner already
-performs for ``ingest_local_file``:
+The Library ingest queue coordinator (F3 Task 4) builds this dict from a
+``LibraryIngestJob``'s fields via ``app.py``'s ``_ingest_job_options``.
+(task-3301) Since the ingest-controls wiring, that builder also resolves
+the live option values the schema above carries:
 
-    options = {
-        "title": job.title or None,
-        "author": job.author or None,
-        "keywords": list(job.keywords) or None,
-        "perform_analysis": job.perform_analysis,
-        "chunk_options": (
-            {"method": "sentences", "size": job.chunk_size, "overlap": 100}
-            if job.chunk_enabled
-            else None
-        ),
-    }
+* ``chunk_options`` is ``None`` when Chunk content is OFF (the parse
+  pipeline treats ``None`` as "do not chunk" for every type) and
+  ``{"size": N, "max_size": N, "overlap": M}`` (ints) when ON;
+* ``encoding`` carries the generic Encoding selection for the
+  plaintext/html readers;
+* ``api_name``/``api_key`` are present when analysis was requested AND
+  the configured ``[analysis_defaults]`` provider resolves as ready
+  (``Library/ingest_analysis.py``); otherwise
+  ``analysis_skipped_reason`` says why analysis will not run, and the
+  writer surfaces it on the done row. (task-3301 xhigh review round)
+  ``api_name`` is the NORMALIZED chat dispatch name (an
+  ``API_CALL_HANDLERS`` key); ``analysis_keyless_ok`` is the explicit
+  opt-in that lets a keyless-READY provider analyze without a
+  credential (direct callers that never set it keep the historical
+  no-key => silent-skip contract); ``analysis_call`` carries the full
+  ``[analysis_defaults]`` call shape
+  (model/temperature/top_p/min_p/max_tokens) for viewer-parity
+  analysis. A failed analysis travels back as the payload's
+  ``analysis_failed_reason`` (plus a warning) and annotates the done
+  row as "analysis failed: ...".
 
-(``custom_prompt``/``system_prompt``/``api_name``/``api_key``/``metadata``
-have no ``LibraryIngestJob`` counterpart -- the Library queue never sets
-them, so they're simply absent/``None``; they exist in the schema only
-because ``ingest_local_file``'s direct programmatic callers --
+(``custom_prompt``/``system_prompt``/``metadata`` have no
+``LibraryIngestJob`` counterpart -- the Library queue never sets them, so
+they're simply absent/``None``; they exist in the schema only because
+``ingest_local_file``'s direct programmatic callers --
 ``batch_ingest_files``, ``quick_ingest``, the server ingest path -- still
 use them.)
 
@@ -67,6 +79,8 @@ this dict, and the structured result below, cross the process boundary as
 from __future__ import annotations
 
 from typing import Any, Dict
+
+from .ingest_parse_progress import emit_parse_progress, install_parse_progress_sink
 
 
 def silence_ingest_worker_import_noise() -> None:
@@ -101,6 +115,12 @@ def silence_ingest_worker_import_noise() -> None:
     # "WARNING:root:…" flood channel. A NullHandler keeps root non-empty
     # so neither auto-basicConfig nor lastResort fires.
     logging.getLogger().addHandler(logging.NullHandler())
+
+
+def initialize_ingest_parse_worker(progress_queue: Any | None = None) -> None:
+    """Initialize import-noise handling and the worker-local progress sink."""
+    silence_ingest_worker_import_noise()
+    install_parse_progress_sink(progress_queue)
 
 
 #: Max underlying exception-chain messages captured for the UI's
@@ -152,7 +172,11 @@ def classify_parse_failure(exc: Exception) -> bool:
     return str(exc).strip().startswith("Unsupported file type")
 
 
-def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
+def run_parse_job(
+    file_path: str,
+    options: Dict[str, Any],
+    progress_context: tuple[int, str] | None = None,
+) -> Dict[str, Any]:
     """Pool entry point: parse one file into a picklable, structured result.
 
     Top-level and spawn-safe -- this is the exact callable submitted to a
@@ -167,6 +191,8 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
     Args:
         file_path: Path to the file to parse.
         options: See the module docstring for the schema.
+        progress_context: Optional ``(generation, job_id)`` identity bound by
+            the parent process for best-effort progress telemetry.
 
     Returns:
         ``{"ok": True, "payload": <dict>}`` on success, where ``payload``
@@ -177,13 +203,35 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
         empty) and ``permanent`` is ``classify_parse_failure(exc)``.
     """
     try:
+        if progress_context is not None:
+            generation, job_id = progress_context
+
+            def progress_callback(phase, message, percent=None):
+                emit_parse_progress(
+                    generation,
+                    job_id,
+                    phase,
+                    message,
+                    percent,
+                )
+
+        else:
+            progress_callback = None
+
         # Deferred import: keeps this module's own import stdlib-only (see
         # module docstring) so a freshly spawned worker process doesn't pay
         # for local_file_ingestion's parse-chain imports just to register
         # this function as the pool's target.
         from .local_file_ingestion import parse_local_file_for_ingest
 
-        payload = parse_local_file_for_ingest(file_path, options)
+        if progress_callback is None:
+            payload = parse_local_file_for_ingest(file_path, options)
+        else:
+            payload = parse_local_file_for_ingest(
+                file_path,
+                options,
+                progress_callback=progress_callback,
+            )
     except Exception as exc:  # noqa: BLE001 - must never raise across the process boundary
         message = str(exc).strip() or exc.__class__.__name__
         permanent = classify_parse_failure(exc)

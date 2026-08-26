@@ -33,6 +33,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as document_processing
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     classify_parse_failure,
+    initialize_ingest_parse_worker,
     run_parse_job,
 )
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
@@ -328,6 +329,76 @@ def test_persist_db_failure_is_wrapped_as_file_ingestion_error(tmp_path: Path) -
         persist_parsed_media(payload, _ExplodingDB())
 
 
+def test_persist_reimport_without_keywords_preserves_curated_keywords_on_restore(
+    tmp_path: Path,
+) -> None:
+    """P1 re-critique finding 2 follow-through: ``parse_local_file_for_
+    ingest`` always normalizes an omitted ``keywords`` option to ``[]``
+    (never ``None``), so ``persist_parsed_media`` must convert that empty
+    list back to "not provided" before handing it to the DB layer -- which
+    now distinguishes "no keywords argument" (preserve existing curated
+    keywords on a trash-restore) from "explicit empty list" (clear them).
+    Without that conversion, plainly re-importing the same file (the
+    real-world "I deleted this by mistake, let me re-import it" flow, the
+    one production caller that passes ``restore_trashed=True``) would
+    silently wipe every curated keyword the row had, exactly the data loss
+    task-4022 was written to prevent. Uses a real file-backed
+    ``MediaDatabase`` (never a mock or ``:memory:``) since this is a
+    DB-layer keyword-persistence claim.
+    """
+    db_path = tmp_path / "media.db"
+    db = MediaDatabase(str(db_path), client_id="test-persist-restore-keywords")
+
+    source = tmp_path / "reimport-me.txt"
+    source.write_text("Original content.", encoding="utf-8")
+
+    # First import: the user explicitly curates keywords via the ingest
+    # options.
+    first_payload = parse_local_file_for_ingest(
+        str(source), {"keywords": ["curated", "mine"]}
+    )
+    # ``parse_local_file_for_ingest`` builds this via ``list(set(...))``
+    # internally, so its order is not guaranteed (varies with the
+    # process's hash seed, not with test order) -- compare unordered.
+    assert sorted(first_payload["keywords"]) == ["curated", "mine"]
+    media_id, _media_uuid, msg = persist_parsed_media(first_payload, db)
+    assert media_id is not None, msg
+
+    def _current_keywords() -> list[str]:
+        return sorted(
+            r["keyword"]
+            for r in db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk "
+                "ON k.id = mk.keyword_id WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+
+    assert _current_keywords() == ["curated", "mine"]
+    assert db.mark_as_trash(media_id) is True
+
+    # Re-import the SAME file with the SAME options object shape a real
+    # "just re-drop the file in" flow produces: no keywords typed this
+    # time, and no extraction gave any either -- the ingest options
+    # normalize that to an EMPTY list (``parse_local_file_for_ingest``'s
+    # own ``if keywords is None: keywords = []``), never ``None``.
+    second_payload = parse_local_file_for_ingest(str(source), {})
+    assert second_payload["keywords"] == []
+    reimported_id, _reimported_uuid, msg2 = persist_parsed_media(second_payload, db)
+
+    assert reimported_id == media_id, msg2
+    assert "restored" in msg2.lower(), msg2
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 0
+
+    assert _current_keywords() == ["curated", "mine"], (
+        "re-importing a restored file without retyping its keywords must "
+        "not wipe the curated keywords it already had"
+    )
+
+    db.close_connection()
+
+
 # --- ingest_local_file (compose) --------------------------------------------
 
 
@@ -495,6 +566,122 @@ def test_ingest_local_file_audio_returns_real_media_id(
     assert db.get_media_by_url(f"file://{source.absolute()}") is not None
 
 
+def test_audio_processor_uses_injected_transcription_runner_without_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import transcription_service
+    from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def runner(audio_path: str, **kwargs: object) -> dict[str, object]:
+        calls.append((audio_path, kwargs))
+        return {"text": "resident transcript", "segments": []}
+
+    monkeypatch.setattr(
+        transcription_service,
+        "TranscriptionService",
+        lambda: (_ for _ in ()).throw(AssertionError("service constructed")),
+    )
+    processor = LocalAudioProcessor(None, transcription_runner=runner)
+
+    result = processor._transcribe_audio(
+        "/private/media.wav",
+        provider="parakeet-onnx",
+        model="nemo-parakeet-tdt-0.6b-v2",
+        language="en",
+    )
+
+    assert result == {"text": "resident transcript", "segments": []}
+    assert calls[0][0] == "/private/media.wav"
+    assert callable(calls[0][1]["progress_callback"])
+
+
+def test_faster_whisper_batch_provenance_records_translation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+    from tldw_chatbook.Local_Ingestion.transcription_service import (
+        TranscriptionService,
+    )
+
+    monkeypatch.setattr(
+        TranscriptionService,
+        "transcribe",
+        lambda self, audio_path, **kwargs: {
+            "text": "Translated transcript.",
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "Translated transcript."}
+            ],
+            "language": "fr",
+            "duration": 1.0,
+            "provider": "faster-whisper",
+            "model": "base",
+            "diarization_performed": False,
+        },
+    )
+
+    result = LocalAudioProcessor(None)._transcribe_audio(
+        "/private/media.wav",
+        provider="faster-whisper",
+        model="base",
+        language="fr",
+        target_lang="en",
+        diarize=True,
+        attempt_id="attempt-translation",
+        job_id="job-translation",
+        timestamps=True,
+    )
+
+    assert result["transcription_provenance"]["task"] == "translate"
+    assert result["transcription_provenance"]["requested_language"] == "fr"
+    assert not result["transcription_provenance"]["produced_capabilities"][
+        "diarization"
+    ]
+
+
+def test_video_processor_forwards_injected_transcription_runner() -> None:
+    from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
+
+    def runner(*_args, **_kwargs):
+        return {"text": "hello", "segments": []}
+
+    processor = LocalVideoProcessor(None, transcription_runner=runner)
+
+    assert processor.audio_processor._transcription_runner is runner
+
+
+def test_parse_audio_for_ingest_passes_worker_owned_transcription_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion as lfi
+
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    def runner(*_args, **_kwargs):
+        return {"text": "hello", "segments": []}
+
+    observed: dict[str, object] = {}
+
+    class InjectedAudioProcessor(_StubAudioProcessor):
+        def __init__(self, media_db=None, *, transcription_runner=None):
+            super().__init__(media_db)
+            observed["runner"] = transcription_runner
+
+    monkeypatch.setattr(lfi, "LocalAudioProcessor", InjectedAudioProcessor)
+
+    payload = parse_local_file_for_ingest(
+        source,
+        {"perform_analysis": False},
+        transcription_runner=runner,
+    )
+
+    assert observed["runner"] is runner
+    assert payload["content"] == "Transcribed words from the stub."
+
+
 # --- classify_parse_failure ---------------------------------------------------
 
 
@@ -533,6 +720,45 @@ def test_run_parse_job_ok_for_txt(tmp_path: Path) -> None:
     import pickle
 
     pickle.dumps(result)
+
+
+def test_run_parse_job_emits_bound_progress_without_changing_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import ingest_parse_worker
+
+    events = []
+    monkeypatch.setattr(
+        ingest_parse_worker,
+        "emit_parse_progress",
+        lambda *args: events.append(args),
+    )
+    source = tmp_path / "note.txt"
+    source.write_text("hello", encoding="utf-8")
+
+    result = run_parse_job(str(source), {}, (3, "ingest-job-9"))
+
+    assert result["ok"] is True
+    assert result["payload"]["content"] == "hello"
+    assert events[0][:3] == (3, "ingest-job-9", "inspecting")
+    assert any(event[2] == "processing" for event in events)
+
+
+def test_progress_callback_exception_never_fails_parse(tmp_path: Path) -> None:
+    source = tmp_path / "note.txt"
+    source.write_text("hello", encoding="utf-8")
+
+    def fail_telemetry(*_args) -> None:
+        raise RuntimeError("telemetry failed")
+
+    payload = parse_local_file_for_ingest(
+        str(source),
+        {},
+        progress_callback=fail_telemetry,
+    )
+
+    assert payload["content"] == "hello"
 
 
 def test_run_parse_job_missing_file_is_permanent(tmp_path: Path) -> None:
@@ -639,7 +865,14 @@ def test_ingest_parse_worker_import_excludes_local_file_ingestion(
             m for m in sys.modules
             if any(m == f"tldw_chatbook.Local_Ingestion.{g}" or m.split(".")[0] == g for g in guards)
         })
-        print(json.dumps({"loaded": loaded}))
+        local_ingestion_modules = sorted(
+            module for module in sys.modules
+            if module.startswith("tldw_chatbook.Local_Ingestion.")
+        )
+        print(json.dumps({
+            "loaded": loaded,
+            "local_ingestion_modules": local_ingestion_modules,
+        }))
         """,
     )
 
@@ -648,6 +881,10 @@ def test_ingest_parse_worker_import_excludes_local_file_ingestion(
     assert payload["loaded"] == [], (
         f"importing ingest_parse_worker pulled in unexpected modules: {payload['loaded']}"
     )
+    assert payload["local_ingestion_modules"] == [
+        "tldw_chatbook.Local_Ingestion.ingest_parse_progress",
+        "tldw_chatbook.Local_Ingestion.ingest_parse_worker",
+    ]
 
 
 # --- Real spawn-Pool integration ----------------------------------------------
@@ -662,17 +899,31 @@ def test_run_parse_job_through_real_spawn_pool(tmp_path: Path) -> None:
     source.write_text("Parsed inside a real spawned worker process.", encoding="utf-8")
 
     ctx = multiprocessing.get_context("spawn")
-    with ctx.Pool(1) as pool:
-        async_result = pool.apply_async(
-            run_parse_job, (str(source), {"title": "Pool note"})
-        )
-        result = async_result.get(timeout=120)
+    progress_queue = ctx.Queue()
+    try:
+        with ctx.Pool(
+            1,
+            initializer=initialize_ingest_parse_worker,
+            initargs=(progress_queue,),
+        ) as pool:
+            async_result = pool.apply_async(
+                run_parse_job,
+                (str(source), {"title": "Pool note"}, (1, "ingest-job-1")),
+            )
+            result = async_result.get(timeout=120)
+            event = progress_queue.get(timeout=120)
+    finally:
+        progress_queue.close()
+        progress_queue.join_thread()
 
     assert result["ok"] is True
     assert result["payload"]["title"] == "Pool note"
     assert (
         result["payload"]["content"] == "Parsed inside a real spawned worker process."
     )
+    assert event.generation == 1
+    assert event.job_id == "ingest-job-1"
+    assert event.phase == "inspecting"
 
 
 # --- empty-extraction guard (task-677) --------------------------------------
@@ -753,3 +1004,19 @@ def test_persist_allows_whitespace_only_url_payload_to_fail_clearly() -> None:
     db = MediaDatabase(":memory:", client_id="test-empty-url")
     with pytest.raises(FileIngestionError, match="No text could be extracted"):
         persist_parsed_media(payload, db)
+
+
+def test_parse_xml_raises_unsupported_not_not_yet_implemented(
+    tmp_path: Path,
+) -> None:
+    """task-3308: ``parse_local_file_for_ingest`` still carries an
+    ``elif file_type == "xml"`` branch that raises "XML file processing is
+    not yet implemented" -- but no queue path can reach it, because
+    ``detect_file_type`` (the only producer of ``file_type`` for local
+    files) refuses ``.xml`` first with the honest "Unsupported file type"
+    error. Pin the refusal AND that the placeholder text never surfaces."""
+    xml = tmp_path / "feed.xml"
+    xml.write_text("<rss/>", encoding="utf-8")
+    with pytest.raises(FileIngestionError, match="Unsupported file type") as exc:
+        parse_local_file_for_ingest(str(xml), {})
+    assert "not yet implemented" not in str(exc.value)

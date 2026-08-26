@@ -22,6 +22,7 @@ from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from Tests.console_provider_doubles import with_destination
 
 
 REMOVED_CHAT_ROOT_NAMES = (
@@ -95,7 +96,7 @@ class _BlockingProviderGateway:
         self._block_forever = asyncio.Event()
 
     async def resolve_for_send(self, selection) -> ConsoleProviderResolution:
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider=selection.provider,
             base_url="",
             model=(
@@ -103,7 +104,7 @@ class _BlockingProviderGateway:
             ),
             ready=True,
             execution_key="openai",
-        )
+        ))
 
     async def stream_chat(self, resolution, messages, **kwargs):
         del resolution, messages
@@ -225,15 +226,15 @@ async def test_native_console_owns_rails_sessions_and_snapshot_without_root_mirr
                 "request_id": "task-650-script",
                 "skill_name": "example",
             }
-            chat._set_console_pending_skill_install(install_payload)
+            chat._skill._set_console_pending_skill_install(install_payload)
             assert chat._task_resume_state.pending_skill_install == install_payload
-            chat._set_console_pending_skill_script(script_payload)
+            chat._skill._set_console_pending_skill_script(script_payload)
             assert chat._task_resume_state.pending_skill_install == install_payload
             assert chat._task_resume_state.pending_skill_script == script_payload
-            chat._set_console_pending_skill_install(None)
+            chat._skill._set_console_pending_skill_install(None)
             assert chat._task_resume_state.pending_skill_install is None
             assert chat._task_resume_state.pending_skill_script == script_payload
-            chat._set_console_pending_skill_script(None)
+            chat._skill._set_console_pending_skill_script(None)
             assert chat._task_resume_state.pending_skill_script is None
 
             await pilot.press("ctrl+t")
@@ -246,10 +247,17 @@ async def test_native_console_owns_rails_sessions_and_snapshot_without_root_mirr
             snapshot = chat.save_state()
             assert "native_console_state" in snapshot
             assert "chat_state" not in snapshot
-            assert snapshot["native_console_state"]["active_session_id"] == (
-                initial_session_id
-            )
-            assert len(snapshot["native_console_state"]["sessions"]) == 2
+            # task-15860 Task 3: the snapshot carries VIEW state only. Session
+            # and message state are owned by the app-owned `ConsoleRuntime`
+            # store, which outlives the screen -- carrying copies here made
+            # the snapshot a second source of truth that won at the next
+            # mount, and a turn that ran while Console was unmounted was
+            # silently overwritten by it.
+            native_state = snapshot["native_console_state"]
+            assert "sessions" not in native_state
+            assert "messages_by_session" not in native_state
+            assert "active_session_id" not in native_state
+            assert "image_view_modes" in native_state
             assert not set(REMOVED_CHAT_ROOT_NAMES).intersection(
                 _snapshot_keys(snapshot)
             )

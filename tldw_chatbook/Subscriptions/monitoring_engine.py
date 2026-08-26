@@ -9,11 +9,13 @@
 # - Content extraction
 #
 # Imports
+import asyncio
 import hashlib
 import json
 import re
 import textwrap
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
@@ -32,7 +34,6 @@ except ImportError:
     logger.warning(
         "defusedxml not available, using standard xml.etree. Install defusedxml for better security."
     )
-from bs4 import BeautifulSoup
 from loguru import logger
 
 #
@@ -44,6 +45,7 @@ from ..DB.Subscriptions_DB import (
     SubscriptionError,
 )
 from ..Metrics.metrics_logger import log_histogram, log_counter
+from .db_offload import run_db_off_loop
 from .item_persist import (
     CONTENT_FORMAT_DIFF,
     CONTENT_FORMAT_TEXT,
@@ -73,11 +75,37 @@ from .security import SecurityValidator
 #
 ########################################################################################################################
 
-# Resolved once at import: this module hard-imports bs4, so soupsieve is
-# certainly present here. Kept in `noise_defaults` rather than inline so the
-# extraction guard and the two UI save-path validators share one definition of
-# "the selector is malformed" -- see `selector_parse_errors`.
-_SELECTOR_PARSE_ERRORS = selector_parse_errors()
+# bs4 is extras-only (`[subscriptions]` among others) while this module is
+# imported eagerly at boot via the scheduler handlers (app.py ->
+# Scheduling/scheduler/handlers -> here), so a module-level
+# `from bs4 import BeautifulSoup` made an install without the extra unable to
+# import the app at all, and made every install pay the bs4+soupsieve import
+# at boot (TASK-21104). BeautifulSoup is therefore resolved lazily at first
+# HTML extraction; a missing install degrades to a per-check ImportError that
+# the monitors' existing exception handling records against the subscription.
+_BS4_INSTALL_HINT = (
+    "beautifulsoup4 is required to extract text from HTML for "
+    "watchlist/subscription monitoring, but it is not installed. "
+    "Install it with: pip install tldw_chatbook[subscriptions]"
+)
+
+
+def _require_beautifulsoup() -> type:
+    """Resolve the ``BeautifulSoup`` class lazily (TASK-21104).
+
+    Returns:
+        The ``bs4.BeautifulSoup`` class.
+
+    Raises:
+        ImportError: When beautifulsoup4 is not installed; the message names
+            the feature and the exact install command so the per-check error
+            surfaced on the subscription is actionable.
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError as exc:
+        raise ImportError(_BS4_INSTALL_HINT) from exc
+    return BeautifulSoup
 
 
 class FetchBlockedError(SubscriptionError):
@@ -206,7 +234,7 @@ class ContentExtractor:
         Returns:
             Extracted text
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = _require_beautifulsoup()(html, "html.parser")
 
         # Remove script and style elements
         for script in soup(["script", "style"]):
@@ -224,7 +252,12 @@ class ContentExtractor:
             for selector in ignore_selectors:
                 try:
                     matches = soup.select(selector)
-                except _SELECTOR_PARSE_ERRORS as exc:
+                # `selector_parse_errors()` is lru_cached and shared with the
+                # two UI save-path validators (`noise_defaults`) so the
+                # definition of "the selector is malformed" cannot drift.
+                # Called here rather than resolved at module import because it
+                # probes soupsieve, which is extras-only like bs4 (TASK-21104).
+                except selector_parse_errors() as exc:
                     # One line per bad selector per extraction: named, so the
                     # log says which rule to fix, not merely that one is broken.
                     logger.warning(
@@ -250,25 +283,66 @@ class ContentExtractor:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def calculate_change_percentage(old_content: str, new_content: str) -> float:
-        """
-        Calculate percentage of change between two texts.
+    def calculate_change_percentage(
+        old_content: str,
+        new_content: str,
+        *,
+        old_segments: List[str] | None = None,
+        new_segments: List[str] | None = None,
+    ) -> float:
+        """Estimate how much of a page's text changed, as a 0.0-1.0 ratio.
+
+        Computed over ``_segment_for_diff`` segments -- the same
+        sentence/line-sized units the stored diff body, ``diff_summary`` and
+        ``added_and_removed_text`` are built from -- so the ratio means "the
+        fraction of the page's segment content that appeared or disappeared"
+        and agrees in granularity with everything else the reader sees about
+        the change. The ratio is order-INSENSITIVE: a page that merely
+        reorders its segments reports 0.0 -- see ``_segment_change_ratio``
+        for that semantic decision and its rationale, and for the O(n) cost.
+
+        TASK-16839. This was a character-level
+        ``SequenceMatcher(None, old, new).ratio()`` with default autojunk,
+        which had two entangled failure regimes over the unbounded inputs the
+        10 MB fetch cap admits: for large Latin pages autojunk junks the
+        entire alphabet and the value degenerates (a 5%-edited ~128 KB page
+        measured pct=0.47 -- the 15764 review measured a full 1.0 -- while
+        taking ~39 s), and for large character repertoires (CJK) nothing is
+        junked and ``ratio()`` is quadratic (4x per doubling; ~7 minutes at
+        the fetch cap, on a GIL-holding worker thread). Its consumers -- the
+        ``change_threshold`` withhold comparison (default 0.0), the withheld
+        disposition, and the reader's ``f"{pct:.0f}% changed"`` headline --
+        all need a coarse, monotonic-ish magnitude, not char-exact ratios.
 
         Args:
-            old_content: Previous content
-            new_content: New content
+            old_content: Previous extracted text.
+            new_content: New extracted text.
+            old_segments: ``old_content`` already run through
+                ``_segment_for_diff``. Optional: segmentation is ~95% of this
+                function's cost, so ``check_url`` segments each side once and
+                shares the lists between this ratio and the significant-change
+                details -- the same segment-once rule ``build_change_diff``
+                documents. Segmented here when omitted, so callers passing
+                only the texts are unchanged.
+            new_segments: ``new_content`` likewise.
 
         Returns:
-            Change percentage (0.0 to 1.0)
+            Change ratio, 0.0 (identical) to 1.0 (nothing in common).
+            Identical texts return 0.0; a whitespace-only difference also
+            returns 0.0 (segmentation normalizes whitespace, deliberately
+            agreeing with the "no textual change after normalization" path
+            of ``build_change_diff``); one side empty returns 1.0.
         """
         if not old_content and not new_content:
             return 0.0
         if not old_content or not new_content:
             return 1.0
 
-        matcher = SequenceMatcher(None, old_content, new_content)
-        similarity = matcher.ratio()
-        return 1.0 - similarity
+        if old_segments is None:
+            old_segments = _segment_for_diff(old_content)
+        if new_segments is None:
+            new_segments = _segment_for_diff(new_content)
+        return _segment_change_ratio(old_segments, new_segments)
 
 
 ########################################################################################################################
@@ -308,11 +382,31 @@ _HEADER_LINES = 2
 # `_segment_for_diff`, which splits on real line breaks when the text has any
 # and on sentence boundaries when it does not (sentences stay aligned under a
 # local edit in a way fixed-width chunking does not).
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+#
+# The second alternative splits AFTER a CJK sentence ender with no whitespace
+# requirement (TASK-16839): CJK prose ends sentences with 。！？ and contains
+# no spaces at all, so under the Latin-only rule an entire CJK page was ONE
+# unit that fell to fixed-width wrapping -- every boundary after an edit
+# shifted, which made the diff (and the change percentage now computed on the
+# same segments) treat half the page as changed for a one-sentence edit.
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[。．！？])")
 
 # A segment longer than this is wrapped at word boundaries, so no single diff
 # line is wider than the narrow reader pane can show without wrapping mid-word.
 _MAX_DIFF_SEGMENT_CHARS = 110
+
+# `textwrap.wrap` is quadratic in the length of a single unbreakable run:
+# `_handle_long_word` re-slices the whole remainder once per emitted line, so
+# one 3.4M-char spaceless unit (a 10 MB CJK page without sentence enders)
+# costs minutes (TASK-16839). A unit containing any whitespace-free run longer
+# than this is fixed-sliced to `_MAX_DIFF_SEGMENT_CHARS` instead -- O(n), and
+# for a fully unbreakable unit the slices are exactly what `break_long_words`
+# would have produced anyway. (Hyphens sometimes let textwrap break a
+# spaceless run cheaply, but only between word characters -- whitespace is
+# the only breaker this guard can trust.) Runs at or under this bound keep
+# textwrap's word-boundary aesthetics at a bounded cost: each run re-slices
+# at most ~1000 chars per emitted line.
+_UNWRAPPABLE_RUN = re.compile(r"\S{1001,}")
 
 # Bounds on the stored diff. The body goes into a TEXT column and into a pane
 # roughly nine rows tall, and the full page it was computed from is already
@@ -352,8 +446,12 @@ def _segment_for_diff(text: str) -> List[str]:
     Splits on real line breaks when ``text`` contains any, and on sentence
     boundaries when it does not -- which is the case for a whole page captured
     through ``extract_text_from_html``, since that collapses everything onto
-    one line. Segments longer than ``_MAX_DIFF_SEGMENT_CHARS`` are then wrapped
-    at word boundaries, and blank segments are dropped.
+    one line. Sentence boundaries include CJK enders with no trailing
+    whitespace (see ``_SENTENCE_BOUNDARY``). Segments longer than
+    ``_MAX_DIFF_SEGMENT_CHARS`` are then wrapped at word boundaries -- or
+    fixed-sliced when they contain a run textwrap could only break
+    quadratically (see ``_UNWRAPPABLE_RUN``) -- and blank segments are
+    dropped.
 
     (Fix round 1, Minor #4: this used to be described in terms of the
     subscription's ``extraction_method``, which it never reads -- the only
@@ -378,8 +476,77 @@ def _segment_for_diff(text: str) -> List[str]:
         if len(stripped) <= _MAX_DIFF_SEGMENT_CHARS:
             segments.append(stripped)
             continue
+        if _UNWRAPPABLE_RUN.search(stripped):
+            # Bounded fixed-width slicing for units textwrap cannot break at
+            # word boundaries anyway -- see `_UNWRAPPABLE_RUN` for why wrap
+            # is quadratic on these.
+            segments.extend(
+                piece
+                for start in range(0, len(stripped), _MAX_DIFF_SEGMENT_CHARS)
+                if (piece := stripped[start : start + _MAX_DIFF_SEGMENT_CHARS].strip())
+            )
+            continue
         segments.extend(textwrap.wrap(stripped, _MAX_DIFF_SEGMENT_CHARS) or [stripped])
     return segments
+
+
+def _segment_change_ratio(old_segments: List[str], new_segments: List[str]) -> float:
+    """Order-insensitive change ratio between two segment lists. O(n), always.
+
+    The fraction of segment occurrences (counting multiplicity) present on
+    only one side: ``1 - 2*matches/total``, difflib's ``quick_ratio`` formula
+    over segments.
+
+    **Semantic decision (TASK-16839 fix round): a segment that merely MOVED
+    is not a change.** A purely reordered page -- same segments, shuffled --
+    reports 0.0 at every size. Rationale: this ratio's consumers (the
+    ``change_threshold`` withhold comparison, the withheld disposition, the
+    reader's "N% changed" headline) all read it as "how much of the page's
+    content changed", and a re-sorted listing page whose content is intact is
+    exactly the noise shape a raised threshold exists to withhold -- reporting
+    near-100% for zero content change is the misleading-percentage defect
+    this task exists to eliminate. Order is not lost to the reader: the
+    stored diff body is position-aware and shows moved blocks as ``-``/``+``
+    pairs, and a pure reorder is still *detected* (the content hash differs),
+    so at the default threshold 0.0 it still produces an item -- headlined
+    "0% changed", with the moves visible in the diff.
+
+    Why one mechanism at every size, rather than an order-sensitive alignment
+    below a cost bound: the reviewed revision ran a ``SequenceMatcher``
+    alignment up to 4,000 total segments with this multiset ratio as the
+    past-the-bound fallback, and the review reproduced the resulting cliff --
+    a pure reorder reported 0.9925 at 4,000 total segments and 0.0000 at
+    4,002, so one added sentence per side flipped "99% changed" to "0%
+    changed". Any hard boundary between an order-sensitive and an
+    order-insensitive tier flips like that on reorder-shaped edits, and
+    order-sensitivity at *every* size is the unaffordable-quadratic shape
+    this task retired -- so the order-insensitive ratio is the sole
+    mechanism, and the reported quantity is continuous in page size for a
+    fixed edit shape. For non-move edit shapes (in-place rewrites,
+    insertions, deletions) this agrees with what the alignment tier
+    reported anyway -- the review measured a scattered 5% edit at
+    0.050000/0.049975 across that boundary -- so ordinary pages are
+    unaffected by the tier's retirement; only moves are now consistently
+    "not a content change" instead of order-dependently either.
+
+    Args:
+        old_segments: Previous text through ``_segment_for_diff``.
+        new_segments: Current text likewise.
+
+    Returns:
+        0.0 (identical multisets) .. 1.0 (disjoint). Both sides empty is
+        0.0; exactly one side empty is 1.0.
+    """
+    total = len(old_segments) + len(new_segments)
+    if not old_segments or not new_segments:
+        return 0.0 if total == 0 else 1.0
+
+    old_counts = Counter(old_segments)
+    new_counts = Counter(new_segments)
+    matches = sum(
+        min(count, new_counts.get(segment, 0)) for segment, count in old_counts.items()
+    )
+    return 1.0 - (2.0 * matches / total)
 
 
 def build_change_diff(
@@ -567,6 +734,70 @@ def classify_change_type(previous_text: str, current_text: str) -> str:
     return "content"
 
 
+def _change_percentage_with_segments(
+    previous_text: str, current_text: str
+) -> tuple[float, List[str], List[str]]:
+    """Segment both sides once and compute the change ratio over the segments.
+
+    ``check_url``'s percentage hop. Segmentation is ~95% of the ratio's cost
+    (measured ~200 ms per side of a ~430 ms total at the 10 MB fetch cap;
+    the multiset ratio itself is cheap), so the segment lists are returned for the
+    details hop to reuse rather than re-segmenting -- extending the
+    segment-once rule ``build_change_diff`` documents across the two
+    ``asyncio.to_thread`` hops as well as within the second (TASK-16839 fix
+    round, review finding 2: a significant change previously paid full
+    segmentation twice end-to-end).
+    """
+    old_segments = _segment_for_diff(previous_text)
+    new_segments = _segment_for_diff(current_text)
+    percentage = ContentExtractor.calculate_change_percentage(
+        previous_text,
+        current_text,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+    return percentage, old_segments, new_segments
+
+
+def _build_significant_change_details(
+    previous_text: str,
+    current_text: str,
+    *,
+    old_segments: List[str] | None = None,
+    new_segments: List[str] | None = None,
+) -> tuple[str, str, str, str, str]:
+    """Build all significant-change diff details from one segmentation pass.
+
+    Args:
+        previous_text: The previous snapshot's ``extracted_content``.
+        current_text: The freshly fetched extracted text.
+        old_segments: ``previous_text`` already segmented; ``new_segments``
+            likewise. Optional: ``check_url`` passes the lists its percentage
+            hop already built (``_change_percentage_with_segments``), so a
+            significant change segments each side once end-to-end. Segmented
+            here when omitted, so direct callers are unchanged.
+        new_segments: See ``old_segments``.
+    """
+    if old_segments is None:
+        old_segments = _segment_for_diff(previous_text)
+    if new_segments is None:
+        new_segments = _segment_for_diff(current_text)
+    diff_body, diff_summary = build_change_diff(
+        previous_text,
+        current_text,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+    added_text, removed_text = added_and_removed_text(
+        previous_text,
+        current_text,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+    change_type = classify_change_type(previous_text, current_text)
+    return diff_body, diff_summary, added_text, removed_text, change_type
+
+
 ########################################################################################################################
 #
 # Check dispositions (TASK-1362, spec §4)
@@ -593,6 +824,17 @@ DISPOSITION_CHANGED = "changed"
 #: other URLs already collected; this is how that partial failure stays
 #: visible instead of silently vanishing into "0 found".
 DISPOSITION_ERROR = "error"
+#: `check_url` was never called at all: another check of this exact
+#: (subscription, url) pair was already in flight, so the entrant skipped
+#: rather than double-checking (task-16838 -- a scheduled check and a UI
+#: "Check Now" of the same source can otherwise interleave across the
+#: network await and each report the same page change once, writing two
+#: snapshots). Like `DISPOSITION_ERROR`, this is synthesized by the caller
+#: (`local_watchlists_service._check_url_guarded`), never by `check_url`
+#: itself. The concurrent check that held the claim reports the real
+#: outcome; this disposition only records, honestly, that this run did not
+#: check the URL.
+DISPOSITION_SKIPPED_IN_FLIGHT = "skipped_in_flight"
 
 #: ``reason`` values for ``DISPOSITION_BASELINE_STORED``. These two are NOT
 #: interchangeable and must never be aggregated together (whole-branch review,
@@ -840,13 +1082,23 @@ class FeedMonitor:
 
         response.raise_for_status()
 
-        # Parse feed based on type
+        # Parse feed based on type.
+        #
+        # task-15463: the parse runs under `asyncio.to_thread`, the fetch above
+        # does not. A scheduled check is dispatched straight onto the event
+        # loop, and `ET.fromstring` (or `json.loads`) over a whole feed body is
+        # synchronous CPU work that froze the UI for its duration -- while the
+        # fetch either side of it was already non-blocking async httpx and
+        # needs no help. Nothing here touches sqlite, so the thread hop is
+        # unconditional: unlike the database hops in this module it has no
+        # in-memory-connection hazard to respect.
         content_type = response.headers.get("content-type", "").lower()
 
         if "json" in content_type or subscription["type"] == "json_feed":
-            return self._parse_json_feed(response.text)
-        else:
-            return self._parse_xml_feed(response.text, subscription["type"])
+            return await asyncio.to_thread(self._parse_json_feed, response.text)
+        return await asyncio.to_thread(
+            self._parse_xml_feed, response.text, subscription["type"]
+        )
 
     def _parse_xml_feed(self, content: str, feed_type: str) -> List[Dict[str, Any]]:
         """
@@ -1223,19 +1475,13 @@ class URLMonitor:
             # either ORDER BY (or either `url` predicate) and you must change
             # the other in the same commit; diverge them and this SELECT reads
             # a pruned row -- i.e. re-baselines, or diffs against stale text.
-            cursor = self.db.conn.cursor()
-            cursor.execute(
-                """
-                SELECT content_hash, extracted_content, extraction_fingerprint
-                FROM url_snapshots
-                WHERE subscription_id = ? AND url = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
-            """,
-                (subscription_id, url),
+            # task-15463: the read hops to a worker thread (`run_db_off_loop`),
+            # like every other sqlite call on the scheduled-check path. The row
+            # is materialized by `fetchone` inside the hop, so what comes back
+            # is plain data, not a live cursor.
+            previous = await run_db_off_loop(
+                self.db, self._select_latest_snapshot, subscription_id, url
             )
-
-            previous = cursor.fetchone()
 
             if not previous:
                 # First check - store baseline
@@ -1301,10 +1547,23 @@ class URLMonitor:
                 breaker.record_success()
                 return None, _disposition(DISPOSITION_UNCHANGED)
 
-            # Calculate change details
+            # Calculate change details. The percentage hop returns the segment
+            # lists it built alongside the ratio: segmentation dominates the
+            # ratio's cost, and the details hop below consumes the very same
+            # lists, so they are carried across the threshold check instead of
+            # being rebuilt (TASK-16839 fix round, review finding 2). The lists
+            # go out of scope with this call frame either way; holding them
+            # across one cheap comparison does not change peak memory, which
+            # the details hop's own segmentation already reached before.
             previous_text = previous["extracted_content"] or ""
-            change_percentage = ContentExtractor.calculate_change_percentage(
-                previous_text, current_content["text"]
+            (
+                change_percentage,
+                old_segments,
+                new_segments,
+            ) = await asyncio.to_thread(
+                _change_percentage_with_segments,
+                previous_text,
+                current_content["text"],
             )
 
             # Check if change exceeds threshold. Both sides of this comparison
@@ -1342,23 +1601,18 @@ class URLMonitor:
             # reader's `[full page]` / `[previous snapshot]` affordances read
             # from; storing it a second time here bought nothing and left the
             # reader unable to see what had actually changed.
-            # Segment each side ONCE and share it with both consumers: the
-            # reader's diff body and the "appeared"/"disappeared" added/removed
-            # text (TASK-1363) are different outputs of the same segmentation,
-            # and a page can be up to 10 MB (Qodo -- do not segment it twice).
-            _old_segments = _segment_for_diff(previous_text)
-            _new_segments = _segment_for_diff(current_content["text"])
-            diff_body, diff_summary = build_change_diff(
+            (
+                diff_body,
+                diff_summary,
+                added_text,
+                removed_text,
+                change_type,
+            ) = await asyncio.to_thread(
+                _build_significant_change_details,
                 previous_text,
                 current_content["text"],
-                old_segments=_old_segments,
-                new_segments=_new_segments,
-            )
-            added_text, removed_text = added_and_removed_text(
-                previous_text,
-                current_content["text"],
-                old_segments=_old_segments,
-                new_segments=_new_segments,
+                old_segments=old_segments,
+                new_segments=new_segments,
             )
             change_info = {
                 "type": "url_change",
@@ -1380,9 +1634,7 @@ class URLMonitor:
                 # reachable at all, a real 35% change would have displayed as
                 # "0% changed" and a total rewrite as "1% changed".
                 "change_percentage": change_percentage * 100.0,
-                "change_type": classify_change_type(
-                    previous_text, current_content["text"]
-                ),
+                "change_type": change_type,
                 "diff_summary": diff_summary,
                 "published_date": datetime.now(timezone.utc).isoformat(),
                 # Filters and content-alert rules are evaluated on the raw
@@ -1418,6 +1670,26 @@ class URLMonitor:
         except Exception:
             breaker.record_failure()
             raise
+
+    def _select_latest_snapshot(self, subscription_id: int, url: str) -> Any:
+        """The newest snapshot for one (subscription, url), or ``None``.
+
+        Extracted only so `check_url`'s baseline read can take a
+        `run_db_off_loop` hop (task-15463); the query, including its
+        TASK-1393 ordering pact with `_store_snapshot`'s prune, is unchanged.
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT content_hash, extracted_content, extraction_fingerprint
+            FROM url_snapshots
+            WHERE subscription_id = ? AND url = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        """,
+            (subscription_id, url),
+        )
+        return cursor.fetchone()
 
     async def _fetch_url_content(self, subscription: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1489,8 +1761,10 @@ class URLMonitor:
 
         if extraction_method == "full" or extraction_method == "auto":
             # Extract text from HTML
-            text = ContentExtractor.extract_text_from_html(
-                response.text, ignore_selectors
+            text = await asyncio.to_thread(
+                ContentExtractor.extract_text_from_html,
+                response.text,
+                ignore_selectors,
             )
         else:
             # Raw content
@@ -1531,6 +1805,29 @@ class URLMonitor:
         if not content_hash:
             content_hash = ContentExtractor.calculate_content_hash(content["text"])
 
+        # task-15463: the whole INSERT+prune transaction takes one worker-thread
+        # hop, so the commit boundary the TASK-1393 comment below relies on is
+        # untouched -- both statements are still inside one `db.transaction()`,
+        # just not on the event loop.
+        await run_db_off_loop(
+            self.db,
+            self._write_snapshot,
+            subscription_id,
+            url,
+            content,
+            content_hash,
+            fingerprint,
+        )
+
+    def _write_snapshot(
+        self,
+        subscription_id: int,
+        url: str,
+        content: Dict[str, Any],
+        content_hash: str,
+        fingerprint: Optional[str],
+    ) -> None:
+        """Insert one snapshot and prune this URL's older ones, in one commit."""
         with self.db.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -1605,18 +1902,10 @@ class URLMonitor:
             )
             pruned = cursor.rowcount
             if pruned > 0:
-                # Qodo/PR #1100: URLs can embed credentials
-                # (https://user:pass@host); the repo's log sanitizer redacts
-                # exactly that, so route the value through it rather than
-                # logging it raw.
-                from ..Utils.log_sanitizer import sanitize_string as _sanitize_log
-
                 logger.debug(
-                    "Pruned {} snapshot(s) for subscription {} url {}, "
-                    "keeping the newest {}",
+                    "Pruned {} snapshot(s) for subscription {}, keeping the newest {}",
                     pruned,
                     subscription_id,
-                    _sanitize_log(url),
                     _SNAPSHOTS_KEPT_PER_URL,
                 )
 

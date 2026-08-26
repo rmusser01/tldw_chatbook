@@ -1,11 +1,11 @@
 """Chat screen implementation with comprehensive state management."""
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
 from functools import partial
-import inspect
 import logging
 import os
 from pathlib import Path
@@ -13,20 +13,28 @@ import re
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
+from typing import Any, Dict, Literal, Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import toml
 from loguru import logger
 from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.color import Color
-from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
-from textual.message import Message
+from textual.events import (
+    Click,
+    DescendantBlur,
+    DescendantFocus,
+    Key,
+    MouseDown,
+    MouseUp,
+    Paste,
+    Resize,
+)
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -38,7 +46,16 @@ from ..Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
 )
+from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
+
+# `TrajectoryScreen` is deliberately NOT imported here (TASK-22213): its
+# module drags `trajectory_import` -> `trajectory_export` plus the timeline
+# widgets (~4,400 LOC) onto the Chat first-paint import leg, and its only
+# use is the `y` action's push. It is imported locally in
+# `action_open_trajectory_view`; the guard is
+# `Tests/Packaging/test_rag_boot_import_closure.py`
+# (`test_chat_screen_import_does_not_execute_the_deferred_packages`).
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
     resolve_effective_provider_model,
@@ -46,17 +63,25 @@ from .provider_model_resolution import (
 )
 from .settings_config_models import SettingsCategoryId
 from ..Console_Modules.frame import (
-    CONSOLE_FRAME_BORDER,
-    CONSOLE_FRAME_COLOR,
-    CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
+    sync_console_focus_paint,
 )
+from ..Console_Modules.status_row import (
+    STATUS_CHIPS_POSITION_ABOVE,
+    apply_status_chips_position,
+    persist_status_chips_collapsed,
+    poke_console_setting,
+    resolve_status_chips_collapsed,
+    resolve_status_chips_position,
+)
+
 # The Console controller classes themselves are deliberately NOT imported
 # here: `..Console_Modules.wiring.build_console_controllers` constructs every
 # one of them, so this module needs only the handful of helper symbols its own
 # body actually uses. Tests that steer a controller patch it on the module
 # that defines it (`..Console_Modules.dictation` and friends) rather than
 # through this module's namespace -- see task-3023, which repointed them.
+from ..Console_Modules.character_avatar_layout import fit_character_avatar_cell_box
 from ..Console_Modules.dictation import (
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
@@ -66,36 +91,64 @@ from ..Console_Modules.dictation import (
 from ..Console_Modules.hands_free import (
     ConsoleHandsFreeSession,
 )
+from ..Console_Modules.agent import (
+    CONSOLE_AGENT_CANCEL_ALL_ID,
+    CONSOLE_AGENT_FLEET_SECTION_ID,
+)
+from ..Console_Modules.prompt_queue import (
+    ConsolePromptDispatchStatus,
+    ConsolePromptQueueRegion,
+)
+from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
-from ..Console_Modules.transcript import (
-    ConsoleTranscriptRegion,
-    _ConsoleTranscriptReadingState,
+from ..Console_Modules.provider_continuation_recovery import (
+    ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion,
 )
+from ..Console_Modules.retrieval import (
+    sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
+    source_mentions_rag as _source_mentions_rag,
+)
+from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules.session import (
-    _canonical_card_character_id,
-    _character_session_prompt_seed,
     _has_selected_text,
     _is_empty_select_value,
 )
-from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_runtime import ensure_console_runtime, leave_console_runtime
+from ...Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+)
+from ...Chat.console_roleplay_identity import (
+    ChatDisplayNameError,
+    ConsoleMessagePresentation,
+    ConsolePresentationContext,
+    ConsoleTranscriptStyle,
+    normalize_chat_display_name,
+    normalize_console_transcript_style,
+    resolve_console_message_presentation,
+)
 from ...Chat.prompt_history import PromptHistory
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
+    ConsoleCostRow,
     ConsoleCostRowTotals,
     ConsoleCostState,
+    TokenEstimateCache,
     build_cost_rows,
     build_cost_rows_totals,
     build_cost_snapshot,
     build_cost_state,
     fingerprint_break_reason,
+    token_estimate_signature,
 )
+from ...Chat.console_exchange_capture import ExchangeCapture, capture_from_blob
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage, as_seconds
+from ...Chat.trajectory import TrajectorySnapshot, derive_trajectory
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
@@ -108,34 +161,23 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 # resolution the native-Console chat entry point uses (task-5) -- session
 # identity via `persisted_conversation_id`, `SessionScopeHolder` for
 # unpersisted sessions, `EffectiveScope` state.
-from ...Event_Handlers.Chat_Events.chat_rag_events import (
-    capture_console_staged_evidence_for_chat,
-    resolve_effective_scope_for_chat,
-    resolve_scope_for_session,
-)
-from ...Chat.rag_scope import (
-    RagScope,
-    read_conversation_scope,
-    write_conversation_scope,
-)
-from ...Chat.scope_picker_listers import (
-    build_keyword_tag_lister,
-    build_media_source_lister,
-    build_notes_source_lister,
-)
+from ...Chat.rag_scope import RagScope
 from ...Chat.console_command_grammar import (
+    FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID,
+    FEWER_PERMISSION_PROMPTS_COMMAND_NAME,
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_IMAGE_COMMAND_NAME,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
     GENERATE_VIDEO_COMMAND_NAME,
     KIND_COMMAND,
-    KIND_FALLBACK,
     KIND_NOT_COMMAND,
     KIND_UNKNOWN,
     PREFILL_COMMAND_HANDLER_ID,
     PREFILL_COMMAND_NAME,
     PROMPT_COMMAND_HANDLER_ID,
     PROMPT_COMMAND_NAME,
+    RESEARCH_COMMAND_HANDLER_ID,
+    RESEARCH_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
@@ -148,6 +190,7 @@ from ...Chat.console_command_grammar import (
     ConsoleCommandRegistry,
     default_console_registry,
 )
+from ...MCP.permission_prompt_reducer import format_permission_prompt_report
 from ...Chat.console_prefill import (
     ACTION_CLEAR,
     ACTION_ERROR,
@@ -157,48 +200,21 @@ from ...Chat.console_prefill import (
     describe_prefill_preview,
     parse_prefill_args,
 )
-from ...Chat.console_generate_image import (
-    GenerationRefusal,
-    LLMContextOptions,
-    PreparedGeneration,
-    clamp_initial_batch,
-    generation_content_marker,
-    insert_style_token_into_draft,
-    parse_generate_image_args,
-    prepare_generation_request,
-    run_generation_batch,
-)
-from ...Chat.console_generate_video import (
-    GENERATE_VIDEO_USAGE_TEXT,
-    estimate_video_cost_text,
-    is_paid_backend,
-    parse_generate_video_args,
-    run_video_generation,
-)
-from ...Video_Generation.config import get_video_generation_config
-from ...Video_Generation.video_store import VideoStore
-from ...Image_Generation.config import get_image_generation_config
-from ...Image_Generation.listing import list_image_models_for_catalog
-from ...Chat.console_skill_resolver import (
-    SKILL_UNTRUSTED_REFUSE,
-    SkillCommandCandidate,
-    cap_skill_args,
-    format_skills_list,
-    resolve_skill_command,
-)
+from ...Chat.console_generate_image import insert_style_token_into_draft
+from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
 from ...Chat.console_chat_models import (
-    CONSOLE_GLOBAL_WORKSPACE_ID,
-    CONSOLE_RUN_MARKER_GLYPHS,
     ConsoleChatMessage,
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunStatus,
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     MessageAttachment,
+    ConsoleWorkspaceContext,
     derive_console_session_title,
 )
-from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
-from ...Widgets.glyph_fallback import resolve_glyph
+from ...Chat.console_turn_context import ConsoleTurnExecutionContext
+from ...UI.character_display_text import sanitize_character_display_label
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -211,46 +227,26 @@ from ...Chat.console_session_settings import (
     build_default_console_session_settings,
     build_console_settings_readiness,
     build_console_settings_summary_state,
+    unsaved_console_endpoint_warning,
 )
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
     ConsoleChatSession,
     ConsoleChatStore,
+    ConsoleRoleplayProjectionPersistencePlan,
+    ConsoleRoleplayProjectionPersistenceResult,
 )
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
-    ConsoleProviderGateway,
     normalize_llamacpp_base_url,
 )
-from ...Chat.console_provider_endpoints import first_configured_endpoint
-
+from ...Chat.console_provider_endpoints import (
+    first_configured_endpoint,
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+)
 from ...Chat.console_voice_input import (
-    NO_CAPTURE_MESSAGE,
-    NO_SPEECH_MESSAGE,
-    STATE_LISTENING,
-    TRANSCRIPTION_INCOMPLETE_REASON,
-    TRANSCRIPTION_INCOMPLETE_REMEDY,
-    VAD_UNAVAILABLE_MESSAGE,
-    ConsoleVoiceInputController,
-    VoiceCommand,
-    VoiceDictationModelDefaulted,
-    VoiceFailed,
-    VoiceFinal,
-    VoiceModelPreparing,
-    VoiceModelWarmupFailed,
-    VoicePartial,
-    VoiceProviderOverridden,
-    VoiceSegmentNoFinal,
-    VoiceSegmentTranscribing,
-    VoiceSpeechResumed,
-    VoiceVadUnavailable,
-    # `acoustic_barge_in_enabled` is dual-use: the realtime engine's own
-    # `_enter_console_realtime_loop` reads it directly, in addition to
-    # `ConsoleHandsFreeController`'s own separate copy of this import for
-    # the pipeline engine's `_enter_console_hands_free_pipeline_loop`
-    # (wave-2 console decomposition, task 1) -- see that module's docstring.
     acoustic_barge_in_enabled,
-    default_service_factory,
     realtime_idle_timeout_seconds,
     realtime_model,
     realtime_provider,
@@ -270,6 +266,7 @@ from ...Chat.console_realtime_loop import RealtimeLoopController
 # lazily, in `_build_console_realtime_session`, exactly like
 # `default_service_factory` defers the speech stack.
 from ...LLM_Calls.realtime import RealtimeCallbacks, RealtimeSessionConfig
+
 # `ExitLoop`/`ModeChanged`/`SilenceSpeech` are dual-use: the realtime engine's
 # own `_handle_console_realtime_intent` reads them directly (V4's FSM emits a
 # strict subset of the pipeline engine's own intent vocabulary, "imported
@@ -287,16 +284,16 @@ from ...Chat.console_hands_free import (
 )
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
-    CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleControlState,
     ConsoleDisplayRow,
-    ConsoleInspectorAction,
     ConsoleInspectorState,
+    ConsoleProjectInstructionState,
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
     ConsoleStagedEvidenceStripState,
+    ConversationFileEntry,
     build_console_evidence_display_state,
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
@@ -326,21 +323,12 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
     console_setup_staged_receipt,
 )
-from ...Chat.console_expression_state import (
-    EXPRESSION_IMAGE_STATES,
-    resolve_console_expression_state,
-)
 from ...Chat.console_command_suggestions import suggestions_for_draft
 from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
-    ConsoleImageRowSpec,
     ConsoleImageViewState,
-    extract_image_urls,
     fit_image_cell_size,
-    next_view_mode,
     resolve_default_mode,
-    resolve_react_character_expressions,
-    resolve_render_remote_images,
     resolve_show_character_avatar,
 )
 from ...Chat.console_paste_attach import (
@@ -349,20 +337,30 @@ from ...Chat.console_paste_attach import (
     looks_attachable,
 )
 from ...Chat.console_rail_state import (
+    CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
+    CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
+    CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
     CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
+    CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
     CONSOLE_RAIL_SECTION_IDS,
-    ConsoleRailPreferences,
+    CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+    ConsoleRailPreferenceKey,
     ConsoleRailState,
     build_console_rail_preference_key,
     build_console_rail_state,
     coerce_console_rail_preferences,
     collect_prunable_console_rail_keys,
+    console_context_reveal_preferences,
     console_rail_left_open_explicit,
     console_rail_width_band,
+    normalize_console_rail_layout_scope,
+    resolve_console_rail_priority,
     serialize_console_rail_preferences,
+    serialize_console_rail_stored_preferences,
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     _get_effective_config_path,
@@ -376,13 +374,11 @@ from ...config import (
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
-from ...Library.library_rag_service import (
-    LibraryRagSearchOutcome,
-    LibraryRagSearchRequest,
-    run_library_rag_search,
-    scope_empty_recovery_state,
+from ...Library.library_rag_service import LibraryRagSearchRequest
+from ...Library.library_rag_state import (
+    LIBRARY_RAG_FALLBACK_TOP_K,
+    library_rag_profile_top_k,
 )
-from ...Library.library_rag_state import library_rag_source_scope_summary
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
@@ -392,7 +388,6 @@ from ...Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
     normalize_console_background_effects,
 )
-from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.persistent_diagnostics import persist_event, safe_metadata_token
 from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
@@ -411,14 +406,19 @@ from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfi
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
+    ConsoleBoundedSection,
+    ConsoleChangedFilesSection,
+    ConsoleChangedFilesState,
     ConsoleCitationSourcesModal,
     ConsoleComposerBar,
     ConsoleComposerUndoHistory,
     ConsoleDraftStash,
     ConsoleControlBar,
+    ConsoleSpeechControls,
     ConsoleRailHandle,
     ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
+    ConsoleSendAuthoritySummary,
     ConsoleSessionSurface,
     ConsoleSettingsModal,
     ConsoleSettingsSummary,
@@ -427,31 +427,73 @@ from ...Widgets.Console import (
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceTree,
+    WorkspaceTreeConversationSelected,
+    WorkspaceTreeExpansionChanged,
+    WorkspaceTreeLoadMoreRequested,
+    WorkspaceTreeRetryRequested,
+    WorkspaceTreeStarRequested,
+    WorkspaceTreeWorkspaceSelected,
 )
-from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.Console.console_control_bar import (
+    ConsoleAutoSpeakRetryRequested,
+    ConsoleAutoSpeakResumeRequested,
+)
+from ...Widgets.Console.console_speech_controls import (
+    ConsoleAutoSpeakChanged,
+    ConsoleHandsFreeToggleRequested,
+)
+from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
+from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
+from ...Widgets.Console.console_context_controls import (
+    ConsoleContextControlState,
+    build_console_context_control_state,
+)
 from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
 )
+from ...Widgets.Console.console_agent_steering_bar import (
+    ConsoleAgentSteeringBar,
+    ConsoleAgentSteeringState,
+)
+from ...Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSection,
+    ConsoleInspectorSectionState,
+)
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
-from ...Widgets.Console.console_context_modal import ConsoleContextModal
-from ...Widgets.Console.console_cost_modal import ConsoleCostModal
+from ...Widgets.Console.console_feedback_comment_modal import (
+    ConsoleFeedbackCommentModal,
+)
+from ...Widgets.Console.console_review_notes_modal import ConsoleReviewNotesModal
+from ...Widgets.Console.console_transcript import (
+    ConsoleReviewNotesRequested,
+    console_transcripts_on_screen,
+)
+from ...Widgets.Console.console_selection_menu import (
+    ConsoleSelectionFeedbackRequested,
+    ConsoleSelectionNoteRequested,
+    ConsoleSelectionMenu,
+    ConsoleSelectionQuoteRequested,
+    ConsoleSideChatRequested,
+    selection_menus_on_screen,
+)
+from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
+from ...Widgets.Console import console_project_instructions as project_instruction_ui
+from ...Widgets.Console.console_conversation_inspector import (
+    TAB_COSTS,
+    TAB_NEXT_SEND,
+    ConsoleConversationInspector,
+    InspectorTurn,
+)
 from ...Widgets.Console.console_citation_sources_modal import (
     selected_valid_evidence_ordinals,
 )
-from ...Widgets.Console.console_generation_card import (
-    ConsoleGenerationCardSpec,
-    generation_card_signature,
-)
-from ...Widgets.Console.console_video_card import (
-    ConsoleVideoCardSpec,
-    video_card_signature,
-)
+from ...Widgets.Console.console_generation_card import generation_card_signature
+from ...Widgets.Console.console_video_card import video_card_signature
 from ...Widgets.Console.console_rag_settings_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
-    CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
     ConsoleRagSettingsModal,
-    ConsoleRagSettingsResult,
     normalize_console_rag_source_types,
 )
 from ...Widgets.Console.console_status_chips import (
@@ -472,7 +514,6 @@ from ...Widgets.Console.console_retrieval_scope_row import (
 )
 from ...Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterChoice,
-    ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
 )
 from ...Widgets.Console.console_composer_menu_modal import (
@@ -480,20 +521,26 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_IMAGE,
     ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
+    ACTION_IMPROVE_CURRENT_DRAFT,
     ACTION_PROMPTS,
     ACTION_SAVE_CHATBOOK,
     ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
 )
+from ...Widgets.Console.console_prompt_comparison_modal import (
+    ConsolePromptComparisonModal,
+    PromptComparisonResult,
+)
 from ...Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
+from ...Widgets.Console.console_prompt_queue_modal import ConsolePromptQueueModal
 from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
+    ConsoleModelPopoverResult,
 )
-from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
@@ -509,31 +556,20 @@ from ...Widgets.Console.console_rewind_modal import (
     ConsoleRewindModal,
     RewindPromptRow,
 )
-from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
+from ...Workspaces.change_tracking import ChangedFile
 from ...Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceContextState,
 )
-from ...Workspaces import (
-    CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
-    ConsoleConversationBrowserInputRow,
-    ConsoleConversationBrowserRow,
-    DEFAULT_WORKSPACE_ID,
-    build_console_conversation_browser_state,
-    console_persisted_row_updated_sort,
-)
 from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
-from ..Views.RAGSearch.search_handoff import (
-    build_library_rag_console_live_work_payload,
-    build_library_rag_evidence_bundle,
-)
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+Changed = Input.Changed
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
 #: editable toggles: this same tuple is the settings modal's default
 #: (`CONSOLE_RAG_DEFAULT_SOURCE_TYPES` -- one object, not a second copy),
@@ -542,8 +578,8 @@ logger = logger.bind(module="ChatScreen")
 #: retrieval item scope (`EffectiveScope`, conversation ∩ workspace) that
 #: `_resolve_console_library_rag_scope` resolves separately.
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
-CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
+CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K = LIBRARY_RAG_FALLBACK_TOP_K
 # TASK-346: below this terminal height the composer row was clipped out of
 # existence at 97x30 (no input box, no warning). The visible header banner
 # (title + purpose + Ready, ~5 rows) is pure chrome; dropping it below the
@@ -554,33 +590,10 @@ CONSOLE_COMPACT_HEIGHT_ROWS = 35
 #: TASK-365: trailing affordance marking the clickable rail system-prompt line as
 #: interactive (matches the ▸ the rail uses for its other actionable controls).
 CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE = "▸"
-# CONSOLE_FRAME_COLOR / CONSOLE_FRAME_BORDER / CONSOLE_QUIET_FRAME_BORDER now
-# live in `UI.Console_Modules.frame` (wave-1 console decomposition, task 2)
-# alongside `frame_console_region`, which is their only consumer that needs
-# them as a module-level default; imported above for the other call sites in
-# this file that still reference them directly.
-# TASK-359: the F6 rail stop focuses the collapse button inside an
-# INLINE-framed region — CSS :focus-within can never win against
-# widget.styles.border, so the pane-stop accent (matching the transcript/
-# composer stops, review-measured #0178D4) is swapped in Python on focus
-# change. $ds-focus-accent resolves to $primary; this mirrors it the same
-# way CONSOLE_FRAME_COLOR hardcodes the frame gray.
-CONSOLE_FOCUS_FRAME_COLOR = "#0178D4"
-CONSOLE_FOCUS_FRAME_BORDER = ("solid", CONSOLE_FOCUS_FRAME_COLOR)
+# Frame and focus-border constants live with their rendering helpers in
+# `UI.Console_Modules.frame`; this screen imports only those helpers.
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
-# "Absent" bucket of the untrusted-refuse copy (Task 7's SKILL_UNTRUSTED_REFUSE):
-# a typed skill name that matches nothing at all -- not a trusted candidate,
-# not even a needs-review one.
-CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT = "no matching skill"
-# Review-mandated addition (Task 8 review, binding): a typed prefix that
-# matches ONLY needs-review (trust-blocked) skills must not read like the
-# generic "nothing found" empty state -- it must say so explicitly rather
-# than silently opening a picker that can only ever show an empty list (the
-# picker's `skill_search` closure is scoped to trusted skills only).
-CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE = (
-    "{count} matching skill(s) need review in Library ▸ Skills before running."
-)
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
@@ -588,16 +601,31 @@ NATIVE_CONSOLE_STATE_VERSION = "1.0"
 # for the native Console send-path applier (`_console_chat_dictionary_applier`).
 _CHATDICT_MAX_TOKENS = 500
 _CHATDICT_STRATEGY = "sorted_evenly"
+_CONSOLE_RAIL_PREFERENCE_WRITE_LOCK = threading.Lock()
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
-# justifies an eager re-count.
-CONSOLE_ACTIVE_RUN_STATUSES = (
-    ConsoleRunStatus.VALIDATING,
-    ConsoleRunStatus.RETRYING,
-    ConsoleRunStatus.STREAMING,
-    ConsoleRunStatus.CHECKING_CITATIONS,
+# justifies an eager re-count, and by the selection feedback gating
+# (Request changes / LGTM). Derived from the canonical
+# ``FEEDBACK_ACTIVE_RUN_STATUSES`` (next to ``ConsoleRunStatus`` in
+# ``Chat/console_chat_models.py``) so the feedback gating and this
+# constant can never drift apart; other behaviors hang off this tuple,
+# so its membership must stay exactly the canonical four active states.
+# Sorted by value purely for a deterministic tuple; every consumer does
+# membership checks only.
+CONSOLE_ACTIVE_RUN_STATUSES: tuple[ConsoleRunStatus, ...] = tuple(
+    sorted(FEEDBACK_ACTIVE_RUN_STATUSES, key=lambda status: status.value)
 )
+# Console selection phase 3 (task 5): the bracketed header each feedback
+# action stamps on the composed next-user message (plan task 5 template:
+# header line, ``> ``-quoted selection, optional comment). Unknown action
+# strings fall back to the Comment header (mirrors the comment modal's
+# own ``_DEFAULT_HEADER`` fallback).
+CONSOLE_FEEDBACK_MESSAGE_HEADERS = {
+    ConsoleSelectionFeedbackRequested.ACTION_REQUEST_CHANGES: "[Request changes]",
+    ConsoleSelectionFeedbackRequested.ACTION_LGM: "[LGTM]",
+    ConsoleSelectionFeedbackRequested.ACTION_COMMENT: "[Comment]",
+}
 # Plan-B Task 7 Finding A: the conversation-browser `[N Sub-Agents]` badge
 # count previously re-queried the DB once per visible row on every 0.2s
 # poll tick. The batched replacement is still cheap to cache; this TTL is
@@ -606,7 +634,7 @@ CONSOLE_ACTIVE_RUN_STATUSES = (
 # Console session/tab).
 CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # TASK-251 (audit P1 B1): the persisted conversation-browser rows behind
-# `_sync_persisted_console_browser_rows` re-query the DB per scope (global +
+# `_refresh_console_persisted_rows_cache` queries the DB per scope (global +
 # every workspace) on every 0.2s poll tick -- measured 11-70ms/tick. Modeled
 # directly on the sub-agent badge-count TTL cache above (same staleness
 # bound, same "explicit invalidation is a nice-to-have, the TTL is the
@@ -618,6 +646,13 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # call to notice -- needs its own slow repaint timer. 10s keeps the
 # countdown's staleness bound well under the 300s cache TTL it is watching.
 CONSOLE_COST_TTL_TICK_SECONDS = 10.0
+# task-15470: every `Collapsible.Toggled` (plus expand-all/collapse-all/reset)
+# used to reassign `sidebar_state` and have `watch_sidebar_state` open+parse+
+# rewrite `ui_state.toml` synchronously on the event loop, per click. This
+# debounce coalesces a burst of toggles into one write, dispatched off the
+# loop (see `_flush_sidebar_state_after_debounce`); `on_unmount` force-flushes
+# so a toggle immediately followed by quit is never lost.
+SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS = 0.5
 # P3c Task 3: the "Character" rail avatar box's fitted cell size (mirrors
 # the transcript inline-image row's `fit_image_cell_size` usage, sized
 # smaller for the rail's narrower column).
@@ -644,12 +679,6 @@ CHARACTER_AVATAR_MAX_LINES = 22
 # fetched body is capped well below the render cache's decode ceiling.
 REMOTE_IMAGE_SCAN_WINDOW = 20
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
-# P3d-1 Task 3 (review fix): bound `_console_expression_spec_cache` so a
-# long session visiting many characters/states doesn't retain unbounded PIL
-# image references (the spec dicts hold their own `PILImage.Image`, so the
-# `_console_image_cache` LRU cap below does not protect this cache). Matches
-# the render cache's bound.
-_EXPRESSION_SPEC_CACHE_MAX = 16
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -679,7 +708,11 @@ CONSOLE_FOCUS_TARGETS_BY_PANE = {
 #: (display:none rails/handles) drop out of Textual's focus chain on their
 #: own, so no explicit hidden-pane handling is needed here.
 CONSOLE_TAB_REGIONS: tuple[tuple[str, ...], ...] = (
-    ("console-control-bar", "console-native-composer"),
+    (
+        "console-workbench-header",
+        "console-control-bar",
+        "console-native-composer",
+    ),
     ("console-context-rail-handle", "console-left-rail"),
     ("console-transcript-region", "console-status-chips"),
     ("console-inspector-rail-handle", "console-right-rail"),
@@ -690,6 +723,7 @@ CONSOLE_TAB_REGIONS: tuple[tuple[str, ...], ...] = (
 #: one of them continues the pane cycle from that pane instead of restarting
 #: at the first pane ("focus not in a pane" -> visible[0]).
 CONSOLE_FOCUS_PANE_FOR_WIDGET = {
+    "console-workbench-header": "console-native-composer",
     "console-control-bar": "console-native-composer",
     "console-status-chips": "console-transcript-surface",
     "console-context-rail-handle": "console-left-rail",
@@ -751,6 +785,131 @@ CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS = 8.0
 #: callbacks. This is the backstop for any no-ready path that arrives as
 #: NOTHING at all -- see `_tick_console_realtime`.
 CONSOLE_REALTIME_READY_TIMEOUT_SECONDS = 8.0
+
+#: Maximum default wait for the screen-owned roleplay drain during unmount.
+#: The immutable writer may outlive this deadline, but never the screen-bound
+#: coordinator or its store/session presentation state.
+CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS = 0.25
+
+#: TASK-18060 Task 5 (review-rail spec §2): sentinel for "the changed-files
+#: conversation tracker has never been set" -- distinct from `None`, which
+#: is a real, valid conversation id state ("no active chat"). Used only to
+#: tell a genuine conversation SWITCH apart from a note-mutation-forced
+#: guard reset (`_last_console_changed_files_scope = None`): both leave the
+#: guard tuple looking like "never checked", but only the former should
+#: clear `_console_changed_files_summary` -- a note mutation on the SAME
+#: conversation must not flash the rail section empty.
+_CONSOLE_CHANGED_FILES_CONVERSATION_UNSET = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _ConsoleRoleplayWriterHandle:
+    """Screen-free bridge from one daemon writer into the owner loop."""
+
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult]
+    thread: threading.Thread
+
+
+def _deliver_console_roleplay_writer_result(
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
+    result: ConsoleRoleplayProjectionPersistenceResult | None,
+    error: BaseException | None,
+) -> None:
+    """Deliver a daemon result only while its owner loop still accepts it."""
+    if future.done() or future.cancelled():
+        return
+    if error is not None:
+        future.set_exception(error)
+    elif result is not None:
+        future.set_result(result)
+
+
+def _run_console_roleplay_projection_writer(
+    plan: ConsoleRoleplayProjectionPersistencePlan,
+    loop: asyncio.AbstractEventLoop,
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
+) -> None:
+    """Consume one frozen plan on a daemon that cannot delay app shutdown."""
+    result: ConsoleRoleplayProjectionPersistenceResult | None = None
+    error: BaseException | None = None
+    try:
+        result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
+    except BaseException as exc:  # noqa: BLE001 - delivered to owner Future
+        error = exc
+    try:
+        loop.call_soon_threadsafe(
+            _deliver_console_roleplay_writer_result,
+            future,
+            result,
+            error,
+        )
+    except RuntimeError:
+        # The screen/app may have closed its loop while this daemon was
+        # blocked in persistence. Nothing live remains to accept a result.
+        if error is not None:
+            logger.opt(exception=error).error(
+                "Detached Console roleplay projection writer failed after loop "
+                "close (session_id={}, generation={}, thread_name={}).",
+                plan.session_id,
+                plan.generation,
+                threading.current_thread().name,
+            )
+
+
+def _start_console_roleplay_projection_writer(
+    plan: ConsoleRoleplayProjectionPersistencePlan,
+) -> _ConsoleRoleplayWriterHandle:
+    """Start one immutable writer without using asyncio's default executor."""
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult] = (
+        loop.create_future()
+    )
+    thread = threading.Thread(
+        target=_run_console_roleplay_projection_writer,
+        args=(plan, loop, future),
+        name=f"console-roleplay-writer-{plan.generation}",
+        daemon=True,
+    )
+    thread.start()
+    return _ConsoleRoleplayWriterHandle(future=future, thread=thread)
+
+
+def _consume_console_roleplay_writer_completion(
+    task: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
+    *,
+    session_id: str,
+    generation: int,
+) -> None:
+    """Consume an abandoned immutable writer result or exception statically."""
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        logger.exception(
+            "Detached Console roleplay projection writer failed "
+            "(session_id={}, generation={}).",
+            session_id,
+            generation,
+        )
+
+
+def _consume_console_roleplay_repair_for_current_screen(
+    app_instance: Any,
+) -> None:
+    """Ask the app's current Console owner to consume a repair marker."""
+    try:
+        current_screen = app_instance.screen
+    except Exception:  # noqa: BLE001 - lifecycle repair is best-effort
+        return
+    consume = getattr(
+        current_screen,
+        "_consume_pending_console_roleplay_repair",
+        None,
+    )
+    if callable(consume):
+        consume()
+
 
 #: Longest sanitized provider-failure text this wiring will carry into a
 #: toast. Long enough to name a cause, short enough that an unexpectedly
@@ -859,9 +1018,7 @@ CONSOLE_REALTIME_AUDIO_UNAVAILABLE_MESSAGE = (
     "Realtime reply audio is unavailable (no output device); the reply "
     "transcript still appears in the conversation."
 )
-CONSOLE_REALTIME_CONNECT_TIMEOUT_MESSAGE = (
-    "the connection timed out after {seconds:g}s"
-)
+CONSOLE_REALTIME_CONNECT_TIMEOUT_MESSAGE = "the connection timed out after {seconds:g}s"
 #: `connect()` returned but the provider never acknowledged the handshake.
 CONSOLE_REALTIME_HANDSHAKE_INCOMPLETE_MESSAGE = (
     "the handshake never completed after {seconds:g}s"
@@ -871,8 +1028,7 @@ CONSOLE_REALTIME_UNSPECIFIED_FAILURE_MESSAGE = (
     "the realtime session could not be opened"
 )
 CONSOLE_REALTIME_FALLBACK_TEMPLATE = (
-    "Realtime voice unavailable ({reason}); using the pipeline hands-free "
-    "loop instead."
+    "Realtime voice unavailable ({reason}); using the pipeline hands-free loop instead."
 )
 CONSOLE_REALTIME_NO_LOOP_TEMPLATE = (
     "Hands-free unavailable. Realtime failed ({reason}); the pipeline loop "
@@ -883,9 +1039,7 @@ CONSOLE_REALTIME_RECONNECTING_MESSAGE = "Realtime reconnecting…"
 #: `listening` is the only signal, and that looks identical whether the
 #: reconnect landed or is still in flight.
 CONSOLE_REALTIME_RECONNECTED_MESSAGE = "Realtime reconnected"
-CONSOLE_REALTIME_EXIT_CONNECTION_LOST_MESSAGE = (
-    "Hands-free ended: connection lost"
-)
+CONSOLE_REALTIME_EXIT_CONNECTION_LOST_MESSAGE = "Hands-free ended: connection lost"
 CONSOLE_REALTIME_EXIT_IDLE_TEMPLATE = "Hands-free ended: idle for {minutes:g} minutes"
 
 
@@ -906,6 +1060,8 @@ class ConsoleRealtimeSession:
             a tab switch mid-conversation must not scatter half a spoken
             exchange across two transcripts (the same discipline V3's
             `pending_session_id` enforces for its own send).
+        buddy_generation: Monotonic app-owned loop generation used only
+            to fence trusted Buddy lifecycle state from replaced loops.
         idle_timeout_seconds: The configured idle ceiling, kept here so the
             exit toast can name it without re-reading config at exit time.
         tap: The `RealtimeMicTap` streaming microphone PCM into the session.
@@ -987,6 +1143,7 @@ class ConsoleRealtimeSession:
     controller: RealtimeLoopController
     console_session_id: str
     idle_timeout_seconds: float
+    buddy_generation: int = 0
     tap: Any = None
     session: Any = None
     sink: Any = None
@@ -1018,7 +1175,8 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
-    ("Enter", "send"),
+    ("Enter", "send / queue"),
+    ("Y", "trace"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
@@ -1029,9 +1187,235 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
 #: action instead. The blocked variant hides the send hint and names the real
 #: action. `_register_console_footer_shortcuts` swaps between the two.
 CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
-    ("Enter", "continue setup") if pair == ("Enter", "send") else pair
+    ("Enter", "continue setup") if pair == ("Enter", "send / queue") else pair
     for pair in CONSOLE_WORKBENCH_SHORTCUTS
 )
+
+
+def _build_trajectory_snapshot(
+    store: Any,
+    conversation_id: str,
+    *,
+    agent_runs_db: Any | None = None,
+) -> "TrajectorySnapshot":
+    """Assemble the ``derive_trajectory`` inputs for one persisted conversation.
+
+    task-5 (console trajectory view). Best-effort at every seam: any source
+    that is unavailable contributes an empty iterable rather than failing
+    the launch -- the ledger degrades to fewer records, never to no screen.
+    Variant contents are process-local (see
+    ``ConsoleChatStore.variant_sets_for_conversation``): cold conversations
+    render without superseded variants by design.
+
+    Args:
+        store: Console store whose persistence owner supplies message/context facts.
+        conversation_id: Durable Console conversation identifier.
+        agent_runs_db: Optional public AgentRunsDB read seam captured by the caller.
+
+    Returns:
+        A completed pure-projection snapshot; the screen performs no DB reads.
+    """
+    messages: list[Any] = []
+    traj_rows: list[Any] = []
+    variant_sets: list[Any] = []
+    compaction_records: list[Any] = []
+    agent_runs: list[Any] = []
+    agent_steps: list[Any] = []
+    retrieval_runs: list[Any] = []
+    diagnostic_events: list[Any] = []
+    active_leaf: str | None = None
+
+    def capture_failed(
+        source: str, error: Exception, *, message_id: str | None = None
+    ) -> None:
+        logger.opt(exception=error).error(
+            "Trace source read failed: source={} conversation_id={}",
+            source,
+            conversation_id,
+        )
+        diagnostic_events.append(
+            {
+                "event_id": (
+                    f"capture-failed:{source}:{conversation_id}"
+                    f"{f':{message_id}' if message_id else ''}"
+                ),
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "event_kind": "capture_failed",
+                "status": "capture_failed",
+                "summary": f"{source} capture failed",
+                "field_states": {
+                    "source": "capture_failed",
+                    **({"message_id": "observed"} if message_id else {}),
+                },
+                "sensitivity": "diagnostic",
+            }
+        )
+
+    persistence = getattr(store, "persistence", None)
+    db = getattr(persistence, "db", None)
+    if db is not None:
+        try:
+            messages = list(
+                db.get_messages_for_conversation(
+                    conversation_id,
+                    limit=1_000_000,
+                    # Text-only projection: skip the image BLOB I/O (task-260).
+                    include_image_data=False,
+                )
+            )
+        except Exception as error:  # noqa: BLE001 - launch must degrade, not fail
+            capture_failed("messages", error)
+            messages = []
+        try:
+            traj_rows = list(db.get_trajectory_rows(conversation_id))
+        except Exception as error:  # noqa: BLE001
+            capture_failed("trajectory", error)
+            traj_rows = []
+        try:
+            active_leaf = db.get_conversation_active_leaf(conversation_id)
+        except Exception as error:  # noqa: BLE001
+            capture_failed("active_leaf", error)
+            active_leaf = None
+    usage_by_id: dict[str, ProviderUsage] = {}
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        usage = ProviderUsage.from_json(message.get("usage_json"))
+        if usage is not None:
+            usage_by_id[str(message.get("id"))] = usage
+    try:
+        variant_sets = list(store.variant_sets_for_conversation(conversation_id))
+    except Exception as error:  # noqa: BLE001
+        capture_failed("variants", error)
+        variant_sets = []
+    context_repository = getattr(persistence, "context_repository", None)
+    if context_repository is not None:
+        try:
+            # The projection itself filters purpose == "conversation_compaction".
+            offset = 0
+            while True:
+                page = list(
+                    context_repository.list_auxiliary_attempts(
+                        conversation_id, limit=500, offset=offset
+                    )
+                )
+                compaction_records.extend(
+                    {**record, "trace_lifecycle": True}
+                    if isinstance(record, Mapping)
+                    else record
+                    for record in page
+                )
+                if len(page) < 500:
+                    break
+                offset += len(page)
+        except Exception as error:  # noqa: BLE001
+            capture_failed("context", error)
+    turn_by_message: dict[str, str] = {}
+    for trajectory_row in traj_rows:
+        if isinstance(trajectory_row, Mapping):
+            row_message_id = trajectory_row.get("message_id")
+            row_turn_id = trajectory_row.get("turn_id")
+        else:
+            row_message_id = getattr(trajectory_row, "message_id", None)
+            row_turn_id = getattr(trajectory_row, "turn_id", None)
+        if row_message_id and row_turn_id:
+            turn_by_message[str(row_message_id)] = str(row_turn_id)
+    if agent_runs_db is not None:
+        try:
+            raw_runs = agent_runs_db.list_runs(conversation_id)
+            for raw_run in raw_runs:
+                try:
+                    run = dict(raw_run) if isinstance(raw_run, Mapping) else {}
+                    run_id = str(run.get("id") or "")
+                    if not run_id:
+                        continue
+                    assistant_message_id = str(run.get("assistant_message_id") or "")
+                    if assistant_message_id in turn_by_message:
+                        run["turn_id"] = turn_by_message[assistant_message_id]
+                    steps = list(run.get("steps", ()) or ())
+                    converted_steps = [
+                        {
+                            **step,
+                            "run_id": run_id,
+                            "conversation_id": conversation_id,
+                            "turn_id": run.get("turn_id"),
+                        }
+                        for step in steps
+                        if isinstance(step, Mapping)
+                    ]
+                    agent_runs.append(run)
+                    agent_steps.extend(converted_steps)
+                except Exception as error:  # noqa: BLE001
+                    capture_failed("agent", error)
+        except Exception as error:  # noqa: BLE001
+            capture_failed("agent", error)
+    citation_repository = getattr(persistence, "citation_repository", None)
+    if citation_repository is not None:
+        assistant_ids = [
+            str(message.get("id") or "")
+            for message in messages
+            if isinstance(message, Mapping)
+            and str(message.get("sender") or "").lower() == "assistant"
+            and message.get("id")
+        ]
+        try:
+            candidates = citation_repository.active_owner_candidate_message_ids(
+                assistant_ids
+            )
+        except Exception as error:  # noqa: BLE001
+            capture_failed("retrieval_candidates", error)
+            candidates = set()
+        for message in messages:
+            if not isinstance(message, Mapping):
+                continue
+            message_id = str(message.get("id") or "")
+            if (
+                not message_id
+                or str(message.get("sender") or "").lower() != "assistant"
+                or message_id not in candidates
+            ):
+                continue
+            try:
+                result = citation_repository.get_active_trace_for_current_message(
+                    message_id,
+                    str(message.get("content") or ""),
+                )
+                if (
+                    result.state is not ActiveCitationTraceState.ACTIVE
+                    or result.summary is None
+                    or not citation_repository.verify_active_trace_result(result)
+                ):
+                    continue
+                for run in result.summary.trace.evidence_runs:
+                    row = run.model_dump(mode="python")
+                    retrieval_runs.append(
+                        {
+                            **row,
+                            "conversation_id": conversation_id,
+                            "message_id": message_id,
+                            "turn_id": turn_by_message.get(message_id),
+                            "field_states": {"payload": "omitted"},
+                            "sensitivity": "retrieval_metadata",
+                            "trace_lifecycle": True,
+                        }
+                    )
+            except Exception as error:  # noqa: BLE001
+                capture_failed("retrieval", error, message_id=message_id)
+                continue
+    return derive_trajectory(
+        messages,
+        usage_by_id,
+        traj_rows,
+        variant_sets,
+        compaction_records,
+        active_leaf_message_id=active_leaf,
+        agent_runs=agent_runs,
+        agent_steps=agent_steps,
+        retrieval_runs=retrieval_runs,
+        diagnostic_events=diagnostic_events,
+    )
+
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
@@ -1062,7 +1446,8 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
     (
         "Composer",
         (
-            ("Enter", "send"),
+            ("Enter", "send now or queue after an accepted turn"),
+            ("Queue shelf", "manage, pause, resume, and recover queued prompts"),
             ("Ctrl+J", "insert a newline (works in any terminal)"),
             ("Shift+Enter", "insert a newline (where the terminal delivers it)"),
             ("Ctrl+Z", "undo the last draft edit"),
@@ -1137,7 +1522,8 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
 #: change what a glyph MEANS, update both.
 CONSOLE_FLEET_MARKER_LEGEND = (
     "Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed "
-    "— clears once you visit that tab."
+    "· ◈ sub-agent ended in background "
+    "— clears once you visit that tab. Qn is the unsent prompt count."
 )
 
 
@@ -1166,8 +1552,15 @@ def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
         "(change in Settings > Console Behavior).",
         "Built-in tools ask before running; a background session that "
         "needs approval parks with a ◆ badge and a toast.",
+        "Accepted turns can hold up to 10 queued prompts per tab; use the "
+        "queue shelf to manage or pause them.",
         CONSOLE_FLEET_MARKER_LEGEND,
-        "Leaving Console cancels any runs still in progress -- you'll be asked first.",
+        # PR3a-2 Task 4: post-3a-1 this line's old claim ("cancels any
+        # runs still in progress") was half false -- background
+        # sub-agents that outlived their turn keep running.
+        "Leaving Console cancels replies still streaming -- you'll be "
+        "asked first; background sub-agents keep running and notify you "
+        "when they finish.",
     )
 
 
@@ -1250,37 +1643,6 @@ def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
     )
 
 
-def _source_mentions_rag(source: Any) -> bool:
-    """Return whether a source label explicitly includes a RAG token.
-
-    Args:
-        source: Source label or source-like seam value.
-
-    Returns:
-        True when the normalized source tokens include `rag`.
-    """
-    tokens = re.split(r"[^a-z0-9]+", str(source or "").lower())
-    return "rag" in tokens
-
-
-def _sanitize_console_library_rag_query(value: Any) -> str:
-    """Return a centralized-validation-safe Console Library RAG query."""
-    sanitized = sanitize_string(
-        str(value or ""),
-        max_length=CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH,
-    )
-    query = " ".join(sanitized.strip().split())
-    if not query:
-        return ""
-    if not validate_text_input(
-        query,
-        max_length=CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH,
-        allow_html=False,
-    ):
-        return ""
-    return query
-
-
 def _console_library_rag_source_scope(screen: Any) -> tuple[str, ...]:
     """Return a Console screen's stored Library RAG source kinds (RAG-44).
 
@@ -1306,6 +1668,33 @@ def _console_library_rag_source_scope(screen: Any) -> tuple[str, ...]:
 #: LENGTH`` (2000, a safety ceiling for an explicitly-typed query, not a
 #: "does this look like a question" heuristic for an implicit prefill).
 CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH = 200
+
+
+def _console_library_rag_profile_top_k() -> int:
+    """Return the ACTIVE RAG profile's result count (TASK-406/TASK-3170).
+
+    Both Library RAG entry points on the Console -- the RAG chip's manual
+    Run and the opt-in send-path auto-retrieve -- must honor the profile
+    the user configured, the same way task-5 made the Library service
+    honor its search mode -- a hardcoded count would silently ignore a
+    profile tuned for more (or fewer) results. This is the one place both
+    call sites read that count from, so they can never drift apart again.
+
+    TASK-15020/B3 gave the Library window the same behavior, and this is now
+    a DELEGATION to that seam (`library_rag_state.library_rag_profile_top_k`)
+    rather than a second copy of the resolution: the Console chip and the
+    Library window are two views of one retrieval stack, and a twin would be
+    free to drift the moment either side changed. The delegation is kept as
+    a named function because both Console call sites (and their tests) reach
+    the profile through this name.
+
+    Returns:
+        The profile's ``search.default_top_k`` when it resolves to a
+        positive integer, else the shared Library RAG fallback -- a
+        broken/absent profile must degrade to retrieving, not to raising
+        inside a send.
+    """
+    return library_rag_profile_top_k()
 
 
 def _console_draft_looks_like_rag_query(draft: Any) -> bool:
@@ -1354,57 +1743,188 @@ def _console_draft_looks_like_rag_query(draft: Any) -> bool:
     return True
 
 
-def _run_dictionary_summary_off_thread(
-    service: Any,
-    conversation_id: Any,
-    character_id: Any,
-) -> Any:
-    """Drive the async scope-service ``summarize_active_dictionaries`` call
-    to completion on a *private* event loop.
+def _console_screen_is_torn_down(screen: Any) -> bool:
+    """Whether ``screen``'s message pump has begun closing.
 
-    Called via ``asyncio.to_thread`` from
-    ``ChatScreen.refresh_active_dictionaries_summary`` -- this function body
-    runs in a worker thread, so ``asyncio.run`` here spins up a fresh loop on
-    that thread rather than reentering the UI's event loop. That keeps the
-    underlying (synchronous) DB read the local chat-dictionary service
-    performs entirely off the UI thread.
+    task-15860 (cross-suite leak). Three deliberate choices:
+
+    * **Not ``is_mounted``.** Measured on the live crash this exists to
+      stop: the removed screen's ``ConsoleSessionSurface`` still reported
+      ``is_mounted=True`` while its own pump reported ``is_running=False``
+      and every child was already gone, so a mount check would have waved
+      through the very tick that then raised ``NoMatches``.
+    * **Not ``is_running``.** That is also False *before* a pump starts,
+      which would silently no-op every harness that drives the sync tick
+      on a hand-built, never-mounted ``ChatScreen``. ``_closing`` /
+      ``_closed`` are the pair Textual sets when a pump is taken down
+      (``MessagePump._close_messages`` sets ``_closing`` as its first
+      statement, before any child comes down) and the pair Textual itself
+      reads for ``is_parent_active``.
+    * **A module function, not a method.** ``MagicMock(spec=ChatScreen)``
+      is a common fixture here, and a spec'd mock auto-answers every
+      *method* on the class -- truthily. As a method this predicate
+      therefore reported "torn down" for every mocked screen and turned
+      three live-screen `test_ui_responsiveness` tests red (measured: 15
+      passed at the baseline, 3 failed with the method form). Read off
+      the raw flags instead: they are set in ``MessagePump.__init__``, so
+      they are absent from ``dir(ChatScreen)``, and a spec'd mock -- like
+      a never-mounted screen -- correctly reads as LIVE.
     """
-    return asyncio.run(
-        service.summarize_active_dictionaries(
-            conversation_id, character_id, mode="local"
-        )
-    )
+    return bool(getattr(screen, "_closing", False) or getattr(screen, "_closed", False))
 
 
-#: Modifier prefixes that make a key a CHORD rather than text input, even
-#: when it carries a printable ``character``. Textual's terminal parser
-#: renames the key (``alt+m``) but passes the bare letter through as the
-#: character (``_xterm_parser.py``), so ``is_printable`` is True for every
-#: ``alt+<letter>``. Without this check ``ChatScreen.on_key``'s
-#: printable-capture branch swallowed the chord as typing -- pressing Alt+M
-#: inserted a literal "m" into the draft and the screen's own
-#: ``Binding("alt+m", ...)`` never ran (TASK-1800).
-#:
-#: ``ctrl+``/``super+``/``meta+`` are listed for completeness, not because
-#: they leak today: their characters are C0 control bytes, which are not
-#: printable, so they never reached that branch. ``alt`` is the one that
-#: does. Listing all four keeps the rule "a modified key is not text" true
-#: by construction rather than by accident of the control-byte encoding.
-_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+")
+def _console_inspector_turn_preview(content: Any) -> str:
+    """Best-effort short text preview for one Conversation Inspector
+    Costs-tab turn row (task-8 review finding 5).
+
+    ``ConsoleChatMessage.content`` is declared ``str``, but a multimodal
+    (structured, OpenAI-style content-block list) message is not
+    guaranteed to have been coerced to text by the time it reaches here --
+    several other modules in this codebase (``Chat/Chat_Functions.py``,
+    ``console_provider_gateway.py``) carry their own ``isinstance(content,
+    str)`` guards for exactly this reason. Slicing a list with ``[:60]``
+    would silently yield up to 60 LIST ELEMENTS, not characters -- not a
+    preview, and not obviously wrong-looking in a diff either. Falls back
+    to the first text block's text (bounded to 60 chars, matching the str
+    path), or ``""`` when nothing text-shaped is found -- never a
+    fabricated summary.
+    """
+    if isinstance(content, str):
+        return content[:60]
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    return text[:60]
+    return ""
 
 
-def _is_modified_chord(key: str) -> bool:
-    """Return whether ``key`` names a modifier chord rather than plain text.
+def _build_console_inspector_exchanges_loader(
+    messages_by_native_id: Mapping[str, Any],
+    db_accessor: Callable[[], Any],
+    abandoned_run_tags_for: Callable[[str], AbstractSet[str]] | None = None,
+) -> Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]]:
+    """Build the Costs-tab ``exchanges_loader`` for
+    ``ConsoleConversationInspector`` (task-8, extended task-9).
+
+    A standalone function rather than a method-local closure specifically
+    so it is unit-testable without mounting a ``ChatScreen`` (review
+    finding 6) -- pure extraction, no behavior change from the closure
+    this replaced in ``ChatScreen._build_console_inspector_cost_data``.
 
     Args:
-        key: Textual key name, e.g. ``"m"``, ``"alt+m"``, ``"shift+alt+m"``.
+        messages_by_native_id: ``ConsoleChatMessage.id`` -> the matching
+            in-memory message, for the native-first check.
+        db_accessor: Zero-arg callable returning the ChaChaNotes DB handle
+            (or ``None``). Called lazily -- only on the DB-fallback path,
+            never for a message resolved natively or with no persisted id
+            -- so an ephemeral session never touches the DB at all.
+        abandoned_run_tags_for: Optional ``native_message_id ->
+            {run_tag, ...}`` lookup (task-9; ``ConsoleChatStore.
+            abandoned_exchange_run_tags`` in production) used ONLY on the
+            native-capture path to resolve each capture's real
+            ``abandoned`` flag. Defaults to ``None``, which preserves the
+            task-8 behavior of reporting ``abandoned=False`` for every
+            native capture -- kept optional (rather than required) so the
+            existing unit tests in
+            ``Tests/UI/test_chat_screen_console_inspector_loader.py``,
+            which construct this loader with just the first two
+            positional args, are unaffected.
 
     Returns:
-        True when any modifier prefix appears in the name. ``shift+`` alone
-        is deliberately NOT a chord -- ``shift+a`` is how a capital letter
-        arrives, and treating it as a chord would break typing.
+        An async ``native_message_id -> [(capture, abandoned), ...]``
+        callable (see ``console_conversation_inspector``'s module
+        docstring for the pair contract and the ordering caveat -- callers
+        must NOT trust the returned order, only ``(created_at, seq)``).
+        Prefers ``message.exchanges`` (native, in-memory captures resolve
+        ``abandoned`` via ``abandoned_run_tags_for`` when supplied, else
+        always ``False``) and only falls back to a threaded
+        ``get_message_exchanges`` + ``capture_from_blob`` read when there
+        is no native capture AND the message has a
+        ``persisted_message_id`` (an ephemeral session has neither, so it
+        returns ``[]`` without any DB call). A single corrupt/undecodable
+        blob is logged and skipped -- not fatal to the rest of the turn's
+        captures.
     """
-    return any(prefix in key for prefix in _CHORD_MODIFIER_PREFIXES)
+
+    async def _exchanges_loader(
+        native_message_id: str,
+    ) -> list[tuple[ExchangeCapture, bool]]:
+        message = messages_by_native_id.get(native_message_id)
+        if message is not None and message.exchanges:
+            # Native captures win when present -- they are fresher than
+            # whatever was last flushed to the DB.
+            abandoned_tags: AbstractSet[str] = (
+                abandoned_run_tags_for(native_message_id)
+                if abandoned_run_tags_for is not None
+                else frozenset()
+            )
+            return [
+                (capture, capture.run_tag in abandoned_tags)
+                for capture in message.exchanges
+            ]
+        persisted_id = message.persisted_message_id if message is not None else None
+        if not persisted_id:
+            return []
+
+        def _read() -> list[tuple[ExchangeCapture, bool]]:
+            db = db_accessor()
+            if db is None:
+                return []
+            out: list[tuple[ExchangeCapture, bool]] = []
+            for db_row in db.get_message_exchanges(persisted_id):
+                try:
+                    out.append(
+                        (
+                            capture_from_blob(db_row["capture_blob"]),
+                            bool(db_row.get("abandoned", False)),
+                        )
+                    )
+                except Exception as exc:
+                    # No traceback (review finding M8): this frame holds
+                    # `capture_blob` (raw compressed bytes) and, mid-loop,
+                    # already-decoded ExchangeCapture payloads in `out` --
+                    # loguru's diagnose formatter would annotate the
+                    # failing source line's names with their values across
+                    # the whole frame chain. The Exchange tab's own
+                    # handlers (console_conversation_inspector.py's
+                    # ``_load_turn_captures``) deliberately refuse
+                    # tracebacks for the identical reason; this brings the
+                    # loader's own decode failure to the same standard.
+                    # type(exc).__name__ plus the message id is enough to
+                    # diagnose and retry.
+                    logger.warning(
+                        f"exchange_blob_decode_failed: persisted_id="
+                        f"{persisted_id!r}: {type(exc).__name__}"
+                    )
+            return out
+
+        return await asyncio.to_thread(_read)
+
+    return _exchanges_loader
+
+
+class _ControllerState:
+    """Read/write compatibility for state moved to a wired controller."""
+
+    def __init__(self, owner_name: str, state_name: str) -> None:
+        self._owner_name = owner_name
+        self._state_name = state_name
+
+    def _owner(self, instance: object) -> object:
+        try:
+            return object.__getattribute__(instance, self._owner_name)
+        except AttributeError as exc:
+            raise RuntimeError("controller not wired") from exc
+
+    def __get__(self, instance: object, owner: type | None = None) -> object:
+        if instance is None:
+            return self
+        return getattr(self._owner(instance), self._state_name)
+
+    def __set__(self, instance: object, value: object) -> None:
+        setattr(self._owner(instance), self._state_name, value)
 
 
 class ChatScreen(BaseAppScreen):
@@ -1415,15 +1935,103 @@ class ChatScreen(BaseAppScreen):
     input text, and UI preferences when navigating away and returning.
     """
 
+    _imagegen_inflight_sessions = _ControllerState(
+        "_image", "_imagegen_inflight_sessions"
+    )
+    _imagegen_inflight_message_ids = _ControllerState(
+        "_image", "_imagegen_inflight_message_ids"
+    )
+    _console_h3_ui_generations = _ControllerState(
+        "_image", "_console_h3_ui_generations"
+    )
+    _console_videogen_inflight = _ControllerState(
+        "_video", "_console_videogen_inflight"
+    )
+    _console_videogen_cancels = _ControllerState("_video", "_console_videogen_cancels")
+    _console_video_store = _ControllerState("_video", "_console_video_store")
+    _pending_video_artifacts = _ControllerState("_video", "_pending_video_artifacts")
+    _pending_video_artifacts_closed = _ControllerState(
+        "_video", "_pending_video_artifacts_closed"
+    )
+    _pending_video_operation_cancels = _ControllerState(
+        "_video", "_pending_video_operation_cancels"
+    )
+    _pending_video_active_operations = _ControllerState(
+        "_video", "_pending_video_active_operations"
+    )
+    _pending_video_deferred_closes = _ControllerState(
+        "_video", "_pending_video_deferred_closes"
+    )
+    _console_persisted_rows_cache = _ControllerState(
+        "_workspace", "_console_persisted_rows_cache"
+    )
+    _console_persisted_rows_cache_key = _ControllerState(
+        "_workspace", "_console_persisted_rows_cache_key"
+    )
+    _console_persisted_rows_cache_at = _ControllerState(
+        "_workspace", "_console_persisted_rows_cache_at"
+    )
+    _console_conversation_browser_query = _ControllerState(
+        "_workspace", "_console_conversation_browser_query"
+    )
+    _console_conversation_browser_search_timer = _ControllerState(
+        "_workspace", "_console_conversation_browser_search_timer"
+    )
+    _console_conversation_browser_search_token = _ControllerState(
+        "_workspace", "_console_conversation_browser_search_token"
+    )
+    _console_conversation_browser_rows = _ControllerState(
+        "_workspace", "_console_conversation_browser_rows"
+    )
+    _console_conversation_browser_total = _ControllerState(
+        "_workspace", "_console_conversation_browser_total"
+    )
+    _console_conversation_browser_error = _ControllerState(
+        "_workspace", "_console_conversation_browser_error"
+    )
+    _console_retrieval_scope_cache = _ControllerState(
+        "_retrieval", "_console_retrieval_scope_cache"
+    )
+    _console_effective_scope_cache = _ControllerState(
+        "_retrieval", "_console_effective_scope_cache"
+    )
+    _active_dictionaries_summary = _ControllerState(
+        "_retrieval", "_active_dictionaries_summary"
+    )
+    _last_console_dictionary_scope_ids = _ControllerState(
+        "_retrieval", "_last_console_dictionary_scope_ids"
+    )
+    _active_world_books_summary = _ControllerState(
+        "_retrieval", "_active_world_books_summary"
+    )
+    _last_console_world_book_scope_ids = _ControllerState(
+        "_retrieval", "_last_console_world_book_scope_ids"
+    )
+    _console_skill_candidates = _ControllerState("_skill", "_console_skill_candidates")
+    _active_character_avatar = _ControllerState(
+        "_character", "_active_character_avatar"
+    )
+    _active_character_avatar_name = _ControllerState(
+        "_character", "_active_character_avatar_name"
+    )
+    _last_console_avatar_scope = _ControllerState(
+        "_character", "_last_console_avatar_scope"
+    )
+    _console_expression_spec_cache = _ControllerState(
+        "_character", "_console_expression_spec_cache"
+    )
+
     # TASK-352: Textual docks notification toasts bottom-right by default —
     # directly over the Console composer's Send/Attach/Save cluster and the
     # staged-chip strip — and toasts intercept clicks, so a click aimed at those
     # controls during a ~5s toast dismisses the toast instead of pressing the
     # button. Dock the Console screen's toast rack to the TOP-right so feedback
     # never obscures, or swallows clicks aimed at, the composer's controls.
-    # Kept in DEFAULT_CSS (not the bundle) so it applies in both the real app
-    # and test harnesses, which load widget DEFAULT_CSS but not the built bundle.
-    DEFAULT_CSS = """
+    # Kept in BUNDLED_CSS (not the CSS_PATH bundle) so it applies in both the
+    # real app and ConsolidatedCSSApp-based test harnesses, which load the
+    # generated widget-defaults sheet but not necessarily the full CSS_PATH
+    # bundle.
+    BUNDLED_CSS = """
     ChatScreen ToastRack {
         dock: top;
         align: right top;
@@ -1462,6 +2070,14 @@ class ChatScreen(BaseAppScreen):
             priority=True,
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
+        # task-5 (console trajectory view): single-letter htop-style launch
+        # key per ADR-031. 'y', NOT 'j': the focused transcript consumes
+        # j/k for next/previous-message selection (console_transcript.py
+        # on_key), which would make the advertised footer hint a lie in
+        # exactly the surface a trajectory reader comes from. The footer
+        # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
+        # of the Console vocabulary.
+        Binding("y", "open_trajectory_view", "Trace", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
@@ -1638,84 +2254,99 @@ class ChatScreen(BaseAppScreen):
         return
 
     @on(Input.Changed, "#console-workspace-conversation-search")
-    def on_console_workspace_conversation_search_changed(
-        self, event: Input.Changed
-    ) -> None:
-        """Debounce grouped conversation-browser search in the Console rail."""
+    def on_console_workspace_conversation_search_changed(self, event: Changed) -> None:
         event.stop()
-        event_input = getattr(event, "input", None)
-        if getattr(event_input, "disabled", False):
-            return
-        next_query = str(event.value or "")
-        if next_query == self._console_conversation_browser_query:
-            return
-        # TASK-251: invalidate before kicking the refresh -- a same-text
-        # re-search within the TTL window (e.g. clear then retype) must not
-        # be served a stale persisted-rows cache entry.
-        self._invalidate_console_persisted_rows_cache()
-        self._console_conversation_browser_query = next_query
-        self._console_workspace_conversation_query = (
-            self._console_conversation_browser_query
+        query = str(event.value or "")
+        disabled = bool(getattr(getattr(event, "input", None), "disabled", False))
+        self._workspace.transition_browser_search(query, disabled)
+
+    @on(Input.Changed, "#console-workspace-search")
+    def on_console_workspace_search_changed(self, event: Changed) -> None:
+        """Keep Workspaces search independent from flat Conversations search."""
+
+        event.stop()
+        self._workspace.transition_workspace_tree_search(
+            str(event.value or ""),
+            bool(getattr(getattr(event, "input", None), "disabled", False)),
         )
-        self._console_conversation_browser_search_token += 1
-        self._console_workspace_conversation_search_token = (
-            self._console_conversation_browser_search_token
-        )
-        token = self._console_conversation_browser_search_token
-        query = self._console_conversation_browser_query
-        if self._console_conversation_browser_search_timer is not None:
-            self._console_conversation_browser_search_timer.stop()
-            self._console_conversation_browser_search_timer = None
-        if self._console_workspace_conversation_search_timer is not None:
-            self._console_workspace_conversation_search_timer.stop()
-            self._console_workspace_conversation_search_timer = None
-        if not query.strip():
-            self._console_conversation_browser_rows = ()
-            self._console_conversation_browser_total = None
-            self._console_conversation_browser_error = ""
-            self._sync_console_workspace_context()
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
-            return
-        self._console_conversation_browser_rows = (
-            self._filter_console_browser_rows_for_query(
-                self._merge_console_browser_rows(
-                    self._native_console_browser_rows(),
-                    self._membership_console_browser_rows(),
-                ),
-                query,
+
+    @on(WorkspaceTreeConversationSelected)
+    @on(WorkspaceTreeRetryRequested)
+    @on(WorkspaceTreeLoadMoreRequested)
+    @on(WorkspaceTreeStarRequested)
+    @on(WorkspaceTreeExpansionChanged)
+    @on(WorkspaceTreeWorkspaceSelected)
+    async def on_workspace_tree_action(
+        self,
+        event: (
+            WorkspaceTreeConversationSelected
+            | WorkspaceTreeRetryRequested
+            | WorkspaceTreeLoadMoreRequested
+            | WorkspaceTreeStarRequested
+            | WorkspaceTreeExpansionChanged
+            | WorkspaceTreeWorkspaceSelected
+        ),
+    ) -> None:
+        event.stop()
+        if isinstance(event, WorkspaceTreeWorkspaceSelected):
+            self._workspace.activate_workspace_id(event.workspace_id)
+        elif isinstance(event, WorkspaceTreeExpansionChanged):
+            self._workspace.transition_workspace_tree_expansion(
+                event.workspace_id,
+                expanded=event.expanded,
             )
-        )
-        self._console_conversation_browser_total = None
-        self._console_conversation_browser_error = ""
-        self._sync_console_workspace_context()
-        self._console_conversation_browser_search_timer = self.set_timer(
-            0.2,
-            lambda: self.run_worker(
-                self._refresh_console_conversation_browser_search(
-                    query,
-                    token,
-                ),
-                group="console-workspace-conversation-search",
-                exclusive=True,
-            ),
-        )
-        self._console_workspace_conversation_search_timer = (
-            self._console_conversation_browser_search_timer
-        )
+        elif isinstance(event, WorkspaceTreeStarRequested):
+            self._workspace._toggle_console_conversation_star(
+                event.conversation_id,
+                starred=event.starred,
+                conversation_title="",
+            )
+        elif isinstance(event, WorkspaceTreeLoadMoreRequested):
+            self._workspace.request_next_workspace_tree_page(event.workspace_id)
+        elif isinstance(event, WorkspaceTreeRetryRequested):
+            self.run_worker(
+                self._workspace.retry_workspace_tree_page(event.workspace_id),
+                group=f"console-workspace-page-{event.workspace_id}",
+                exclusive=False,
+            )
+        else:
+            await self._workspace.open_console_workspace_conversation(
+                event.conversation_id,
+                target_workspace_id=event.workspace_id,
+            )
 
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
-        """Mirror native compact provider changes into Console-owned labels."""
+        """Mirror native compact provider changes into Console-owned labels.
+
+        Coalesced through task-3010's seam rather than syncing directly:
+        these two Select watchers ARE the mount-window burst that seam
+        exists to absorb. Instrumenting one screen push showed seven
+        control-bar syncs, four of them from here -- ``#compact-api-model``
+        fires three times and ``#compact-api-provider`` once while the
+        compact selects are populated, and the first three results are
+        overwritten before anything paints. Coalescing them takes that push
+        to three syncs.
+
+        Both handlers must move together: leaving one direct while the
+        other is coalesced fails ``test_requested_sync_still_executes``,
+        because the direct call satisfies the pending request's work
+        without clearing its scheduled flag.
+        """
         if not _is_empty_select_value(event.value):
             self._console_control_provider = str(event.value)
-        self._sync_console_control_bar()
+        self._request_console_control_bar_sync()
 
     @on(Select.Changed, "#compact-api-model")
     def on_console_compact_model_changed(self, event: Select.Changed) -> None:
-        """Mirror native compact model changes into Console-owned labels."""
+        """Mirror native compact model changes into Console-owned labels.
+
+        Coalesced -- see ``on_console_compact_provider_changed`` above for
+        why, and why the two cannot be split.
+        """
         if not _is_empty_select_value(event.value):
             self._console_control_model = str(event.value)
-        self._sync_console_control_bar()
+        self._request_console_control_bar_sync()
 
     @on(ConsoleLeftRail.SectionToggled)
     def on_console_left_rail_section_toggled(
@@ -1730,7 +2361,111 @@ class ChatScreen(BaseAppScreen):
         close decision, persistence, and Inspector-rail interaction stay
         here unchanged: they reach beyond the rail's own DOM.
         """
-        self._toggle_console_rail_section(message.section_id)
+        self._toggle_console_rail_section(
+            message.section_id,
+            next_open=message.opened,
+        )
+
+    @on(ConsoleLeftRail.ReactionPickerRequested)
+    async def _console_reaction_picker_requested(
+        self, message: ConsoleLeftRail.ReactionPickerRequested
+    ) -> None:
+        message.stop()
+        await self._session._open_console_reaction_picker()
+
+    @on(ConsoleInspectorSection.RowActivated)
+    def on_console_agent_fleet_row_activated(
+        self, message: ConsoleInspectorSection.RowActivated
+    ) -> None:
+        """Drill into the sub-agent a fleet row was clicked for (TASK-4).
+
+        Only the Agent rail's own fleet mini-section is a
+        ``ConsoleInspectorSection`` today (``CONSOLE_AGENT_FLEET_SECTION_
+        ID``) -- the ``section_id`` guard exists so a future sibling
+        section built on the same component (Changes/Sources/Workspace,
+        spec §7's stated direction) never gets routed here by accident.
+        Replaces the old cycling click handler (id-string matching on
+        ``#console-agent-section-subagents`` in ``on_click``) -- a row now
+        posts its own typed message with its own stable ``row_id``,
+        mirroring ``console_status_chips.py``'s chip-activation messages
+        rather than matching by DOM id.
+        """
+        if message.section_id != CONSOLE_AGENT_FLEET_SECTION_ID:
+            return
+        message.stop()
+        self._agent._drill_into_console_agent_subagent(message.row_id)
+
+    @on(ConsoleInspectorSection.RowCancelRequested)
+    def on_console_agent_fleet_row_cancel_requested(
+        self, message: ConsoleInspectorSection.RowCancelRequested
+    ) -> None:
+        """Cooperatively cancel a fleet row's child (PR2b Task 5).
+
+        Same ``section_id`` guard as the drill-in handler above, for the
+        same reason. Routes through ``ConsoleAgentController._cancel_
+        console_agent_fleet_row``, which itself routes through the
+        EXISTING cancellation path (``AgentService.cancel_subagent`` ->
+        ``_cancel_fleet_handles``) -- no second mechanism.
+
+        A burst of cancels (the user cancelling more than one row in quick
+        succession) each requests a coalesced fleet-section resync rather
+        than a synchronous one, so N cancels in the same UI tick still
+        produce exactly one ``_sync_console_agent_section`` run (task-5
+        coalescing) instead of N redundant ones.
+        """
+        if message.section_id != CONSOLE_AGENT_FLEET_SECTION_ID:
+            return
+        message.stop()
+        cancelled = self._agent._cancel_console_agent_fleet_row(message.row_id)
+        if cancelled:
+            self._request_console_agent_fleet_sync()
+
+    @on(Button.Pressed, f"#{CONSOLE_AGENT_CANCEL_ALL_ID}")
+    def on_console_agent_cancel_all(self, event: Button.Pressed) -> None:
+        """Cancel every live child of the conversation (PR3b Task 5).
+
+        Same delegation grammar as the per-row cancel handler above: the
+        controller routes to ``ConsoleAgentBridge.cancel_all_subagents``,
+        which walks the current service plus the retained survivor owners
+        and cancels each live handle through the EXISTING per-handle
+        cancel/approval-revoke path -- no second mechanism. A non-zero
+        count requests one coalesced fleet resync so the rows and the
+        affordance's own visibility reflect the stop on the next tick.
+
+        Args:
+            event: The press on the agent section's "Cancel all agents"
+                button (``CONSOLE_AGENT_CANCEL_ALL_ID``); stopped here --
+                the delegation is this handler's whole job.
+        """
+        event.stop()
+        if self._agent._cancel_all_console_agents():
+            self._request_console_agent_fleet_sync()
+
+    @on(ConsoleAgentSteeringBar.SteeringSubmitted)
+    def on_console_agent_steering_submitted(
+        self, message: ConsoleAgentSteeringBar.SteeringSubmitted
+    ) -> None:
+        """Queue USER steering for the drilled-in child (PR3b Task 3).
+
+        Same delegation grammar as the per-row cancel handler above: the
+        controller routes to ``ConsoleAgentBridge.steer_subagent`` (which
+        owns resolution + boundary validation), and a successful post
+        requests one coalesced fleet-section resync so the queued-count
+        line reflects the new entry on the next tick. The bar's draft is
+        cleared only on a QUEUED submit (Qodo audit minor batch) -- a
+        refusal keeps the user's text in the input for retry rather than
+        destroying it with nothing delivered.
+        """
+        message.stop()
+        queued = self._agent._steer_console_agent_drilldown_child(
+            message.target_id, message.text
+        )
+        if queued:
+            self._request_console_agent_fleet_sync()
+            try:
+                self.query_one(ConsoleAgentSteeringBar).clear_draft()
+            except Exception:  # noqa: BLE001 -- a mid-recompose bar is fine
+                pass
 
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
@@ -1742,7 +2477,17 @@ class ChatScreen(BaseAppScreen):
     def on_console_context_rail_open(self, event: Button.Pressed) -> None:
         """Open the Console context rail and persist the preference."""
         event.stop()
-        self._set_console_rail_preference(left_open=True)
+        available_columns = self._console_rail_available_columns()
+        rail_state = self._current_console_rail_state(
+            available_columns=available_columns
+        )
+        preference_changes = console_context_reveal_preferences(
+            rail_state, available_columns
+        )
+        self._set_console_rail_preference(
+            left_open=preference_changes["left_open"],
+            right_open=preference_changes.get("right_open"),
+        )
 
     @on(Button.Pressed, "#console-inspector-rail-collapse")
     def on_console_inspector_rail_collapse(self, event: Button.Pressed) -> None:
@@ -1755,6 +2500,22 @@ class ChatScreen(BaseAppScreen):
         """Open the Console inspector rail and persist the preference."""
         event.stop()
         self._set_console_rail_preference(right_open=True)
+
+    @on(ConsoleRunInspector.MoreToggled)
+    def on_console_inspector_more_toggled(
+        self, event: ConsoleRunInspector.MoreToggled
+    ) -> None:
+        """Persist a deliberate Inspector More disclosure change.
+
+        Args:
+            event: The disclosure event carrying the requested open state.
+        """
+
+        event.stop()
+        self._set_console_rail_preference(
+            section_updates={CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID: event.open},
+            notify_on_failure=False,
+        )
 
     @on(Button.Pressed, "#console-inspector-dictionaries-attach")
     def on_console_inspector_dictionaries_attach(self, event: Button.Pressed) -> None:
@@ -1792,40 +2553,569 @@ class ChatScreen(BaseAppScreen):
         self._console_worldbook_dialog_active = True
         self.run_worker(self._console_worldbook_detach_worker(), group="console-io")
 
-    async def _open_console_settings(self, *, focus_model: bool = False) -> None:
+    async def _open_console_settings(
+        self,
+        *,
+        focus_model: bool = False,
+        focus_context: bool = False,
+    ) -> None:
         """Open Console session settings for the active native session."""
         settings = self._session._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            return
+        session = store.switch_session(session_id)
+        origin_system_prompt = settings.system_prompt
+        context_estimate = self._active_console_settings_context_estimate()
         modal = ConsoleSettingsModal(
             settings=settings,
+            user_display_name_override=session.user_display_name_override,
+            global_user_display_name=self._global_chat_display_name(),
             app_config=self._provider_readiness_app_config(),
             providers_models=await self._providers_models_for_console_settings(
                 settings.provider,
                 current_model=settings.model,
             ),
-            context_estimate=self._active_console_settings_context_estimate(),
+            context_estimate=context_estimate,
+            context_state=self._active_console_context_control_state(
+                estimate=context_estimate
+            ),
             can_save=controller.run_state.is_send_allowed,
             focus_model=focus_model,
+            focus_context=focus_context,
+            reset_current_memory=lambda: controller.reset_active_context_memory(
+                session_id
+            ),
+            undo_current_memory_reset=controller.undo_context_memory_reset,
+            reset_all_memories=lambda: controller.reset_all_context_memories(
+                session_id
+            ),
+            compact_now=lambda: controller.compact_context_now(session_id),
         )
 
-        def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
-            if not isinstance(result, ConsoleSessionSettings):
-                return
-            # Modal results are explicit user selections; mark them so stale
-            # default refresh never overrides them.
-            self._session._replace_active_console_session_settings(
-                replace(result, source="user")
+        def apply_origin_result(result: ConsoleSettingsResult | None) -> None:
+            self._apply_console_settings_result(
+                result,
+                origin_session_id=session_id,
+                origin_system_prompt=origin_system_prompt,
             )
+
+        self.app.push_screen(modal, callback=apply_origin_result)
+
+    def _global_chat_display_name(self) -> str:
+        """Return the live in-memory global chat label without touching disk."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        chat_defaults = (
+            app_config.get("chat_defaults", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        raw_value = (
+            chat_defaults.get("user_display_name", "User")
+            if isinstance(chat_defaults, Mapping)
+            else "User"
+        )
+        try:
+            return (
+                normalize_chat_display_name(raw_value, blank_means_none=False) or "User"
+            )
+        except ChatDisplayNameError:
+            return "User"
+
+    def _console_transcript_style(self) -> ConsoleTranscriptStyle:
+        """Return the live global Console transcript appearance preference."""
+
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        appearance = (
+            app_config.get("appearance", {}) if isinstance(app_config, Mapping) else {}
+        )
+        raw_value = (
+            appearance.get("console_transcript_style", "role_accents")
+            if isinstance(appearance, Mapping)
+            else "role_accents"
+        )
+        return normalize_console_transcript_style(raw_value)
+
+    def _console_message_presentation(
+        self, message: ConsoleChatMessage
+    ) -> ConsoleMessagePresentation:
+        """Resolve one active-session message for every visible action surface."""
+        return resolve_console_message_presentation(
+            message, self._console_presentation_context()
+        )
+
+    def _console_presentation_context(self) -> ConsolePresentationContext:
+        """Return the active Console session's live roleplay context."""
+        session = self._session._active_native_console_session()
+        if session is None:
+            return ConsolePresentationContext(
+                user_name=self._global_chat_display_name(),
+                transcript_style=self._console_transcript_style(),
+            )
+        store = self._ensure_console_chat_store()
+        return replace(
+            store.presentation_context(session.id, self._global_chat_display_name()),
+            transcript_style=self._console_transcript_style(),
+        )
+
+    def _sync_console_identity_surfaces(self) -> None:
+        """Refresh mounted surfaces derived from active chat presentation."""
+        self._sync_console_chat_core_state()
+        self._sync_console_settings_summary()
+        self._sync_console_rail_system_line()
+        self._sync_console_control_bar()
+
+    def _apply_console_settings_result(
+        self,
+        result: ConsoleSettingsResult | ConsoleSessionSettings | None,
+        *,
+        origin_session_id: str | None = None,
+        origin_system_prompt: str | None = None,
+    ) -> None:
+        """Apply provider settings and the separately owned chat-name override."""
+        if not isinstance(result, (ConsoleSettingsResult, ConsoleSessionSettings)):
+            return
+        settings = (
+            result.settings if isinstance(result, ConsoleSettingsResult) else result
+        )
+        store = self._ensure_console_chat_store()
+        session_id = origin_session_id or store.active_session_id
+        if session_id is None:
+            return
+        try:
+            current_settings = store.session_settings(session_id)
+        except KeyError:
+            return
+        current_system_prompt = (
+            origin_system_prompt
+            if origin_session_id is not None
+            else (
+                current_settings.system_prompt if current_settings is not None else None
+            )
+        )
+        store.replace_session_settings(
+            session_id,
+            replace(
+                settings,
+                source="user",
+                system_prompt=current_system_prompt,
+            ),
+        )
+        if isinstance(result, ConsoleSettingsResult):
+            if result.context_policy_overrides is not None:
+                _session, policy_persisted = store.set_session_context_policy_overrides(
+                    session_id,
+                    result.context_policy_overrides,
+                )
+                if not policy_persisted:
+                    self.app_instance.notify(
+                        "Context policy applied in memory but could not be saved.",
+                        severity="warning",
+                    )
+            _session, persisted = store.set_session_user_display_name_override(
+                session_id,
+                result.user_display_name_override,
+                global_default=self._global_chat_display_name(),
+            )
+            self._last_console_roleplay_refresh_key = (
+                session_id,
+                self._global_chat_display_name(),
+            )
+            if not persisted:
+                self.app_instance.notify(
+                    "Name changed for this session, but it may not survive reopening.",
+                    severity="warning",
+                )
+        if store.active_session_id == session_id:
+            self._sync_console_identity_surfaces()
             self.run_worker(
                 self._sync_native_console_chat_ui(),
                 exclusive=True,
                 group="console-sync",
             )
-            # FB-07 (TASK-2154.17): the save used to apply with no positive
-            # confirmation at all (a dismiss returns None and skips this).
-            self.app_instance.notify("Console settings saved.", severity="success")
+        self.app_instance.notify("Console settings saved.", severity="success")
+        # task-16473: a session endpoint with no persisted backing works for
+        # this run (llama.cpp readiness even reports "Ready") and then
+        # silently evaporates on restart -- the exact trap behind the
+        # "re-enter my llama.cpp IP:Port every boot" report.
+        endpoint_warning = unsaved_console_endpoint_warning(
+            settings,
+            app_config=self._provider_readiness_app_config(),
+        )
+        if endpoint_warning:
+            self.app_instance.notify(endpoint_warning, severity="warning")
 
-        self.app.push_screen(modal, callback=_apply_modal_result)
+    async def _refresh_console_roleplay_projections(
+        self,
+        plan: ConsoleRoleplayProjectionPersistencePlan,
+    ) -> None:
+        """Persist one current immutable plan without off-thread store access."""
+        store = self._ensure_console_chat_store()
+        if not store.is_roleplay_projection_plan_current(plan):
+            if self._console_roleplay_repair_plan is plan:
+                self._console_roleplay_repair_plan = None
+                self._console_roleplay_repair_inflight_generation = 0
+            return
+        writer = _start_console_roleplay_projection_writer(plan)
+        persistence_task = writer.future
+        persistence_task.add_done_callback(
+            partial(
+                _consume_console_roleplay_writer_completion,
+                session_id=plan.session_id,
+                generation=plan.generation,
+            )
+        )
+        self._console_roleplay_writer_task = persistence_task
+        self._console_roleplay_writer_thread = writer.thread
+        try:
+            result = await asyncio.shield(persistence_task)
+        except asyncio.CancelledError:
+            # Unmount may abandon the screen-owned drain while the immutable
+            # writer continues. Its static callback consumes completion
+            # without retaining this screen or its live store.
+            if self._console_roleplay_tearing_down:
+                raise
+            result = await persistence_task
+        finally:
+            if self._console_roleplay_writer_task is persistence_task:
+                self._console_roleplay_writer_task = None
+                self._console_roleplay_writer_thread = None
+        accepted = store.accept_roleplay_projection_persistence_result(result)
+        if self._console_roleplay_repair_plan is plan:
+            repair_generation = self._console_roleplay_repair_inflight_generation
+            self._console_roleplay_repair_plan = None
+            self._console_roleplay_repair_inflight_generation = 0
+            if accepted and result.persisted and repair_generation > 0:
+                self._console_roleplay_repair_generation = repair_generation
+                self.app_instance._console_roleplay_repair_consumed_generation = max(
+                    repair_generation,
+                    int(
+                        getattr(
+                            self.app_instance,
+                            "_console_roleplay_repair_consumed_generation",
+                            0,
+                        )
+                        or 0
+                    ),
+                )
+        if accepted and not result.persisted:
+            self.app_instance.notify(
+                "Your chat name is active, but updated character templates may not "
+                "survive reopening.",
+                severity="warning",
+            )
+        if accepted and store.active_session_id == plan.session_id:
+            self._sync_console_identity_surfaces()
+
+    async def _drain_console_roleplay_persistence(self) -> None:
+        """Drain one active and one replaceable latest projection plan."""
+        plan: ConsoleRoleplayProjectionPersistencePlan | None = None
+        try:
+            while self._console_roleplay_pending_plan is not None:
+                plan = self._console_roleplay_pending_plan
+                self._console_roleplay_pending_plan = None
+                self._console_roleplay_active_plan = plan
+                await self._refresh_console_roleplay_projections(plan)
+                self._console_roleplay_active_plan = None
+                plan = None
+        except asyncio.CancelledError:
+            if (
+                self._console_roleplay_pending_plan is None
+                and plan is not None
+                and self._ensure_console_chat_store().is_roleplay_projection_plan_current(
+                    plan
+                )
+            ):
+                self._console_roleplay_pending_plan = plan
+            raise
+        finally:
+            self._console_roleplay_active_plan = None
+            self._console_roleplay_drain_scheduled = False
+
+    async def _await_console_roleplay_persistence_task(
+        self, task: asyncio.Task[None]
+    ) -> None:
+        """Let Textual cancel its waiter without cancelling the durable queue."""
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            return
+
+    def _finish_console_roleplay_persistence_task(
+        self, task: asyncio.Task[None]
+    ) -> None:
+        """Release a drained task and consume any unexpected exception."""
+        if self._console_roleplay_persistence_task is task:
+            self._console_roleplay_persistence_task = None
+        if task.cancelled():
+            error = None
+        else:
+            error = task.exception()
+            if error is not None:
+                failed_plan = (
+                    self._console_roleplay_active_plan
+                    or self._console_roleplay_pending_plan
+                )
+                logger.error(
+                    "Console roleplay projection persistence task failed "
+                    "(session_id={}, generation={}, task_name={}): {!r}",
+                    failed_plan.session_id if failed_plan is not None else "unknown",
+                    failed_plan.generation if failed_plan is not None else 0,
+                    task.get_name(),
+                    error,
+                )
+        if (
+            self._console_roleplay_pending_plan is not None
+            and self.is_mounted
+            and not self._console_roleplay_tearing_down
+        ):
+            self._start_console_roleplay_persistence_drain()
+
+    def _console_roleplay_unmount_timeout_seconds(self) -> float:
+        """Return the bounded configurable drain deadline for this screen."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console_config = app_config.get("console", {})
+        raw_timeout = (
+            console_config.get(
+                "roleplay_refresh_teardown_timeout_seconds",
+                CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS,
+            )
+            if isinstance(console_config, dict)
+            else CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS
+        )
+        try:
+            timeout = float(raw_timeout)
+        except (TypeError, ValueError):
+            return CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS
+        if not 0.01 <= timeout <= 5.0:
+            return CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS
+        return timeout
+
+    def _publish_console_roleplay_repair_marker(self) -> None:
+        """Publish the latest desired identity on the app, not this screen."""
+        generation = (
+            int(
+                getattr(self.app_instance, "_console_roleplay_repair_generation", 0)
+                or 0
+            )
+            + 1
+        )
+        self.app_instance._console_roleplay_repair_generation = generation
+        self.app_instance._console_roleplay_repair_global_name = (
+            self._global_chat_display_name()
+        )
+        # Textual resumes the uncovered screen before awaiting this screen's
+        # unmount hook. A marker published only after the teardown deadline
+        # therefore misses that screen's normal ``on_screen_resume`` probe.
+        # The loop callback resolves the app's current screen only after pop
+        # completes and captures neither this retiring screen nor its store.
+        asyncio.get_running_loop().call_later(
+            0.1,
+            _consume_console_roleplay_repair_for_current_screen,
+            self.app,
+        )
+
+    async def _teardown_console_roleplay_persistence(self) -> None:
+        """Bound screen-owned teardown while a static immutable writer lingers."""
+        self._console_roleplay_tearing_down = True
+        task = self._console_roleplay_persistence_task
+        if task is None or task.done():
+            if (
+                self._console_roleplay_pending_plan is not None
+                or self._console_roleplay_active_plan is not None
+                or (
+                    self._console_roleplay_writer_task is not None
+                    and not self._console_roleplay_writer_task.done()
+                )
+            ):
+                self._publish_console_roleplay_repair_marker()
+            self._console_roleplay_persistence_task = None
+            self._console_roleplay_active_plan = None
+            self._console_roleplay_pending_plan = None
+            self._console_roleplay_writer_task = None
+            self._console_roleplay_writer_thread = None
+            self._console_roleplay_drain_scheduled = False
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=self._console_roleplay_unmount_timeout_seconds(),
+            )
+        except TimeoutError:
+            self._publish_console_roleplay_repair_marker()
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        except Exception:
+            self._publish_console_roleplay_repair_marker()
+            failed_plan = (
+                self._console_roleplay_active_plan
+                or self._console_roleplay_pending_plan
+            )
+            logger.exception(
+                "Console roleplay projection drain failed during teardown "
+                "(session_id={}, generation={}, task_name={}).",
+                failed_plan.session_id if failed_plan is not None else "unknown",
+                failed_plan.generation if failed_plan is not None else 0,
+                task.get_name(),
+            )
+        finally:
+            self._console_roleplay_persistence_task = None
+            self._console_roleplay_active_plan = None
+            self._console_roleplay_pending_plan = None
+            self._console_roleplay_writer_task = None
+            self._console_roleplay_writer_thread = None
+            self._console_roleplay_drain_scheduled = False
+
+    def _start_console_roleplay_persistence_drain(self) -> None:
+        """Start the sole retained persistence drain when work is pending."""
+        if self._console_roleplay_pending_plan is None:
+            return
+        task = self._console_roleplay_persistence_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            if self._console_roleplay_drain_scheduled:
+                return
+            self._console_roleplay_drain_scheduled = True
+            self.run_worker(
+                self._drain_console_roleplay_persistence(),
+                exclusive=False,
+                group="console-roleplay-refresh",
+            )
+            return
+        self._console_roleplay_drain_scheduled = True
+        task = loop.create_task(self._drain_console_roleplay_persistence())
+        self._console_roleplay_persistence_task = task
+        task.add_done_callback(self._finish_console_roleplay_persistence_task)
+        self.run_worker(
+            partial(self._await_console_roleplay_persistence_task, task),
+            exclusive=False,
+            group="console-roleplay-refresh",
+        )
+
+    def _dispatch_active_console_roleplay_refresh(
+        self,
+        *,
+        force_persistence: bool = False,
+        repair_generation: int = 0,
+    ) -> bool:
+        """Coalesce refresh writes by active session and effective global name."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return False
+        self._start_console_roleplay_persistence_drain()
+        global_user_display_name = self._global_chat_display_name()
+        refresh_key = (store.active_session_id, global_user_display_name)
+        if (
+            not force_persistence
+            and refresh_key == self._last_console_roleplay_refresh_key
+        ):
+            return False
+        self._last_console_roleplay_refresh_key = refresh_key
+        try:
+            plan = store.prepare_session_roleplay_projection_refresh(
+                refresh_key[0],
+                global_default=global_user_display_name,
+                force_persistence=force_persistence,
+            )
+        except KeyError:
+            return False
+        self._sync_console_identity_surfaces()
+        if plan is not None:
+            if repair_generation > 0:
+                self._console_roleplay_repair_plan = plan
+                self._console_roleplay_repair_inflight_generation = repair_generation
+            self._console_roleplay_pending_plan = plan
+            self._start_console_roleplay_persistence_drain()
+        return plan is not None if force_persistence else True
+
+    def request_console_identity_refresh(self, generation: int | None = None) -> bool:
+        """Consume a global display-name save without waiting for the sync tick."""
+        observed = self._console_identity_refresh_generation
+        if generation is None:
+            generation = int(
+                getattr(
+                    self.app_instance,
+                    "_console_identity_refresh_generation",
+                    0,
+                )
+                or 0
+            )
+        if generation <= observed:
+            return False
+        self._console_identity_refresh_generation = generation
+        self._last_console_roleplay_refresh_key = None
+        return self._dispatch_active_console_roleplay_refresh()
+
+    def request_console_appearance_refresh(self, generation: int | None = None) -> bool:
+        """Refresh mounted transcript rows immediately after an Appearance save."""
+
+        observed = self._console_appearance_refresh_generation
+        if generation is None:
+            generation = int(
+                getattr(
+                    self.app_instance,
+                    "_console_appearance_refresh_generation",
+                    0,
+                )
+                or 0
+            )
+        if generation <= observed:
+            return False
+        self._console_appearance_refresh_generation = generation
+        self._last_native_transcript_refresh_key = None
+        if self.is_mounted:
+            try:
+                transcript = self.query_one(
+                    "#console-native-transcript", ConsoleTranscript
+                )
+            except QueryError:
+                transcript = None
+            if transcript is not None:
+                # Appearance only changes message presentation. Updating the
+                # transcript context avoids queueing behind the much broader
+                # Console sync worker during a busy mount or active turn.
+                transcript.set_presentation_context(
+                    self._console_presentation_context(),
+                    force=True,
+                )
+        return True
+
+    def _consume_pending_console_identity_refresh(self) -> bool:
+        """Consume an identity generation missed while Console was inactive."""
+        return self.request_console_identity_refresh()
+
+    def _consume_pending_console_roleplay_repair(self) -> bool:
+        """Force-persist the latest source projection after abandoned teardown."""
+        generation = int(
+            getattr(self.app_instance, "_console_roleplay_repair_generation", 0) or 0
+        )
+        app_consumed = int(
+            getattr(
+                self.app_instance,
+                "_console_roleplay_repair_consumed_generation",
+                0,
+            )
+            or 0
+        )
+        if generation <= max(self._console_roleplay_repair_generation, app_consumed):
+            return False
+        if self._console_roleplay_repair_inflight_generation >= generation:
+            return False
+        self._ensure_console_chat_store()
+        self._last_console_roleplay_refresh_key = None
+        dispatched = self._dispatch_active_console_roleplay_refresh(
+            force_persistence=True,
+            repair_generation=generation,
+        )
+        return dispatched
 
     async def on_console_settings_open(self, event: Button.Pressed) -> None:
         """Open Console session settings for the active native session."""
@@ -1855,7 +3145,17 @@ class ChatScreen(BaseAppScreen):
         elif action_id == "settings":
             await self._open_console_settings(focus_model=False)
         elif action_id == "attach-context":
-            self._set_console_rail_preference(left_open=True)
+            available_columns = self._console_rail_available_columns()
+            rail_state = self._current_console_rail_state(
+                available_columns=available_columns
+            )
+            preference_changes = console_context_reveal_preferences(
+                rail_state, available_columns
+            )
+            self._set_console_rail_preference(
+                left_open=preference_changes["left_open"],
+                right_open=preference_changes.get("right_open"),
+            )
         elif action_id == "run-library-rag":
             self._run_console_library_rag_from_visible_action()
         elif action_id == "send":
@@ -1879,6 +3179,61 @@ class ChatScreen(BaseAppScreen):
         # cap so the help copy tracks a user override instead of quoting the
         # baked-in default.
         max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
+        shortcut_groups = CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        if self._console_inspector_active():
+            shortcut_groups = (
+                *shortcut_groups,
+                ("Inspector", (("n / p", "next / previous section"),)),
+            )
+        focused = self.app.focused
+        if isinstance(focused, Widget):
+            authority_summary = next(
+                (
+                    candidate
+                    for candidate in focused.ancestors_with_self
+                    if isinstance(candidate, ConsoleSendAuthoritySummary)
+                ),
+                None,
+            )
+            if authority_summary is not None:
+                authority_rows = tuple(
+                    (escape_markup(label), escape_markup(value))
+                    for label, value in authority_summary.contextual_help_rows()
+                )
+                shortcut_groups = (
+                    *shortcut_groups,
+                    (
+                        "What happens if I send now?",
+                        authority_rows,
+                    ),
+                )
+        if isinstance(self.app.focused, ConsoleWorkspaceTree):
+            try:
+                tray = self.query_one(
+                    "#console-workspaces-context", ConsoleWorkspaceContextTray
+                )
+            except (NoMatches, QueryError):
+                context_data = None
+            else:
+                context_data = getattr(tray, "_workspace_tree_context_data", None)
+            label = escape_markup(
+                str(getattr(context_data, "raw_label", "") or "Workspace tree")
+            )
+            shortcut_groups = (
+                *shortcut_groups,
+                (
+                    "Workspaces",
+                    (
+                        ("Selected", label),
+                        ("Single click", "select row; expand a collapsed workspace"),
+                        ("Double-click", "open the selected workspace or conversation"),
+                        ("Enter", "open the selected row"),
+                        ("Space", "toggle workspace disclosure"),
+                        ("Left", "collapse or move to the parent workspace"),
+                        ("Right", "expand or move to the first child"),
+                    ),
+                ),
+            )
         self.app.push_screen(
             WorkbenchHelpPanel(
                 WorkbenchHelpState(
@@ -1887,7 +3242,7 @@ class ChatScreen(BaseAppScreen):
                     actions=workbench_state.actions,
                     notes_heading="Agents",
                     notes=_console_workbench_agents_notes(max_parallel_runs),
-                    shortcut_groups=CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+                    shortcut_groups=shortcut_groups,
                 )
             )
         )
@@ -2080,26 +3435,122 @@ class ChatScreen(BaseAppScreen):
             if self._console_setup_modal_blocking()
             else CONSOLE_WORKBENCH_SHORTCUTS
         )
+        # task-18812 / ADR-031: advertise the focus toggle in the footer —
+        # the only exit affordance visible in focus mode (no nav bar). The
+        # label names the action the key will perform, per the truthfulness
+        # rule. PREPENDED, not appended: AppFooterStatus's degradation drops
+        # hints from the END of the context when width runs out, and the
+        # Console context is already at that budget at common widths — an
+        # appended focus hint never rendered (caught in live verification
+        # at 160 cols: 153-cell context vs 152 available).
+        focus_label = (
+            "exit focus"
+            if bool(getattr(self.app_instance, "focus_mode", False))
+            else "focus"
+        )
+        shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
+        if self._console_inspector_active():
+            shortcuts = (("n/p", "Sections"), *shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _console_inspector_active(self) -> bool:
+        """Return whether live focus is the Inspector rail or a descendant."""
+
+        try:
+            rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
+        except (NoMatches, QueryError):
+            return False
+        focused = self.app.focused
+        return isinstance(focused, Widget) and rail.inspector_active(focused)
+
+    def _apply_focus_chrome(self) -> None:
+        """Mirror the app-level focus_mode flag onto this screen (task-18812).
+
+        Idempotent: sets/removes the ``-focus`` class that suppresses the
+        nav bar and workbench header (CSS: _agentic_terminal.tcss), and
+        refreshes the footer hints so the focus toggle's label tracks the
+        target state.
+        """
+        focused = bool(getattr(self.app_instance, "focus_mode", False))
+        self.set_class(focused, "-focus")
+        self._register_console_footer_shortcuts()
 
     def _clear_console_footer_shortcuts(self) -> None:
         """Clear Console Workbench shortcuts from this screen's own footer."""
         self.clear_footer_shortcuts(source="console")
 
-
-    def action_open_console_session_switcher(self) -> None:
+    async def action_open_console_session_switcher(self) -> None:
         """Open the Ctrl+K fuzzy session switcher."""
         if self._console_setup_modal_blocking():
             return
-        rows = [
-            *self._native_console_browser_rows(),
-            *self._membership_console_browser_rows(),
-        ]
-        persisted_rows, _total, _error = self._sync_persisted_console_browser_rows()
-        rows.extend(persisted_rows)
         self.app.push_screen(
-            ConsoleSessionSwitcherModal(rows=tuple(rows)),
+            ConsoleSessionSwitcherModal(
+                rows=await self._workspace.console_session_switcher_rows()
+            ),
             callback=self._session._apply_console_switcher_choice,
+        )
+
+    def action_open_trajectory_view(self) -> None:
+        """Open Trace for the active Console conversation (``y``).
+
+        task-5: the snapshot is built off the UI thread (DB reads); the
+        screen is pushed with live tail-follow callables wired to the
+        store's payload-revision bus.
+
+        TASK-22213: `TrajectoryScreen` is imported here, not at module
+        scope, so the ~4,400-LOC trajectory family stays off the Chat
+        first-paint import leg. The first `y` press pays the one-time
+        import (tens of ms); every later press hits `sys.modules`.
+        """
+        from .trajectory_screen import TrajectoryScreen
+
+        store = self._console_chat_store or self._ensure_console_chat_store()
+        session = getattr(store, "_sessions", {}).get(
+            getattr(store, "active_session_id", None)
+        )
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        if not conversation_id:
+            self.notify("The active conversation has no persisted trace yet.")
+            return
+        conv_id = str(conversation_id)
+        screen_title = str(getattr(session, "title", "") or "Console")
+        agent_controller = getattr(self, "_agent", None)
+        bridge = (
+            self._ensure_console_agent_bridge()
+            if agent_controller is not None
+            else None
+        )
+        agent_runs_db = getattr(bridge, "runs_db", None)
+
+        def build() -> TrajectorySnapshot:
+            return _build_trajectory_snapshot(
+                store,
+                conv_id,
+                agent_runs_db=agent_runs_db,
+            )
+
+        # task-16847: `Screen` defines NEITHER `call_from_thread` NOR
+        # `push_screen` (both are App-only in Textual 8) -- the original
+        # bare `self.` spelling of each raised AttributeError inside the
+        # thread worker, so pressing `y` never presented anything.
+        def present(snapshot: TrajectorySnapshot) -> None:
+            self.app.push_screen(
+                TrajectoryScreen(
+                    snapshot,
+                    screen_title=screen_title,
+                    conversation_id=conv_id,
+                    revision_provider=lambda: store.get_payload_revision(conv_id),
+                    snapshot_builder=build,
+                )
+            )
+
+        def build_worker() -> None:
+            snapshot = build()
+            self.app.call_from_thread(present, snapshot)
+
+        self.notify("Building trace…")
+        self.run_worker(
+            build_worker, thread=True, exclusive=True, group="trajectory-launch"
         )
 
     async def action_open_console_model_popover(self) -> None:
@@ -2112,12 +3563,17 @@ class ChatScreen(BaseAppScreen):
             current_model=settings.model,
         )
         self.app.push_screen(
-            ConsoleModelPopover(settings=settings, providers_models=providers_models),
+            ConsoleModelPopover(
+                settings=settings,
+                providers_models=providers_models,
+                context_state=self._active_console_context_control_state(),
+            ),
             callback=self._apply_console_model_popover_result,
         )
 
     def _apply_console_model_popover_result(
-        self, result: "ConsoleSessionSettings | str | None"
+        self,
+        result: "ConsoleModelPopoverResult | ConsoleSessionSettings | str | None",
     ) -> None:
         """Apply the popover result: sentinel opens full settings, else replaces settings.
 
@@ -2127,10 +3583,30 @@ class ChatScreen(BaseAppScreen):
         if result is None:
             return
         if result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS:
-            self.run_worker(self._open_console_settings(), exclusive=False)
+            self.run_worker(
+                self._open_console_settings(focus_context=True), exclusive=False
+            )
             return
+        if isinstance(result, ConsoleModelPopoverResult):
+            store = self._ensure_console_chat_store()
+            session_id = store.active_session_id
+            if session_id is None:
+                return
+            current = store.session_context_policy_overrides(session_id)
+            overrides = replace(current, compaction_mode=result.compaction_mode)
+            _session, persisted = store.set_session_context_policy_overrides(
+                session_id, overrides
+            )
+            if not persisted:
+                self.app_instance.notify(
+                    "Compaction policy applied in memory but could not be saved.",
+                    severity="warning",
+                )
+            result = result.settings
         # Popover results are explicit user selections; protect from refresh.
-        self._session._replace_active_console_session_settings(replace(result, source="user"))
+        self._session._replace_active_console_session_settings(
+            replace(result, source="user")
+        )
 
     def action_focus_console_composer_home(self) -> None:
         """Return keyboard focus to the Console composer (Escape, non-priority).
@@ -2153,7 +3629,8 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         self.run_worker(
-            self._session._create_native_console_session_from_active_context(), exclusive=False
+            self._session._create_native_console_session_from_active_context(),
+            exclusive=False,
         )
 
     def action_new_temporary_console_tab(self) -> None:
@@ -2173,7 +3650,9 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         self.run_worker(
-            self._session._create_native_console_session_from_active_context(ephemeral=True),
+            self._session._create_native_console_session_from_active_context(
+                ephemeral=True
+            ),
             exclusive=False,
         )
 
@@ -2238,7 +3717,16 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(self._open_console_system_prompt_editor(), exclusive=False)
 
     def action_view_chat_context(self) -> None:
-        """Open the Console context viewer modal (Ctrl+Shift+P)."""
+        """Open the Conversation Inspector's Next Send tab (Ctrl+Shift+P).
+
+        task-8: this used to push a standalone modal (retired in task-10);
+        it now pushes the shared ``ConsoleConversationInspector`` instead
+        (same modal the cost chip opens, just starting on a different
+        tab) -- the command-palette "view context" entry
+        (``UI/console_command_provider.py``) follows automatically since
+        it calls this same action. task-10 wired the Next Send tab to the
+        factories built below, so opening from here renders real content.
+        """
         if self._console_setup_modal_blocking():
             return
         controller = self._ensure_console_chat_controller()
@@ -2247,17 +3735,61 @@ class ChatScreen(BaseAppScreen):
             self.notify("No active conversation.", severity="warning")
             return
 
-        async def _factory() -> ConsoleContextSnapshot:
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-            except (NoMatches, QueryError):
-                composer = None
-            current_draft = composer.draft_text() if composer else ""
+        factory, estimate_factory, token_estimate, in_progress = (
+            self._console_inspector_next_send_factories(controller, session_id)
+        )
+        self._push_console_inspector(
+            initial_tab=TAB_NEXT_SEND,
+            snapshot_factory=factory,
+            estimate_factory=estimate_factory,
+            token_estimate=token_estimate,
+            in_progress=in_progress,
+            **project_instruction_ui.project_instruction_context_kwargs(
+                self, controller, session_id
+            ),
+        )
 
-            current_session_id = controller.store.active_session_id
-            pending = controller.store.pending_attachments(current_session_id)
+    def _console_inspector_next_send_factories(
+        self, controller: Any, session_id: str
+    ) -> tuple[
+        Callable[[], Awaitable[ConsoleContextSnapshot]],
+        Callable[[], int | None],
+        int | None,
+        bool,
+    ]:
+        """Build the Next Send tab's snapshot/estimate factories (task-18300).
+
+        Shared by BOTH ``ConsoleConversationInspector`` entry points (the
+        cost chip and Ctrl+Shift+P) -- the two push the SAME modal
+        instance, and the user can switch to the Next Send tab regardless
+        of which tab it opened on, so a caller that skipped this would
+        leave the tab showing nothing. Building the closures themselves is
+        cheap (no I/O happens until one is actually CALLED); the Next Send
+        pane calls ``snapshot_factory`` once on mount regardless of
+        ``initial_tab`` (see ``ConsoleConversationInspector.on_mount``).
+
+        ``session_id`` is threaded in rather than re-read from the store
+        because the composer only reflects the ACTIVE session; see
+        ``_captured_draft``.
+        """
+
+        def _captured_draft() -> str:
+            if controller.store.active_session_id == session_id:
+                try:
+                    return self.query_one(
+                        "#console-native-composer", ConsoleComposerBar
+                    ).draft_text()
+                except (NoMatches, QueryError):
+                    pass
+            session = next(
+                (item for item in controller.store.sessions() if item.id == session_id),
+                None,
+            )
+            return session.draft if session is not None else ""
+
+        async def _factory() -> ConsoleContextSnapshot:
+            current_draft = _captured_draft()
+            pending = controller.store.pending_attachments(session_id)
             current_attachments = tuple(
                 MessageAttachment(
                     data=pending_attachment.data,
@@ -2273,29 +3805,15 @@ class ChatScreen(BaseAppScreen):
                 draft=current_draft,
                 attachments=current_attachments,
                 staged_sources=current_staged_sources,
+                session_id=session_id,
             )
 
         def _estimate_factory() -> int | None:
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-            except (NoMatches, QueryError):
-                composer = None
-            current_draft = composer.draft_text() if composer else ""
-            return self._estimate_tokens({"draft": current_draft})
+            return self._estimate_tokens({"draft": _captured_draft()})
 
         token_estimate = _estimate_factory()
         in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-        self.app.push_screen(
-            ConsoleContextModal(
-                _factory,
-                token_estimate=token_estimate,
-                estimate_factory=_estimate_factory,
-                in_progress=in_progress,
-                ephemeral=self._console_active_session_is_ephemeral(),
-            )
-        )
+        return _factory, _estimate_factory, token_estimate, in_progress
 
     def _estimate_tokens(self, payload: dict[str, Any]) -> int | None:
         """Return a token estimate for the current draft text."""
@@ -2317,7 +3835,6 @@ class ChatScreen(BaseAppScreen):
         if not (1 <= number <= len(sessions)):
             return
         await self._session._activate_native_console_session(sessions[number - 1].id)
-
 
     @on(Button.Pressed, "#console-change-workspace")
     def on_console_change_workspace(self, event: Button.Pressed) -> None:
@@ -2367,7 +3884,21 @@ class ChatScreen(BaseAppScreen):
         )
 
     # Reactive property for sidebar state persistence
-    sidebar_state = reactive({}, layout=False)
+    sidebar_state = reactive(dict, layout=False)
+
+    #: task-15475: one-shot "the mount already did this visit's refreshes"
+    #: token. Textual posts ``ScreenResume`` when a screen is PUSHED, so
+    #: ``on_mount`` and the mount's own ``on_screen_resume`` both fire on the
+    #: first visit -- and both used to dispatch the (non-exclusive, so
+    #: uncancelled) skill-candidate worker and both used to sync task-resume
+    #: state. ``on_mount`` sets this; the very next resume consumes it and
+    #: skips. Every LATER resume still refreshes, which is the point: a skill
+    #: may have been installed, or an approval may have landed, while Console
+    #: was suspended.
+    #:
+    #: Class-level default so it is readable on a screen built by ``__new__``
+    #: (several Console tests construct one without running ``__init__``).
+    _console_mount_visit_refreshed: bool = False
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
@@ -2375,6 +3906,10 @@ class ChatScreen(BaseAppScreen):
         self._task_resume_state = TaskResumeState()
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
+        self._console_status_chips_collapsed = resolve_status_chips_collapsed(
+            getattr(app_instance, "app_config", None)
+        )
+        self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
@@ -2402,22 +3937,33 @@ class ChatScreen(BaseAppScreen):
         self._console_library_rag_source_types: tuple[str, ...] = (
             CONSOLE_LIBRARY_RAG_SOURCE_SCOPE
         )
-        self._console_chat_store: ConsoleChatStore | None = None
-        # task-9: cache of persisted-conversation RAG retrieval scopes,
-        # keyed by conversation id -- populated off-loop at resume time and
-        # by the scope picker's modal-open/after-save reads (never during
-        # compose/recompose), so the Inspector's retrieval-scope row and
-        # run-recipe line render from pure session state.
-        self._console_retrieval_scope_cache: Dict[str, Optional[RagScope]] = {}
-        # task-13: cache of resolved EFFECTIVE (conversation ∩ workspace)
-        # retrieval-scope display state, keyed the same way as the cache
-        # above (persisted conversation id, or the session id while
-        # unpersisted) -- populated off-loop at the same three trigger
-        # points (scope-picker save on either target, resume, and the
-        # first-persist flush hook), never during compose/recompose, so
-        # the Inspector row and header chip can render the intersection
-        # with zero DB work.
-        self._console_effective_scope_cache: Dict[str, ConsoleRetrievalScopeState] = {}
+        # `_console_chat_store` is a PROPERTY over the app-owned runtime
+        # (task-15860 lifetime landing) -- it deliberately has no `__init__`
+        # slot any more. Assigning `None` here would clear the store a
+        # surviving runtime is still using the instant a fresh ChatScreen is
+        # constructed, which `_complete_screen_navigation` does BEFORE the
+        # outgoing screen unmounts.
+        self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
+        self._console_roleplay_persistence_task: asyncio.Task[None] | None = None
+        self._console_roleplay_writer_task: (
+            asyncio.Future[ConsoleRoleplayProjectionPersistenceResult] | None
+        ) = None
+        self._console_roleplay_writer_thread: threading.Thread | None = None
+        self._console_roleplay_active_plan: (
+            ConsoleRoleplayProjectionPersistencePlan | None
+        ) = None
+        self._console_roleplay_pending_plan: (
+            ConsoleRoleplayProjectionPersistencePlan | None
+        ) = None
+        self._console_roleplay_drain_scheduled = False
+        self._console_roleplay_tearing_down = False
+        self._console_roleplay_repair_generation = 0
+        self._console_roleplay_repair_inflight_generation = 0
+        self._console_roleplay_repair_plan: (
+            ConsoleRoleplayProjectionPersistencePlan | None
+        ) = None
+        self._console_identity_refresh_generation = 0
+        self._console_appearance_refresh_generation = 0
         # TASK-340: keyboard-send draft stashes — keypress->handler handoff,
         # then the queued submit's accept/refuse consumption slot.
         # `_console_pending_send_stash` stays a single slot: it is consumed
@@ -2469,13 +4015,6 @@ class ChatScreen(BaseAppScreen):
         #: for the same "bounded by distinct sessions ever parked" reason
         #: as `_console_toasted_park_round_ids` above.
         self._console_last_parked_round_ids: dict[str, frozenset[str]] = {}
-        # TASK-251: TTL cache for `_sync_persisted_console_browser_rows` --
-        # see `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`.
-        self._console_persisted_rows_cache: (
-            tuple[list[ConsoleConversationBrowserInputRow], int | None, str] | None
-        ) = None
-        self._console_persisted_rows_cache_key: tuple[str, str | None] | None = None
-        self._console_persisted_rows_cache_at: float = 0.0
         # TASK-251: last-applied payload for the equality-guarded Agent
         # rail sub-sync (skip Static.update()/style work when the payload
         # `ConsoleAgentController._console_agent_section_payload` computes
@@ -2483,8 +4022,23 @@ class ChatScreen(BaseAppScreen):
         # `_sync_console_agent_section` itself -- it is that DOM write's
         # memo and nothing else's (wave-4 console decomposition, task 3).
         self._console_agent_section_last: (
-            tuple[str, str, str, str, bool, bool, bool] | None
+            tuple[
+                str,
+                str,
+                ConsoleInspectorSectionState,
+                str,
+                bool,
+                bool,
+                bool,
+                ConsoleAgentSteeringState,
+            ]
+            | None
         ) = None
+        # PR2b Task 5: coalescing flag for `_request_console_agent_fleet_
+        # sync` -- mirrors `_console_control_bar_sync_scheduled` exactly
+        # (see that flag's own call site, `_request_console_control_bar_
+        # sync`, for the precedent this follows).
+        self._console_agent_fleet_sync_scheduled = False
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
         # The six Console controllers -- their construction and every
@@ -2497,15 +4051,11 @@ class ChatScreen(BaseAppScreen):
         # wiring's late-binding lambdas. See `build_console_
         # controllers`' docstring for the build order and why it is
         # documentation rather than a constraint.
-        build_console_controllers(self)
-        self._console_conversation_browser_query = ""
-        self._console_conversation_browser_search_timer: Any | None = None
-        self._console_conversation_browser_search_token = 0
-        self._console_conversation_browser_rows: tuple[
-            ConsoleConversationBrowserInputRow, ...
-        ] = ()
-        self._console_conversation_browser_total: int | None = None
-        self._console_conversation_browser_error = ""
+        build_console_controllers(
+            self,
+            rag_source_types_accessor=(lambda: _console_library_rag_source_scope(self)),
+            rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
+        )
         #: The realtime (V4) hands-free loop's live session, or None when
         #: that loop is not running. Mutually exclusive with
         #: `_console_hands_free` by construction: the engine fork in
@@ -2518,17 +4068,12 @@ class ChatScreen(BaseAppScreen):
         #: sink, or None. Retained only so `on_unmount` can wait for it --
         #: see `_teardown_console_realtime_loop`.
         self._console_realtime_close_worker: Any | None = None
-        self._console_provider_gateway: Any | None = None
-        self._console_chat_controller: ConsoleChatController | None = None
+        # `_console_provider_gateway`/`_console_chat_controller`: properties
+        # over the app-owned runtime, no `__init__` slot -- see the note at
+        # `_console_chat_store`'s old slot.
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
         )
-        # Snapshot of trusted, user-invocable skills for the slash-command
-        # popup's skill entries; refreshed on mount/resume by
-        # `_refresh_console_skill_candidates`. Bare-`/skill-name` resolution
-        # was hard-removed (the `$`-mention migration), so this snapshot only
-        # feeds suggestions, which complete to `/skills <name> `.
-        self._console_skill_candidates: tuple[SkillCommandCandidate, ...] = ()
         self._console_unknown_send_armed: str | None = None
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
@@ -2553,6 +4098,23 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._console_citation_counts: dict[str, int] = {}
+        # task-17169 slice 2: review-note previews keyed by NATIVE message id
+        # (the transcript marker's input), plus the conversation the map was
+        # last loaded for -- reloads happen only on conversation change; live
+        # Comment writes update the map in place.
+        self._console_annotation_previews: dict[str, tuple[str, ...]] = {}
+        self._console_annotation_loaded_conversation: str | None = None
+        # Qodo (PR #1723): mutual exclusion for the selection-feedback flow.
+        # The worker is deliberately NOT exclusive (a superseding exclusive
+        # cancel would strand a mounted comment modal -- see the flow's
+        # docstring), so exclusion is this guard instead: re-triggers while
+        # a flow is in flight are ignored, never queued and never cancelled.
+        self._console_selection_feedback_inflight = False
+        # Same precedent, same reason (task-18515 review-note management
+        # task 3 fix round): a rapid double marker-click / double-`n` before
+        # the first worker's off-thread DB read resolves must not stack two
+        # ConsoleReviewNotesModals with independent DB-bound closures.
+        self._console_review_notes_inflight = False
         self._console_citation_resolved_signatures: dict[
             str, tuple[str, str, str, str]
         ] = {}
@@ -2603,38 +4165,55 @@ class ChatScreen(BaseAppScreen):
         self._console_fleet_coachmark_seen_cached: bool | None = None
         self._console_detected_local_server: DiscoveredLocalServer | None = None
         self._console_local_discovery_started = False
-        # P1g: cached "what's in play" chat-dictionary summary for the
-        # active native Console session's conversation/character scope,
-        # recomputed only by `refresh_active_dictionaries_summary()`.
-        # Fix-wave (Critical, Task 4 review): the old recompute trigger
-        # watched root-owned conversation and character mirrors that native
-        # Console never wrote, so the summary was permanently stuck at
-        # "No active chat" in the real app. `_sync_native_console_chat_ui()`
-        # recomputes whenever the active native session's
-        # (conversation_id, character_id) scope changes -- see
-        # `_active_console_dictionary_scope_ids()` and
-        # `_refresh_active_dictionaries_summary_if_scope_changed()`.
-        # `_build_console_inspector_state` and the inspector compose path
-        # read ONLY this cache -- never a DB query on recompose.
-        self._active_dictionaries_summary: dict | None = None
-        # Last (conversation_id, character_id) scope a refresh was run
-        # for. `_sync_native_console_chat_ui()` also runs on a 0.2s
-        # transcript-poll timer while a run is streaming
-        # (`_start_console_transcript_sync_timer`), so this guard is what
-        # keeps the recompute from hitting the DB (via the scope service)
-        # several times a second instead of only on a real scope change.
-        self._last_console_dictionary_scope_ids: (
-            tuple[str | None, int | None] | None
-        ) = None
-        # P2g-2: cached "what's in play" world-book summary for the active
-        # native Console session's conversation scope, recomputed only by
-        # `refresh_active_world_books_summary()`. Mirrors the dictionary
-        # cache above -- `_build_console_inspector_state` reads only this
-        # cache, never a DB query on recompose.
-        self._active_world_books_summary: dict | None = None
-        # Sentinel distinct from any real `(conversation_id,)` tuple so the
-        # first scope check always refreshes.
-        self._last_console_world_book_scope_ids: tuple | None = None
+        # TASK-18060 Task 5 (review-rail spec §2): cached cross-turn
+        # "Changed files" summary for the active native Console session's
+        # conversation. Mirrors the dictionary/world-book caches above --
+        # `_build_console_changed_files_state` (and therefore the rail's
+        # `ConsoleChangedFilesSection`) reads ONLY this cache, never the
+        # DB/git directly, on compose or on the 0.2s sync tick.
+        # `_console_changed_files_pruned_rows` mirrors the summary's own
+        # retention-pruned-row count. Both are populated off-thread, by
+        # `_dispatch_console_changed_files_worker`'s `call_from_thread`
+        # landing -- unlike the dictionary/world-book caches, this recompute
+        # is a git subprocess PER snapshot row (spec §2's cost model), so it
+        # runs on a `thread=True` worker rather than an in-tick awaited
+        # `asyncio.to_thread`.
+        self._console_changed_files_summary: "tuple[ConversationFileEntry, ...] | None" = None
+        self._console_changed_files_pruned_rows: int = 0
+        # Per-row git-diff memo (fix round, spec §2's stated per-row memo),
+        # keyed by the owning `change_snapshots` row's own DB id -- handed
+        # to `AgentRunsChangeReviewProvider.conversation_changed_files`'s
+        # `row_cache` param so a recompute only runs git for rows it has
+        # not seen before (a new turn costs its own rows' git calls, not
+        # the whole history's -- benchmarked at ~18ms/row-pair, ~900ms at
+        # turn 50 without this, quadratic cumulative across the
+        # conversation's lifetime). Cleared alongside the summary on a
+        # genuine conversation switch (row ids are globally unique, so this
+        # is hygiene, not correctness); deliberately NOT cleared by a
+        # note-mutation-forced guard reset -- the git content behind an
+        # already-seen row does not change when a note is added/deleted,
+        # only the notes join reruns.
+        self._console_changed_files_row_cache: "dict[int, list[ChangedFile]]" = {}
+        # Guard: `(conversation_id, newest change_review_run_id present in
+        # the message store)`. `_sync_console_changed_files_if_scope_changed`
+        # only dispatches the off-thread recompute when this tuple actually
+        # changes -- an unchanged scope costs nothing (no DB, no git) on
+        # every 0.2s tick. `None` is a sentinel distinct from any real scope
+        # tuple (including `(None, None)`, a real "no active chat" scope),
+        # matching the world-book cache's own "first check always
+        # refreshes" convention. Also reset to `None` by every app-side
+        # note-mutation path (the card's save/delete, the Review screen's
+        # dismissal callback) so the rail's `✎ N` badges never go stale --
+        # the guard tuple alone only moves on a NEW run.
+        self._last_console_changed_files_scope: "tuple[str | None, str | None] | None" = None
+        # Tracks ONLY the conversation-id half, across resets that use the
+        # sentinel above -- distinguishes a genuine conversation switch
+        # (clears the summary) from a note-mutation-forced re-check on the
+        # SAME conversation (must not clear it). See
+        # `_CONSOLE_CHANGED_FILES_CONVERSATION_UNSET`'s docstring.
+        self._last_console_changed_files_conversation_id: Any = (
+            _CONSOLE_CHANGED_FILES_CONVERSATION_UNSET
+        )
         # P1g Task 5: guards the Console dictionary attach/detach picker
         # flow against a double-open (mirrors P1f's `_io_dialog_active`),
         # reset in a `finally` in both attach/detach workers.
@@ -2642,22 +4221,13 @@ class ChatScreen(BaseAppScreen):
         # P2g-2 Task 4: same double-open guard, for the World Books
         # inspector block's Attach/Detach picker flow.
         self._console_worldbook_dialog_active = False
-        # P3c: cached avatar spec (dict | None) for the active character in
-        # the "Character" rail section, plus its display name and the
-        # scope (conversation/character) it was last computed for. Mirrors
-        # the dictionaries/world-books caches above -- the compose path
-        # reads only this cache, never doing I/O on recompose. T3 fills
-        # `_active_character_avatar`; this task only seeds the empty state.
-        self._active_character_avatar: dict | None = None
-        self._active_character_avatar_name: str | None = None
-        self._last_console_avatar_scope: Any | None = None
-        # P3d-1: per-(character_id, state) decode cache so revisiting an
-        # expression state already seen this session is served instantly
-        # (no re-fetch/re-decode). Keyed on the full scope tuple, mirroring
-        # `_last_console_avatar_scope`.
-        self._console_expression_spec_cache: dict[tuple[int, str], dict] = {}
         self.ui_state = UIState()
         self._load_sidebar_state()
+        # task-15470: debounce state for `watch_sidebar_state` -- see
+        # `SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS`.
+        self._sidebar_state_save_timer: Any | None = None
+        self._sidebar_state_dirty = False
+        self._sidebar_state_persist_worker: Any | None = None
 
     # Sections `load_settings()` always injects into a disk-loaded config but
     # which Console test fakes never carry. Used to tell a real boot snapshot
@@ -2669,6 +4239,59 @@ class ChatScreen(BaseAppScreen):
     # never takes the fresh branch.
     _CONSOLE_LIVE_CONFIG_MARKER_SECTIONS = ("general", "logging")
 
+    #: Memo for ONE synchronous Console state-derivation pass, or None when
+    #: no pass is open. A CLASS attribute default because the hand-built
+    #: `ChatScreen.__new__()` test fixtures never run `__init__`.
+    _console_derivation_memo: dict[Any, Any] | None = None
+
+    #: Cross-tick memo for the cost chip's per-row token estimates
+    #: (task-15451), lazily created by `_console_cost_estimate_cache_or_new`.
+    #: Unlike `_console_derivation_memo` this deliberately OUTLIVES a single
+    #: pass -- the whole point is that the 0.2s tick stops re-tokenizing rows
+    #: it already estimated on the previous tick. Also a CLASS attribute
+    #: default, for the same `__new__()`-fixture reason.
+    _console_cost_estimate_cache: TokenEstimateCache | None = None
+
+    def _console_cost_estimate_cache_or_new(self) -> TokenEstimateCache:
+        """Return this screen's token-estimate memo, creating it on first use.
+
+        Held per screen rather than per session: entries are keyed by message
+        id and every hit is re-verified against the row's own text, so the
+        two sessions of a switched-between pair share the cache safely (see
+        :class:`TokenEstimateCache`).
+        """
+        cache = self._console_cost_estimate_cache
+        if cache is None:
+            cache = TokenEstimateCache()
+            self._console_cost_estimate_cache = cache
+        return cache
+
+    @contextmanager
+    def _console_derivation_scope(self):
+        """Memoize repeated provider lookups for one derivation pass.
+
+        Building the Console control state and the Workbench state off it
+        re-derives the same provider selection and readiness config once
+        per leg: measured on dev, a single draft-edit sync ran
+        `_build_console_provider_selection` 7x and
+        `_provider_readiness_app_config` 63x (task-15452). None of those
+        legs mutate anything, and the pass is synchronous, so one memo for
+        its duration is exact rather than merely close.
+
+        Deliberately opt-in and scoped: outside a `with` block every lookup
+        is live, exactly as before. Re-entrant (an inner scope keeps the
+        outer memo) and always torn down, so a raising leg cannot leave a
+        stale selection cached for the next keystroke.
+        """
+        if self._console_derivation_memo is not None:
+            yield
+            return
+        self._console_derivation_memo = {}
+        try:
+            yield
+        finally:
+            self._console_derivation_memo = None
+
     def _provider_readiness_app_config(self) -> Any:
         """Return the freshest app config for provider-readiness checks.
 
@@ -2678,24 +4301,33 @@ class ChatScreen(BaseAppScreen):
         task-177). When the snapshot looks disk-loaded, re-source it from
         ``load_settings()`` - cheap (cached) except right after a save, which
         is exactly when the fresh read matters.
+
+        Served from the per-pass memo inside a `_console_derivation_scope`
+        (task-15452): one draft-edit sync called this 63 times.
         """
+        memo = self._console_derivation_memo
+        if memo is not None and "app_config" in memo:
+            return memo["app_config"]
         try:
             app_config = getattr(self.app, "app_config")
         except (AttributeError, NoActiveAppError):
             app_config = getattr(self.app_instance, "app_config", {}) or {}
         app_config = app_config or {}
-        if not self._console_config_snapshot_is_disk_loaded(app_config):
-            return app_config
-        try:
-            fresh = load_settings()
-        except Exception:
-            logger.debug(
-                "Console readiness refresh via load_settings() failed; using snapshot"
-            )
-            return app_config
-        if isinstance(fresh, Mapping) and fresh:
-            return fresh
-        return app_config
+        resolved = app_config
+        if self._console_config_snapshot_is_disk_loaded(app_config):
+            try:
+                fresh = load_settings()
+            except Exception:
+                logger.debug(
+                    "Console readiness refresh via load_settings() failed; "
+                    "using snapshot"
+                )
+            else:
+                if isinstance(fresh, Mapping) and fresh:
+                    resolved = fresh
+        if memo is not None:
+            memo["app_config"] = resolved
+        return resolved
 
     @classmethod
     def _console_config_snapshot_is_disk_loaded(cls, app_config: Any) -> bool:
@@ -2853,7 +4485,9 @@ class ChatScreen(BaseAppScreen):
         self._pending_console_launch_auto_open_inspector = True
         store.acknowledge(claim)
         try:
-            self._stage_console_library_rag_launch(launch, allow_recompose=False)
+            self._retrieval._stage_console_library_rag_launch(
+                launch, allow_recompose=False
+            )
         except Exception as exc:
             # Includes the never-composed screen shell, where the staging
             # seam's surface sync has no DOM to query.
@@ -2917,7 +4551,6 @@ class ChatScreen(BaseAppScreen):
         value = config.get(key, {})
         return value if isinstance(value, dict) else {}
 
-
     def _providers_models(self) -> dict[str, list[str]]:
         """Return configured provider/model options for Console settings."""
         providers_models = getattr(self.app_instance, "providers_models", None)
@@ -2964,9 +4597,6 @@ class ChatScreen(BaseAppScreen):
                 current_model,
             )
             return providers_models
-        if not model_options:
-            return providers_models
-
         merged = {
             provider_name: list(model_ids)
             for provider_name, model_ids in providers_models.items()
@@ -3006,7 +4636,6 @@ class ChatScreen(BaseAppScreen):
             (provider_config_key(provider), model_id),
             "",
         )
-
 
     def _configured_console_provider(
         self,
@@ -3206,6 +4835,35 @@ class ChatScreen(BaseAppScreen):
             ),
         )
 
+    def _active_console_context_control_state(
+        self,
+        *,
+        estimate: ConsoleSettingsContextEstimate | None = None,
+    ) -> ConsoleContextControlState:
+        """Build the shared quick/full context snapshot for the active session."""
+        settings = self._session._ensure_active_console_session_settings()
+        estimate = estimate or self._active_console_settings_context_estimate()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        overrides = ConsoleContextPolicyOverrides()
+        global_overrides = None
+        memory = None
+        if session_id is not None:
+            controller = self._ensure_console_chat_controller()
+            try:
+                overrides, global_overrides, memory = controller.context_control_inputs(
+                    session_id
+                )
+            except (KeyError, ValueError):
+                pass
+        return build_console_context_control_state(
+            settings=settings,
+            estimate=estimate,
+            overrides=overrides,
+            global_overrides=global_overrides,
+            active_memory=memory,
+        )
+
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""
         settings, readiness = self._active_console_settings_readiness()
@@ -3252,6 +4910,29 @@ class ChatScreen(BaseAppScreen):
         system_line.update(line_text)
         system_line.set_class(is_dim, "console-rail-system-line-dim")
         self._console_rail_system_line_last = payload
+        self._request_console_context_allocation_reconcile()
+
+    def _request_console_context_allocation_reconcile(self) -> None:
+        """Safely invalidate the mounted Context allocator after a DOM mutation."""
+
+        try:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
+            return
+        left_rail.request_allocation_reconcile()
+
+    def _request_console_live_work_reconcile(self) -> None:
+        """Settle the swapped Live Work body before its Inspector owner."""
+
+        try:
+            section = self.query_one(
+                "#console-bounded-section-live-work", ConsoleBoundedSection
+            )
+            rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
+        except (NoMatches, QueryError):
+            return
+        section.request_reconcile()
+        rail.request_outer_reconcile()
 
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
@@ -3263,6 +4944,7 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         else:
+            # The child owns its bounded-body and rail invalidation.
             summary.sync_state(summary_state)
         provider_value = _summary_row_value(summary_state.provider_row) or "—"
         model_value = _summary_row_value(summary_state.model_row) or "—"
@@ -3306,6 +4988,37 @@ class ChatScreen(BaseAppScreen):
 
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
+        self._request_console_context_allocation_reconcile()
+
+    def _request_console_agent_fleet_sync(self) -> None:
+        """Coalesce Agent-fleet-section syncs into one trailing run (task-5).
+
+        Mirrors ``_request_console_control_bar_sync`` exactly -- a
+        scheduled-flag + ``call_after_refresh`` trailing run, not a timer.
+        That precedent's own docstring records the measurement that
+        motivated the shape (one screen push ran a ~47ms sync 14 times --
+        0.65s of a ~1.2s push, every caller individually justified, nothing
+        deduplicating them); this is the same shape applied to the Agent
+        fleet mini-section's own sync (``_sync_console_agent_section``)
+        instead, for its own bursty callers -- e.g. the per-row Cancel
+        handler below, which can fire several times in a row (a user
+        cancelling more than one child in quick succession) while only one
+        resync is ever needed to reflect all of them.
+
+        Requests landing before the trailing run fires fold into it; the
+        run always calls ``_sync_console_agent_section`` fresh (itself
+        still equality-guarded against the last applied payload), so the
+        last-writer semantics every caller relies on are preserved.
+        """
+        if self._console_agent_fleet_sync_scheduled:
+            return
+        self._console_agent_fleet_sync_scheduled = True
+        self.call_after_refresh(self._run_coalesced_console_agent_fleet_sync)
+
+    def _run_coalesced_console_agent_fleet_sync(self) -> None:
+        """Execute one coalesced Agent-fleet-section sync (task-5)."""
+        self._console_agent_fleet_sync_scheduled = False
+        self._sync_console_agent_section()
 
     def _sync_console_agent_section(self) -> None:
         """Apply the Agent rail's derived payload to the mounted widgets.
@@ -3321,6 +5034,17 @@ class ChatScreen(BaseAppScreen):
         The memo is written only after a successful apply, so a tick that
         raised part-way through the writes below is re-attempted next tick
         rather than recorded as painted.
+
+        PR2b Task 4: the third payload element is now a
+        ``ConsoleInspectorSectionState`` (rows + header summary) for the
+        ``ConsoleInspectorSection`` mounted at ``#console-agent-section-
+        subagents`` -- replacing the plain ``Static.update()`` this used to
+        do, ``sync_state`` patches the section's rows/summary in place when
+        possible (structural key unchanged) and only recomposes when the
+        row set itself changed shape, per that component's own discipline
+        (Task 3). The section is hidden entirely whenever there are no rows
+        to show -- no fleet at all, or drilled into one child whose own
+        detail the status/steps Statics above already carry (state 3).
         """
         payload = self._agent._console_agent_section_payload()
         if payload == self._console_agent_section_last:
@@ -3328,17 +5052,23 @@ class ChatScreen(BaseAppScreen):
         (
             status_line,
             steps_text,
-            subagents_text,
+            fleet_section_state,
             fleet_line,
             back_visible,
             section_open,
             full_log_visible,
+            steering_state,
+            cancel_all_visible,
         ) = payload
         try:
             self.query_one("#console-agent-section-status", Static).update(status_line)
             self.query_one("#console-agent-section-steps", Static).update(steps_text)
-            self.query_one("#console-agent-section-subagents", Static).update(
-                subagents_text
+            fleet_section = self.query_one(
+                "#console-agent-section-subagents", ConsoleInspectorSection
+            )
+            fleet_section.sync_state(fleet_section_state)
+            fleet_section.styles.display = (
+                "block" if fleet_section_state.rows else "none"
             )
             fleet_summary = self.query_one("#console-agent-fleet-summary", Static)
             fleet_summary.update(fleet_line)
@@ -3347,6 +5077,18 @@ class ChatScreen(BaseAppScreen):
             back_button.styles.display = "block" if back_visible else "none"
             full_log_button = self.query_one("#console-agent-view-full-log", Button)
             full_log_button.styles.display = "block" if full_log_visible else "none"
+            # PR3b Task 3: the drill-in steering bar applies its own
+            # visibility/queued-line writes from the derived state.
+            self.query_one(
+                "#console-agent-steering-bar", ConsoleAgentSteeringBar
+            ).sync_state(steering_state)
+            # PR3b Task 5: the whole-fleet kill switch paints only while
+            # a live child exists (derived beside the steering state so
+            # the two surfaces move together).
+            cancel_all_button = self.query_one(
+                f"#{CONSOLE_AGENT_CANCEL_ALL_ID}", Button
+            )
+            cancel_all_button.styles.display = "block" if cancel_all_visible else "none"
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
@@ -3356,6 +5098,7 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         self._console_agent_section_last = payload
+        self._request_console_context_allocation_reconcile()
 
     def _focus_console_workspace_conversation_search(self) -> None:
         """Restore focus to the conversation search input when it is mounted."""
@@ -3365,11 +5108,46 @@ class ChatScreen(BaseAppScreen):
             return
         search.focus()
 
-    def _build_console_provider_selection(self) -> ConsoleProviderSelection:
-        """Return the effective native Console provider selection for sends."""
+    def _build_console_provider_selection(
+        self, session_id: str | None = None
+    ) -> ConsoleProviderSelection:
+        """Return an owning-session provider selection without switching tabs.
+
+        Served from the per-pass memo inside a `_console_derivation_scope`
+        (task-15452): one draft-edit sync built this 7 times for the same
+        session.
+        """
+        memo = self._console_derivation_memo
+        memo_key = ("provider_selection", session_id)
+        if memo is not None and memo_key in memo:
+            return memo[memo_key]
+        selection = self._build_console_provider_selection_uncached(session_id)
+        if memo is not None:
+            memo[memo_key] = selection
+        return selection
+
+    def _build_console_provider_selection_uncached(
+        self, session_id: str | None = None
+    ) -> ConsoleProviderSelection:
+        """Derive the provider selection with no memo in front of it."""
         app_config = self._provider_readiness_app_config()
-        selection_settings = self._session._ensure_active_console_session_settings()
-        _legacy_provider, legacy_model = self._effective_console_provider_model()
+        store = self._ensure_console_chat_store()
+        if session_id is None:
+            selection_settings = self._session._ensure_active_console_session_settings()
+            target_session_id = store.active_session_id
+        else:
+            selection_settings = self._session._console_session_settings(session_id)
+            if selection_settings is None:
+                raise KeyError(f"Unknown Console session: {session_id}")
+            target_session_id = session_id
+        legacy_model = None
+        if session_id is None:
+            _legacy_provider, legacy_model = self._effective_console_provider_model()
+        elif getattr(selection_settings, "source", "derived") == "user":
+            legacy_model = selection_settings.model
+        else:
+            chat_defaults = self._config_section(app_config, "chat_defaults")
+            legacy_model = chat_defaults.get("model")
         provider = provider_config_key(selection_settings.provider) or "llama_cpp"
         explicit_model = (
             str(selection_settings.model).strip()
@@ -3410,6 +5188,17 @@ class ChatScreen(BaseAppScreen):
         elif _has_selected_text(selection_settings.base_url):
             base_url = str(selection_settings.base_url).strip()
 
+        current_workspace_context = self._workspace._current_console_workspace_context()
+        if target_session_id is None:
+            workspace_context = current_workspace_context
+        else:
+            workspace_id = store.session_workspace_id(target_session_id)
+            workspace_context = (
+                current_workspace_context
+                if current_workspace_context.active_workspace_id == workspace_id
+                else ConsoleWorkspaceContext(active_workspace_id=workspace_id)
+            )
+
         return ConsoleProviderSelection(
             provider=provider,
             base_url=base_url,
@@ -3430,13 +5219,30 @@ class ChatScreen(BaseAppScreen):
             thinking_budget_tokens=selection_settings.thinking_budget_tokens,
             streaming=selection_settings.streaming,
             system_prompt=selection_settings.system_prompt,
-            workspace_context=self._workspace._current_console_workspace_context(),
+            workspace_context=workspace_context,
         )
 
     def _active_console_provider_model_display(
         self,
     ) -> tuple[str, str | None, ConsoleSessionSettings]:
-        """Return provider/model labels backed by active session settings."""
+        """Return provider/model labels backed by active session settings.
+
+        Served from the per-pass memo inside a `_console_derivation_scope`
+        (task-15452): the control state and the Workbench state built off it
+        each re-derive this leg.
+        """
+        memo = self._console_derivation_memo
+        if memo is not None and "provider_model_display" in memo:
+            return memo["provider_model_display"]
+        display = self._active_console_provider_model_display_uncached()
+        if memo is not None:
+            memo["provider_model_display"] = display
+        return display
+
+    def _active_console_provider_model_display_uncached(
+        self,
+    ) -> tuple[str, str | None, ConsoleSessionSettings]:
+        """Derive provider/model labels with no memo in front of them."""
         settings = self._session._ensure_active_console_session_settings()
         selection = self._build_console_provider_selection()
         legacy_provider, _legacy_model = self._effective_console_provider_model()
@@ -3452,7 +5258,25 @@ class ChatScreen(BaseAppScreen):
     def _active_console_settings_readiness(
         self,
     ) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]:
-        """Return effective settings plus Console-native readiness for display/send surfaces."""
+        """Return effective settings plus Console-native readiness for display/send surfaces.
+
+        Served from the per-pass memo inside a `_console_derivation_scope`
+        (task-15452): the blocker copy, the recovery action and the setup
+        blocker each re-derive it, and `build_console_settings_readiness`
+        is the single most expensive leg of a draft-edit sync.
+        """
+        memo = self._console_derivation_memo
+        if memo is not None and "settings_readiness" in memo:
+            return memo["settings_readiness"]
+        readiness = self._active_console_settings_readiness_uncached()
+        if memo is not None:
+            memo["settings_readiness"] = readiness
+        return readiness
+
+    def _active_console_settings_readiness_uncached(
+        self,
+    ) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]:
+        """Derive effective settings + readiness with no memo in front."""
         settings = self._session._ensure_active_console_session_settings()
         selection = self._build_console_provider_selection()
         selected_model = selection.explicit_model or selection.configured_model
@@ -3491,33 +5315,68 @@ class ChatScreen(BaseAppScreen):
             )
         return effective_settings, readiness
 
+    def _console_runtime(self) -> Any:
+        """Return the `ConsoleRuntime` this screen is the view of, memoised.
+
+        task-15860 lifetime landing: the runtime OUTLIVES this screen, so
+        the four handles below are properties over it rather than instance
+        attributes. A fresh `ChatScreen`'s own `None` would otherwise
+        SHADOW a live store/gateway/controller until `_ensure_*` happened
+        to run -- and `_complete_screen_navigation` constructs (and
+        `restore_state`s) the incoming screen BEFORE the outgoing one
+        unmounts, so both screens are briefly alive and both legitimately
+        reach these handles.
+
+        **Memoised on purpose, and resolved exactly once.** Reading a
+        handle must never re-claim: a screen that is already superseded
+        (the overlapping window above) reads its OWN runtime here and can
+        never reach through to the successor's.
+        """
+        runtime = getattr(self, "_console_runtime_ref", None)
+        if runtime is None:
+            runtime = ensure_console_runtime(
+                getattr(self, "app_instance", None), view=self
+            )
+            self._console_runtime_ref = runtime
+        return runtime
+
+    @property
+    def _console_chat_store(self) -> ConsoleChatStore | None:
+        """The runtime's Console store, or `None` if none is built yet."""
+        return self._console_runtime().chat_store
+
+    @_console_chat_store.setter
+    def _console_chat_store(self, value: ConsoleChatStore | None) -> None:
+        self._console_runtime().set_chat_store(value)
+
+    @property
+    def _console_provider_gateway(self) -> Any | None:
+        """The runtime's provider gateway, or `None`."""
+        return self._console_runtime().provider_gateway
+
+    @_console_provider_gateway.setter
+    def _console_provider_gateway(self, value: Any | None) -> None:
+        self._console_runtime().set_provider_gateway(value)
+
+    @property
+    def _console_chat_controller(self) -> "ConsoleChatController | None":
+        """The runtime's Console chat controller, or `None`."""
+        return self._console_runtime().chat_controller
+
+    @_console_chat_controller.setter
+    def _console_chat_controller(self, value: "ConsoleChatController | None") -> None:
+        self._console_runtime().set_chat_controller(value)
+
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
-        """Return the native Console chat store, creating it lazily."""
+        """Return the native Console chat store, creating it lazily.
+
+        task-15860: CONSTRUCTED and OWNED by the app-owned `ConsoleRuntime`
+        (`Chat/console_runtime.py`). Name, laziness, return type and
+        patchability are unchanged; the store now survives this screen's
+        unmount, so a second Console visit re-uses it.
+        """
         if self._console_chat_store is None:
-            persistence = None
-            db = getattr(self.app_instance, "chachanotes_db", None)
-            if db is not None:
-                citation_repository = getattr(
-                    self.app_instance,
-                    "citation_trace_repository",
-                    None,
-                )
-                if (
-                    citation_repository is not None
-                    and getattr(citation_repository, "db", None) is not db
-                ):
-                    citation_repository = None
-                persistence = ChatPersistenceService(
-                    db,
-                    workspace_registry=getattr(
-                        self.app_instance,
-                        "workspace_registry_service",
-                        None,
-                    ),
-                    citation_repository=citation_repository,
-                )
-            self._console_chat_store = ConsoleChatStore(
-                persistence=persistence,
+            self._console_runtime().ensure_chat_store(
                 workspace_context=self._workspace._current_console_workspace_context(),
                 on_scope_flushed=self._on_console_scope_flushed,
             )
@@ -3572,122 +5431,6 @@ class ChatScreen(BaseAppScreen):
         pre-existing test suite's direct-call/monkeypatch convention."""
         return self._message._recent_console_image_messages(messages)
 
-    def _build_console_image_specs(self, messages) -> dict[str, ConsoleImageRowSpec]:
-        """Build image-row payloads for prepared, non-hidden image messages."""
-        state, cache = self._ensure_console_image_view()
-        default_mode = self._console_image_default_mode
-        specs: dict[str, ConsoleImageRowSpec] = {}
-        for message in self._recent_console_image_messages(messages):
-            mode = state.mode_for(message.id, default=default_mode)
-            if mode == "hidden":
-                continue
-            pil = cache.get_pil(message.id)
-            if pil is None:
-                continue
-            specs[message.id] = ConsoleImageRowSpec(
-                message_id=message.id,
-                mode=mode,
-                pixels=cache.get_pixels(message.id) if mode == "pixels" else None,
-                pil=pil if mode == "graphics" else None,
-            )
-        self._extend_specs_with_remote_images(messages, specs, state, cache)
-        return specs
-
-    def _extend_specs_with_remote_images(
-        self, messages, specs: dict, state, cache
-    ) -> None:
-        """Add rows for images referenced by LINKS in recent assistant replies.
-
-        task-1537, OFF unless ``[chat.images] render_remote_images`` -- a
-        model-suggested URL is untrusted input, so every fetch goes through
-        the egress-hardened image GET (per-hop SSRF policy, credential
-        stripping on cross-origin redirects, byte caps) and each URL is
-        attempted at most once per screen lifetime. Decoded bodies share the
-        bounded transcript render cache under a per-URL ``remote:`` key, so
-        the row appears on the next transcript sync tick after the fetch
-        lands; failures negative-cache and stay blank.
-        """
-        app_config = (
-            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
-        )
-        if not resolve_render_remote_images(app_config):
-            return
-        default_mode = self._console_image_default_mode
-        for message in messages[-REMOTE_IMAGE_SCAN_WINDOW:]:
-            if message.role is not ConsoleMessageRole.ASSISTANT:
-                continue
-            if message.id in specs:
-                continue
-            if message.status == "failed":
-                continue
-            urls = extract_image_urls(message.content or "", limit=1)
-            if not urls:
-                continue
-            url = urls[0]
-            key = f"remote:{url}"
-            pil = cache.get_pil(key)
-            if pil is not None:
-                mode = state.mode_for(message.id, default=default_mode)
-                if mode == "hidden":
-                    continue
-                specs[message.id] = ConsoleImageRowSpec(
-                    message_id=message.id,
-                    mode=mode,
-                    pixels=cache.get_pixels(key) if mode == "pixels" else None,
-                    pil=pil if mode == "graphics" else None,
-                )
-                continue
-            if cache.is_failed(key):
-                continue
-            attempts = getattr(self, "_remote_image_fetch_attempts", None)
-            if attempts is None:
-                attempts = set()
-                self._remote_image_fetch_attempts = attempts
-            if url in attempts:
-                continue
-            attempts.add(url)
-            self.run_worker(
-                self._fetch_remote_transcript_image(url, key),
-                group="console-remote-image-fetch",
-                exclusive=False,
-                exit_on_error=False,
-            )
-
-    async def _fetch_remote_transcript_image(self, url: str, cache_key: str) -> None:
-        """Fetch one linked image via the egress-hardened GET and cache it.
-
-        Must never raise (workers dispatched from the transcript sync path):
-        any failure -- egress-blocked URL, oversize body, non-image
-        content-type, decode error -- logs at debug and leaves the URL
-        negative-cached/attempted so it is not retried this session.
-        """
-        try:
-            from ...Image_Generation.adapters.image_format_utils import (
-                fetch_image_bytes,
-            )
-
-            data, content_type = await asyncio.to_thread(
-                fetch_image_bytes,
-                url,
-                timeout=20,
-                max_bytes=REMOTE_IMAGE_MAX_BYTES,
-            )
-            if content_type and not str(content_type).split(";")[
-                0
-            ].strip().lower().startswith("image/"):
-                return
-            _state, cache = self._ensure_console_image_view()
-            prepared = await asyncio.to_thread(cache.prepare, cache_key, data)
-            if prepared and self.is_mounted:
-                # The Console sync is demand-driven, not a free-running
-                # timer: without this request the freshly cached image would
-                # sit invisible until the next unrelated UI action.
-                await self._sync_native_console_chat_ui()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "remote transcript image fetch failed: {}", url
-            )
-
     def _console_generation_browse(self) -> dict[str, int]:
         """Return the lazily-created browsed-variant-index map for generation cards.
 
@@ -3703,81 +5446,6 @@ class ChatScreen(BaseAppScreen):
             browse = {}
             self._generation_browse = browse
         return browse
-
-    def _build_generation_card_specs(
-        self, messages
-    ) -> dict[str, ConsoleGenerationCardSpec]:
-        """Build image-generation card row payloads for generation messages.
-
-        Mirrors ``_build_console_image_specs``'s mode/cache resolution, but
-        keys the render cache under the browsed variant's composite key
-        (``f"{message_id}:{browsed_index}"``) instead of the plain message
-        id -- one generation message can browse between several decoded
-        variants sharing the same bounded render cache.
-
-        Unlike a plain image row, an undecoded/byte-less browsed variant
-        does NOT drop the row here: the card still carries real value from
-        its details block alone, so ``ConsoleGenerationCard`` renders a
-        placeholder line for the missing image instead.
-        """
-        state, cache = self._ensure_console_image_view()
-        default_mode = self._console_image_default_mode
-        browse = self._console_generation_browse()
-        specs: dict[str, ConsoleGenerationCardSpec] = {}
-        for message in messages:
-            generation_metadata = getattr(message, "generation_metadata", ())
-            if not generation_metadata:
-                continue
-            mode = state.mode_for(message.id, default=default_mode)
-            if mode == "hidden":
-                continue
-            variant_count = len(generation_metadata)
-            browsed_index = browse.get(message.id, 0)
-            if not (0 <= browsed_index < variant_count):
-                browsed_index = 0
-            cache_key = f"{message.id}:{browsed_index}"
-            specs[message.id] = ConsoleGenerationCardSpec(
-                message_id=message.id,
-                browsed_index=browsed_index,
-                variant_count=variant_count,
-                meta=generation_metadata[browsed_index],
-                mode=mode,
-                pixels=cache.get_pixels(cache_key) if mode == "pixels" else None,
-                pil=cache.get_pil(cache_key) if mode == "graphics" else None,
-            )
-        return specs
-
-    def _pending_console_generation_card_images(
-        self,
-        messages,
-        card_specs: Mapping[str, ConsoleGenerationCardSpec],
-    ) -> list[tuple[str, bytes]]:
-        """Return (cache-key, bytes) pairs for un-decoded browsed generation variants.
-
-        Feeds the same generic ``_prep_console_images`` off-thread decode
-        path as plain image rows -- its ``pending`` list is already opaque
-        ``(cache_key, bytes)`` pairs, so no separate prep routine is needed.
-        Bytes come from ``message.attachments[browsed_index].data``; a
-        rehydrated-without-bytes attachment (``data is None``) is skipped
-        (never queued), leaving the card's placeholder-image fallback in
-        place rather than queuing dead work.
-        """
-        _state, cache = self._ensure_console_image_view()
-        by_id = {message.id: message for message in messages}
-        pending: list[tuple[str, bytes]] = []
-        for message_id, spec in card_specs.items():
-            message = by_id.get(message_id)
-            attachments = getattr(message, "attachments", ()) or () if message else ()
-            if not (0 <= spec.browsed_index < len(attachments)):
-                continue
-            data = attachments[spec.browsed_index].data
-            if data is None:
-                continue
-            cache_key = f"{message_id}:{spec.browsed_index}"
-            if cache.get_pil(cache_key) is not None or cache.is_failed(cache_key):
-                continue
-            pending.append((cache_key, data))
-        return pending
 
     async def _prep_console_images(self, pending: list[tuple[str, bytes]]) -> None:
         """Prepare pending transcript images off-loop, then resync once."""
@@ -3796,30 +5464,20 @@ class ChatScreen(BaseAppScreen):
             # cache's pending_ids recompute keeps the working set converged.
             self._console_image_preparing.difference_update(mid for mid, _ in pending)
 
-    def _handle_console_toggle_image_view(self, message_id: str) -> None:
-        """Cycle one message's inline-image view mode."""
-        state, _cache = self._ensure_console_image_view()
-        current = state.mode_for(message_id, default=self._console_image_default_mode)
-        state.set_mode(
-            message_id,
-            next_view_mode(current),
-            default=self._console_image_default_mode,
-        )
-
     def _ensure_console_provider_gateway(self) -> Any:
-        """Return the native Console provider gateway with a test injection seam."""
+        """Return the native Console provider gateway with a test injection seam.
+
+        task-15860: constructed and OWNED by the app-owned `ConsoleRuntime`,
+        which also reads the app's `console_provider_gateway_factory`
+        injection seam. Name, laziness and behaviour are unchanged; the
+        gateway is now closed at app exit (`ConsoleRuntime.dispose`) rather
+        than on every navigation away.
+        """
         if self._console_provider_gateway is None:
-            factory = getattr(
-                self.app_instance, "console_provider_gateway_factory", None
-            )
-            self._console_provider_gateway = (
-                factory()
-                if callable(factory)
-                else ConsoleProviderGateway(
-                    # Fresh-config source: the gateway re-resolves readiness at
-                    # send time and must see Settings saves made after boot.
-                    config_provider=self._provider_readiness_app_config,
-                )
+            self._console_runtime().ensure_provider_gateway(
+                # Fresh-config source: the gateway re-resolves readiness at
+                # send time and must see Settings saves made after boot.
+                config_provider=self._provider_readiness_app_config,
             )
         return self._console_provider_gateway
 
@@ -3827,11 +5485,99 @@ class ChatScreen(BaseAppScreen):
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
         return self._prompts._ensure_console_prompt_history()
 
+    def _console_library_provider_factory(
+        self, turn_context: ConsoleTurnExecutionContext | None = None
+    ):
+        """Resolve the Library retrieval provider for one Console agent run.
+
+        ADR-079: the final turn authority pins the Library mode for one run;
+        a missing context fails closed. Direct mode assembles
+        ``LocalLibraryToolService`` purely from the app's local service
+        attributes (any missing backend degrades its own tools to
+        ``feature_unavailable``); off mode binds the bounded RAG provider to
+        the app-owned ``library_rag_search_service``.
+        """
+        if turn_context is None:
+            return None
+        app = self.app_instance
+        direct_library_tools = turn_context.library_authority.direct_library_tools
+        if not direct_library_tools:
+            from tldw_chatbook.Agents.library_rag_tool_provider import (
+                LibraryRagToolProvider,
+            )
+
+            return LibraryRagToolProvider(
+                getattr(app, "library_rag_search_service", None)
+            )
+        from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+        from tldw_chatbook.Library.local_library_tool_service import (
+            LocalLibraryToolService,
+        )
+
+        media_chunk_service = None
+        media_reading_service = getattr(app, "local_media_reading_service", None)
+        media_db = getattr(app, "media_db", None) or getattr(
+            media_reading_service, "media_db", None
+        )
+        if media_db is not None or media_reading_service is not None:
+            # The chunk tools need the media DB (row/chunk reads, template
+            # interop) on top of the reading service; built here so a missing
+            # handle degrades only its own tools, like every other backend.
+            from tldw_chatbook.Chunking.chunking_interop_library import (
+                get_chunking_service,
+            )
+            from tldw_chatbook.Library.local_media_chunk_tool_service import (
+                LocalMediaChunkToolService,
+            )
+
+            media_chunk_service = LocalMediaChunkToolService(
+                media_db,
+                media_reading_service,
+                template_interop=(
+                    get_chunking_service(media_db) if media_db is not None else None
+                ),
+                # chunking-agent-tools (Task 5, spec §6): the app's policy
+                # enforcer closes the Console-direct gate on the WRITING
+                # chunk tools (`library_save_chunk_spec`,
+                # `library_rechunk_media`) -- denials surface as named
+                # payloads before any backend touch. The same handle every
+                # other tool-bearing service receives
+                # (`service_policy_enforcer`, built off the app's runtime
+                # policy context).
+                policy_enforcer=getattr(app, "service_policy_enforcer", None),
+            )
+        service = LocalLibraryToolService(
+            media_service=media_reading_service,
+            notes_service=getattr(app, "notes_service", None),
+            prompt_service=getattr(app, "local_prompt_service", None),
+            skills_service=getattr(app, "local_skills_service", None),
+            conversation_service=getattr(app, "local_chat_conversation_service", None),
+            collections_service=getattr(app, "local_library_collections_service", None),
+            media_chunk_service=media_chunk_service,
+            # student-workflow (spec §4.3): the note-save folder seam -- the
+            # app's scope service (folders live only there); a missing handle
+            # degrades folder requests to feature_unavailable like every
+            # other optional backend.
+            notes_scope_service=getattr(app, "notes_scope_service", None),
+            # student-workflow (spec §6): the writing note tool's
+            # Console-direct gate (the chunk-tools pattern) -- the same app
+            # enforcer handle the writing chunk tools receive above.
+            policy_enforcer=getattr(app, "service_policy_enforcer", None),
+        )
+        return LibraryToolProvider(service)
+
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
-        """Return the native Console chat controller with fresh selection state."""
+        """Return the native Console chat controller with fresh selection state.
+
+        task-15860 Task 1: CONSTRUCTED by the app-owned `ConsoleRuntime`,
+        same keyword arguments in the same order. Everything below the
+        construction block -- the UI hook wiring, the wake coordinator's
+        `wire(app=...)`, the core-state sync -- still runs here on every
+        call; rebinding those hooks for a viewless turn is Task 4.
+        """
         if self._console_chat_controller is None:
             selection = self._build_console_provider_selection()
-            self._console_chat_controller = ConsoleChatController(
+            self._console_runtime().ensure_chat_controller(
                 store=self._ensure_console_chat_store(),
                 provider_gateway=self._ensure_console_provider_gateway(),
                 provider=selection.provider,
@@ -3858,91 +5604,126 @@ class ChatScreen(BaseAppScreen):
                 skills_service=getattr(self.app_instance, "skills_scope_service", None),
                 chat_dictionary_applier=self._console_chat_dictionary_applier,
                 world_info_applier=self._console_world_info_applier,
-                rag_capture_provider=self._capture_console_staged_rag,
+                rag_capture_provider=self._retrieval._capture_console_staged_rag,
                 default_session_settings=self._session._default_console_session_settings,
+                library_provider_factory=self._console_library_provider_factory,
+                global_user_display_name=self._global_chat_display_name,
+                turn_context_provider=(
+                    self._session._build_console_turn_execution_context
+                ),
+                provider_config=self._provider_readiness_app_config,
             )
-        self._console_chat_controller.on_submission_accepted = (
-            self._on_console_submission_accepted
+        # task-15860: every screen-owned slot on the controller, the store
+        # and the wake coordinator is (re)bound HERE, through the single
+        # enumerated `CONSOLE_VIEW_HOOK_SLOTS` list, so that the same list
+        # can clear all of them at detach. This block used to assign each
+        # one by hand and had no counterpart anywhere.
+        self._console_runtime().attach_view(self)
+        self._console_chat_controller._confirm_project_instruction_dispatch = (
+            self._session._confirm_project_instruction_dispatch
         )
-        # TASK-1364: accepted sends are recorded to the shared prompt
-        # history (inside `submit_draft`, past every block/refusal gate).
-        self._console_chat_controller.prompt_history = (
-            self._ensure_console_prompt_history()
+        self._console_chat_controller._select_project_instruction_binding = (
+            self._session._select_project_instruction_binding
         )
         # MCP batch-approval bridge (task-5): `request_mcp_approvals` runs
-        # on the agent bridge's worker thread and needs both a
-        # `call_from_thread`-capable App handle and a UI-thread hook that
-        # pushes/clears the pending batch into this screen's task-resume
-        # state. `self.app_instance` IS the running `TldwCli` (an `App`
-        # subclass), so it already has `call_from_thread`.
+        # on the agent bridge's worker thread and needs a
+        # `call_from_thread`-capable App handle. Deliberately NOT a
+        # view-hook slot: this is the APP, which outlives every view, and
+        # clearing it at detach would break the bridge a surviving turn
+        # still needs.
         self._console_chat_controller.app = self.app_instance
-        self._console_chat_controller.set_pending_approval = (
-            self._set_console_pending_approval
-        )
-        # Task 9 (parked background approvals): UI-thread bridge target for
-        # a NON-active session's approval round -- badge + one toast,
-        # never the mounted-card path above.
-        self._console_chat_controller.park_pending_approval = (
-            self._park_console_approval
-        )
-        # Task 10 (background completion toasts): UI-thread bridge target
-        # for a NON-active session's run finishing/failing -- the one-per-
-        # run toast, invoked directly (never via call_from_thread) from
-        # `_set_run_state`'s once-guarded non-active terminal branch.
-        self._console_chat_controller.notify_run_outcome = (
-            self._notify_console_run_outcome
-        )
-        # task-2154.16 (FB-05): UI-thread bridge target for the ACTIVE
-        # session's own run failing -- one error toast carrying the run's
-        # visible copy, invoked directly from `_set_run_state`'s
-        # once-guarded active-session FAILED branch.
-        self._console_chat_controller.notify_run_failure = (
-            self._notify_console_run_failure
-        )
-        self._console_chat_controller.set_pending_skill_install = (
-            self._set_console_pending_skill_install
-        )
-        self._console_chat_controller.set_pending_skill_script = (
-            self._set_console_pending_skill_script
-        )
+        # PR3a-2 Task 5 (auto-wake): the app object (durable-mark clear
+        # seam + marks reads). getattr-guarded because several UI tests
+        # swap in hand-built controller doubles before re-running this
+        # wiring block. `delivery_ui_hook` is a view-hook slot and is
+        # bound by `attach_view` above.
+        wake = getattr(self._console_chat_controller, "fleet_wake", None)
+        if wake is not None:
+            wake.wire(app=self.app_instance)
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
-    async def _capture_console_staged_rag(self, draft: str):
-        """Resolve the current staged Library-RAG bundle for one Console send.
+    def console_view_hooks(self) -> dict[str, Any]:
+        """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
 
-        This is the ONLY consume-on-send seam. The controller calls it once
-        per accepted send, AFTER every block gate (provider readiness, skill
-        substitution refusal), so a blocked send never reaches this method
-        and keeps its staging -- which is why the release below needs no
-        block check of its own.
+        task-15860. The runtime outlives this screen, so every callable it
+        holds that closes over `self` has to be re-bindable and, more
+        importantly, CLEARABLE -- Task 0's P3 found five such slots still
+        pointing at a dead `ChatScreen` after a real unmount, none of them
+        raising, and a silent wrong answer from `wake_conversation_in_view`
+        decides whether the unseen `◈` mark survives.
 
-        Capture-boundary ruling: the launch is released only when the
-        capture returned a non-empty ``context`` string -- exactly the
-        predicate ``ConsoleChatController._capture_rag_context`` uses to
-        decide whether the evidence is prepended to the provider messages.
-        ``capture_console_staged_evidence_for_chat`` has several honest
-        no-op returns (invalid bundle, no canonical-local references, prompt
-        authority incomplete, empty formatted context) that all yield
-        ``context=None``; releasing on those would silently discard evidence
-        that never reached the model.
+        Keys must match `CONSOLE_VIEW_HOOK_SLOTS` exactly; a test asserts
+        the two sets are equal, which is what stops a slot being bound
+        here and never cleared (or cleared and never bound).
+
+        Returns:
+            dict[str, Any]: slot name -> this view's value.
         """
-
-        # Whatever the previous send consumed is no longer "this message".
-        self._clear_console_evidence_sent_notice()
-        launch = self._consume_pending_console_launch()
-        result = await capture_console_staged_evidence_for_chat(
-            self.app_instance,
-            launch,
-            user_message=draft,
-        )
-        context = getattr(result, "context", None)
-        if launch is not None and isinstance(context, str) and context.strip():
-            self._release_consumed_console_launch(launch, result)
-        # The captured result is returned unconditionally: nothing in the
-        # release above may change what this send transmits (see the
-        # containment note there).
-        return result
+        session = getattr(self, "_session", None)
+        prompts = getattr(self, "_prompts", None)
+        retrieval = getattr(self, "_retrieval", None)
+        skill = getattr(self, "_skill", None)
+        return {
+            # constructor-supplied callables
+            "_chat_dictionary_applier": self._console_chat_dictionary_applier,
+            "_world_info_applier": self._console_world_info_applier,
+            "_rag_capture_provider": getattr(
+                retrieval, "_capture_console_staged_rag", None
+            ),
+            "_default_session_settings": getattr(
+                session, "_default_console_session_settings", None
+            ),
+            "_library_provider_factory": self._console_library_provider_factory,
+            "_global_user_display_name": self._global_chat_display_name,
+            "_turn_context_provider": getattr(
+                session, "_build_console_turn_execution_context", None
+            ),
+            # post-construction UI bridges
+            "on_submission_accepted": self._on_console_submission_accepted,
+            # TASK-1364: accepted sends are recorded to the shared prompt
+            # history (inside `submit_draft`, past every block/refusal gate).
+            "prompt_history": (
+                self._ensure_console_prompt_history() if prompts is not None else None
+            ),
+            "set_pending_approval": self._set_console_pending_approval,
+            # Task 9 (parked background approvals): UI-thread bridge target
+            # for a NON-active session's approval round -- badge + one
+            # toast, never the mounted-card path above.
+            "park_pending_approval": self._park_console_approval,
+            # Task 10 (background completion toasts): UI-thread bridge
+            # target for a NON-active session's run finishing/failing -- the
+            # one-per-run toast, invoked directly (never via
+            # `call_from_thread`) from `_set_run_state`'s once-guarded
+            # non-active terminal branch.
+            "notify_run_outcome": self._notify_console_run_outcome,
+            # task-2154.16 (FB-05): the ACTIVE session's own run failing --
+            # one error toast carrying the run's visible copy.
+            "notify_run_failure": self._notify_console_run_failure,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
+            # PR3a-2 Task 5, user-wins-ties.
+            "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+            # task-15971: the delivery COMMIT's visibility probe -- a wake
+            # completing while this conversation is not displayed-and-active
+            # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+            # learns an off-view delivery landed).
+            "wake_conversation_in_view": (
+                self._fleet._console_wake_conversation_in_view
+            ),
+            # the store's one screen-owned callback
+            "on_scope_flushed": self._on_console_scope_flushed,
+            # task-15862: a wake turn enters through the coordinator, never
+            # the user-send worker that arms the 0.2s transcript poll --
+            # without this hook nothing repaints the wake turn's streamed
+            # reply, its terminal tab glyph, or the composer state (the live
+            # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            "delivery_ui_hook": self._fleet._on_console_wake_delivery_started,
+        }
 
     def _release_consumed_console_launch(
         self,
@@ -4101,10 +5882,43 @@ class ChatScreen(BaseAppScreen):
                 )
         return selection
 
+    #: Memoized ``#console-native-composer`` node, or None when nothing has
+    #: been resolved (or the last resolved node went away). A CLASS attribute
+    #: default because the hand-built ``ChatScreen.__new__()`` test fixtures
+    #: never run ``__init__``. Never read directly -- always through
+    #: ``_console_composer_or_none``, which revalidates before returning it.
+    _console_composer_ref: ConsoleComposerBar | None = None
+
     def _console_composer_or_none(self) -> ConsoleComposerBar | None:
-        """Return the native Console composer when it is mounted."""
+        """Return the native Console composer when it is mounted.
+
+        TASK-15454 (folded in from task-15452's review): this used to run an
+        uncached ``self.query()`` -- a full walk of the largest widget tree
+        in the app -- and the draft-edit keystroke path alone calls it twice,
+        which measured as the majority of that path's residual cost. The
+        resolved node is memoized instead.
+
+        A stale reference must be impossible, so the memo is revalidated on
+        every hit rather than invalidated from teardown hooks: the cached
+        widget is returned only while it is still mounted AND still reachable
+        from this screen. A recompose that replaces the composer detaches the
+        old node (``_parent`` cleared by the prune) and clears its mounted
+        flag, so both halves fail closed and the next call re-queries. The
+        memo therefore cannot outlive the widget it names even if some future
+        teardown path forgets about it entirely.
+        """
+        cached = self._console_composer_ref
+        if cached is not None:
+            try:
+                still_live = cached.is_mounted and self in cached.ancestors_with_self
+            except Exception:  # pragma: no cover - defensive, see above
+                still_live = False
+            if still_live:
+                return cached
+            self._console_composer_ref = None
         composers = list(self.query("#console-native-composer"))
         if composers and isinstance(composers[0], ConsoleComposerBar):
+            self._console_composer_ref = composers[0]
             return composers[0]
         return None
 
@@ -4241,6 +6055,14 @@ class ChatScreen(BaseAppScreen):
         self._message._console_speaking_message_id = value
 
     @property
+    def _console_speech_states(self) -> dict[str, str]:
+        return self._message._console_speech_states
+
+    @_console_speech_states.setter
+    def _console_speech_states(self, value: dict[str, str]) -> None:
+        self._message._console_speech_states = value
+
+    @property
     def _pending_console_swipe_selection(self) -> str | None:
         return self._message._pending_console_swipe_selection
 
@@ -4343,19 +6165,12 @@ class ChatScreen(BaseAppScreen):
     def _agent_section_user_dismissed_while_busy(self, value: bool) -> None:
         self._agent._agent_section_user_dismissed_while_busy = value
 
-    # Workspace conversation-search state moved to `ConsoleWorkspaceController`
-    # (wave-2 console decomposition, task 2). These six properties keep
-    # `self._console_workspace_conversation_query`/`_search_timer`/
-    # `_search_token`/`_search_rows`/`_search_total`/`_search_error` readable
-    # AND writable exactly as before, for the two screen methods that are
-    # not part of the workspace cluster but still touch this state
-    # (`on_console_workspace_conversation_search_changed`, a sibling
-    # conversation-browser handler that mirrors three of them, and
-    # `on_button_pressed`'s workspace-search branches) and for tests that
-    # poke it directly -- each proxies straight through to `self._workspace`,
-    # so none of those call sites needed to change. `_console_workspace_
-    # conversation_workspace_id` needs no proxy: it is read and written only
-    # inside `_with_console_workspace_conversation_section`, itself moved.
+    # Legacy Workspace-search names remain assignable compatibility aliases.
+    # Scalar reads/writes share Workspace's canonical browser state; row reads
+    # project rich rows to the legacy shape and row writes convert back to rich
+    # rows. The bounded Input handler passes only query/disabled values, and the
+    # Clear button delegates the complete transition to Workspace, so the screen
+    # owns no duplicate browser backing state or refresh writer.
     @property
     def _console_workspace_conversation_query(self) -> str:
         return self._workspace._console_workspace_conversation_query
@@ -4460,7 +6275,6 @@ class ChatScreen(BaseAppScreen):
 
         self.app_instance.post_message(TTSRequestEvent(text=text))
 
-
     @on(ConsoleDictationEvent)
     def _handle_console_dictation_event(self, message: ConsoleDictationEvent) -> None:
         """Apply a streaming dictation event posted from any thread.
@@ -4474,7 +6288,6 @@ class ChatScreen(BaseAppScreen):
             message: The posted controller event.
         """
         self._dictation._handle_console_dictation_event(message)
-
 
     @on(ConsoleDictationLimitSignal)
     def _handle_console_dictation_buffer_limit(
@@ -4514,6 +6327,9 @@ class ChatScreen(BaseAppScreen):
                 # Same input the action-row button read before it moved here,
                 # so Save Chatbook's available/unavailable copy is unchanged.
                 can_save_chatbook=self._console_chatbook_action_available(),
+                draft_available=bool(
+                    composer is not None and composer.draft_text().strip()
+                ),
                 improvement_undo_available=bool(
                     composer is not None and composer.improvement_undo_available
                 ),
@@ -4560,15 +6376,11 @@ class ChatScreen(BaseAppScreen):
         if action_id == ACTION_PROMPTS:
             self._open_console_prompts_modal()
             return
+        if action_id == ACTION_IMPROVE_CURRENT_DRAFT:
+            self._open_console_prompts_modal(initial_mode="improve")
+            return
         if action_id == ACTION_UNDO_PROMPT_IMPROVEMENT:
-            composer = self._console_composer_or_none()
-            if composer is None or not composer.undo_improvement():
-                return
-            store = self._ensure_console_chat_store()
-            session_id = store.active_session_id
-            if session_id is not None:
-                store.set_session_draft(session_id, composer.draft_text())
-            self._focus_console_composer_if_needed(force=True)
+            self._undo_console_prompt_improvement()
             return
         # Attach and Save Chatbook moved out of the width-bounded action row
         # into this menu. Both route to the SAME handlers their buttons used,
@@ -4593,10 +6405,45 @@ class ChatScreen(BaseAppScreen):
                 group="console-impersonate",
             )
 
-    def _open_console_prompts_modal(self) -> None:
-        """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
-        self._prompts._open_console_prompts_modal()
+    def _undo_console_prompt_improvement(self) -> bool:
+        """Restore the exact pre-improvement draft and persist it for this tab."""
+        composer = self._console_composer_or_none()
+        if composer is None or not composer.undo_improvement():
+            return False
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is not None:
+            store.set_session_draft(session_id, composer.draft_text())
+        self._focus_console_composer_if_needed(force=True)
+        return True
 
+    def _open_console_prompt_comparison(self) -> None:
+        """Open the safe before/after view for the current improvement Undo."""
+        composer = self._console_composer_or_none()
+        comparison = composer.improvement_comparison() if composer is not None else None
+        if comparison is None:
+            self._focus_console_composer_if_needed(force=True)
+            return
+        before, after = comparison
+        self.app.push_screen(
+            ConsolePromptComparisonModal(before=before, after=after),
+            callback=self._handle_console_prompt_comparison_result,
+        )
+
+    def _handle_console_prompt_comparison_result(
+        self, result: PromptComparisonResult | None
+    ) -> None:
+        """Keep the improved draft or consume Undo to restore the original."""
+        if result == "restore":
+            self._undo_console_prompt_improvement()
+            return
+        self._focus_console_composer_if_needed(force=True)
+
+    def _open_console_prompts_modal(
+        self, *, initial_mode: Literal["browse", "improve"] = "browse"
+    ) -> None:
+        """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
+        self._prompts._open_console_prompts_modal(initial_mode=initial_mode)
 
     @on(ConsoleTemporaryChip.SaveRequested)
     def on_console_temporary_chip_save(
@@ -4673,10 +6520,9 @@ class ChatScreen(BaseAppScreen):
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         composer = self._console_composer_or_none()
-        if composer is not None and not (
-            getattr(self, "_console_visible_draft_session_id", None)
-            in (None, session_id)
-        ):
+        if composer is not None and getattr(
+            self, "_console_visible_draft_session_id", None
+        ) not in (None, session_id):
             composer = None
         if composer is not None:
             current = composer.draft_text()
@@ -4903,6 +6749,17 @@ class ChatScreen(BaseAppScreen):
     # map of what moved and the two-engine boundary it draws.
     # ------------------------------------------------------------------
 
+    @on(ConsoleHandsFreeToggleRequested)
+    def on_console_hands_free_toggle_requested(
+        self, event: "ConsoleHandsFreeToggleRequested"
+    ) -> None:
+        """The visible Switch flipped (task-18911 fix 2): same path as the
+        keybinding. The switch is repainted by the session lifecycle sync,
+        not here -- entering can fail (e.g. mic unavailable), and the
+        control must reflect the session, not the wish."""
+        event.stop()
+        self._hands_free.action_toggle_console_hands_free()
+
     def action_toggle_console_hands_free(self) -> None:
         """`ctrl+shift+h`: enter the hands-free loop, or exit it if already
         running.
@@ -4981,8 +6838,14 @@ class ChatScreen(BaseAppScreen):
         if not console_session_id:
             logger.debug("Console realtime loop refused: no active Console session")
             return
-
         idle_timeout = realtime_idle_timeout_seconds()
+        buddy_generation = (
+            self._console_runtime().persona_buddy_sink.next_voice_generation(
+                console_session_id
+            )
+        )
+        if buddy_generation is None:
+            return
         controller = RealtimeLoopController(
             self._handle_console_realtime_intent,
             acoustic_barge_in=acoustic_barge_in_enabled(),
@@ -4992,6 +6855,7 @@ class ChatScreen(BaseAppScreen):
             controller=controller,
             console_session_id=console_session_id,
             idle_timeout_seconds=idle_timeout,
+            buddy_generation=buddy_generation,
         )
         self._console_realtime = session
         session.tick_timer = self.set_interval(0.1, self._tick_console_realtime)
@@ -5748,7 +7612,7 @@ class ChatScreen(BaseAppScreen):
             )
             return
         try:
-            store.update_message_content(row_id, spoken)
+            store.finalize_deferred_user_message_content(row_id, spoken)
         except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
             logger.opt(exception=True).warning(
                 "Console realtime: could not write the input transcript"
@@ -5824,7 +7688,7 @@ class ChatScreen(BaseAppScreen):
             return
         if not existing:
             try:
-                store.update_message_content(
+                store.finalize_deferred_user_message_content(
                     row_id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
                 )
             except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
@@ -6204,9 +8068,7 @@ class ChatScreen(BaseAppScreen):
         try:
             queue.put_nowait(pcm)
         except Exception:  # noqa: BLE001 - a full/closed queue is not fatal
-            logger.opt(exception=True).debug(
-                "Console realtime: dropped an audio chunk"
-            )
+            logger.opt(exception=True).debug("Console realtime: dropped an audio chunk")
 
     def _begin_console_realtime_reply_audio(
         self, session: ConsoleRealtimeSession
@@ -6374,9 +8236,7 @@ class ChatScreen(BaseAppScreen):
                     "Console realtime: could not stop the audio sink"
                 )
 
-    def _on_console_realtime_first_audio(
-        self, session: ConsoleRealtimeSession
-    ) -> None:
+    def _on_console_realtime_first_audio(self, session: ConsoleRealtimeSession) -> None:
         """`on_first_audio`: reply audio started -- `thinking` -> `speaking`."""
         self._persist_console_realtime_event(
             "realtime_first_audio",
@@ -6489,9 +8349,7 @@ class ChatScreen(BaseAppScreen):
         would otherwise say `connecting…` forever.
         """
         if not session.ready:
-            self._console_realtime_connect_failed(
-                session, session.connect_attempt, exc
-            )
+            self._console_realtime_connect_failed(session, session.connect_attempt, exc)
             return
         logger.warning(
             "Console realtime: provider error: op=realtime_error "
@@ -6562,6 +8420,11 @@ class ChatScreen(BaseAppScreen):
         session = self._console_realtime
         if session is None:
             return
+        self._console_runtime().persona_buddy_sink.voice_state(
+            session.console_session_id,
+            session.buddy_generation,
+            state,
+        )
         gated = session.controller.mic_gated
         session.mic_gated = gated
         tap = session.tap
@@ -6687,7 +8550,8 @@ class ChatScreen(BaseAppScreen):
                 # nothing left to cancel" are different incidents and were
                 # indistinguishable from outside the session.
                 self._persist_console_realtime_event(
-                    "realtime_cancel_sent" if sent is not False
+                    "realtime_cancel_sent"
+                    if sent is not False
                     else "realtime_cancel_noop",
                     operation="cancel",
                     decision="sent" if sent is not False else "noop",
@@ -6891,6 +8755,10 @@ class ChatScreen(BaseAppScreen):
         session = self._console_realtime
         if session is None:
             return None
+        self._console_runtime().persona_buddy_sink.release_voice(
+            session.console_session_id,
+            session.buddy_generation,
+        )
         self._console_realtime = None
         # Exiting mid-reply IS an interruption: close the row that way
         # rather than leaving a `pending` assistant message that nothing
@@ -6941,9 +8809,7 @@ class ChatScreen(BaseAppScreen):
         # an ordinary thing to do -- has nothing else left to release them
         # by, so `on_unmount` waits on this.
         self._console_realtime_close_worker = self.run_worker(
-            self._close_console_realtime_resources(
-                tap, provider_session, sink, queue
-            ),
+            self._close_console_realtime_resources(tap, provider_session, sink, queue),
             exclusive=False,
             group="console-realtime-close",
             exit_on_error=False,
@@ -7012,7 +8878,6 @@ class ChatScreen(BaseAppScreen):
         """
         self._dictation._request_console_dictation_stop()
 
-
     def _request_console_dictation_cancel(self) -> None:
         """Abandon a `starting`/`recording` capture without inserting.
 
@@ -7033,7 +8898,6 @@ class ChatScreen(BaseAppScreen):
         implementation.
         """
         self._dictation._request_console_dictation_start()
-
 
     def _console_transcript_region_or_none(self) -> ConsoleTranscriptRegion | None:
         """Return the mounted transcript region, or ``None`` before compose.
@@ -7108,9 +8972,6 @@ class ChatScreen(BaseAppScreen):
             if popup is not None:
                 popup.hide()
         composer.set_collapsed(collapsed)
-        composer.styles.border = (
-            CONSOLE_QUIET_FRAME_BORDER if collapsed else CONSOLE_FRAME_BORDER
-        )
         composer.refresh(layout=True)
         self.call_after_refresh(
             self._finish_console_composer_layout_change,
@@ -7118,6 +8979,62 @@ class ChatScreen(BaseAppScreen):
             collapsed,
             reading_state,
         )
+
+    def _set_console_status_chips_collapsed(self, collapsed: bool) -> None:
+        """Synchronize screen-owned collapse state with the mounted status row."""
+        if self._console_setup_modal_blocking():
+            return
+        collapsed = bool(collapsed)
+        if self._console_status_chips_collapsed == collapsed:
+            return
+        try:
+            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
+        except QueryError:
+            return
+        self._console_status_chips_collapsed = collapsed
+        # task-17652: the collapse choice survives Console re-entry and app
+        # restart. Poke the live config synchronously (compose and __init__
+        # read it back) and move only the disk write off the event loop —
+        # never-raising, since a worker exception is fatal by default.
+        poke_console_setting(
+            getattr(self.app_instance, "app_config", None),
+            "status_chips_collapsed",
+            collapsed,
+        )
+        self.run_worker(
+            partial(persist_status_chips_collapsed, collapsed),
+            thread=True,
+            group="console-status-row-pref",
+            exclusive=True,
+        )
+        self._console_status_chips_layout_revision += 1
+        revision = self._console_status_chips_layout_revision
+        status_chips.set_collapsed(collapsed)
+        status_chips.refresh(layout=True)
+        self.call_after_refresh(
+            self._finish_console_status_chips_layout_change,
+            revision,
+            collapsed,
+        )
+
+    def _finish_console_status_chips_layout_change(
+        self,
+        revision: int,
+        expected_collapsed: bool,
+    ) -> None:
+        """Focus the inverse control after the latest status-row transition."""
+        if (
+            revision != self._console_status_chips_layout_revision
+            or expected_collapsed != self._console_status_chips_collapsed
+        ):
+            return
+        target_id = (
+            "console-status-expand" if expected_collapsed else "console-status-collapse"
+        )
+        try:
+            self.query_one(f"#{target_id}", Button).focus()
+        except QueryError:
+            return
 
     def _finish_console_composer_layout_change(
         self,
@@ -7137,7 +9054,6 @@ class ChatScreen(BaseAppScreen):
         else:
             self._focus_console_workbench_target("console-native-composer")
 
-
     def _build_console_control_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -7155,7 +9071,7 @@ class ChatScreen(BaseAppScreen):
             # rail name covers resumed conversations.
             character=(
                 getattr(settings, "character_label", None)
-                or self._current_console_rail_character_name()
+                or self._character._current_console_rail_character_name()
             ),
             assistant_kind=getattr(active_session, "assistant_kind", None),
             assistant_name=getattr(active_session, "assistant_name", None),
@@ -7213,7 +9129,8 @@ class ChatScreen(BaseAppScreen):
             snapshot_messages = [
                 message
                 for message in messages
-                if getattr(message, "status", "complete") not in {"pending", "streaming"}
+                if getattr(message, "status", "complete")
+                not in {"pending", "streaming"}
             ]
             # task-6: staged (not-yet-sent) evidence used to be invisible to
             # the cost chip entirely -- `ConsoleStagedSource` carries no
@@ -7235,7 +9152,62 @@ class ChatScreen(BaseAppScreen):
                     SimpleNamespace(role="user", content=staged_text, usage=None)
                 ]
             provider, model, _settings = self._active_console_provider_model_display()
-            snapshot = build_cost_snapshot(snapshot_messages, provider=provider, model=model)
+            # PR2b Task 5 (cost rollup): the active conversation's LIVE
+            # sub-agent fleet spend, folded into the snapshot's token total
+            # (never priced -- see `ConsoleCostSnapshot.fleet_tokens`'s
+            # docstring for why). Read straight off the SAME live source
+            # the fleet rail rows themselves read
+            # (`_console_agent_fleet_token_total` sums `bridge.fleet_
+            # snapshot(...)`'s `FleetHandle.total_tokens`), so the chip and
+            # the rail can never disagree about a conversation's fleet
+            # spend.
+            fleet_tokens = self._agent._console_agent_fleet_token_total()
+            # PR3a-1 Task 6b (audit F3): plus whatever a SURVIVING child
+            # billed after its turn's usage was attached to the assistant
+            # message. PR3a-2 Task 3 (tasks 15660/15667): that spend is now
+            # INTERIM, not lost -- when the conversation's last fleet child
+            # settles, the controller's "usage-reattach" drain consumer
+            # folds the whole turn (survivors included) back onto the
+            # message's own usage row and this line falls to zero. Until
+            # that drain, the money is named here on the chip's unpriced
+            # sub-agent line. No double count: `unattributed_fleet_tokens`
+            # counts ONLY payloads closed out after the latest attach (the
+            # fold resets its watermark), and a live handle's
+            # `FleetHandle.total_tokens` -- what `_console_agent_fleet_token_
+            # total` sums -- is 0 until it finishes, by which point it has
+            # left `fleet_snapshot`.
+            cost_controller = self._console_chat_controller
+            if cost_controller is not None:
+                unattributed = getattr(
+                    cost_controller, "unattributed_fleet_tokens", None
+                )
+                if callable(unattributed):
+                    fleet_tokens += int(unattributed(session_id) or 0)
+            # task-15451: this method runs on the 0.2s tick for the whole
+            # duration of a run (plus every control-bar sync pass and the
+            # 10s TTL timer), and the equality guard in
+            # `_sync_console_cost_chip` gates only the REPAINT -- the build
+            # itself always ran. Without the memo below every usage-less row
+            # (all user/system rows, legacy assistant rows, the staged
+            # evidence pseudo-row) was re-tokenized by a per-character
+            # Python loop 5x/s: ~28ms/tick on a 99KB transcript, measured.
+            # The memo re-verifies each row's own text before serving a hit,
+            # so it can change how long this takes but not what it returns.
+            #
+            # Gating the whole snapshot on `store.payload_revision` instead
+            # was considered and rejected: usage is not payload-affecting, so
+            # `ConsoleChatStore.set_message_usage` never bumps that counter --
+            # a real priced usage landing on an ALREADY-terminal row (the
+            # documented Stop-path ordering) would leave the chip showing the
+            # estimated total until some unrelated edit moved the revision.
+            estimate_cache = self._console_cost_estimate_cache_or_new()
+            snapshot = build_cost_snapshot(
+                snapshot_messages,
+                provider=provider,
+                model=model,
+                fleet_tokens=fleet_tokens,
+                estimate_cache=estimate_cache,
+            )
 
             controller = self._console_chat_controller
             run_status = (
@@ -7306,17 +9278,37 @@ class ChatScreen(BaseAppScreen):
                     # (fingerprint recompute -- and so `break_reason` /
                     # `alert` -- is frozen during the run, but this
                     # projection is computed fresh every call).
-                    dict_messages = [
-                        {
-                            "role": str(
-                                getattr(message.role, "value", message.role)
-                            ),
-                            "content": message.content,
-                        }
+                    #
+                    # task-15451: gated, but not cheap -- an alerting
+                    # session pays a WHOLE-transcript estimate on every tick
+                    # for as long as the alert stands. Same memo, same
+                    # guarantee: the hit is verified against every row's
+                    # (role, content) before it is served.
+                    projection_rows = tuple(
+                        (
+                            str(getattr(message.role, "value", message.role)),
+                            message.content,
+                        )
                         for message in snapshot_messages
-                    ]
-                    estimated_tokens = _estimate_tokens_locally(
-                        dict_messages, model or "", provider_key
+                    )
+
+                    def _estimate_projection() -> int:
+                        return _estimate_tokens_locally(
+                            [
+                                {"role": role, "content": content}
+                                for role, content in projection_rows
+                            ],
+                            model or "",
+                            provider_key,
+                        )
+
+                    projection_cache = self._console_cost_estimate_cache_or_new()
+                    estimated_tokens = projection_cache.estimate(
+                        ("#cost-projection", session_id),
+                        token_estimate_signature(
+                            projection_rows, model or "", provider_key
+                        ),
+                        _estimate_projection,
                     )
                     rate_delta = (
                         pricing.cache_write_per_mtok - pricing.cache_read_per_mtok
@@ -7395,50 +9387,6 @@ class ChatScreen(BaseAppScreen):
             return ConsoleStagedContextState.empty()
         return ConsoleStagedContextState.from_live_work(pending_launch)
 
-    def _build_console_retrieval_scope_state(self) -> ConsoleRetrievalScopeState:
-        """Pure display state for the Inspector's "Retrieval scope" row.
-
-        Reads only in-memory session state -- the EFFECTIVE
-        (conversation ∩ workspace, task-13) scope cache
-        (``self._console_effective_scope_cache``), populated off-loop by
-        ``_resolve_console_effective_scope_state`` at the scope-picker
-        save/resume/first-persist-flush trigger points -- never the DB
-        directly. Safe to call on every compose/recompose (task-9's
-        zero-DB-on-recompose contract).
-
-        Falls back to the conversation-only ``SessionScopeHolder`` (still
-        zero-DB, purely in-memory) for an UNPERSISTED session whose
-        effective state has not been resolved yet, so a scope narrowed via
-        the picker still reflects immediately even before the off-loop
-        workspace-intersection resolve lands.
-
-        Returns:
-            "Everything" (unscoped) when there is no active session, an
-            unpersisted session with no held scope and no resolved
-            effective state yet, or a persisted session whose conversation
-            id has not yet been resolved into the cache.
-        """
-        session = self._session._active_native_console_session()
-        if session is None:
-            return ConsoleRetrievalScopeState.unscoped()
-        cache_key = session.persisted_conversation_id or session.id
-        cached = self._console_effective_scope_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        if session.persisted_conversation_id is None:
-            return ConsoleRetrievalScopeState.from_scope(session.rag_scope_holder.scope)
-        return ConsoleRetrievalScopeState.unscoped()
-
-    def _console_retrieval_scope_run_recipe_count(self) -> Optional[int]:
-        """Item count for the Inspector run-recipe's "/ scope N items" suffix.
-
-        ``None`` when unscoped (the run-recipe line stays unchanged); the
-        same pure, zero-DB session-state read
-        ``_build_console_retrieval_scope_state`` uses.
-        """
-        state = self._build_console_retrieval_scope_state()
-        return state.item_count if state.is_scoped else None
-
     def _sync_console_retrieval_scope_row(self) -> None:
         """Refresh the mounted retrieval-scope row AND status-strip chips.
 
@@ -7458,7 +9406,7 @@ class ChatScreen(BaseAppScreen):
         ``sync_temporary_chip`` for why it is kept off the general
         control-bar sync tick, same as the scope chip.
         """
-        state = self._build_console_retrieval_scope_state()
+        state = self._retrieval._build_console_retrieval_scope_state()
         try:
             row = self.query_one(
                 f"#{CONSOLE_RETRIEVAL_SCOPE_ROW_ID}", ConsoleRetrievalScopeRow
@@ -7473,159 +9421,6 @@ class ChatScreen(BaseAppScreen):
             return
         status_chips.sync_scope_chip(state)
         status_chips.sync_temporary_chip(self._console_active_session_is_ephemeral())
-
-    async def _resolve_console_effective_scope_state(
-        self, session: "ConsoleChatSession"
-    ) -> ConsoleRetrievalScopeState:
-        """Resolve+cache the EFFECTIVE (conversation ∩ workspace) scope
-        display state for ``session``, off-loop (task-13).
-
-        Delegates to ``chat_rag_events.resolve_scope_for_session`` -- the
-        SAME resolution core ``resolve_effective_scope_for_chat`` uses to
-        enforce retrieval -- so the Inspector row/header chip and actual
-        enforcement never diverge. The returned ``ScopeResolution`` also
-        carries the raw conversation/workspace scopes, used here only for
-        the chip's intersection-breakdown tooltip counts.
-
-        Refreshes ``self._console_retrieval_scope_cache`` (the
-        conversation-only cache the picker's ``initial`` seed reads) from
-        the SAME resolved conversation scope -- one DB read serves both
-        caches -- and caches the built ``ConsoleRetrievalScopeState`` in
-        ``self._console_effective_scope_cache``, keyed by the persisted
-        conversation id or the session id while unpersisted, so
-        ``_build_console_retrieval_scope_state`` can read it back with
-        zero DB work on compose/recompose.
-
-        Call sites: the scope-picker save handlers (either the
-        conversation or the workspace target), resume
-        (``_resume_console_workspace_conversation``), and the first-persist
-        flush hook (``_on_console_scope_flushed``) -- never
-        compose/recompose.
-
-        Args:
-            session: The Console session to resolve scope for.
-
-        Returns:
-            The resolved, cached ``ConsoleRetrievalScopeState``.
-        """
-        resolution = await resolve_scope_for_session(self.app_instance, session)
-        if session.persisted_conversation_id is not None:
-            self._console_retrieval_scope_cache[session.persisted_conversation_id] = (
-                resolution.conv_scope
-            )
-        conv_item_count = (
-            len(resolution.conv_scope.items)
-            if resolution.conv_scope is not None
-            else None
-        )
-        ws_item_count = (
-            len(resolution.ws_scope.items) if resolution.ws_scope is not None else None
-        )
-        state = ConsoleRetrievalScopeState.from_effective(
-            resolution.effective,
-            conv_item_count=conv_item_count,
-            ws_item_count=ws_item_count,
-        )
-        cache_key = session.persisted_conversation_id or session.id
-        self._console_effective_scope_cache[cache_key] = state
-        return state
-
-    async def _refresh_console_effective_scope_and_sync(
-        self, session: "ConsoleChatSession"
-    ) -> None:
-        """Resolve the effective scope for ``session`` and refresh the row/chip.
-
-        Thin convenience wrapper around ``_resolve_console_effective_scope_
-        state`` for the (common) case where the caller wants the resolved
-        state pushed straight into the mounted Inspector row and header
-        chip afterward. A no-op refresh when the screen is not mounted
-        (mirrors every other post-save sync call site in this file).
-
-        Args:
-            session: The Console session to resolve scope for.
-        """
-        await self._resolve_console_effective_scope_state(session)
-        if self.is_mounted:
-            self._sync_console_retrieval_scope_row()
-            self._sync_console_control_bar()
-
-    async def _warm_console_effective_scope_cache_if_stale(self) -> None:
-        """Warm the effective-scope cache for an already-active persisted session.
-
-        Covers a gap the picker-save/resume/first-persist-flush warmers
-        (``_resolve_console_effective_scope_state``'s three call sites)
-        never reach: ``restore_state`` (screen restore on app start, or
-        switching back to the Console screen) can reactivate a native
-        session whose ``persisted_conversation_id`` is already set BEFORE
-        this screen ever mounts, so ``_console_effective_scope_cache`` has
-        no entry for it yet. Left alone, ``_build_console_retrieval_scope_
-        state`` falls through to its cache-miss branch for a persisted
-        session and renders "Everything" for a conversation that is
-        actually scoped, until the user happens to resume/switch/save.
-
-        Called at the start of every ``_sync_native_console_chat_ui`` tick
-        (the initial-mount sync path included), but the cache-key presence
-        check below makes it a no-op once the session has been warmed --
-        the same one-time guard every other warmer relies on -- so this
-        adds no repeated DB work.
-        """
-        session = self._session._active_native_console_session()
-        if session is None or session.persisted_conversation_id is None:
-            return
-        cache_key = session.persisted_conversation_id
-        if cache_key in self._console_effective_scope_cache:
-            return
-        try:
-            await self._refresh_console_effective_scope_and_sync(session)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to warm retrieval scope cache for conversation {}",
-                cache_key,
-            )
-
-    @staticmethod
-    async def _read_console_retrieval_scope(
-        db: Any, conversation_id: str
-    ) -> Optional[RagScope]:
-        """Read a conversation's stored scope, off-loop for file-backed DBs.
-
-        In-memory SQLite connections are thread-local -- the same trap
-        ``library_local_rag_search_service._search_conversations`` already
-        documents and guards: offloading to a worker thread via
-        ``asyncio.to_thread`` would open a FRESH, blank in-memory
-        connection with no migrated schema, since only the thread that
-        created the DB has one. Real app usage is always file-backed
-        (``asyncio.to_thread`` applies normally); the guard only matters
-        for the in-memory DBs the test suite uses per repo convention.
-        """
-        if getattr(db, "is_memory_db", False):
-            return read_conversation_scope(db, conversation_id)
-        return await asyncio.to_thread(read_conversation_scope, db, conversation_id)
-
-    @staticmethod
-    async def _write_console_retrieval_scope(
-        db: Any, conversation_id: str, scope: Optional[RagScope]
-    ) -> None:
-        """Write (or clear) a conversation's stored scope; see the read twin's
-        in-memory-DB guard docstring for why this isn't unconditionally
-        ``asyncio.to_thread``."""
-        if getattr(db, "is_memory_db", False):
-            write_conversation_scope(db, conversation_id, scope)
-        else:
-            await asyncio.to_thread(
-                write_conversation_scope, db, conversation_id, scope
-            )
-
-    def _console_scope_picker_listers(
-        self,
-    ) -> tuple[Any, Any, Any]:
-        """Build the real (media, notes, tag) listers for the scope picker."""
-        user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
-        return (
-            build_media_source_lister(self.app_instance),
-            build_notes_source_lister(self.app_instance, user_id=user_id),
-            build_keyword_tag_lister(self.app_instance),
-        )
 
     async def _open_console_retrieval_scope_picker(self) -> None:
         """Open the RAG retrieval-scope picker for the active Console session.
@@ -7651,7 +9446,7 @@ class ChatScreen(BaseAppScreen):
         if conversation_id is not None:
             db = getattr(self.app_instance, "chachanotes_db", None)
             initial = (
-                await self._read_console_retrieval_scope(db, conversation_id)
+                await self._retrieval._read_console_retrieval_scope(db, conversation_id)
                 if db is not None
                 else None
             )
@@ -7681,13 +9476,18 @@ class ChatScreen(BaseAppScreen):
                     (item.source_type, item.source_id) for item in ws_scope.items
                 )
 
-        title = session.title.strip() if session.title else ""
+        title = sanitize_character_display_label(
+            session.title,
+            max_characters=500,
+        )
         target_label = title or "this conversation"
-        media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
+        media_lister, notes_lister, tag_lister = (
+            self._retrieval._console_scope_picker_listers()
+        )
 
         def _on_save(scope: Optional[RagScope]) -> None:
             self.run_worker(
-                self._apply_console_retrieval_scope_save(session, scope),
+                self._retrieval._apply_console_retrieval_scope_save(session, scope),
                 exclusive=True,
                 group="console-retrieval-scope-save",
             )
@@ -7709,99 +9509,7 @@ class ChatScreen(BaseAppScreen):
         session = self._session._active_native_console_session()
         if session is None:
             return
-        await self._apply_console_retrieval_scope_save(session, None)
-
-    async def _apply_console_retrieval_scope_save(
-        self,
-        session: ConsoleChatSession,
-        scope: Optional[RagScope],
-    ) -> None:
-        """Persist (or session-hold) a scope chosen in the picker modal.
-
-        A persisted conversation writes through ``write_conversation_scope``
-        off-loop; ``write_conversation_scope`` fails SOFT on corrupt
-        existing metadata (silently skips the write rather than raising or
-        erasing sibling metadata keys) -- this is detected here by
-        re-reading afterward: a non-``None`` target scope that reads back
-        as ``None`` means the write was refused, and an honest notify is
-        surfaced rather than a false "saved". A not-yet-persisted session
-        holds the scope in ``session.rag_scope_holder`` instead --
-        ``ConsoleChatStore.persist_session_if_needed`` flushes it through
-        exactly once, at first persistence. Either branch ends by
-        refreshing the Inspector row and the run-recipe line.
-
-        ``write_conversation_scope`` can also raise (task-9 review finding
-        4): a ``ConflictError`` (optimistic-lock version race -- a
-        concurrent write, e.g. a dictionary attach/detach, landed on the
-        same conversation row between read and write; real per PR #734's
-        docs) and a ``ValueError`` (the conversation no longer exists) are
-        both genuine, distinct failure modes -- neither is "corrupted
-        metadata", so each gets its own honest notify instead of the
-        generic corrupt-metadata wording.
-
-        Args:
-            session: The Console session the scope applies to.
-            scope: The new scope, or ``None`` to clear it.
-        """
-        if session.persisted_conversation_id is not None:
-            conversation_id = session.persisted_conversation_id
-            db = getattr(self.app_instance, "chachanotes_db", None)
-            if db is None:
-                self.app_instance.notify(
-                    "Couldn't save scope: no database is available.",
-                    severity="error",
-                )
-                return
-            from ...DB.ChaChaNotes_DB import ConflictError
-
-            try:
-                await self._write_console_retrieval_scope(db, conversation_id, scope)
-            except ConflictError:
-                logger.opt(exception=True).warning(
-                    "Retrieval scope write conflict for conversation {}",
-                    conversation_id,
-                )
-                self.app_instance.notify(
-                    "Couldn't save scope: the conversation was modified "
-                    "concurrently — try again.",
-                    severity="error",
-                )
-                return
-            except ValueError:
-                logger.opt(exception=True).warning(
-                    "Retrieval scope write target missing for conversation {}",
-                    conversation_id,
-                )
-                self.app_instance.notify(
-                    "Couldn't save scope: this conversation no longer exists.",
-                    severity="error",
-                )
-                return
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Failed to write retrieval scope for conversation {}",
-                    conversation_id,
-                )
-                self.app_instance.notify(
-                    "Couldn't save scope: conversation metadata is corrupted.",
-                    severity="error",
-                )
-                return
-            after = await self._read_console_retrieval_scope(db, conversation_id)
-            if scope is not None and after is None:
-                self.app_instance.notify(
-                    "Couldn't save scope: conversation metadata is corrupted.",
-                    severity="error",
-                )
-                return
-            self._console_retrieval_scope_cache[conversation_id] = after
-        else:
-            session.rag_scope_holder.set(scope)
-        # task-13: resolve the EFFECTIVE (conversation ∩ workspace) state
-        # for the row/chip, not just the conversation-only scope just
-        # saved -- a workspace scope may already be narrowing this
-        # conversation's retrieval too.
-        await self._refresh_console_effective_scope_and_sync(session)
+        await self._retrieval._apply_console_retrieval_scope_save(session, None)
 
     @on(Button.Pressed, ".console-retrieval-scope-open-btn")
     async def _console_retrieval_scope_open_pressed(
@@ -7850,9 +9558,7 @@ class ChatScreen(BaseAppScreen):
         self.action_open_console_system_prompt_editor()
 
     @on(ConsoleRagChip.OpenRequested)
-    def _console_rag_chip_activated(
-        self, event: ConsoleRagChip.OpenRequested
-    ) -> None:
+    def _console_rag_chip_activated(self, event: ConsoleRagChip.OpenRequested) -> None:
         """Open Library search settings from the Library-search chip."""
         event.stop()
         self._open_console_rag_settings()
@@ -7879,9 +9585,7 @@ class ChatScreen(BaseAppScreen):
         self._reveal_console_inspector_rail()
 
     @on(ConsoleRunChip.OpenRequested)
-    def _console_run_chip_activated(
-        self, event: ConsoleRunChip.OpenRequested
-    ) -> None:
+    def _console_run_chip_activated(self, event: ConsoleRunChip.OpenRequested) -> None:
         """Open the Inspector rail at the live run rows (FB-08)."""
         event.stop()
         self._reveal_console_inspector_rail()
@@ -7906,18 +9610,130 @@ class ChatScreen(BaseAppScreen):
     def _console_cost_chip_activated(
         self, event: ConsoleCostChip.ConsoleCostChipPressed
     ) -> None:
-        """Open the per-message cost breakdown modal from the cost chip (task-5)."""
+        """Open the Conversation Inspector's Costs tab from the cost chip (task-5/8)."""
         event.stop()
         self._open_console_cost_breakdown()
 
     def _open_console_cost_breakdown(self) -> None:
-        """Push the cost breakdown modal for the active native session (task-5).
+        """Push the Conversation Inspector on the Costs tab for the active
+        native session (task-5/8).
+
+        task-8: this used to push a standalone modal (retired in task-10);
+        it now pushes the shared ``ConsoleConversationInspector`` (same
+        modal Ctrl+Shift+P opens, just starting on a different tab). The
+        Next Send factories are built too (via ``_console_inspector_next_
+        send_factories``) so switching to that tab after opening from the
+        chip renders real content, not stale/empty data.
+        """
+        controller = self._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        if not session_id:
+            self.notify("No active conversation.", severity="warning")
+            return
+        factory, estimate_factory, token_estimate, in_progress = (
+            self._console_inspector_next_send_factories(controller, session_id)
+        )
+        self._push_console_inspector(
+            initial_tab=TAB_COSTS,
+            snapshot_factory=factory,
+            estimate_factory=estimate_factory,
+            token_estimate=token_estimate,
+            in_progress=in_progress,
+        )
+
+    def _push_console_inspector(
+        self,
+        *,
+        initial_tab: str,
+        snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
+        estimate_factory: Callable[[], int | None] | None = None,
+        token_estimate: int | None = None,
+        in_progress: bool = False,
+        project_instruction_state: ConsoleProjectInstructionState | None = None,
+        project_instruction_state_factory: Callable[
+            [], Awaitable[ConsoleProjectInstructionState]
+        ]
+        | None = None,
+        project_instruction_session_id: str | None = None,
+        project_instruction_recovery: Callable[
+            [str | None, str], Awaitable[ConsoleProjectInstructionState | None]
+        ]
+        | None = None,
+    ) -> None:
+        """Build the Costs-tab inputs and push the shared inspector (task-8).
 
         Rows/totals are computed once here (``build_cost_rows``/
         ``build_cost_rows_totals`` are already best-effort and never raise
         on their own) and handed to the modal at construction -- the modal
-        itself never queries the store, matching ``ConsoleRunLogModal``'s
-        "already computed, just render it" shape.
+        itself never queries the store directly, the same "already
+        computed, just render it" shape the standalone modal it replaced
+        (pre-task-8) used.
+
+        The ``project_instruction_*`` kwargs (task-18300) all default to
+        ``None`` -- ``_open_console_cost_breakdown`` (the cost-chip entry
+        point) never passes them, so its Next Send tab simply mounts no
+        project-instructions panel; only ``action_view_chat_context``
+        supplies them, via ``project_instruction_ui.
+        project_instruction_context_kwargs``.
+        """
+        rows, totals, turns, exchanges_loader = (
+            self._build_console_inspector_cost_data()
+        )
+        self.app.push_screen(
+            ConsoleConversationInspector(
+                rows=rows,
+                totals=totals,
+                turns=turns,
+                exchanges_loader=exchanges_loader,
+                snapshot_factory=snapshot_factory,
+                token_estimate=token_estimate,
+                estimate_factory=estimate_factory,
+                in_progress=in_progress,
+                ephemeral=self._console_active_session_is_ephemeral(),
+                initial_tab=initial_tab,
+                project_instruction_state=project_instruction_state,
+                project_instruction_state_factory=project_instruction_state_factory,
+                project_instruction_session_id=project_instruction_session_id,
+                project_instruction_recovery=project_instruction_recovery,
+            )
+        )
+
+    def _build_console_inspector_cost_data(
+        self,
+    ) -> tuple[
+        list[ConsoleCostRow],
+        ConsoleCostRowTotals,
+        list[InspectorTurn],
+        Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]],
+    ]:
+        """Shared Costs-tab inputs for ``ConsoleConversationInspector``
+        (task-8, extended task-9 for the Exchange tab).
+
+        Returns:
+            ``(rows, totals, turns, exchanges_loader)`` -- ``rows``/
+            ``totals`` are ``build_cost_rows``/``build_cost_rows_totals``'s
+            output; ``turns`` is one :class:`InspectorTurn` per transcript
+            message (NOT filtered to contributing ones -- the
+            contributing-only property is enforced downstream, in
+            ``ConsoleConversationInspector``); ``exchanges_loader`` is
+            called by the modal with one turn's ``native_message_id`` and
+            returns ``(capture, abandoned)`` pairs (see
+            ``console_conversation_inspector``'s module docstring for the
+            pair contract and the ordering caveat -- callers must NOT trust
+            the returned order, only ``(created_at, seq)``).
+
+            The loader checks the NATIVE (in-memory) store first --
+            ``message.exchanges`` on the matching ``ConsoleChatMessage`` --
+            and only falls back to a DB read when there is none, so an
+            EPHEMERAL session (no ``persisted_message_id``, no DB row at
+            all) still resolves its captures; a native capture wins over a
+            DB one when both exist (the native copy is fresher -- see
+            ``ConsoleChatStore.attach_message_exchanges``). task-9 closed
+            the former "known gap" here: a native capture's ``abandoned``
+            flag is now resolved through ``store.abandoned_exchange_run_
+            tags`` (the store's new public accessor over its private
+            ``_abandoned_exchange_run_tags`` bookkeeping) rather than
+            always reporting ``False``.
         """
         store = self._console_chat_store
         messages: list[Any] = []
@@ -7933,7 +9749,29 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).warning("cost_breakdown_rows_failed")
             rows = []
         totals: ConsoleCostRowTotals = build_cost_rows_totals(rows)
-        self.app.push_screen(ConsoleCostModal(rows, totals))
+
+        turns = [
+            InspectorTurn(
+                message_id=message.persisted_message_id or "",
+                native_message_id=message.id,
+                index=index,
+                role=(
+                    message.role.value
+                    if isinstance(message.role, ConsoleMessageRole)
+                    else str(message.role)
+                ),
+                preview=_console_inspector_turn_preview(message.content),
+            )
+            for index, message in enumerate(messages)
+        ]
+        messages_by_native_id = {message.id: message for message in messages}
+        exchanges_loader = _build_console_inspector_exchanges_loader(
+            messages_by_native_id,
+            lambda: getattr(self.app_instance, "chachanotes_db", None),
+            store.abandoned_exchange_run_tags if store is not None else None,
+        )
+
+        return rows, totals, turns, exchanges_loader
 
     def _open_console_rag_settings(self) -> None:
         """Open the Library search settings modal, prefilled with the best query.
@@ -7958,12 +9796,10 @@ class ChatScreen(BaseAppScreen):
                 source_types=_console_library_rag_source_scope(self),
                 # Matches the chip exactly: the chip's "Library search: on"
                 # derives from this same pending-launch source test.
-                rag_active=_source_mentions_rag(
-                    pending.source if pending else None
-                ),
+                rag_active=_source_mentions_rag(pending.source if pending else None),
                 staged_title=(pending.title if pending else ""),
             ),
-            callback=self._apply_console_rag_settings_choice,
+            callback=self._retrieval._apply_console_rag_settings_choice,
         )
 
     def _set_console_library_rag_query(self, query: str) -> None:
@@ -8009,24 +9845,13 @@ class ChatScreen(BaseAppScreen):
             scope_label = self.query_one("#console-library-rag-scope", Static)
         except QueryError:
             return
-        scope_label.update(self._console_library_rag_scope_label())
-
-    def _apply_console_rag_settings_choice(
-        self, result: ConsoleRagSettingsResult | None
-    ) -> None:
-        """Store the modal's query and sources, then optionally run now."""
-        if result is None:
-            return
-        self._set_console_library_rag_source_scope(result.source_types)
-        self._set_console_library_rag_query(
-            _sanitize_console_library_rag_query(result.query)
-        )
-        if result.run:
-            self._run_console_library_rag_from_visible_action()
+        scope_label.update(self._retrieval._console_library_rag_scope_label())
 
     async def _open_console_character_picker(self) -> None:
         """Load characters off-thread and open the picker modal (task-1672)."""
-        options = await asyncio.to_thread(self._console_character_picker_options)
+        options = await asyncio.to_thread(
+            self._character._console_character_picker_options
+        )
         if not options:
             self.app.notify(
                 "No characters saved yet — import a card in Roleplay first.",
@@ -8036,37 +9861,12 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleCharacterPickerModal(
                 options=options,
-                current_character_id=self._current_console_rail_character_id(),
+                current_character_id=(
+                    self._character._current_console_rail_character_id()
+                ),
             ),
             callback=self._apply_console_character_choice,
         )
-
-    def _console_character_picker_options(
-        self,
-    ) -> tuple[ConsoleCharacterOption, ...]:
-        """Read selectable character cards (worker thread; never raises)."""
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return ()
-        try:
-            cards = db.list_character_cards(limit=500)
-        except Exception:
-            logger.opt(exception=True).warning("Character picker: list failed.")
-            return ()
-        options: list[ConsoleCharacterOption] = []
-        for card in cards or ():
-            card_id = _canonical_card_character_id(card.get("id"))
-            name = str(card.get("name") or "").strip()
-            if card_id is None or not name:
-                continue
-            options.append(
-                ConsoleCharacterOption(
-                    character_id=card_id,
-                    name=name,
-                    description=str(card.get("description") or "")[:200],
-                )
-            )
-        return tuple(options)
 
     def _apply_console_character_choice(
         self, choice: "ConsoleCharacterChoice | None"
@@ -8075,77 +9875,10 @@ class ChatScreen(BaseAppScreen):
         if choice is None:
             return
         self.run_worker(
-            self._apply_console_character_choice_async(choice),
+            self._character._apply_console_character_choice_async(choice),
             exclusive=True,
             group="console-character-pick",
         )
-
-    async def _apply_console_character_choice_async(
-        self, choice: "ConsoleCharacterChoice"
-    ) -> None:
-        """Apply the picked character to this session or a fresh one."""
-        card = await asyncio.to_thread(
-            self._fetch_character_card_for_avatar, choice.character_id
-        )
-        if card is None:
-            self.app.notify(f"Could not load {choice.name}.", severity="error")
-            return
-        name, system_prompt, greeting = _character_session_prompt_seed(
-            card, choice.name
-        )
-        # cubic PR #1153 P1: the store lives on the SCREEN behind a lazy
-        # accessor -- `app_instance.console_chat_store` is always None, so
-        # the whole feature silently did nothing.
-        store = self._ensure_console_chat_store()
-        if choice.placement == "new":
-            # cubic PR #1153 P1: the card's system prompt was computed and
-            # discarded, leaving the new chat on the default prompt. Mirror
-            # the Start-Chat path, which seeds it into the session settings.
-            settings = replace(
-                self._session._default_console_session_settings(),
-                system_prompt=system_prompt,
-            )
-            session = store.create_session(
-                title=f"Chat with {name}",
-                workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
-                settings=settings,
-                runtime_backend="local",
-                assistant_kind="character",
-                assistant_id=str(choice.character_id),
-                assistant_authority_id=None,
-                character_id=choice.character_id,
-                character_name=name,
-            )
-            if greeting:
-                try:
-                    store.append_message(
-                        session.id,
-                        role=ConsoleMessageRole.ASSISTANT,
-                        content=greeting,
-                        persist=True,
-                    )
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "Character picker: greeting seed failed; continuing."
-                    )
-            store.switch_session(session.id)
-            # task-7 review: a new (never-ephemeral) session may be
-            # replacing a temporary one as the active tab; the awaited
-            # `_sync_native_console_chat_ui()` below never touches the
-            # temporary chip (see `_sync_console_temporary_chip`).
-            self._sync_console_temporary_chip()
-            self.app.notify(f"Started a new chat with {name}.")
-        else:
-            if not self._session._swap_console_session_character(
-                store, choice.character_id, name, system_prompt, greeting
-            ):
-                return
-            self.app.notify(f"This chat now uses {name}.")
-        # cubic PR #1153 P2: this refresher is async -- calling it without
-        # awaiting produced a never-run coroutine (and a RuntimeWarning).
-        await self._sync_native_console_chat_ui()
-        await self._refresh_active_character_avatar_if_scope_changed()
-
 
     @on(ConsoleScopeChip.OpenRequested)
     async def _console_scope_chip_activated(
@@ -8160,190 +9893,26 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         await self._open_console_retrieval_scope_picker()
 
+    def _current_console_conversation_id(self) -> Optional[str]:
+        """Return the active native Console session's persisted conversation id.
 
-    def _current_console_rail_conversation_id(self) -> Optional[str]:
-        """Return the conversation scope used only for Console rail persistence."""
-        native_session = self._session._active_native_console_session()
-        if native_session is not None:
-            conversation_id = getattr(
-                native_session,
-                "persisted_conversation_id",
-                None,
-            )
-            return str(conversation_id) if conversation_id else None
+        One-line delegation to the session controller (task-16815): the
+        browser consolidation (520b1ec12) and the ``/research`` delivery
+        (e1f3a4424) both call this name on the screen, but the method only
+        existed on ``ConsoleSessionController`` -- every Ctrl+K switcher
+        open and ``/research <question>`` dispatch raised ``AttributeError``
+        until this seam existed.
+        """
         return self._session._current_console_conversation_id()
 
-    def _current_console_rail_character_id(self) -> Optional[int]:
-        """Active native Console session's character id (int), or None.
-
-        Resolved ONLY off the live session (#754 sets it at Start-Chat, on
-        DB-resume, and on screen-state restore); never from legacy
-        ``app.current_chat_*`` reactives. None for a generic session.
-        """
-        native_session = self._session._active_native_console_session()
-        if native_session is None:
-            return None
-        return native_session.local_character_id()
-
-    def _current_console_rail_character_name(self) -> Optional[str]:
-        """Active native Console session's character name, or None."""
-        native_session = self._session._active_native_console_session()
-        if native_session is None:
-            return None
-        name = getattr(native_session, "character_name", None)
-        return str(name) if name else None
-
-    def _fetch_character_card_for_avatar(self, character_id: int) -> dict | None:
-        """Synchronous character-card fetch for the avatar refresh (off-thread).
-
-        Canonical DB accessor used throughout `chat_screen.py` (e.g. the
-        resume path `_resolve_resumed_character_name`); there is no
-        `self.chachanotes_db`.
-        """
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return None
-        try:
-            return db.get_character_card_by_id(int(character_id))
-        except Exception:
-            logger.opt(exception=True).debug("avatar: character fetch failed")
-            return None
-
-    def _fetch_expression_image_bytes(
-        self, character_id: int, state: str
-    ) -> bytes | None:
-        """Return the image bytes for (character, state): the expression-table
-        image for a non-idle state, else the character's idle avatar. Runs
-        off-thread (called via asyncio.to_thread). Never raises -> None on any error."""
-        try:
-            db = getattr(self.app_instance, "chachanotes_db", None)
-            if db is None:
-                return None
-            if state in EXPRESSION_IMAGE_STATES:
-                img = db.get_character_expression_image(character_id, state)
-                if img:
-                    return img
-            card = self._fetch_character_card_for_avatar(character_id)  # idle fallback
-            image = (card or {}).get("image")
-            return (
-                bytes(image)
-                if isinstance(image, (bytes, bytearray)) and image
-                else None
-            )
-        except Exception:
-            logger.opt(exception=True).debug("avatar: expression fetch failed")
-            return None
-
-    async def _refresh_active_character_avatar_if_scope_changed(self) -> None:
-        """Refresh the cached character avatar only when the active
-        (character, expression state) scope changed.
-
-        P3d-1: widens the P3c `(character_id,)` scope to `(character_id,
-        state)` so the avatar reacts to the character thinking/speaking, via
-        `resolve_console_expression_state` (pure, DB-free, reads only the
-        active native Console session's live message statuses).
-        """
-        if not resolve_show_character_avatar(
-            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
-        ):
-            # Feature is config-off: the rail section isn't composed, so
-            # skip the off-thread DB fetch + PIL decode below entirely and
-            # keep the cache empty for when the section is next shown.
-            self._active_character_avatar = None
-            self._active_character_avatar_name = None
-            # Invalidate the scope guard too: otherwise, if the feature is
-            # re-enabled while character_id is unchanged, the equality check
-            # below would early-return and the section would stay stuck in
-            # the empty state (Qodo #782-3). Resetting forces a repopulate on
-            # the next config-on tick.
-            self._last_console_avatar_scope = None
-            return
-        character_id = self._current_console_rail_character_id()
-        controller = getattr(self, "_console_chat_controller", None)
-        store = getattr(controller, "store", None) if controller is not None else None
-        active_session_id = (
-            getattr(store, "active_session_id", None) if store is not None else None
-        )
-        react = resolve_react_character_expressions(
-            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
-        )
-        state = resolve_console_expression_state(
-            store, active_session_id, react_enabled=react
-        )
-        scope = (character_id, state)
-        if scope == self._last_console_avatar_scope:
-            return
-        self._last_console_avatar_scope = scope
-        name = self._current_console_rail_character_name()
-        self._active_character_avatar_name = name
-        if character_id is None:
-            self._active_character_avatar = None
-            await self._render_character_avatar_into_section()
-            return
-        # Serve from the per-state cache when this (character, state) scope
-        # was already decoded this session -- no re-fetch/re-decode.
-        cached = self._console_expression_spec_cache.get((character_id, state))
-        if cached is not None:
-            self._active_character_avatar = cached
-            await self._render_character_avatar_into_section()
-            return
-        _, cache = self._ensure_console_image_view()
-        mode = getattr(self, "_console_image_default_mode", "pixels")
-        key = f"character:{character_id}:{state}"
-        spec = {
-            "character_id": character_id,
-            "state": state,
-            "name": name,
-            "mode": mode,
-            "pil": None,
-            "pixels": None,
-        }
-        try:
-            image = await asyncio.to_thread(
-                self._fetch_expression_image_bytes, character_id, state
-            )
-            if image:
-                ok = await asyncio.to_thread(cache.prepare, key, image)
-                if ok:
-                    # Always carry the PIL, never the cache's pre-baked Pixels.
-                    # `cache.get_pixels` bakes at the TRANSCRIPT box
-                    # (PIXELS_MAX_COLS x PIXELS_MAX_LINES = 80x40 cells); the
-                    # avatar rail is 16x8, and Rich clips an oversized Pixels
-                    # renderable rather than scaling it -- which showed the
-                    # user only the top-left corner of their character's
-                    # portrait. The render path scales the PIL to the avatar
-                    # box before building Pixels.
-                    spec["pil"] = cache.get_pil(key)
-        except Exception:
-            logger.opt(exception=True).debug("avatar: expression decode failed")
-        # Post-await staleness re-check on the FULL (character_id, state)
-        # scope: the state can flip mid-decode while streaming, so recompute
-        # it live -- both the session id and the state -- rather than reusing
-        # the `active_session_id` captured before the await, so two tabs
-        # sharing one character can't paint a stale render.
-        current_session_id = (
-            getattr(store, "active_session_id", None) if store is not None else None
-        )
-        current_state = resolve_console_expression_state(
-            store, current_session_id, react_enabled=react
-        )
-        if (
-            self._current_console_rail_character_id(),
-            current_state,
-        ) != scope or not self.is_mounted:
-            return
-        self._console_expression_spec_cache[(character_id, state)] = spec
-        # Bound the cache: evict oldest insertion-ordered entries (dicts
-        # preserve insertion order) so a long session visiting many
-        # characters/states doesn't retain unbounded PIL image references.
-        while len(self._console_expression_spec_cache) > _EXPRESSION_SPEC_CACHE_MAX:
-            del self._console_expression_spec_cache[
-                next(iter(self._console_expression_spec_cache))
-            ]
-        self._active_character_avatar = spec
-        await self._render_character_avatar_into_section()
-
-    async def _render_character_avatar_into_section(self) -> None:
+    async def _render_character_avatar_into_section(
+        self,
+        *,
+        spec: dict | None,
+        name: str | None,
+        manual_label: str | None,
+        is_current: Callable[[], bool],
+    ) -> None:
         """Re-mount the avatar widget + name into the (already-composed) section.
 
         Async because Textual `Widget.mount()` returns an `AwaitMount` that
@@ -8352,21 +9921,52 @@ class ChatScreen(BaseAppScreen):
         DOM state (not just the cached spec dict) right after the refresh
         awaits this.
         """
+        if not is_current():
+            return
         try:
-            holder = self.query_one("#console-character-avatar", Container)
-        except QueryError:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
             return  # section not composed (config off / not mounted)
         try:
-            await holder.remove_children()
-            await holder.mount(
-                self._build_character_avatar_widget(self._active_character_avatar)
+            if not is_current():
+                return
+            left_rail.invalidate_character_avatar_geometry()
+            fitted_box = left_rail.character_avatar_box
+            replaced = await left_rail.replace_character_avatar_widget(
+                lambda: self._build_character_avatar_widget(spec, box=fitted_box),
+                is_current=is_current,
             )
+            if not replaced or not is_current():
+                return
             try:
-                self.query_one("#console-character-name", Static).update(
-                    self._active_character_avatar_name or "No character in this chat"
+                name_widget = self.query_one("#console-character-name", Static)
+                if not is_current():
+                    return
+                name_widget.update(
+                    Text(
+                        sanitize_character_display_label(
+                            name,
+                            max_characters=180,
+                        )
+                        or "No character in this chat"
+                    )
                 )
             except QueryError:
                 pass
+            try:
+                reaction_widget = self.query_one(
+                    "#console-character-reaction-state", Static
+                )
+                if not is_current():
+                    return
+                reaction_widget.update(
+                    f"Reaction: {manual_label} (manual)"
+                    if manual_label
+                    else "Reaction: Automatic"
+                )
+            except QueryError:
+                pass
+            self._request_console_context_allocation_reconcile()
         except Exception:
             # Must never raise: called from `_refresh_active_character_avatar_
             # if_scope_changed` at two sites outside that method's own
@@ -8388,7 +9988,11 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleImageViewerModal(
                 pil,
-                title=self._active_character_avatar_name or "Character portrait",
+                title=sanitize_character_display_label(
+                    self._active_character_avatar_name,
+                    max_characters=180,
+                )
+                or "Character portrait",
             )
         )
 
@@ -8415,7 +10019,12 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             return 0
 
-    def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
+    def _build_character_avatar_widget(
+        self,
+        spec: dict | None,
+        *,
+        box: tuple[int, int] | None = None,
+    ) -> Widget:
         """Build a fresh avatar widget from the cached spec (data, not a widget).
 
         `spec` is `{character_id, name, mode, pil, pixels}` (T3 fills it via
@@ -8438,7 +10047,25 @@ class ChatScreen(BaseAppScreen):
                 if (spec and spec.get("character_id") is not None)
                 else "No character in this chat"
             )
-            return Static(hint, id="console-character-avatar-empty")
+            # width auto, not the Static default 100%: the holder is
+            # width/height auto (task-1661), and a percentage-width child of
+            # an auto container resolves to 0x0 under Textual 8.x -- the
+            # placeholder would mount but paint nothing (task-3793).
+            placeholder = Static(hint, id="console-character-avatar-empty")
+            placeholder.styles.width = "auto"
+            return placeholder
+        if box == (0, 0):
+            hidden = Static("", id="console-character-avatar-image")
+            hidden.styles.width = 0
+            hidden.styles.height = 0
+            hidden.styles.display = "none"
+            return hidden
+        resolved_box = box or character_avatar_box(
+            self._character_avatar_available_cols()
+        )
+        image = spec.get("pil")
+        if image is not None:
+            resolved_box = fit_character_avatar_cell_box(image, *resolved_box)
         if spec.get("mode") == "graphics" and spec.get("pil") is not None:
             try:
                 from textual_image.widget import Image as _GraphicsImage
@@ -8453,9 +10080,7 @@ class ChatScreen(BaseAppScreen):
                 # tick before that settles can ask the renderer to scale
                 # into a transient 0-width/height region, which PIL's
                 # resize() raises on.
-                box_cols, box_lines = character_avatar_box(
-                    self._character_avatar_available_cols()
-                )
+                box_cols, box_lines = resolved_box
                 w, h = fit_image_cell_size(
                     spec["pil"].width,
                     spec["pil"].height,
@@ -8468,9 +10093,9 @@ class ChatScreen(BaseAppScreen):
             except Exception:
                 logger.opt(exception=True).debug("avatar: graphics mount failed")
         try:
-            box_cols, box_lines = character_avatar_box(
-                self._character_avatar_available_cols()
-            )
+            box_cols, box_lines = resolved_box
+            from ...Utils.mosaic_render import explicit_cell_size
+
             pixels = spec.get("pixels")
             if pixels is None and spec.get("pil") is not None:
                 pixels = _character_avatar_fallback_renderable(
@@ -8483,12 +10108,28 @@ class ChatScreen(BaseAppScreen):
                 pixels if pixels is not None else "",
                 id="console-character-avatar-image",
             )
+            # Explicit cell size derived from the baked renderable's own
+            # grid, not just max-width/max-height: the holder is
+            # width/height auto (task-1661), and this Static's default
+            # width: 100% resolves to 0x0 inside it under Textual 8.x --
+            # the avatar mounted but painted nothing at all (task-3793).
+            # Same pattern as ConsoleImageViewerModal._build_full_size_widget;
+            # explicit_cell_size returns None for a rich_pixels renderable,
+            # which is sized for the box anyway.
+            grid_size = explicit_cell_size(pixels)
+            if grid_size is not None:
+                widget.styles.width, widget.styles.height = grid_size
+            else:
+                widget.styles.width = box_cols
+                widget.styles.height = box_lines
             widget.styles.max_width = box_cols
             widget.styles.max_height = box_lines
             return widget
         except Exception:
             logger.opt(exception=True).debug("avatar: pixels build failed")
-            return Static("no avatar", id="console-character-avatar-empty")
+            placeholder = Static("no avatar", id="console-character-avatar-empty")
+            placeholder.styles.width = "auto"
+            return placeholder
 
     def _console_messages_from_conversation_tree(
         self, tree: dict[str, Any]
@@ -8499,8 +10140,6 @@ class ChatScreen(BaseAppScreen):
         Controller`'s `messages_from_conversation_tree_accessor`) now
         points at `self._message` directly, bypassing this delegation."""
         return self._message._console_messages_from_conversation_tree(tree)
-
-
 
     async def _resolve_resumed_character_name(self, character_id: int) -> str:
         """Return a resumed character's display name from its card, or ``""``.
@@ -8613,783 +10252,10 @@ class ChatScreen(BaseAppScreen):
         session = self._session._active_native_console_session()
         if session is not None and session.persisted_conversation_id == conversation_id:
             self.run_worker(
-                self._refresh_console_effective_scope_and_sync(session),
+                self._retrieval._refresh_console_effective_scope_and_sync(session),
                 exclusive=True,
                 group="console-effective-scope-refresh",
             )
-
-    @staticmethod
-    def _console_browser_row_key(row: ConsoleConversationBrowserInputRow) -> str:
-        return str(row.row_key or row.conversation_id or "").strip()
-
-    @staticmethod
-    def _console_browser_row_scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
-        if row.scope_type == "global":
-            return "global chats"
-        if row.workspace_id == DEFAULT_WORKSPACE_ID:
-            return "default workspace chats"
-        if row.workspace_id:
-            return f"workspace {row.workspace_label}"
-        return "chats"
-
-    @staticmethod
-    def _console_browser_row_matches_query(
-        row: ConsoleConversationBrowserInputRow,
-        normalized_query: str,
-    ) -> bool:
-        haystack = " ".join(
-            (
-                str(row.title or ""),
-                str(row.workspace_label or ""),
-                str(row.status or ""),
-                ChatScreen._console_browser_row_scope_copy(row),
-            )
-        ).lower()
-        return normalized_query in haystack
-
-    def _filter_console_browser_rows_for_query(
-        self,
-        rows: Iterable[ConsoleConversationBrowserInputRow],
-        query: str,
-    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-        normalized_query = str(query or "").strip().lower()
-        row_tuple = tuple(rows)
-        if not normalized_query:
-            return row_tuple
-        return tuple(
-            row
-            for row in row_tuple
-            if self._console_browser_row_matches_query(row, normalized_query)
-        )
-
-    def _find_console_browser_row(
-        self,
-        row_key: str,
-        *,
-        conversation_id: str | None = None,
-    ) -> ConsoleConversationBrowserRow | None:
-        """Return the current grouped browser row for a rendered row key."""
-        target_row_key = str(row_key or "").strip()
-        target_conversation_id = str(conversation_id or "").strip()
-        if not target_row_key and not target_conversation_id:
-            return None
-        state = self._workspace._build_console_workspace_context_state()
-        browser = state.conversation_browser
-        if browser is None:
-            return None
-        allow_conversation_fallback = not target_row_key
-        fallback: ConsoleConversationBrowserRow | None = None
-        for section in browser.sections:
-            for row in section.rows:
-                if target_row_key and row.row_key == target_row_key:
-                    return row
-                if (
-                    allow_conversation_fallback
-                    and fallback is None
-                    and target_conversation_id
-                    and row.conversation_id == target_conversation_id
-                ):
-                    fallback = row
-            for group in section.groups:
-                for row in group.rows:
-                    if target_row_key and row.row_key == target_row_key:
-                        return row
-                    if (
-                        allow_conversation_fallback
-                        and fallback is None
-                        and target_conversation_id
-                        and row.conversation_id == target_conversation_id
-                    ):
-                        fallback = row
-        return fallback
-
-
-    @staticmethod
-    def _console_browser_display_identity(
-        row: ConsoleConversationBrowserInputRow,
-    ) -> tuple[str, str, str, str] | tuple[str, str]:
-        """Return the display identity used to dedupe grouped browser rows."""
-        conversation_id = str(row.conversation_id or "").strip()
-        if conversation_id:
-            scope_type = str(row.scope_type or "").strip() or "workspace"
-            workspace_id = (
-                "" if scope_type == "global" else str(row.workspace_id or "").strip()
-            )
-            return ("conversation", scope_type, workspace_id, conversation_id)
-        return ("row", ChatScreen._console_browser_row_key(row))
-
-    def _starred_console_conversation_ids(self) -> set[str]:
-        """Return locally starred durable conversation ids."""
-        service = getattr(self.app_instance, "conversation_local_marks_service", None)
-        list_marked = getattr(service, "list_marked_conversation_ids", None)
-        if not callable(list_marked):
-            return set()
-        try:
-            return {str(conversation_id) for conversation_id in list_marked()}
-        except Exception:
-            logger.opt(exception=True).debug("Unable to read local conversation stars")
-            return set()
-
-    def _apply_console_browser_star_state(
-        self,
-        row: ConsoleConversationBrowserInputRow,
-        starred_ids: set[str] | None = None,
-    ) -> ConsoleConversationBrowserInputRow:
-        """Apply local star state and star eligibility to one browser row."""
-        conversation_id = str(row.conversation_id or "").strip()
-        ids = (
-            starred_ids
-            if starred_ids is not None
-            else self._starred_console_conversation_ids()
-        )
-        star_enabled = bool(conversation_id) and not str(row.row_key or "").startswith(
-            "native:"
-        )
-        return replace(
-            row,
-            conversation_id=conversation_id or None,
-            starred=bool(conversation_id and conversation_id in ids),
-            star_enabled=bool(star_enabled),
-        )
-
-    def _native_console_browser_rows(
-        self,
-        current_conversation_id: str | None = None,
-    ) -> list[ConsoleConversationBrowserInputRow]:
-        """Return open native Console sessions across all workspaces."""
-        store = self._console_chat_store
-        if store is None:
-            return []
-        labels = self._workspace._console_browser_workspace_labels()
-        starred_ids = self._starred_console_conversation_ids()
-        active_session_id = store.active_session_id
-        controller = getattr(self, "_console_chat_controller", None)
-        rows: list[ConsoleConversationBrowserInputRow] = []
-        for session in store.sessions():
-            session_workspace_id = str(session.workspace_id or "").strip()
-            scope_type = (
-                "global"
-                if session_workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
-                else "workspace"
-            )
-            workspace_id = None if scope_type == "global" else session_workspace_id
-            persisted_id = (
-                str(session.persisted_conversation_id).strip()
-                if session.persisted_conversation_id
-                else ""
-            )
-            row_key = persisted_id or f"native:{session.id}"
-            selected = session.id == active_session_id
-            # Parallel-agents spec PA-T8: resolved here (glyph string, not the
-            # raw `ConsoleRunMarker`) so `conversation_browser_state.py` and
-            # the tray widget stay free of a model-layer import -- threaded
-            # like TASK-717 threaded `openable` (input row -> normalize ->
-            # display row -> row label).
-            run_marker = (
-                resolve_glyph(
-                    CONSOLE_RUN_MARKER_GLYPHS.get(controller.run_marker_for(session.id), "")
-                )
-                if controller is not None
-                else ""
-            )
-            row = ConsoleConversationBrowserInputRow(
-                row_key=row_key,
-                conversation_id=persisted_id or None,
-                native_session_id=session.id,
-                title=str(session.title or "Untitled conversation"),
-                scope_type=scope_type,
-                workspace_id=workspace_id,
-                workspace_label=self._workspace._console_browser_workspace_label(
-                    workspace_id, labels
-                ),
-                status="active session" if selected else "open session",
-                selected=selected,
-                source_kind="native",
-                updated_sort=str(session.updated_at or ""),
-                run_marker=run_marker,
-            )
-            rows.append(self._apply_console_browser_star_state(row, starred_ids))
-        return rows
-
-    def _membership_console_browser_rows(
-        self,
-        current_conversation_id: str | None = None,
-    ) -> list[ConsoleConversationBrowserInputRow]:
-        """Return conversation membership rows across every local workspace."""
-        service = getattr(self.app_instance, "workspace_registry_service", None)
-        list_conversations = getattr(service, "list_workspace_conversations", None)
-        if not callable(list_conversations):
-            return []
-        labels = self._workspace._console_browser_workspace_labels()
-        starred_ids = self._starred_console_conversation_ids()
-        current_conversation = (
-            current_conversation_id or self._session._current_console_conversation_id()
-        )
-        active_session = self._session._active_native_console_session()
-        active_workspace_id = (
-            str(active_session.workspace_id or "").strip()
-            if active_session is not None
-            else str(
-                self._workspace._current_console_workspace_context().active_workspace_id or ""
-            ).strip()
-        )
-        rows: list[ConsoleConversationBrowserInputRow] = []
-        for record in self._workspace._console_browser_workspace_records():
-            workspace_id = str(record.workspace_id or "").strip()
-            if not workspace_id:
-                continue
-            try:
-                memberships = list_conversations(workspace_id)
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Unable to list Console browser workspace conversations "
-                    "workspace_id={}",
-                    workspace_id,
-                )
-                continue
-            for membership in memberships:
-                conversation_id = str(getattr(membership, "item_id", "") or "").strip()
-                if not conversation_id:
-                    continue
-                title = str(getattr(membership, "title", "") or conversation_id)
-                row = ConsoleConversationBrowserInputRow(
-                    row_key=f"workspace:{workspace_id}:conversation:{conversation_id}",
-                    conversation_id=conversation_id,
-                    native_session_id=None,
-                    title=title,
-                    scope_type="workspace",
-                    workspace_id=workspace_id,
-                    workspace_label=self._workspace._console_browser_workspace_label(
-                        workspace_id, labels
-                    ),
-                    status=str(getattr(membership, "role", "") or "workspace-thread"),
-                    selected=bool(
-                        current_conversation
-                        and current_conversation == conversation_id
-                        and active_workspace_id == workspace_id
-                    ),
-                    source_kind="membership",
-                    updated_sort=str(getattr(membership, "created_at", "") or ""),
-                    openable=conversation_id
-                    not in getattr(self, "_console_broken_conversation_ids", set()),
-                )
-                rows.append(self._apply_console_browser_star_state(row, starred_ids))
-        return rows
-
-    async def _persisted_console_browser_rows(
-        self,
-        query: str = "",
-    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Return persisted global/workspace rows for grouped browser search."""
-        services: list[tuple[Any, bool]] = []
-        scope_service = getattr(
-            self.app_instance,
-            "chat_conversation_scope_service",
-            None,
-        )
-        local_service = getattr(
-            self.app_instance, "local_chat_conversation_service", None
-        )
-
-        def add_service(candidate: Any, *, include_mode: bool) -> None:
-            if candidate is None:
-                return
-            if any(candidate is existing for existing, _include_mode in services):
-                return
-            services.append((candidate, include_mode))
-
-        add_service(scope_service, include_mode=True)
-        add_service(getattr(scope_service, "local_service", None), include_mode=False)
-        add_service(local_service, include_mode=False)
-        if not services:
-            return [], None, ""
-
-        labels = self._workspace._console_browser_workspace_labels()
-        scopes: list[tuple[str, str | None]] = [("global", None)]
-        scopes.extend(
-            ("workspace", str(record.workspace_id))
-            for record in self._workspace._console_browser_workspace_records()
-            if str(record.workspace_id or "").strip()
-        )
-        last_error = ""
-        for service, include_mode in services:
-            list_conversations = getattr(service, "list_conversations", None)
-            if not callable(list_conversations):
-                continue
-            rows: list[ConsoleConversationBrowserInputRow] = []
-            total_count = 0
-            saw_total = False
-            saw_result = False
-            current_conversation = self._session._current_console_conversation_id()
-            starred_ids = self._starred_console_conversation_ids()
-            for scope_type, workspace_id in scopes:
-                list_kwargs: dict[str, Any] = {
-                    "query": query,
-                    "scope_type": scope_type,
-                    "workspace_id": workspace_id,
-                    "limit": 25,
-                    "offset": 0,
-                }
-                if include_mode:
-                    list_kwargs["mode"] = "local"
-                try:
-                    if include_mode:
-                        # Routed through ChatConversationScopeService, which
-                        # already threads its own local-mode sync DB call
-                        # internally (B4/task-283) -- just await it.
-                        result = list_conversations(**list_kwargs)
-                        result = await result if inspect.isawaitable(result) else result
-                    else:
-                        # Raw ChatConversationService (scope_service.local_service
-                        # or app.local_chat_conversation_service): a plain sync
-                        # sqlite/FTS call that bypasses the scope service's own
-                        # threading. run_worker(coroutine) is not a thread, so
-                        # this used to block the event loop on every debounce
-                        # fire -- thread it directly, same is_memory_db guard as
-                        # ChatConversationScopeService._is_memory_backed (a
-                        # per-connection :memory: DB is only visible to the
-                        # thread that migrated it).
-                        db = getattr(service, "db", None)
-                        if bool(getattr(db, "is_memory_db", False)):
-                            result = list_conversations(**list_kwargs)
-                        else:
-                            result = await asyncio.to_thread(
-                                list_conversations, **list_kwargs
-                            )
-                except Exception as exc:
-                    if (
-                        isinstance(exc, ValueError)
-                        and "service is unavailable" in str(exc).lower()
-                    ):
-                        logger.debug(
-                            "Local persisted conversation service is unavailable"
-                        )
-                        last_error = ""
-                        break
-                    logger.exception(
-                        "Unable to search Console conversation browser "
-                        "query={!r} scope_type={} workspace_id={} include_mode={}",
-                        query,
-                        scope_type,
-                        workspace_id,
-                        include_mode,
-                    )
-                    return (
-                        rows,
-                        None if not saw_total else total_count,
-                        ("Workspace conversation search is unavailable."),
-                    )
-                saw_result = True
-                if not isinstance(result, dict):
-                    continue
-                items = result.get("items")
-                if not isinstance(items, list):
-                    items = []
-                total = result.get("total")
-                if total is None:
-                    pagination = result.get("pagination")
-                    if isinstance(pagination, dict):
-                        total = pagination.get("total")
-                try:
-                    total_count += int(total)
-                    saw_total = True
-                except (TypeError, ValueError):
-                    total_count += len(items)
-                    saw_total = True
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    conversation_id = str(item.get("id") or "").strip()
-                    if not conversation_id:
-                        continue
-                    item_scope_type = str(
-                        item.get("scope_type") or scope_type or "workspace"
-                    )
-                    item_workspace_id = item.get("workspace_id", workspace_id)
-                    normalized_workspace_id = (
-                        None
-                        if item_scope_type == "global"
-                        else str(item_workspace_id or workspace_id or "").strip()
-                    )
-                    row = ConsoleConversationBrowserInputRow(
-                        row_key=conversation_id,
-                        conversation_id=conversation_id,
-                        native_session_id=None,
-                        title=str(item.get("title") or "Untitled conversation"),
-                        scope_type=item_scope_type,
-                        workspace_id=normalized_workspace_id,
-                        workspace_label=self._workspace._console_browser_workspace_label(
-                            normalized_workspace_id,
-                            labels,
-                        ),
-                        status=str(item.get("state") or "workspace-thread"),
-                        selected=bool(
-                            current_conversation
-                            and current_conversation == conversation_id
-                        ),
-                        source_kind="persisted",
-                        # TASK-355: recency-first ordering / age labels must come
-                        # from last_modified (normalize_conversation_row exposes
-                        # no updated_at) or the rail degrades to creation order.
-                        updated_sort=console_persisted_row_updated_sort(item),
-                    )
-                    rows.append(
-                        self._apply_console_browser_star_state(row, starred_ids)
-                    )
-            if saw_result:
-                return rows, total_count if saw_total else None, last_error
-        return [], None, last_error
-
-    def _invalidate_console_persisted_rows_cache(self) -> None:
-        """Clear the TTL-cached persisted conversation-browser rows.
-
-        TASK-251: a dumb clear only -- callers that mutate the persisted
-        conversation set call this so the very next sync reflects the
-        change immediately, but nothing here tries to enumerate every
-        theoretical mutation site. ``CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS``
-        is the correctness backstop for whatever this misses (mirrors the
-        sub-agent badge-count cache's condition 3).
-        """
-        self._console_persisted_rows_cache = None
-        self._console_persisted_rows_cache_key = None
-        self._console_persisted_rows_cache_at = 0.0
-
-    def _sync_persisted_console_browser_rows(
-        self,
-        query: str = "",
-        current_conversation_id: str | None = None,
-    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Return persisted rows when the local listing seam is synchronous.
-
-        TASK-251 (audit P1 B1): TTL-cached (see
-        ``CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS``) keyed on
-        ``(query, current_conversation_id)`` -- the 0.2s Console poll tick
-        used to re-issue this per-scope DB query chain unconditionally,
-        measured 11-70ms/tick. Explicit invalidation sites exist (see
-        ``_invalidate_console_persisted_rows_cache`` callers) but the TTL is
-        the correctness backstop, not those sites.
-        """
-        cache_key = (query, current_conversation_id)
-        if (
-            self._console_persisted_rows_cache is not None
-            and self._console_persisted_rows_cache_key == cache_key
-            and (time.monotonic() - self._console_persisted_rows_cache_at)
-            < CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS
-        ):
-            return self._console_persisted_rows_cache
-        result = self._compute_persisted_console_browser_rows(
-            query,
-            current_conversation_id,
-        )
-        self._console_persisted_rows_cache = result
-        self._console_persisted_rows_cache_key = cache_key
-        self._console_persisted_rows_cache_at = time.monotonic()
-        return result
-
-    def _compute_persisted_console_browser_rows(
-        self,
-        query: str = "",
-        current_conversation_id: str | None = None,
-    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Uncached implementation behind ``_sync_persisted_console_browser_rows``."""
-        services: list[tuple[Any, bool]] = []
-        local_service = getattr(
-            self.app_instance, "local_chat_conversation_service", None
-        )
-        scope_service = getattr(
-            self.app_instance,
-            "chat_conversation_scope_service",
-            None,
-        )
-
-        def add_service(candidate: Any, *, include_mode: bool) -> None:
-            if candidate is None:
-                return
-            if any(candidate is existing for existing, _include_mode in services):
-                return
-            services.append((candidate, include_mode))
-
-        add_service(local_service, include_mode=False)
-        add_service(getattr(scope_service, "local_service", None), include_mode=False)
-        add_service(scope_service, include_mode=True)
-        if not services:
-            return [], None, ""
-
-        labels = self._workspace._console_browser_workspace_labels()
-        scopes: list[tuple[str, str | None]] = [("global", None)]
-        scopes.extend(
-            ("workspace", str(record.workspace_id))
-            for record in self._workspace._console_browser_workspace_records()
-            if str(record.workspace_id or "").strip()
-        )
-        last_error = ""
-        for service, include_mode in services:
-            list_conversations = getattr(service, "list_conversations", None)
-            if not callable(list_conversations):
-                continue
-            rows: list[ConsoleConversationBrowserInputRow] = []
-            total_count = 0
-            saw_total = False
-            saw_sync_result = False
-            current_conversation = (
-                current_conversation_id or self._session._current_console_conversation_id()
-            )
-            starred_ids = self._starred_console_conversation_ids()
-            for scope_type, workspace_id in scopes:
-                list_kwargs: dict[str, Any] = {
-                    "query": query,
-                    "scope_type": scope_type,
-                    "workspace_id": workspace_id,
-                    "limit": 25,
-                    "offset": 0,
-                }
-                if include_mode:
-                    list_kwargs["mode"] = "local"
-                try:
-                    result = list_conversations(**list_kwargs)
-                except Exception as exc:
-                    if (
-                        isinstance(exc, ValueError)
-                        and "service is unavailable" in str(exc).lower()
-                    ):
-                        logger.debug(
-                            "Local persisted conversation service is unavailable"
-                        )
-                        last_error = ""
-                        break
-                    logger.exception(
-                        "Unable to list Console conversation browser "
-                        "query={!r} scope_type={} workspace_id={} include_mode={}",
-                        query,
-                        scope_type,
-                        workspace_id,
-                        include_mode,
-                    )
-                    return (
-                        rows,
-                        None if not saw_total else total_count,
-                        ("Workspace conversation search is unavailable."),
-                    )
-                if inspect.isawaitable(result):
-                    try:
-                        result.close()
-                    except AttributeError:
-                        pass
-                    continue
-                saw_sync_result = True
-                if not isinstance(result, dict):
-                    continue
-                items = result.get("items")
-                if not isinstance(items, list):
-                    items = []
-                total = result.get("total")
-                if total is None:
-                    pagination = result.get("pagination")
-                    if isinstance(pagination, dict):
-                        total = pagination.get("total")
-                try:
-                    total_count += int(total)
-                    saw_total = True
-                except (TypeError, ValueError):
-                    total_count += len(items)
-                    saw_total = True
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    conversation_id = str(item.get("id") or "").strip()
-                    if not conversation_id:
-                        continue
-                    item_scope_type = str(
-                        item.get("scope_type") or scope_type or "workspace"
-                    )
-                    item_workspace_id = item.get("workspace_id", workspace_id)
-                    normalized_workspace_id = (
-                        None
-                        if item_scope_type == "global"
-                        else str(item_workspace_id or workspace_id or "").strip()
-                    )
-                    row = ConsoleConversationBrowserInputRow(
-                        row_key=conversation_id,
-                        conversation_id=conversation_id,
-                        native_session_id=None,
-                        title=str(item.get("title") or "Untitled conversation"),
-                        scope_type=item_scope_type,
-                        workspace_id=normalized_workspace_id,
-                        workspace_label=self._workspace._console_browser_workspace_label(
-                            normalized_workspace_id,
-                            labels,
-                        ),
-                        status=str(item.get("state") or "workspace-thread"),
-                        selected=bool(
-                            current_conversation
-                            and current_conversation == conversation_id
-                        ),
-                        source_kind="persisted",
-                        # TASK-355: recency-first ordering / age labels must come
-                        # from last_modified (normalize_conversation_row exposes
-                        # no updated_at) or the rail degrades to creation order.
-                        updated_sort=console_persisted_row_updated_sort(item),
-                    )
-                    rows.append(
-                        self._apply_console_browser_star_state(row, starred_ids)
-                    )
-            if saw_sync_result:
-                return rows, total_count if saw_total else None, last_error
-        return [], None, last_error
-
-    def _merge_console_browser_rows(
-        self,
-        *row_groups: Iterable[ConsoleConversationBrowserInputRow],
-    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-        """Merge browser rows with native, membership, then persisted precedence."""
-        merged: list[ConsoleConversationBrowserInputRow] = []
-        seen: set[tuple[str, ...]] = set()
-        starred_ids = self._starred_console_conversation_ids()
-        for group in row_groups:
-            for raw_row in group:
-                row = self._apply_console_browser_star_state(raw_row, starred_ids)
-                identity = self._console_browser_display_identity(row)
-                if not identity[-1] or identity in seen:
-                    continue
-                seen.add(identity)
-                merged.append(row)
-        return tuple(merged)
-
-    def _current_console_browser_rows(
-        self,
-        query: str,
-        current_conversation_id: str | None = None,
-    ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None, str]:
-        """Return current grouped browser rows plus optional search metadata."""
-        local_rows = self._merge_console_browser_rows(
-            self._native_console_browser_rows(current_conversation_id),
-            self._membership_console_browser_rows(current_conversation_id),
-        )
-        persisted_rows, persisted_total, sync_error = (
-            self._sync_persisted_console_browser_rows(
-                query,
-                current_conversation_id=current_conversation_id,
-            )
-        )
-        cached_rows = self._console_conversation_browser_rows
-        rows = self._merge_console_browser_rows(local_rows, persisted_rows, cached_rows)
-        if str(query or "").strip():
-            total = (
-                self._console_conversation_browser_total
-                if self._console_conversation_browser_total is not None
-                else persisted_total
-            )
-        else:
-            total = None
-        return rows, total, self._console_conversation_browser_error or sync_error
-
-    async def _refresh_console_conversation_browser_search(
-        self,
-        query: str,
-        token: int,
-    ) -> None:
-        """Refresh grouped browser search rows if query and token are current."""
-        if token != self._console_conversation_browser_search_token:
-            return
-        if query != self._console_conversation_browser_query:
-            return
-        if not str(query or "").strip():
-            self._console_conversation_browser_rows = ()
-            self._console_conversation_browser_total = None
-            self._console_conversation_browser_error = ""
-            self._sync_console_workspace_context()
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
-            return
-
-        local_rows = self._filter_console_browser_rows_for_query(
-            self._merge_console_browser_rows(
-                self._native_console_browser_rows(),
-                self._membership_console_browser_rows(),
-            ),
-            query,
-        )
-        self._console_conversation_browser_rows = local_rows
-        self._console_conversation_browser_total = None
-        self._console_conversation_browser_error = ""
-        self._sync_console_workspace_context()
-        self.call_after_refresh(self._focus_console_workspace_conversation_search)
-
-        (
-            persisted_rows,
-            persisted_total,
-            error_copy,
-        ) = await self._persisted_console_browser_rows(query)
-        if token != self._console_conversation_browser_search_token:
-            return
-        if query != self._console_conversation_browser_query:
-            return
-        merged = self._merge_console_browser_rows(local_rows, persisted_rows)
-        result_total = persisted_total
-        if result_total is None or result_total < len(merged):
-            result_total = len(merged)
-        self._console_conversation_browser_rows = merged
-        self._console_conversation_browser_total = result_total
-        self._console_conversation_browser_error = error_copy
-        self._sync_console_workspace_context()
-        self.call_after_refresh(self._focus_console_workspace_conversation_search)
-
-    async def _refresh_console_conversation_browser_after_selection(self) -> None:
-        """Refresh grouped browser rows after selection/star state changes."""
-        query = self._console_conversation_browser_query
-        if not query.strip():
-            self._console_conversation_browser_rows = ()
-            self._console_conversation_browser_total = None
-            self._console_conversation_browser_error = ""
-            self._sync_console_workspace_context()
-            return
-        if self._console_conversation_browser_search_timer is not None:
-            self._console_conversation_browser_search_timer.stop()
-            self._console_conversation_browser_search_timer = None
-        self._console_conversation_browser_search_token += 1
-        self._console_workspace_conversation_search_token = (
-            self._console_conversation_browser_search_token
-        )
-        token = self._console_conversation_browser_search_token
-        await self._refresh_console_conversation_browser_search(query, token)
-
-
-    def _with_console_conversation_browser_state(
-        self,
-        state: ConsoleWorkspaceContextState,
-        current_conversation_id: str | None = None,
-    ) -> ConsoleWorkspaceContextState:
-        """Attach grouped all-workspaces conversation browser state."""
-        marks_service = getattr(
-            self.app_instance,
-            "conversation_local_marks_service",
-            None,
-        )
-        query = self._console_conversation_browser_query
-        rows, total, error_copy = self._current_console_browser_rows(
-            query,
-            current_conversation_id=current_conversation_id,
-        )
-        bridge = self._ensure_console_agent_bridge()
-        subagent_counts = self._agent._console_subagent_counts_for_rows(bridge, rows)
-        browser = build_console_conversation_browser_state(
-            rows=rows,
-            active_workspace_id=self._workspace._current_console_workspace_context().active_workspace_id,
-            group_collapse_preferences=(
-                self._console_conversation_browser_collapse_preferences()
-            ),
-            query=query,
-            marks_available=marks_service is not None,
-            error_copy=error_copy or self._console_conversation_browser_error,
-            result_total_count=total,
-            result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
-            subagent_counts=subagent_counts,
-        )
-        legacy_state = self._workspace._with_console_workspace_conversation_section(state)
-        return replace(
-            state,
-            conversation_browser=browser,
-            conversation_section=legacy_state.conversation_section,
-        )
 
     def _console_config(self) -> dict[str, Any]:
         """Return mutable Console app config, initializing the section if needed."""
@@ -9452,43 +10318,6 @@ class ChatScreen(BaseAppScreen):
             console_config["rail_state"] = rail_state_config
         return rail_state_config
 
-    def _stored_console_rail_preferences(
-        self,
-        key: str,
-        fallback_key: str | None,
-    ) -> Any:
-        """Read stored Console rail preferences without writing persistence."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return None
-        console_config = app_config.get("console")
-        if not isinstance(console_config, dict):
-            return None
-        rail_state_config = console_config.get("rail_state")
-        if not isinstance(rail_state_config, dict):
-            return None
-        if key in rail_state_config:
-            return rail_state_config[key]
-        if fallback_key and fallback_key in rail_state_config:
-            return rail_state_config[fallback_key]
-        return None
-
-    def _persist_console_rail_preferences(
-        self,
-        key: str,
-        preferences: ConsoleRailPreferences,
-        *,
-        notify_on_failure: bool = False,
-    ) -> bool:
-        """Queue best-effort persistence for an already-updated in-memory preference."""
-        serialized = serialize_console_rail_preferences(preferences)
-        self._save_console_rail_preferences(
-            key,
-            serialized,
-            notify_on_failure=notify_on_failure,
-        )
-        return True
-
     @work(thread=True)
     def _save_console_rail_preferences(
         self,
@@ -9498,25 +10327,30 @@ class ChatScreen(BaseAppScreen):
         notify_on_failure: bool = False,
     ) -> None:
         """Persist Console rail preferences without blocking the UI thread."""
-        try:
-            saved = save_setting_to_cli_config(
-                "console.rail_state",
-                key,
-                serialized,
-            )
-        except Exception as exc:
-            logger.warning("Failed to persist Console rail preference: {}", exc)
-            saved = False
+        with _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK:
+            latest: Any = serialized
+            app_config = getattr(self.app_instance, "app_config", None)
+            if isinstance(app_config, Mapping):
+                console_config = app_config.get("console")
+                if isinstance(console_config, Mapping):
+                    rail_state_config = console_config.get("rail_state")
+                    if (
+                        isinstance(rail_state_config, Mapping)
+                        and key in rail_state_config
+                    ):
+                        latest = rail_state_config[key]
+            latest_serialized = serialize_console_rail_stored_preferences(latest)
+            try:
+                saved = save_setting_to_cli_config(
+                    "console.rail_state",
+                    key,
+                    latest_serialized,
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist Console rail preference: {}", exc)
+                saved = False
         if not saved and notify_on_failure:
             self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
-
-    @work(thread=True)
-    def _delete_console_rail_preference_keys(self, keys: list[str]) -> None:
-        """Remove superseded/orphaned rail preference keys off the UI thread."""
-        try:
-            delete_settings_from_cli_config("console.rail_state", keys)
-        except Exception as exc:
-            logger.warning("Failed to prune Console rail preference keys: {}", exc)
 
     def _dispatch_console_rail_preference_prune(self) -> None:
         """Queue the one-shot orphaned rail-preference cleanup after mount."""
@@ -9765,36 +10599,41 @@ class ChatScreen(BaseAppScreen):
         except Exception as exc:
             logger.warning("Failed to persist Console fleet coach-mark flag: {}", exc)
 
-    def _migrate_console_rail_fallback_preferences(
+    def _ensure_console_rail_scope_seed(
         self,
-        key: str,
-        fallback_key: str | None,
-    ) -> None:
-        """Copy temporary session rail preferences to a durable key when needed."""
-        if not fallback_key:
-            return
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        console_config = app_config.get("console")
-        if not isinstance(console_config, dict):
-            return
-        rail_state_config = console_config.get("rail_state")
-        if not isinstance(rail_state_config, dict):
-            return
-        if key in rail_state_config or fallback_key not in rail_state_config:
-            return
-        preferences = coerce_console_rail_preferences(rail_state_config[fallback_key])
-        rail_state_config[key] = serialize_console_rail_preferences(preferences)
-        self._persist_console_rail_preferences(
-            key,
-            preferences,
-            notify_on_failure=False,
+        selected_key: ConsoleRailPreferenceKey,
+        workspace_key: ConsoleRailPreferenceKey,
+        *,
+        persist: bool = True,
+    ) -> Any:
+        """Seed one absent layout scope without overwriting or deleting sources."""
+        rail_state_config = self._console_rail_state_config()
+        if selected_key.value in rail_state_config:
+            return rail_state_config[selected_key.value]
+
+        shared_key = build_console_rail_preference_key(layout_scope="global")
+        candidates = (
+            (workspace_key.value, workspace_key.fallback_value)
+            if selected_key.scope_id == CONSOLE_RAIL_SHARED_LAYOUT_SCOPE
+            else (workspace_key.fallback_value, shared_key.value)
         )
-        # The session-scoped fallback is superseded by the durable key; drop
-        # it so migrations stop leaving permanent orphan sections behind.
-        rail_state_config.pop(fallback_key, None)
-        self._delete_console_rail_preference_keys([fallback_key])
+        source = next(
+            (
+                rail_state_config[key]
+                for key in candidates
+                if key and key in rail_state_config
+            ),
+            None,
+        )
+        serialized = serialize_console_rail_stored_preferences(source)
+        rail_state_config[selected_key.value] = serialized
+        if persist:
+            self._save_console_rail_preferences(
+                selected_key.value,
+                serialized,
+                notify_on_failure=False,
+            )
+        return serialized
 
     def _console_active_session_is_ephemeral(self) -> bool:
         """Return whether the active Console session is temporary.
@@ -9888,18 +10727,26 @@ class ChatScreen(BaseAppScreen):
                 if session.id == active_session_id:
                     active_session = session
                     break
+        workspace_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            conversation_id=(self._character._current_console_rail_conversation_id()),
+            session_id=self._session._current_console_session_id(),
+            layout_scope="workspace",
+        )
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
-            conversation_id=self._current_console_rail_conversation_id(),
-            session_id=self._session._current_console_session_id(),
+            layout_scope=normalize_console_rail_layout_scope(
+                self._console_config().get("rail_layout_scope")
+            ),
         )
-        self._migrate_console_rail_fallback_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+        stored_preferences = self._ensure_console_rail_scope_seed(
+            preference_key,
+            workspace_key,
         )
-        stored_preferences = self._stored_console_rail_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+        resolved_available_columns = (
+            available_columns
+            if available_columns is not None
+            else self._console_rail_available_columns()
         )
         rail_state = build_console_rail_state(
             preference_key=preference_key,
@@ -9913,16 +10760,13 @@ class ChatScreen(BaseAppScreen):
             tool_count=self._console_tool_count(),
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
-            available_columns=(
-                available_columns
-                if available_columns is not None
-                else self._console_rail_available_columns()
-            ),
+            available_columns=resolved_available_columns,
         )
         if self._should_open_standard_width_inspector(
             rail_state=rail_state,
             stored_preferences=stored_preferences,
             inspector_state=inspector_state,
+            available_columns=resolved_available_columns,
         ):
             return replace(rail_state, right_open=True, right_forced_collapsed=False)
         return rail_state
@@ -9933,14 +10777,19 @@ class ChatScreen(BaseAppScreen):
         rail_state: ConsoleRailState,
         stored_preferences: Any,
         inspector_state: ConsoleInspectorState,
+        available_columns: int | None,
     ) -> bool:
         """Return whether the 120-column Console contract should show Inspector."""
         if rail_state.right_open:
             return False
         if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
             return False
-        available_columns = self._console_rail_available_columns()
-        if available_columns is None or not 118 <= available_columns <= 128:
+        if (
+            available_columns is None
+            or not CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS
+            <= available_columns
+            <= CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS
+        ):
             return False
         labels = {str(row.label).strip() for row in inspector_state.rows}
         return "Run recipe" in labels and bool(
@@ -9997,6 +10846,14 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             left_rail.sync_sections(rail_state)
+        try:
+            inspector = self.query_one(
+                "#console-run-inspector-state", ConsoleRunInspector
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            inspector.set_more_open(rail_state.inspector_more_open)
         for selector, label, badge in (
             (
                 "#console-context-rail-handle",
@@ -10015,9 +10872,10 @@ class ChatScreen(BaseAppScreen):
                 continue
             handle.sync_state(label, badge)
 
-        # TASK-2154.1: mirrors the compose-time rules -- single-pane mode
-        # hides both handles and waives the main column's min-width so the
-        # transcript keeps the full grid width at any terminal size.
+        # TASK-2154.1: mirrors the compose-time rules -- below 84 both handles
+        # hide and the main minimum is waived. The default layout gives the
+        # transcript the full grid; budget-eligible explicit rails may remain
+        # visible and share it.
         targets = (
             ("#console-left-rail", rail_state.left_open),
             (
@@ -10044,15 +10902,14 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             pass
         else:
-            # TASK-2154.2: the min-width waiver also applies when a rail is
-            # open below its compact-collapse threshold by explicit toggle
-            # (compact_override), so the honored rail can never overflow the
-            # grid -- mirrors the compose-time rule.
+            # Mirror compose-time geometry: these state flags waive the main
+            # minimum during a live rail-visibility sync.
             main_column.styles.min_width = (
                 0 if rail_state.single_pane or rail_state.compact_override else 56
             )
 
         self.refresh(layout=True)
+        self._request_console_context_allocation_reconcile()
 
     def _sync_console_rail_visibility_if_changed(
         self,
@@ -10083,23 +10940,46 @@ class ChatScreen(BaseAppScreen):
             child.styles.display = "none"
 
     def _current_console_rail_state(
-        self, *, available_columns: int | None = None
+        self,
+        *,
+        available_columns: int | None = None,
+        inspector_state: ConsoleInspectorState | None = None,
     ) -> ConsoleRailState:
-        """Build the current effective rail state from mounted Console context."""
+        """Build the current effective rail state from mounted Console context.
+
+        Inside a run tick's `tick_workspace_build_scope` (TASK-22201) the
+        workspace-context build below is served from the tick's shared,
+        fingerprint-validated build; every other caller builds live.
+        """
+        resolved_available_columns = (
+            available_columns
+            if available_columns is not None
+            else self._console_rail_available_columns()
+        )
         pending_launch = self._pending_console_launch_context
         staged_context_state = self._build_console_staged_context_state(pending_launch)
-        inspector_state = self._build_console_inspector_state(pending_launch)
-        workspace_context_state = self._workspace._build_console_workspace_context_state()
+        if inspector_state is None:
+            inspector_state = self._build_console_inspector_state(pending_launch)
+        workspace_context_state = (
+            self._workspace._build_console_workspace_context_state()
+        )
         rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
-            available_columns=available_columns,
+            available_columns=resolved_available_columns,
+        )
+        rail_state = resolve_console_rail_priority(
+            rail_state, resolved_available_columns
         )
         rail_state = self._apply_pending_launch_inspector_auto_open(
             rail_state, pending_launch
         )
-        return self._agent._apply_fleet_agent_section_auto_open(rail_state)
+        rail_state = resolve_console_rail_priority(
+            rail_state, resolved_available_columns
+        )
+        rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
+        return resolve_console_rail_priority(rail_state, resolved_available_columns)
 
     def _set_console_rail_preference(
         self,
@@ -10111,16 +10991,25 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
         workspace_context = self._workspace._current_console_workspace_context()
+        workspace_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            conversation_id=(self._character._current_console_rail_conversation_id()),
+            session_id=self._session._current_console_session_id(),
+            layout_scope="workspace",
+        )
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
-            conversation_id=self._current_console_rail_conversation_id(),
-            session_id=self._session._current_console_session_id(),
-        )
-        self._migrate_console_rail_fallback_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+            layout_scope=normalize_console_rail_layout_scope(
+                self._console_config().get("rail_layout_scope")
+            ),
         )
         rail_state_config = self._console_rail_state_config()
+        target_missing = preference_key.value not in rail_state_config
+        self._ensure_console_rail_scope_seed(
+            preference_key,
+            workspace_key,
+            persist=False,
+        )
         prior_stored = rail_state_config.get(preference_key.value)
         current = coerce_console_rail_preferences(prior_stored)
         changes: dict[str, bool] = {}
@@ -10129,27 +11018,33 @@ class ChatScreen(BaseAppScreen):
         if right_open is not None:
             changes["right_open"] = bool(right_open)
         for section_id, section_open in (section_updates or {}).items():
-            if section_id in CONSOLE_RAIL_SECTION_IDS:
+            if section_id in CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS:
                 changes[f"{section_id}_open"] = bool(section_open)
         next_preferences = replace(current, **changes)
-        # TASK-2154.2 (LY-11, ADR-042): an explicit rail toggle writes
+        # TASK-2154.2 (LY-11, ADR-043): an explicit rail toggle writes
         # through even when the coerced value is unchanged. Otherwise "open
         # the left rail" below 100 cols persisted nothing -- the default is
         # already left_open=True -- and the force-collapse rule (see
         # build_console_rail_state) kept the rail hidden: the exact silent
-        # no-op this task removes. Because every write serializes the FULL
-        # payload, the left rail's explicitness cannot be read back from
-        # key presence; a dedicated marker records the gesture (the right
-        # rail's closed default is distinguishable by value, so it needs
-        # none). The marker is also preserved across later writes that did
-        # not touch the left rail (e.g. a section toggle re-serializing the
-        # payload). The augmented dict goes to both the in-memory config
-        # and the persisted file so the two never disagree.
+        # no-op this task removes. Ordinary writes serialize the preference
+        # payload, so the left rail's explicitness cannot be read back from
+        # key presence; a dedicated marker records the gesture. The marker
+        # is also preserved across later writes that did not touch the left
+        # rail (e.g. a section toggle). The right-open key is omitted when a
+        # seed source omitted it so the 118-128-column auto-open band remains
+        # distinguishable. The augmented dict goes to both the in-memory
+        # config and the persisted file so the two never disagree.
         explicit_rail_toggle = left_open is not None or right_open is not None
-        if next_preferences != current or explicit_rail_toggle:
+        if next_preferences != current or explicit_rail_toggle or target_missing:
             serialized = serialize_console_rail_preferences(next_preferences)
             if left_open is not None or console_rail_left_open_explicit(prior_stored):
                 serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+            if (
+                right_open is None
+                and isinstance(prior_stored, Mapping)
+                and "right_open" not in prior_stored
+            ):
+                serialized.pop("right_open")
             rail_state_config[preference_key.value] = serialized
             self._save_console_rail_preferences(
                 preference_key.value,
@@ -10162,12 +11057,18 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
-    def _toggle_console_rail_section(self, section_id: str) -> None:
+    def _toggle_console_rail_section(
+        self,
+        section_id: str,
+        *,
+        next_open: bool | None = None,
+    ) -> None:
         """Flip one left-rail section open state, then sync body and header."""
         if section_id not in CONSOLE_RAIL_SECTION_IDS:
             return
         rail_state = self._current_console_rail_state()
-        next_open = not getattr(rail_state, f"{section_id}_open")
+        if next_open is None:
+            next_open = not getattr(rail_state, f"{section_id}_open")
         if section_id == "agent":
             # TASK-915: track manual collapse/reopen of the Agent section
             # relative to the fleet's own busy signal -- never the
@@ -10187,6 +11088,7 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             left_rail.apply_section_open(section_id, next_open)
+            self._request_console_context_allocation_reconcile()
         if section_id == "character" and next_open:
             # A collapsed body has `display: none`, so
             # `_character_avatar_available_cols()` measures 0 and
@@ -10199,7 +11101,7 @@ class ChatScreen(BaseAppScreen):
             # task-1661 fixed for a different trigger. Clearing the scope
             # guard makes the next sync tick re-measure the now-visible body
             # and repaint at the rail's real width.
-            self._last_console_avatar_scope = None
+            self._character.invalidate_refresh_scope()
 
     def _sync_console_workspace_context(self) -> None:
         try:
@@ -10215,16 +11117,26 @@ class ChatScreen(BaseAppScreen):
             # construction time, so comparing against it here stays safe
             # across recomposes too.
             state_changed = state != workspace_context.state
-            # TASK-344/349: the tray recomposes unconditionally in its own
-            # sync_state (a widget-level equality guard is forbidden -- it
-            # breaks grouped-browser click targeting, see
-            # test_console_workspace_context_tray_sync_state_always_recomposes).
-            # That unconditional recompose ALSO self-heals a real DOM/state
+            # TASK-344/349: the tray used to recompose unconditionally in its
+            # own sync_state (a plain widget-level equality guard is still
+            # forbidden -- it breaks grouped-browser click targeting). That
+            # unconditional recompose ALSO self-healed a real DOM/state
             # desync: a full-screen recompose constructs a fresh tray whose
             # `.state` is set but whose rows can be superseded before they
             # settle, so `.state` says X while the DOM shows nothing -- the
             # next tick's recompose repaints it. So an equality guard is
-            # unsafe in general. It IS safe on the ~5x/second run tick: the
+            # unsafe in general.
+            #
+            # TASK-15454 replaced the unconditional recompose with an
+            # evidence-based one (`ConsoleWorkspaceContextTray.
+            # _can_skip_recompose`): the tray now skips only when the rows
+            # actually mounted still match the ones its last completed
+            # `compose` built, on an instance the rail has already pushed to.
+            # That subsumes the self-heal above rather than removing it -- a
+            # desynced or fresh tray fails the check and recomposes. The
+            # screen-side skip here is kept as-is: it is a cheaper, earlier
+            # exit on exactly the tick it was written for, and the two agree.
+            # It IS safe on the ~5x/second run tick: the
             # workspace state is unchanged and recomposing the browser that
             # often tore it visibly down mid-run (the list vanished / showed
             # a half-composed frame and displaced clicks).
@@ -10249,16 +11161,10 @@ class ChatScreen(BaseAppScreen):
                 workspace_context, "_console_workspace_context_synced", False
             )
             if state_changed or not run_active or not already_synced:
-                workspace_context.sync_state(state)
-                workspace_context._console_workspace_context_synced = True
-                try:
-                    details_tray = self.query_one(
-                        "#console-workspace-details", ConsoleWorkspaceDetailsTray
-                    )
-                except (NoMatches, QueryError):
-                    pass
-                else:
-                    details_tray.sync_state(state)
+                self.query_one(
+                    "#console-left-rail", ConsoleLeftRail
+                ).sync_workspace_context(state)
+                self._request_console_context_allocation_reconcile()
             # PR #660 review: a full-screen recompose constructs a FRESH tray
             # already carrying the current state, so `state_changed` alone
             # would never re-kick the legacy-alias worker after a recompose —
@@ -10306,6 +11212,7 @@ class ChatScreen(BaseAppScreen):
                 await workspace_context.mount(new_button, before=before_status)
             else:
                 await workspace_context.mount(new_button)
+            self._request_console_context_allocation_reconcile()
 
     @on(ConsoleWorkspaceContextTray.Relabeled)
     def _on_console_workspace_context_relabeled(self) -> None:
@@ -10327,20 +11234,6 @@ class ChatScreen(BaseAppScreen):
         source = str(pending_launch.source or "").strip().lower()
         target_id = str(pending_launch.payload.get("target_id") or "").strip()
         return source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id
-
-    @staticmethod
-    def _launch_has_rag_source_payload(pending_launch: ConsoleLiveWorkLaunch) -> bool:
-        source_keys = (
-            "source_id",
-            "source_count",
-            "citation_count",
-            "chunk_id",
-            "query",
-            "result_id",
-        )
-        return any(
-            str(pending_launch.payload.get(key) or "").strip() for key in source_keys
-        )
 
     def _console_pending_approval_count(self) -> int:
         explicit_count = getattr(
@@ -10376,47 +11269,6 @@ class ChatScreen(BaseAppScreen):
         return coerce_non_negative_int(
             getattr(self.app_instance, "console_mcp_not_connected_count", 0)
         )
-
-    def _console_rag_source_status(
-        self,
-        pending_launch: Optional[ConsoleLiveWorkLaunch],
-        sent_source_count: Optional[int] = None,
-    ) -> str:
-        """Return the Inspector's "Sources" row text (D1b).
-
-        Args:
-            pending_launch: Currently staged live-work launch, if any.
-            sent_source_count: The one-send "evidence sent" memory
-                (``ChatScreen._console_evidence_sent_notice``) -- the SAME
-                count the staged-evidence strip reads for its "Evidence
-                sent with this message" line. Only consulted when nothing
-                is staged: live staging always wins, exactly like the
-                strip (``build_console_staged_evidence_strip_state``).
-
-        Returns:
-            The existing staged/blocked/not-requested vocabulary when a
-            launch is pending; the last-send memory sentence when nothing
-            is staged but a send just consumed evidence; else the
-            genuinely-empty ``"not staged"``.
-        """
-        if pending_launch is None:
-            if sent_source_count:
-                count = int(sent_source_count)
-                noun = "source" if count == 1 else "sources"
-                return f"sent with the last message · {count} {noun}"
-            return "not staged"
-        if _source_mentions_rag(pending_launch.source):
-            launch_status = str(pending_launch.status or "").strip().lower()
-            if launch_status in {"blocked", "failed", "unavailable"}:
-                return "unavailable"
-            if launch_status == "empty":
-                return "no results"
-            if launch_status == "searching":
-                return "retrieving from Library Search/RAG"
-            if self._launch_has_rag_source_payload(pending_launch):
-                return "staged from Library Search/RAG"
-            return "missing source"
-        return "not requested"
 
     def _console_artifact_status(
         self,
@@ -10489,7 +11341,7 @@ class ChatScreen(BaseAppScreen):
             model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
-            rag_status=self._console_rag_source_status(
+            rag_status=self._retrieval._console_rag_source_status(
                 pending_launch,
                 sent_source_count=self._console_evidence_sent_notice,
             ),
@@ -10506,15 +11358,14 @@ class ChatScreen(BaseAppScreen):
             mcp_tool_count=self._console_mcp_tool_count(),
             mcp_not_connected_count=self._console_mcp_not_connected_count(),
             can_save_chatbook=can_save_chatbook,
-            scope_item_count=self._console_retrieval_scope_run_recipe_count(),
+            scope_item_count=self._retrieval._console_retrieval_scope_run_recipe_count(),
             change_review_available=(
-                getattr(
-                    self._console_agent_bridge, "change_tracking_enabled", False
-                )
+                getattr(self._console_agent_bridge, "change_tracking_enabled", False)
                 if self._console_agent_bridge is not None
                 else False
             ),
             ephemeral=self._console_active_session_is_ephemeral(),
+            staged_source_count=console_staged_source_count(pending_launch),
         )
         setup_blocker_copy = self._console_provider_blocker_copy()
         if setup_blocker_copy:
@@ -10558,10 +11409,10 @@ class ChatScreen(BaseAppScreen):
         # current by `refresh_active_dictionaries_summary()`).
         inspector_state = replace(
             inspector_state,
-            dictionary_rows=self._console_dictionary_inspector_rows(),
-            dictionary_actions=self._console_dictionary_inspector_actions(),
-            world_book_rows=self._console_world_book_inspector_rows(),
-            world_book_actions=self._console_world_book_inspector_actions(),
+            dictionary_rows=self._retrieval._console_dictionary_inspector_rows(),
+            dictionary_actions=self._retrieval._console_dictionary_inspector_actions(),
+            world_book_rows=self._retrieval._console_world_book_inspector_rows(),
+            world_book_actions=self._retrieval._console_world_book_inspector_actions(),
         )
         return inspector_state
 
@@ -10618,205 +11469,259 @@ class ChatScreen(BaseAppScreen):
             db, conversation_id, None, message_text, history or []
         )
 
-    def _active_console_dictionary_scope_ids(self) -> tuple[str | None, int | None]:
-        """Return (conversation_id, character_id) for the active native
-        Console session's chat-dictionary scope.
+    # -- Changed-files rail section (TASK-18060 Task 5, review-rail spec §2) -
 
-        `conversation_id` comes from `_current_console_rail_conversation_id()`
-        -- the existing accessor that already resolves the active native
-        session's `persisted_conversation_id` (falling back to the native
-        Console conversation accessor when no active session exists).
-        `character_id` is always `None`: native
-        Console sessions do not yet track a numeric character id --
-        `ConsoleSessionSettings.character_label` is only a free-text display
-        string, never a DB id. Character-scoped dictionary attachment for the
-        native Console is net-new work (tracked separately as Roleplay P1e
-        Attachments); once it lands, this is the one place to source a real
-        character id from.
+    @staticmethod
+    def _console_changed_files_section_enabled() -> bool:
+        """Whether `[console] changed_files_section` is on (default True).
+
+        OFF is a pure presentation toggle: the section renders nothing
+        (`_build_console_changed_files_state` returns an empty state) AND
+        the guard-gated recompute worker never dispatches.
         """
-        return self._current_console_rail_conversation_id(), None
+        return bool(get_cli_setting("console", "changed_files_section", True))
 
-    async def refresh_active_dictionaries_summary(self) -> None:
-        """Recompute and cache the "what's in play" chat-dictionary summary
-        for the active native Console session's conversation/character, then
-        refresh the Console inspector.
+    def _console_changed_files_scope(self) -> "tuple[str | None, str | None]":
+        """`(conversation_id, newest change_review_run_id)` -- the guard.
 
-        This is the ONLY place that performs the (DB-backed) dictionary
-        summarize call -- `_build_console_inspector_state` (and therefore
-        every Console recompose/refresh) reads only the cache set here. The
-        scope-service call is marshalled onto a worker thread via
-        `asyncio.to_thread` so this never performs a synchronous DB read on
-        the UI event loop.
+        `conversation_id` is the same accessor the world-book/dictionary
+        caches use. `newest change_review_run_id` comes from the store's
+        own `newest_change_review_run_id` memo (no DB read): every
+        change-summary TOOL marker carries `change_review_run_id`
+        (live-appended and resume-injected alike, both real store
+        messages -- see `ConsoleAgentBridge._append_change_markers` /
+        `resume_marker_messages`), and the store's active-path view holds
+        them in transcript order, so the newest marker is the last one on
+        the path.
+
+        TASK-21121: this used to reverse-scan `messages_for_session()`
+        here. That call `dataclasses.replace`-copies EVERY message in the
+        session before the scan can look at even one of them, so the
+        early break bought nothing and this cost a full O(messages) copy
+        pass on every 0.2s tick -- worst case (no marker anywhere in the
+        session) being the COMMON case. The store-side memo re-verifies
+        its own signature on every hit, so it can only change how long
+        this takes, never what it returns -- a property that holds
+        because that signature is sampled BEFORE the scan it describes
+        (see `newest_change_review_run_id`; sampling it after let a
+        concurrent marker append pair a pre-append answer with a
+        post-append length, which the memo then served indefinitely).
         """
-        conversation_id, character_id = self._active_console_dictionary_scope_ids()
-        service = self._dictionary_scope_service()
-        if service is None or (conversation_id is None and character_id is None):
-            self._active_dictionaries_summary = {"dictionaries": []}
-        else:
+        conversation_id = self._character._current_console_rail_conversation_id()
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        newest_run_id: str | None = None
+        if store is not None and session_id:
             try:
-                summary = await asyncio.to_thread(
-                    _run_dictionary_summary_off_thread,
-                    service,
-                    conversation_id,
-                    character_id,
+                newest_run_id = store.newest_change_review_run_id(session_id)
+            except KeyError:
+                newest_run_id = None
+        return (conversation_id, newest_run_id)
+
+    def _build_console_changed_files_state(self) -> ConsoleChangedFilesState:
+        """Project the cached summary into the section's display state.
+
+        Reads ONLY `self._console_changed_files_summary` (and the config
+        gate) -- never the DB/git. `ConsoleChangedFilesSection` itself
+        renders nothing when the state is empty, so the config-OFF and
+        no-history cases both degrade to the same "nothing rendered"
+        outcome without any conditional mounting here.
+        """
+        if not self._console_changed_files_section_enabled():
+            return ConsoleChangedFilesState(entries=())
+        return ConsoleChangedFilesState(
+            entries=self._console_changed_files_summary or (),
+            pruned_rows=self._console_changed_files_pruned_rows,
+        )
+
+    def _sync_console_changed_files_section(self) -> None:
+        """Push the cached summary into the mounted section, in place."""
+        try:
+            section = self.query_one(
+                "#console-changed-files-section", ConsoleChangedFilesSection
+            )
+        except QueryError:
+            return
+        state = self._build_console_changed_files_state()
+        # The child owns its bounded-body and rail invalidation.
+        section.update_state(state)
+
+    def _land_console_changed_files(
+        self, conversation_id: "str | None", entries: list, pruned_rows: int
+    ) -> None:
+        """Apply a worker's results -- iff its conversation is still live.
+
+        TASK-18060 final-review fix round (Fix 4c): `conversation_id` is
+        the scope this recompute was DISPATCHED for
+        (`_dispatch_console_changed_files_worker`'s caller already advances
+        `_last_console_changed_files_scope` to the new scope BEFORE
+        dispatching, so the guard alone can't be trusted to prove this
+        worker is still relevant by the time it lands). Textual's
+        exclusive worker group only guarantees the run_worker() call
+        cancels the PRIOR WORKER TASK -- a `call_from_thread` callback that
+        worker had already queued on the main loop before the cancellation
+        still runs. Without this check, a stale worker from an older
+        conversation landing late would overwrite a NEWER conversation's
+        summary and stick there until the guard happens to change again --
+        which may never come for a conversation with no further activity.
+
+        Args:
+            conversation_id: The conversation live at DISPATCH time.
+            entries: The recompute's cross-turn summary.
+            pruned_rows: How many rows retention pruned out of it.
+        """
+        if self._character._current_console_rail_conversation_id() != conversation_id:
+            logger.debug(
+                "Console changed-files: dropping a stale worker result for "
+                f"conversation {conversation_id!r} -- no longer current"
+            )
+            return
+        self._console_changed_files_summary = tuple(entries)
+        self._console_changed_files_pruned_rows = pruned_rows
+        self._sync_console_changed_files_section()
+
+    def _land_console_changed_files_empty(self, conversation_id: "str | None") -> None:
+        """The no-provider variant of `_land_console_changed_files`.
+
+        Same stale-conversation guard (Fix 4c) -- see that method's
+        docstring.
+
+        Args:
+            conversation_id: The conversation live at DISPATCH time.
+        """
+        if self._character._current_console_rail_conversation_id() != conversation_id:
+            logger.debug(
+                "Console changed-files: dropping a stale empty-land for "
+                f"conversation {conversation_id!r} -- no longer current"
+            )
+            return
+        self._console_changed_files_summary = ()
+        self._console_changed_files_pruned_rows = 0
+        self._sync_console_changed_files_section()
+
+    def _dispatch_console_changed_files_worker(
+        self, conversation_id: "str | None"
+    ) -> None:
+        """Fire the off-thread cross-turn changed-files recompute.
+
+        ONE `run_worker(thread=True, exclusive=True,
+        group="console-changed-files")` per guard change -- Textual's own
+        exclusive-group semantics cancel any prior in-flight recompute for
+        this screen, so no additional in-flight flag is needed (mirrors
+        `action_open_trajectory_view`'s `trajectory-launch` group). The
+        provider is acquired INSIDE the worker (fix round, self-review
+        finding: an earlier cut acquired it here, on the UI thread, before
+        this docstring's own claim was true) via the same
+        `_console_change_review_provider()` recipe the card/opener use --
+        confirmed cheap/pure enough for a worker thread (attribute reads
+        and dict lookups on already-constructed objects, no I/O of its
+        own) -- and the provider's own `conversation_changed_files()`
+        walks the conversation's entire snapshot history with a git
+        subprocess pair per UNSEEN row -- this must never run on the UI
+        thread (see that method's own docstring). `_console_changed_files_
+        row_cache` is handed through as `row_cache` so a row this screen
+        has already diffed once is reused rather than re-run.
+
+        A failure inside the worker (the provider raising, or a `None`
+        provider) is caught here and logged -- the summary/section keep
+        their LAST-KNOWN state (stale, not wrong) rather than the whole
+        0.2s sync tick's worker dying; the NEXT guard-triggered dispatch
+        (a new marker, a note mutation, a conversation switch) tries again
+        independently.
+
+        Args:
+            conversation_id: The conversation this dispatch is FOR (the
+                caller's own scope[0], captured before the guard moves on
+                to whatever scope is live when this worker eventually
+                lands) -- threaded through to `_land_console_changed_files`
+                /`_land_console_changed_files_empty` (Fix 4c) so a stale
+                landing can recognize itself and no-op.
+        """
+
+        def build_worker() -> None:
+            try:
+                provider = self._console_change_review_provider()
+                if provider is None:
+                    # No git / no persisted conversation -- an ordinary,
+                    # expected rail state, not an error: degrades to an
+                    # empty cache rather than leaving stale entries around.
+                    self.app.call_from_thread(
+                        self._land_console_changed_files_empty, conversation_id
+                    )
+                    return
+                entries, pruned_rows = provider.conversation_changed_files(
+                    row_cache=self._console_changed_files_row_cache
                 )
             except Exception:
                 logger.opt(exception=True).warning(
-                    "Could not summarize active chat dictionaries for the Console inspector."
+                    "Console changed-files recompute failed; the rail "
+                    "section keeps its last-known state."
                 )
-                summary = {"dictionaries": []}
-            self._active_dictionaries_summary = (
-                summary if isinstance(summary, dict) else {"dictionaries": []}
-            )
-        self._request_console_control_bar_sync()
-
-    async def _refresh_active_dictionaries_summary_if_scope_changed(self) -> None:
-        """Recompute the "what's in play" summary only when the active
-        native Console session's dictionary scope actually changed.
-
-        Called from `_sync_native_console_chat_ui()`, the central Console
-        UI-sync entrypoint -- which also runs on a 0.2s transcript-poll timer
-        while a run is streaming (`_start_console_transcript_sync_timer`).
-        Without this guard, every one of those polls would re-run the
-        DB-backed summarize call. The guard is driven by the actual
-        native-session change signal.
-        """
-        scope_ids = self._active_console_dictionary_scope_ids()
-        if scope_ids == self._last_console_dictionary_scope_ids:
-            return
-        self._last_console_dictionary_scope_ids = scope_ids
-        await self.refresh_active_dictionaries_summary()
-
-    def _console_dictionary_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
-        """Project the cached dictionary summary into inspector rows.
-
-        Reads ONLY `self._active_dictionaries_summary` (and the active native
-        Console session's conversation/character ids, to distinguish "no
-        active chat" from "no dictionaries attached yet") -- never touches
-        the DB.
-        """
-        conversation_id, character_id = self._active_console_dictionary_scope_ids()
-        if conversation_id is None and character_id is None:
-            return (ConsoleDisplayRow("No active chat", ""),)
-
-        summary = self._active_dictionaries_summary or {}
-        dictionaries = summary.get("dictionaries") or []
-        if not dictionaries:
-            return (ConsoleDisplayRow("No dictionaries in play", ""),)
-
-        rows = []
-        for entry in dictionaries:
-            if not isinstance(entry, dict):
-                continue
-            name = str(entry.get("name") or "Unnamed")
-            value = (
-                "from conversation"
-                if entry.get("source") == "conversation"
-                else "from character"
-            )
-            if entry.get("shadowed"):
-                value += " (shadowed)"
-            if not entry.get("enabled", True):
-                value += " (disabled)"
-            rows.append(ConsoleDisplayRow(name, value))
-        return tuple(rows)
-
-    def _active_console_world_book_scope_ids(self) -> tuple[str | None]:
-        """(conversation_id,) for the active native Console world-book scope.
-
-        Conversation-only: native Console has no character (see
-        `_active_console_dictionary_scope_ids`).
-        """
-        return (self._current_console_rail_conversation_id(),)
-
-    async def refresh_active_world_books_summary(self) -> None:
-        """The ONLY place that performs the DB-backed world-book summarize.
-
-        `_build_console_inspector_state` reads only the cache set here. The
-        sync summarize is marshalled onto a worker thread via `asyncio.to_thread`
-        so it never blocks the UI loop.
-        """
-        conversation_id = self._current_console_rail_conversation_id()
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if not conversation_id or db is None:
-            self._active_world_books_summary = {"world_books": []}
-            self._request_console_control_bar_sync()
-            return
-        try:
-            from ...Character_Chat.world_info_resolver import (
-                summarize_active_world_books,
+                return
+            self.app.call_from_thread(
+                self._land_console_changed_files,
+                conversation_id,
+                entries,
+                pruned_rows,
             )
 
-            summary = await asyncio.to_thread(
-                summarize_active_world_books, db, conversation_id, None
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Could not summarize active world books for the Console inspector."
-            )
-            summary = {"world_books": []}
-        self._active_world_books_summary = (
-            summary if isinstance(summary, dict) else {"world_books": []}
+        self.run_worker(
+            build_worker,
+            thread=True,
+            exclusive=True,
+            group="console-changed-files",
         )
-        self._request_console_control_bar_sync()
 
-    async def _refresh_active_world_books_summary_if_scope_changed(self) -> None:
-        """Recompute the world-book summary only when the scope changed."""
-        scope_ids = self._active_console_world_book_scope_ids()
-        if scope_ids == self._last_console_world_book_scope_ids:
-            return
-        self._last_console_world_book_scope_ids = scope_ids
-        await self.refresh_active_world_books_summary()
+    def _sync_console_changed_files_if_scope_changed(self) -> None:
+        """Recompute the changed-files summary only when the scope changed.
 
-    def _console_world_book_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
-        """Project the cached world-book summary into inspector rows (no DB)."""
-        conversation_id = self._current_console_rail_conversation_id()
-        if conversation_id is None:
-            return (ConsoleDisplayRow("No active chat", ""),)
-        summary = self._active_world_books_summary or {}
-        books = summary.get("world_books") or []
-        if not books:
-            return (ConsoleDisplayRow("No world books in play", ""),)
-        rows = []
-        for entry in books:
-            if not isinstance(entry, dict):
-                continue
-            name = str(entry.get("name") or "Unnamed")
-            count = entry.get("entry_count")
-            value = f"{count} entries" if isinstance(count, int) else "0 entries"
-            if not entry.get("enabled", True):
-                value += " (disabled)"
-            rows.append(ConsoleDisplayRow(name, value))
-        return tuple(rows)
+        Mirrors `_refresh_active_world_books_summary_if_scope_changed`'s
+        guard shape, except the recompute is a `thread=True` worker (git
+        subprocess work, never awaited inline) rather than an in-tick
+        `asyncio.to_thread` await -- see
+        `_dispatch_console_changed_files_worker`.
 
-    def _console_dictionary_inspector_actions(
-        self,
-    ) -> tuple[ConsoleInspectorAction, ...]:
-        """Attach/Detach actions for the Console dictionary inspector block.
-
-        Reads ONLY the cache + the active native Console session's
-        conversation id -- never the DB.
+        Also the note-mutation invalidation hook: the card's save/delete
+        handlers and the Review-screen dismissal callback reset
+        `_last_console_changed_files_scope` to `None` and call this
+        directly (rather than merely waiting for a future idle tick, which
+        may never come once a run leaves the active statuses that keep the
+        0.2s poll ticking) so the rail's `✎ N` badges never go stale. That
+        reset must NOT be mistaken for a conversation switch -- see
+        `_last_console_changed_files_conversation_id`'s docstring for why a
+        separate tracker (not `prior is None`) decides that. It ALSO must
+        not clear `_console_changed_files_row_cache`: a note mutation
+        never changes a row's git diff, only the notes join reruns, so the
+        per-row memo survives untouched -- only a genuine conversation
+        switch clears it, below.
         """
-        conversation_id, _character_id = self._active_console_dictionary_scope_ids()
-        summary = self._active_dictionaries_summary or {}
-        dictionaries = summary.get("dictionaries") or []
-        has_conversation_dictionary = any(
-            isinstance(entry, dict) and entry.get("source") == "conversation"
-            for entry in dictionaries
+        if not self._console_changed_files_section_enabled():
+            return
+        scope = self._console_changed_files_scope()
+        prior = self._last_console_changed_files_scope
+        if scope == prior:
+            return
+        conversation_changed = (
+            self._last_console_changed_files_conversation_id
+            is not _CONSOLE_CHANGED_FILES_CONVERSATION_UNSET
+            and scope[0] != self._last_console_changed_files_conversation_id
         )
-        return (
-            ConsoleInspectorAction(
-                "console-inspector-dictionaries-attach",
-                "Attach dictionary…",
-                enabled=bool(conversation_id),
-                disabled_reason="Start or load a conversation first",
-            ),
-            ConsoleInspectorAction(
-                "console-inspector-dictionaries-detach",
-                "Detach dictionary…",
-                enabled=has_conversation_dictionary,
-            ),
-        )
+        self._last_console_changed_files_scope = scope
+        self._last_console_changed_files_conversation_id = scope[0]
+        if conversation_changed:
+            # Hygiene (CLAUDE.md: clear caches on context switch) -- without
+            # this, the in-place sync below would flash the PRIOR
+            # conversation's file list for the tick(s) before the worker
+            # lands the new conversation's summary. Row ids are globally
+            # unique, so clearing the summary/row-cache here is hygiene
+            # (memory + freshness), not a correctness requirement (spec
+            # §2) -- a stale row-cache entry from another conversation
+            # could never collide with this one's row ids.
+            self._console_changed_files_summary = None
+            self._console_changed_files_pruned_rows = 0
+            self._console_changed_files_row_cache = {}
+            self._sync_console_changed_files_section()
+        self._dispatch_console_changed_files_worker(scope[0])
 
     async def _console_dictionary_attach_worker(self) -> None:
         """Pick and attach a chat dictionary to the active Console conversation.
@@ -10828,7 +11733,7 @@ class ChatScreen(BaseAppScreen):
         ``run_worker(exit_on_error=True)``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -10867,30 +11772,9 @@ class ChatScreen(BaseAppScreen):
             # -> notify + refresh): on success the summary gains the dict; on a
             # ConflictError the DB changed under us and the cache must re-read
             # the current truth rather than stay stale until the next switch.
-            await self.refresh_active_dictionaries_summary()
+            await self._retrieval.refresh_active_dictionaries_summary()
         finally:
             self._console_dictionary_dialog_active = False
-
-    def _console_world_book_inspector_actions(
-        self,
-    ) -> tuple[ConsoleInspectorAction, ...]:
-        """Attach/Detach actions for the Console world-book block (cache + conv id only)."""
-        conversation_id = self._current_console_rail_conversation_id()
-        summary = self._active_world_books_summary or {}
-        has_attached = bool(summary.get("world_books"))
-        return (
-            ConsoleInspectorAction(
-                "console-inspector-worldbooks-attach",
-                "Attach world book…",
-                enabled=bool(conversation_id),
-                disabled_reason="Start or load a conversation first",
-            ),
-            ConsoleInspectorAction(
-                "console-inspector-worldbooks-detach",
-                "Detach world book…",
-                enabled=has_attached,
-            ),
-        )
 
     async def _console_worldbook_attach_worker(self) -> None:
         """Pick and attach a world book to the active Console conversation.
@@ -10901,7 +11785,7 @@ class ChatScreen(BaseAppScreen):
         ``run_worker(exit_on_error=True)``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -10958,7 +11842,7 @@ class ChatScreen(BaseAppScreen):
                 logger.opt(exception=True).warning("Could not attach the world book.")
                 self.app_instance.notify(f"Attach failed: {exc}", severity="error")
                 return
-            await self.refresh_active_world_books_summary()
+            await self._retrieval.refresh_active_world_books_summary()
         finally:
             self._console_worldbook_dialog_active = False
 
@@ -10968,7 +11852,7 @@ class ChatScreen(BaseAppScreen):
         Analogous to :meth:`_console_worldbook_attach_worker`.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -11025,7 +11909,7 @@ class ChatScreen(BaseAppScreen):
                 logger.opt(exception=True).warning("Could not detach the world book.")
                 self.app_instance.notify(f"Detach failed: {exc}", severity="error")
                 return
-            await self.refresh_active_world_books_summary()
+            await self._retrieval.refresh_active_world_books_summary()
         finally:
             self._console_worldbook_dialog_active = False
 
@@ -11036,7 +11920,7 @@ class ChatScreen(BaseAppScreen):
         ``console_attached_dictionaries``/``handle_console_dictionary_detach``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -11076,7 +11960,7 @@ class ChatScreen(BaseAppScreen):
             )
             # Always resync after an attempted detach (spec AC5: ConflictError
             # -> notify + refresh); see _console_dictionary_attach_worker.
-            await self.refresh_active_dictionaries_summary()
+            await self._retrieval.refresh_active_dictionaries_summary()
         finally:
             self._console_dictionary_dialog_active = False
 
@@ -11091,20 +11975,36 @@ class ChatScreen(BaseAppScreen):
                 ConsoleDisplayRow("Conversation source", "none"),
             )
 
-        try:
-            active_session = store.switch_session(store.active_session_id)
-        except KeyError:
+        active_session = next(
+            (
+                session
+                for session in store.sessions()
+                if session.id == store.active_session_id
+            ),
+            None,
+        )
+        if active_session is None:
             return (
                 ConsoleDisplayRow("Selected conversation", "No active conversation"),
                 ConsoleDisplayRow("Conversation source", "none"),
             )
 
         workspace_state = self._workspace._build_console_workspace_context_state()
-        workspace_label = str(workspace_state.workspace_label or "").strip()
-        if workspace_label.startswith("Workspace: "):
-            workspace_label = workspace_label.removeprefix("Workspace: ").strip()
-        workspace_label = workspace_label or str(
-            active_session.workspace_id or "Default"
+        workspace_value = workspace_state.workspace_label
+        if isinstance(workspace_value, str) and workspace_value.startswith(
+            "Workspace: "
+        ):
+            workspace_value = workspace_value.removeprefix("Workspace: ")
+        workspace_label = (
+            sanitize_character_display_label(
+                workspace_value,
+                max_characters=500,
+            )
+            or sanitize_character_display_label(
+                active_session.workspace_id,
+                max_characters=500,
+            )
+            or "Default"
         )
         persisted_id = str(active_session.persisted_conversation_id or "").strip()
         source = "saved conversation" if persisted_id else "native Console session"
@@ -11130,7 +12030,13 @@ class ChatScreen(BaseAppScreen):
                 ConsoleDisplayRow("Prefill (pinned)", describe_prefill_preview(pinned))
             )
         return (
-            ConsoleDisplayRow("Selected conversation", active_session.title),
+            ConsoleDisplayRow(
+                "Selected conversation",
+                sanitize_character_display_label(
+                    active_session.title,
+                    max_characters=500,
+                ),
+            ),
             ConsoleDisplayRow("Conversation source", source),
             ConsoleDisplayRow("Workspace", workspace_label),
             ConsoleDisplayRow("Resume state", resume_state),
@@ -11146,10 +12052,23 @@ class ChatScreen(BaseAppScreen):
         message_id = transcript.selected_message_id
         if message_id is None:
             return ()
+        store = self._ensure_console_chat_store()
         try:
-            message = self._ensure_console_chat_store().get_message(message_id)
+            owner_session_id = store.session_id_for_message(message_id)
         except KeyError:
             return ()
+        if owner_session_id != store.active_session_id:
+            return ()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            # Display-only TOOL/Thinking activity markers deliberately never
+            # enter the store tree. Resolve only from this transcript's
+            # current session projection; the store-owned session check above
+            # prevents the pre-transcript phase of a switch reviving stale UI.
+            message = transcript.display_message(message_id)
+            if message is None:
+                return ()
 
         rows = [
             ConsoleDisplayRow(
@@ -11224,13 +12143,7 @@ class ChatScreen(BaseAppScreen):
             badge, optional primary action, and payload rows as children.
         """
         card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
-        children: list[Any] = [
-            Static(
-                card_state.badge_text,
-                id=card_state.badge_id,
-                classes=card_state.badge_classes,
-            )
-        ]
+        children: list[Any] = []
         if card_state.primary_action is not None:
             children.append(
                 Button(
@@ -11244,26 +12157,14 @@ class ChatScreen(BaseAppScreen):
             Static(row.text, id=row.widget_id, classes=row.classes)
             for row in card_state.rows
         )
-        return Container(
+        container = Container(
             *children,
             id=card_state.container_id,
             classes=card_state.container_classes,
         )
-
-    def _console_library_rag_scope_label(self) -> str:
-        """Return the readiness card's Library RAG source line (RAG-44).
-
-        Library's scope-summary grammar (`library_rag_source_scope_summary`
-        -- selected sources in canonical order, the deselected ones named
-        as off) under the Console's own noun: "Sources", never "Scope",
-        which this screen already spends on the retrieval ITEM scope
-        ("Scope: 2 items"). The settings modal's own summary line is the
-        same builder on the same state -- two seams, one builder.
-        """
-        return library_rag_source_scope_summary(
-            _console_library_rag_source_scope(self),
-            prefix=CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
-        )
+        container.styles.height = "auto"
+        container.styles.min_height = 0
+        return container
 
     @staticmethod
     def _hidden_static(text: str, *, id: str, classes: str = "") -> Static:
@@ -11338,8 +12239,14 @@ class ChatScreen(BaseAppScreen):
         TASK-347: the header chip and Inspector status/live-work surfaces
         read this so they stop claiming "Ready"/"No active work" mid-run.
         """
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        image_edit_active = (
+            session_id is not None
+            and self._image._h3_image_edit_registry().active(session_id) is not None
+        )
         controller = self._console_chat_controller
-        return (
+        return image_edit_active or (
             controller is not None
             and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
         )
@@ -11355,8 +12262,19 @@ class ChatScreen(BaseAppScreen):
         run_state = (
             getattr(controller, "run_state", None) if controller is not None else None
         )
-        can_stop = bool(getattr(run_state, "is_stop_allowed", False))
-        run_allows_send = bool(getattr(run_state, "is_send_allowed", True))
+        store = self._console_chat_store
+        active_session_id = store.active_session_id if store is not None else None
+        image_edit_active = (
+            active_session_id is not None
+            and self._image._h3_image_edit_registry().active(active_session_id)
+            is not None
+        )
+        can_stop = image_edit_active or bool(
+            getattr(run_state, "is_stop_allowed", False)
+        )
+        run_allows_send = (
+            bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
+        )
         can_send = (
             has_draft
             and not bool(self._console_setup_blocked_reason())
@@ -11525,8 +12443,6 @@ class ChatScreen(BaseAppScreen):
                 "Choose a supported provider for this Console session",
             )
         return ("Review settings", "console", "Review this Console session's settings")
-
-
 
     def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
         """Build the empty-transcript onboarding state from current readiness."""
@@ -11721,25 +12637,62 @@ class ChatScreen(BaseAppScreen):
         choice (mirroring the settings-modal apply path) and re-evaluates the
         setup card from the fresh on-disk config (task-177 mechanics; no
         boot-time snapshots).
+
+        task-16476: a provider that already has a DIFFERENT user-configured
+        endpoint keeps it -- the endpoint write fills only when absent, and
+        the detected endpoint is applied to the session instead, so "Use
+        detected ..." stays effective without clobbering persisted config
+        (discovery is loopback-only and can never see the LAN server the
+        configured endpoint may point at).
         """
         server = self._console_detected_local_server
         if server is None:
             return
         model_id = server.model_ids[0] if server.model_ids else None
-        provider_values: dict[str, object] = {"api_url": server.base_url}
+        app_config = self._provider_readiness_app_config()
+        provider_key = provider_config_key(server.provider_key)
+        provider_settings = self._config_section(
+            self._config_section(app_config, "api_settings"),
+            provider_key,
+        )
+        configured_endpoint = first_configured_endpoint(provider_settings)
+        provider_values: dict[str, object] = {}
+        # Qodo review (PR #1720): compare connection identities, not raw
+        # strings -- a configured endpoint differing only by a trailing
+        # slash (or a llama.cpp endpoint-path suffix) is the SAME server and
+        # must not warn or skip the canonicalizing write. Same vocabulary
+        # ``_endpoint_differs_for_provider`` uses.
+        if configured_endpoint and self._adoption_endpoints_differ(
+            provider_key, configured_endpoint, server.base_url
+        ):
+            self.app_instance.notify(
+                "Keeping the saved endpoint "
+                f"{safe_endpoint_display(configured_endpoint) or configured_endpoint} "
+                f"for {provider_key}; using the detected "
+                "server for this session only.",
+                severity="warning",
+            )
+        else:
+            provider_values["api_url"] = server.base_url
         chat_defaults: dict[str, object] = {"provider": server.provider_key}
         if model_id:
             provider_values["model"] = model_id
             chat_defaults["model"] = model_id
-        try:
-            saved = save_settings_to_cli_config(
-                {
-                    f"api_settings.{server.provider_key}": provider_values,
-                    "chat_defaults": chat_defaults,
-                }
-            )
-        except Exception:
-            saved = False
+        if provider_values:
+            try:
+                saved = save_settings_to_cli_config(
+                    {
+                        f"api_settings.{server.provider_key}": provider_values,
+                        "chat_defaults": chat_defaults,
+                    }
+                )
+            except Exception:
+                saved = False
+        else:
+            try:
+                saved = save_settings_to_cli_config({"chat_defaults": chat_defaults})
+            except Exception:
+                saved = False
         if not saved:
             logger.warning(
                 "Could not persist detected local server defaults to config; "
@@ -11750,13 +12703,49 @@ class ChatScreen(BaseAppScreen):
             server.provider_key,
             model_id,
         )
-        if provider_config_key(settings.provider) in {"llama_cpp", "local_llamacpp"}:
-            settings = replace(settings, base_url=None)
-        self._session._replace_active_console_session_settings(replace(settings, source="user"))
+        settings = replace(settings, base_url=server.base_url)
+        self._session._replace_active_console_session_settings(
+            replace(settings, source="user")
+        )
         self._sync_console_transcript_guidance()
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
         )
+
+    @staticmethod
+    def _adoption_endpoints_differ(
+        provider_key: str,
+        configured_endpoint: str,
+        detected_endpoint: str,
+    ) -> bool:
+        """Return whether adoption endpoints differ by connection identity.
+
+        Qodo review (PR #1720): raw string inequality treats a trailing
+        slash (or a llama.cpp endpoint-path suffix) as a different server,
+        warning and skipping the write for what is the same connection. Uses
+        the same normalization vocabulary as
+        ``_endpoint_differs_for_provider``.
+
+        Args:
+            provider_key: Normalized provider readiness key.
+            configured_endpoint: Persisted endpoint for the provider.
+            detected_endpoint: Discovered server base URL.
+
+        Returns:
+            ``True`` only when the two endpoints normalize to different
+            connection identities.
+        """
+        if provider_key in {"llama_cpp", "local_llamacpp"}:
+            configured = normalize_generic_endpoint_for_compare(
+                normalize_llamacpp_base_url(configured_endpoint)
+            )
+            detected = normalize_generic_endpoint_for_compare(
+                normalize_llamacpp_base_url(detected_endpoint)
+            )
+            return configured != detected
+        return normalize_generic_endpoint_for_compare(
+            configured_endpoint
+        ) != normalize_generic_endpoint_for_compare(detected_endpoint)
 
     def _console_setup_modal_blocking(self) -> bool:
         """Return True when the first-run setup modal is covering the workbench."""
@@ -11790,7 +12779,7 @@ class ChatScreen(BaseAppScreen):
     def _frame_console_region(
         widget: Any,
         *,
-        top: bool = True,
+        edges: tuple[str, ...],
         variant: str = "solid",
     ) -> Any:
         """Apply a visible Textual-native workbench frame.
@@ -11798,7 +12787,7 @@ class ChatScreen(BaseAppScreen):
         Delegates to `UI.Console_Modules.frame.frame_console_region` (wave-1
         console decomposition, task 2). Kept as a thin shim so the
         not-yet-extracted call sites in `compose_content` are untouched.
-        Task 6 (wave 1's close-out) checked this: 7 call sites remain
+        Task 6 (wave 1's close-out) checked this; five call sites remain
         inside `compose_content` (the main-column block, wave 2's job), so
         the shim stays rather than being force-removed. It is safe to
         delete once every remaining call site imports
@@ -11807,13 +12796,13 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             widget: The Console shell region widget to frame in place.
-            top: When False, suppresses the top border.
+            edges: The exact application or interior edges owned by the region.
             variant: ``"solid"`` or ``"quiet"`` framing.
 
         Returns:
             The same `widget`, mutated in place with frame styling applied.
         """
-        return frame_console_region(widget, top=top, variant=variant)
+        return frame_console_region(widget, edges=edges, variant=variant)
 
     def _build_console_live_work_source_readiness_card(self) -> Container:
         """Build the mounted source-readiness card shown without a launch.
@@ -11840,12 +12829,7 @@ class ChatScreen(BaseAppScreen):
         )
         children: list[Any] = [
             Static(
-                readiness.title,
-                id=readiness.title_id,
-                classes=readiness.title_classes,
-            ),
-            Static(
-                self._console_library_rag_scope_label(),
+                self._retrieval._console_library_rag_scope_label(),
                 id="console-library-rag-scope",
                 classes="destination-section",
             ),
@@ -11950,10 +12934,10 @@ class ChatScreen(BaseAppScreen):
             query=query,
             source_types=_console_library_rag_source_scope(self),
             mode="rag",
-            top_k=5,
+            top_k=_console_library_rag_profile_top_k(),
             include_citations=True,
         )
-        self._stage_console_library_rag_launch(
+        self._retrieval._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
                 source="Library Search/RAG",
                 title="Library Search/RAG retrieval",
@@ -11967,37 +12951,6 @@ class ChatScreen(BaseAppScreen):
             )
         )
         self._execute_console_library_rag_search(request)
-
-    def _stage_console_library_rag_launch(
-        self,
-        launch: ConsoleLiveWorkLaunch,
-        *,
-        allow_recompose: bool = True,
-    ) -> None:
-        """Stage live-work launch context and refresh Console surfaces in place.
-
-        TASK-259: previously this recomposed the ENTIRE ChatScreen to show
-        one pending launch card. Now every mounted reader of
-        ``_pending_console_launch_context`` is refreshed with a targeted
-        update instead; the full recompose survives only as a fallback for
-        the never-composed case (Console shell not mounted yet).
-
-        Args:
-            launch: Live-work launch metadata to stage for Console.
-            allow_recompose: Whether the never-composed case may fall back
-                to a full recompose. Only ``_supersede_resident_console_
-                launch_from_store`` passes ``False``: its unmounted case is
-                ``compose_content`` itself calling
-                ``_consume_pending_console_launch`` on its first line, so
-                the compose in progress already renders this exact launch
-                and scheduling a second one mid-compose would tear the
-                just-built DOM back down for no change.
-        """
-        self._pending_console_launch_context = launch
-        # New staging supersedes the previous send's "evidence sent" line.
-        self._console_evidence_sent_notice = None
-        if not self._sync_console_pending_launch_surfaces() and allow_recompose:
-            self.refresh(recompose=True)
 
     def _sync_console_pending_launch_surfaces(self) -> bool:
         """Refresh every mounted reader of the pending launch context in place.
@@ -12112,14 +13065,15 @@ class ChatScreen(BaseAppScreen):
         swap_completed = False
         try:
             try:
-                rail_body = self.query_one(
-                    "#console-inspector-rail-body", VerticalScroll
+                local_section = self.query_one(
+                    "#console-bounded-section-live-work", ConsoleBoundedSection
                 )
-                # Task-400: the Context (staged sources) tray is pinned at
-                # the TOP of the rail body, so live-work cards keep their
-                # pre-move anchor -- mounted after the run-inspector block,
-                # at the bottom of the rail body.
-                anchor = self.query_one("#console-run-inspector", Vertical)
+                pending_header = self.query_one(
+                    "#console-live-work-status-badge", Static
+                )
+                readiness_header = self.query_one(
+                    "#console-live-work-source-readiness-title", Static
+                )
             except QueryError:
                 return
             for selector in (
@@ -12127,7 +13081,7 @@ class ChatScreen(BaseAppScreen):
                 f"#{SOURCE_READINESS_CARD_ID}",
             ):
                 try:
-                    stale_card = self.query_one(selector)
+                    stale_card = local_section.query_one(selector)
                 except QueryError:
                     continue
                 await stale_card.remove()
@@ -12137,7 +13091,10 @@ class ChatScreen(BaseAppScreen):
                 if launch is not None
                 else self._build_console_live_work_source_readiness_card()
             )
-            await rail_body.mount(card, after=anchor)
+            await local_section.viewport.mount(card)
+            pending_header.display = launch is not None
+            readiness_header.display = launch is None
+            self.call_after_refresh(self._request_console_live_work_reconcile)
             swapped_context = launch
             swap_completed = True
         finally:
@@ -12164,111 +13121,38 @@ class ChatScreen(BaseAppScreen):
         state = self._build_console_staged_context_state(
             self._pending_console_launch_context
         )
-        tray.styles.min_height = 3 if state.is_empty else 4
-        tray.styles.max_height = 6 if state.is_empty else 10
+        # The child owns its bounded-body and rail invalidation.
         tray.sync_state(state)
-
-    async def _resolve_console_library_rag_scope(
-        self, request: LibraryRagSearchRequest
-    ) -> tuple[LibraryRagSearchRequest, Optional[LibraryRagSearchOutcome]]:
-        """Resolve the active conversation's RAG retrieval scope for `request`.
-
-        Plain `async def` (not `@work`-decorated) so it is directly
-        awaitable in tests without the Textual worker machinery -- only
-        `_execute_console_library_rag_search` itself needs to run as a
-        worker.
-
-        Args:
-            request: The unscoped Library RAG search request as built by the
-                run-action call site.
-
-        Returns:
-            A `(request, outcome)` tuple. When the resolved scope is EMPTY
-            (a configured scope with nothing left to search), `outcome`
-            carries the short-circuit recovery state and `request` is
-            returned unchanged -- the caller must not proceed to
-            `run_library_rag_search`. Otherwise `outcome` is `None` and
-            `request` carries `scope=effective_scope` when scoped, or is
-            returned unchanged when unscoped (byte-identical to before this
-            resolution step existed).
-        """
-        effective_scope = await resolve_effective_scope_for_chat(self.app_instance)
-        if effective_scope.state == "empty":
-            return request, LibraryRagSearchOutcome(
-                status="empty",
-                recovery_state=scope_empty_recovery_state(effective_scope.cause),
-            )
-        if effective_scope.state == "scoped":
-            return replace(request, scope=effective_scope), None
-        return request, None
 
     @work(exclusive=True, group="console-library-rag-search")
     async def _execute_console_library_rag_search(
         self, request: LibraryRagSearchRequest
     ) -> None:
-        (
-            scoped_request,
-            short_circuit_outcome,
-        ) = await self._resolve_console_library_rag_scope(request)
-        outcome = short_circuit_outcome or await run_library_rag_search(
-            self.app_instance, scoped_request
-        )
-        await self._apply_console_library_rag_search_outcome(scoped_request, outcome)
+        await self._retrieval._execute_console_library_rag_search(request)
 
-    async def _apply_console_library_rag_search_outcome(
-        self,
-        request: LibraryRagSearchRequest,
-        outcome: Any,
-    ) -> None:
-        if not self.is_mounted:
-            return
-        if outcome.results:
-            result = outcome.results[0]
-            launch_payload = build_library_rag_console_live_work_payload(
-                result,
-                query=request.query,
-            )
-            launch_payload["evidence_bundle"] = build_library_rag_evidence_bundle(
-                outcome.results,
-                query=request.query,
-            ).to_payload()
-            launch_payload["requested_top_k"] = request.top_k
-            launch_payload["search_mode"] = request.mode
-            self._stage_console_library_rag_launch(
-                ConsoleLiveWorkLaunch.from_values(
-                    source="Library Search/RAG",
-                    title=result.title,
-                    payload=launch_payload,
-                    status="staged",
-                    recovery=CONSOLE_LIBRARY_RAG_RECOVERY_COPY,
-                    action_label="Review evidence in Console",
-                )
-            )
-            return
+    def _has_staged_console_evidence(self) -> bool:
+        """Whether this send already has evidence the user staged themselves.
 
-        recovery_state = outcome.recovery_state
-        recovery_copy = (
-            recovery_state.visible_copy
-            if recovery_state is not None
-            else "Library Search/RAG did not return usable evidence."
-        )
-        # TASK-259: set the auto-open flag BEFORE staging. Staging now syncs
-        # the rail state synchronously (no deferred screen recompose), so a
-        # flag set after the stage call would miss the rail-visibility pass.
-        self._pending_console_launch_auto_open_inspector = True
-        self._stage_console_library_rag_launch(
-            ConsoleLiveWorkLaunch.from_values(
-                source="Library Search/RAG",
-                title="Library Search/RAG retrieval",
-                payload={
-                    "query": request.query,
-                    "source_scope": ", ".join(request.source_types),
-                },
-                status=outcome.status or "blocked",
-                recovery=recovery_copy,
-                action_label="Resolve Library search setup",
-            )
-        )
+        Two places count as "staged", because
+        ``_consume_pending_console_launch`` reads both on the very next line
+        of the send: the resident launch context, and an UNCLAIMED
+        ``CONSOLE_LIVE_WORK`` handoff (a Library "Use in Console" the user
+        just clicked). Ignoring the second would spend a retrieval whose
+        result the claim immediately supersedes -- the exact "no double
+        spend" the auto-retrieve gate exists to prevent.
+
+        Returns:
+            True when manual staging is present and must win.
+        """
+        if self._pending_console_launch_context is not None:
+            return True
+        try:
+            store = self.app_instance.pending_handoffs
+            return bool(store.has_pending(HandoffChannel.CONSOLE_LIVE_WORK))
+        except Exception:
+            # An unreadable store is not evidence; retrieving is the safe
+            # failure here (worst case a claim supersedes the result).
+            return False
 
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
@@ -12276,21 +13160,28 @@ class ChatScreen(BaseAppScreen):
         control_state = self._build_console_control_state(pending_launch)
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
-        workspace_context_state = self._workspace._build_console_workspace_context_state()
+        workspace_context_state = (
+            self._workspace._build_console_workspace_context_state()
+        )
         # task-10: built once, shared verbatim by the header's "Scope" chip
         # and the Inspector's retrieval-scope row below -- one zero-DB
         # state, two renderers.
-        retrieval_scope_state = self._build_console_retrieval_scope_state()
+        retrieval_scope_state = self._retrieval._build_console_retrieval_scope_state()
+        available_columns = self._console_rail_available_columns()
         rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
+            available_columns=available_columns,
         )
+        rail_state = resolve_console_rail_priority(rail_state, available_columns)
         rail_state = self._apply_pending_launch_inspector_auto_open(
             rail_state,
             pending_launch,
         )
+        rail_state = resolve_console_rail_priority(rail_state, available_columns)
         rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
+        rail_state = resolve_console_rail_priority(rail_state, available_columns)
         workbench_state = self._build_console_workbench_state(control_state)
         shell_classes = (
             f"workbench-frame console-workbench-frame density-{workbench_state.density}"
@@ -12302,6 +13193,7 @@ class ChatScreen(BaseAppScreen):
             # statics below remain mounted but hidden for contract tests.
             yield DestinationHeader(
                 workbench_state.header,
+                before_status=ConsoleSpeechControls(id="console-speech-controls"),
                 id="console-workbench-header",
                 classes="workbench-header console-header-inline",
             )
@@ -12351,24 +13243,23 @@ class ChatScreen(BaseAppScreen):
                 id="console-mode-bar",
                 classes="ds-panel",
             )
-            yield self._compact_console_workbench_widget(
-                ConsoleControlBar(
-                    control_state,
-                    self.app_instance,
-                    actions=workbench_state.actions,
-                    on_sidebar_toggle_requested=self._open_console_settings,
-                    id="console-control-bar",
-                    classes="console-control-bar",
-                ),
-                height=1,
+            yield ConsoleControlBar(
+                control_state,
+                self.app_instance,
+                actions=workbench_state.actions,
+                on_sidebar_toggle_requested=self._open_console_settings,
+                id="console-control-bar",
+                classes="console-control-bar",
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(
                     id="console-workspace-grid",
                     classes="ds-panel destination-workbench",
-                )
+                ),
+                edges=("top", "bottom"),
             )
             workspace_grid.styles.min_height = 0
+            stack_rail_labels = self._stack_collapsed_rail_labels()
             with workspace_grid:
                 left_handle = ConsoleRailHandle(
                     label=rail_state.left_label,
@@ -12376,16 +13267,20 @@ class ChatScreen(BaseAppScreen):
                     button_id="console-context-rail-open",
                     badge_id="console-context-rail-badge",
                     side="left",
+                    vertical=stack_rail_labels,
                     id="console-context-rail-handle",
                 )
-                left_handle.styles.width = 13
-                left_handle.styles.min_width = 13
-                left_handle.styles.max_width = 13
+                left_handle_width = (
+                    ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 13
+                )
+                left_handle.styles.width = left_handle_width
+                left_handle.styles.min_width = left_handle_width
+                left_handle.styles.max_width = left_handle_width
                 if rail_state.left_open or rail_state.single_pane:
                     # TASK-2154.1: single-pane mode hides both handles -- the
                     # transcript is the only pane left to point at.
                     left_handle.styles.display = "none"
-                yield self._frame_console_region(left_handle)
+                yield self._frame_console_region(left_handle, edges=("right",))
 
                 # The section-level values below are computed here, on the
                 # screen, exactly as they were computed inline before this
@@ -12398,36 +13293,62 @@ class ChatScreen(BaseAppScreen):
                 system_line_text, system_line_dim = (
                     self._console_rail_system_line_state()
                 )
-                agent_status_line, agent_steps_text, agent_subagents_text = (
+                # PR2b Task 4: the third element (the old joined sub-agents
+                # string) is no longer painted -- the fleet mini-section's
+                # rows/summary are derived independently, straight from the
+                # bridge, by `_console_agent_fleet_section_state`.
+                agent_status_line, agent_steps_text, _agent_subagents_text = (
                     self._agent._console_agent_section_lines()
                 )
+                agent_fleet_section_state = (
+                    self._agent._console_agent_fleet_section_state()
+                )
                 show_character_section = resolve_show_character_avatar(
-                    getattr(getattr(self, "app_instance", None), "app_config", {})
-                    or {}
+                    getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
                 )
                 # `character_avatar_widget_builder` hands `ConsoleLeftRail` a
-                # zero-arg callable, not a pre-built widget: the rail's own
+                # box-aware callable, not a pre-built widget: the rail's own
                 # `compose()` calls it, so a future recompose always mounts a
-                # fresh avatar widget built from the CURRENT
+                # fresh, currently fitted avatar widget built from the CURRENT
                 # `self._active_character_avatar` rather than re-yielding a
                 # stale instance `_render_character_avatar_into_section` may
                 # already have removed from the DOM (final review finding 1).
-                # The lambda closes over `self` and reads
+                # The callable closes over `self` and reads
                 # `self._active_character_avatar` at CALL time, matching
                 # `ConsoleDictationController`'s late-binding constructor rule
                 # (see `dictation.py`'s module docstring) -- not a bound
                 # method or a snapshotted spec, which would freeze today's
                 # value instead.
                 character_avatar_widget_builder = None
+                character_avatar_fit_box = None
                 character_avatar_name = ""
                 if show_character_section:
-                    character_avatar_widget_builder = (
-                        lambda: self._build_character_avatar_widget(
-                            self._active_character_avatar
+
+                    def character_avatar_widget_builder(box=None):
+                        return self._build_character_avatar_widget(
+                            self._active_character_avatar,
+                            box=box,
                         )
-                    )
+
+                    def character_avatar_fit_box(
+                        available_cols: int,
+                        available_lines: int,
+                    ) -> tuple[int, int] | None:
+                        spec = self._active_character_avatar or {}
+                        image = spec.get("pil")
+                        if image is None:
+                            return None
+                        return fit_character_avatar_cell_box(
+                            image,
+                            available_cols,
+                            available_lines,
+                        )
+
                     character_avatar_name = (
-                        self._active_character_avatar_name
+                        sanitize_character_display_label(
+                            self._active_character_avatar_name,
+                            max_characters=180,
+                        )
                         or "No character in this chat"
                     )
 
@@ -12440,63 +13361,87 @@ class ChatScreen(BaseAppScreen):
                     fleet_line=fleet_line,
                     agent_status_line=agent_status_line,
                     agent_steps_text=agent_steps_text,
-                    agent_subagents_text=agent_subagents_text,
+                    agent_fleet_section_state=agent_fleet_section_state,
                     agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
                     agent_full_log_available=(
                         self._agent._console_agent_full_log_available()
                     ),
+                    agent_steering_state=(self._agent._console_agent_steering_state()),
+                    agent_cancel_all_visible=(
+                        self._agent._console_agent_cancel_all_visible()
+                    ),
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
+                    character_avatar_fit_box=character_avatar_fit_box,
+                    workspace_tree_expanded_ids=(
+                        self._workspace.workspace_tree_expansion_preferences()
+                    ),
+                    workspace_tree_expansion_preferences_changed=(
+                        self._workspace.set_workspace_tree_expansion_preferences
+                    ),
+                    manual_reaction_label=(
+                        self._session._manual_reaction_label_for_current_actor()
+                    ),
                 )
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
-                # Compact contract: left rail + main column + the collapsed
-                # inspector handle (11) must fit a 100-column terminal.
-                # TASK-2154.1 (LY-08/LY-09): below 100 columns the rail state
-                # force-collapses the left rail instead (rendering override;
-                # see console_rail_state), and below
-                # CONSOLE_SINGLE_PANE_COLUMNS the grid drops to the
-                # single-pane fallback handled at `main_column` below.
-                # TASK-2154.2: that collapse is the responsive default; an
-                # explicit user toggle is honored below 100 cols too, with
-                # the main min-width waiver keeping the grid solvable.
-                # TASK-2154.3 (LY-01/LY-07): min-width 24 was below the rail
-                # content's intrinsic width (12-col label + 10-col value +
-                # 7 cells of border/gutter/padding chrome), so every Session
-                # row clipped mid-word at 100-160 cols where the 3fr share
-                # (18-27) is min-bound. 30 keeps the content whole and the
-                # compact contract still resolves: 30 + 56 + 11 + 2 = 99.
+                # TASK-19639 (formerly TASK-18913) compact contract: at exactly 100 columns the
+                # workspace grid has all 100 application columns. Default
+                # horizontal-label geometry resolves as Context 30 + main
+                # outer 59 + collapsed Inspector handle 11 = 100. The main
+                # min-width waiver keeps
+                # the row solvable; `rail_state.left_open` determines Context
+                # visibility. Below 100, default Context force-collapses
+                # without rewriting preference; eligible explicit opens
+                # instead receive the same layout-only waiver.
+                # TASK-2154.3 (LY-01/LY-07): 30 is the Context outer minimum
+                # (13-cell label with gutter + 10-cell value + 7-cell chrome).
+                # A 3-column handle applies only with stacked rail labels.
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
-                yield self._frame_console_region(left_rail)
+                yield self._frame_console_region(left_rail, edges=("right",))
 
                 # A zero-arg builder, not a pre-built widget, for the same
                 # reason `character_avatar_widget_builder` above is one --
-                # with a sharper edge here, since the surface is CACHED on
-                # the screen; full reasoning in `ConsoleTranscriptRegion.
-                # __init__`'s docstring. Sizing stays on this side: it
-                # describes this pane's place among its grid siblings
+                # Sizing stays here because it describes this pane among its siblings
                 # (3fr / 13fr / 4fr), exactly as both rails are wired.
                 main_column = ConsoleTranscriptRegion(
                     session_surface_builder=(
                         lambda: self._ensure_console_session_surface()
                     ),
+                    recovery_message_builder=(
+                        lambda: (
+                            self._ensure_console_chat_controller().provider_continuation_recovery_message()
+                        )
+                    ),
+                    recovery_replay_available_builder=(
+                        lambda: (
+                            self._ensure_console_chat_controller().provider_continuation_replay_available()
+                        )
+                    ),
+                    on_recovery_action=(
+                        lambda action, message_id, version: (
+                            self._ensure_console_chat_controller().recover_provider_continuation(
+                                action, message_id, version
+                            )
+                        )
+                    ),
                 )
                 main_column.styles.width = "13fr"
-                # TASK-2154.1 (LY-09): in single-pane mode the min-width
-                # guarantee is waived so the transcript renders at ANY width
-                # (60x18 included) instead of overflowing out of the grid;
-                # the handles are hidden, so nothing else competes for the
-                # row. At/above CONSOLE_SINGLE_PANE_COLUMNS the 56-column
-                # contract holds: handles (13+11) + 56 + grid frame (2) = 82,
-                # which is exactly what the 84-column threshold protects.
-                # TASK-2154.2 (LY-11): the waiver also holds while a rail is
-                # open below its compact-collapse threshold by explicit user
-                # toggle (compact_override) -- the user chose the rail over
-                # transcript width, and the waived minimum keeps the grid
-                # solvable at any width (rails keep their own mins 24/34).
+                # TASK-2154.1 (LY-09): below 84 the handles hide and the main
+                # minimum is waived. The default layout is transcript-only;
+                # budget-eligible explicit rails may still render from their
+                # 70/74 floors through 83 via compact override. At 84, default
+                # horizontal handles (13 + 11) leave 60 application columns
+                # for the main, above its 56-column floor; stacked handles are
+                # 3 columns each.
+                # TASK-2154.2/TASK-19639 (formerly TASK-18913): ``compact_override`` is only
+                # layout-minimum-waiver authority. It covers eligible explicit
+                # opens below the thresholds, default Context at exactly 100,
+                # and Inspector priority; it is not preference or user intent.
+                # Open rails retain their 30/34-column minimums.
                 main_column.styles.min_width = (
                     0 if rail_state.single_pane or rail_state.compact_override else 56
                 )
@@ -12526,6 +13471,10 @@ class ChatScreen(BaseAppScreen):
                     staged_context_state=staged_context_state,
                     retrieval_scope_state=retrieval_scope_state,
                     inspector_state=inspector_state,
+                    changed_files_state=self._build_console_changed_files_state(),
+                    project_instruction_state=project_instruction_ui.project_instruction_ui_state_for_screen(
+                        self
+                    ),
                     settings_summary_state=self._build_console_settings_summary_state(),
                     live_work_card_builder=(
                         lambda: (
@@ -12536,13 +13485,14 @@ class ChatScreen(BaseAppScreen):
                             else self._build_console_live_work_source_readiness_card()
                         )
                     ),
+                    inspector_more_open=rail_state.inspector_more_open,
                 )
                 right_rail.can_focus = True
                 right_rail.styles.width = "4fr"
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
-                yield self._frame_console_region(right_rail)
+                yield self._frame_console_region(right_rail, edges=("left",))
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,
@@ -12550,17 +13500,28 @@ class ChatScreen(BaseAppScreen):
                     button_id="console-inspector-rail-open",
                     badge_id="console-inspector-rail-badge",
                     side="right",
+                    vertical=stack_rail_labels,
                     id="console-inspector-rail-handle",
                 )
-                right_handle.styles.width = 11
-                right_handle.styles.min_width = 11
-                right_handle.styles.max_width = 11
+                right_handle_width = (
+                    ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 11
+                )
+                right_handle.styles.width = right_handle_width
+                right_handle.styles.min_width = right_handle_width
+                right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
-                yield self._frame_console_region(right_handle, variant="quiet")
+                yield self._frame_console_region(right_handle, edges=("left",))
+            # task-17652: the status row's side of the composer cluster is
+            # user-configurable ([console] status_chips_position). "above"
+            # (the default; owner ruling 2026-08-17) tops the cluster
+            # directly under the workspace grid; "below" restores the
+            # TASK-15704 bottom row. Built once here so both branches yield
+            # the same widget; the command popup's clearance loop handles
+            # both placements (see ConsoleCommandPopup.reposition).
             # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
-            # flag below -- compose the cost chip correctly on the very
-            # first frame rather than waiting for a post-mount sync call.
+            # flag -- compose the cost chip correctly on the very first
+            # frame rather than waiting for a post-mount sync call.
             # Best-effort: `_build_console_cost_state` already never raises
             # on its own, but this call site still tolerates an unexpected
             # failure rather than ever taking down the whole compose.
@@ -12569,9 +13530,13 @@ class ChatScreen(BaseAppScreen):
             except Exception:
                 logger.opt(exception=True).warning("cost_chip_state_failed")
                 initial_cost_state = None
-            yield ConsoleStatusChips(
+            status_chips_position = resolve_status_chips_position(
+                getattr(self.app_instance, "app_config", {}) or {}
+            )
+            status_chips = ConsoleStatusChips(
                 control_state,
                 scope_state=retrieval_scope_state,
+                collapsed=self._console_status_chips_collapsed,
                 # F1 (final review): compose the chip correctly on the very
                 # first render instead of relying on a post-mount sync call
                 # that some code paths (screen recreation via
@@ -12585,14 +13550,54 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-chips",
                 classes="ds-panel",
             )
-            # RAG-40: staged evidence belongs on the MAIN surface, directly
-            # above the composer it is about to be prepended to -- not only
-            # in an Inspector rail the staging path never opens.
+            # RAG-40: staged evidence belongs on the MAIN surface -- not only
+            # in an Inspector rail the staging path never opens. task-17661:
+            # ALL transient strips (staged evidence, prompt queue) sit at the
+            # TOP of the control deck, above the status line, so the area
+            # around the composer stays visually quiet.
             yield ConsoleStagedEvidenceStrip(
                 self._build_console_staged_evidence_strip_state(pending_launch),
                 id="console-staged-evidence-strip",
                 classes="ds-panel",
             )
+            store = self._console_chat_store
+            recovery = None
+            if store is not None and store.active_session_id is not None:
+                recovery = store.dispatch_recovery_for_presentation(
+                    store.active_session_id
+                )
+            yield ConsoleDispatchRecoveryRegion(
+                recovery,
+                session_id=(store.active_session_id if store is not None else ""),
+                id="console-dispatch-recovery",
+                classes="ds-panel",
+                on_action=self._dispatch_console_recovery_action,
+            )
+            yield ConsolePromptQueueRegion(
+                id="console-prompt-queue",
+                on_manage_requested=(
+                    lambda session_id, revision: self.app.push_screen(
+                        ConsolePromptQueueModal(
+                            session_id=session_id,
+                            revision=revision,
+                            queue_controller=self._prompt_queue,
+                        )
+                    )
+                ),
+                on_primary_requested=(
+                    lambda session_id, revision, action: self.run_worker(
+                        self._prompt_queue.handle_primary_intent(
+                            session_id,
+                            action=action,
+                            expected_revision=revision,
+                        ),
+                        exclusive=True,
+                        group="console-prompt-queue-shelf",
+                    )
+                ),
+            )
+            if status_chips_position == STATUS_CHIPS_POSITION_ABOVE:
+                yield status_chips
             composer = ConsoleComposerBar(
                 id="console-native-composer",
                 classes="ds-panel",
@@ -12610,7 +13615,15 @@ class ChatScreen(BaseAppScreen):
                     composer.load_draft(store.session_draft(store.active_session_id))
                 except KeyError:
                     pass
-            yield self._frame_console_region(composer)
+            # TASK-17651: the composer is a dense-form field, not a framed
+            # region — CSS owns its left-edge marker and focus treatment.
+            yield composer
+            # In "below" mode the chips close the shell as a bottom status
+            # row: the composer cluster (staged evidence, prompt queue,
+            # composer) stays contiguous with the transcript, and the chips
+            # annotate the whole surface from underneath.
+            if status_chips_position != STATUS_CHIPS_POSITION_ABOVE:
+                yield status_chips
             yield ConsoleCommandPopup()
             # Console-scoped first-run blocker. Sits on a dedicated overlay
             # layer over the whole Console shell so the workbench (rail,
@@ -12627,6 +13640,17 @@ class ChatScreen(BaseAppScreen):
             return True
         return coerce_bool_setting(
             console_config.get("collapse_large_pastes", True), True
+        )
+
+    def _stack_collapsed_rail_labels(self) -> bool:
+        """Return whether fresh collapsed Console handles use stacked labels."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console_config = app_config.get("console", {})
+        if not isinstance(console_config, dict):
+            return False
+        return coerce_bool_setting(
+            console_config.get("stack_collapsed_rail_labels", False),
+            False,
         )
 
     def _console_paste_collapse_threshold(self) -> int:
@@ -12650,12 +13674,27 @@ class ChatScreen(BaseAppScreen):
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
 
+        self.app_instance._console_h3_image_edit_screen = self
+        self._apply_focus_chrome()
+        if not hasattr(self, "_console_h3_terminal_generations"):
+            self._console_h3_terminal_generations: set[str] = set()
+        # This handoff is session/config only and does not need mounted DOM.
+        # Consume it before ordinary UI restoration can create a competing
+        # default session with a different identity.
+        self._session.consume_pending_console_first_chat_intent()
         self._notify_console_fleet_teardown_if_any()
+        # PR3a-2 Task 5: claim staged auto-wakes SYNCHRONOUSLY, before any
+        # timer or worker below can run the first tab sync -- whose
+        # view-clear consumes the ACTIVE conversation's FLEET_UNSEEN mark
+        # (Task 4's stated ordering hazard: read marks BEFORE activation).
+        self._fleet._claim_console_fleet_wake_marks()
+        self._console_auto_speak.mount()
 
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
+        self.set_timer(0.15, self._consume_pending_console_roleplay_repair)
         # Mirrors the handoff timer above: the native composer is not
         # guaranteed to exist in the DOM yet at this exact point (it can
         # still be settling in immediately after mount, same reason every
@@ -12664,6 +13703,20 @@ class ChatScreen(BaseAppScreen):
         # existing resume/user-triggered retry paths.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
+        # PR3a-2 Task 4: claim a background sub-agent completion's deep
+        # link (staged while Console was not mounted) and switch to the
+        # settled conversation's session. Same 0.15s settle hedge as the
+        # surrounding handoff timers.
+        self.set_timer(
+            0.15,
+            self._fleet.consume_pending_console_fleet_completion,
+        )
+        # PR3a-2 Task 4 (task-15664): mount hedge for the survivor tick --
+        # the primary arming point is the transcript poll's self-stop
+        # edge, but a controller wired at mount with survivors already
+        # live (e.g. a future above-screen bridge) must not stay frozen.
+        # A no-op when nothing is live.
+        self.set_timer(0.3, self._fleet._maybe_start_console_fleet_survivor_tick)
         # Same hedge as the handoff timers above: the native composer is not
         # guaranteed to exist in the DOM yet at `call_after_refresh` time
         # either, and `_sync_console_dictation_availability` silently no-ops
@@ -12673,104 +13726,117 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._sync_console_dictation_availability)
         self.set_timer(0.15, self._sync_console_dictation_availability)
         self.call_after_refresh(self._sync_native_console_chat_ui)
+        self.call_after_refresh(self._image._reconcile_h3_image_edit_completions)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
-        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
+        self.run_worker(
+            self._skill._refresh_console_skill_candidates(), exclusive=False
+        )
+        # task-15475: claim this visit's refreshes; the ScreenResume Textual
+        # posts for this very mount consumes the token and skips its own copy.
+        self._console_mount_visit_refreshed = True
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
-        """One-shot toast reporting a fleet the LAST Console instance lost.
+        """One-shot toasts reporting the LAST Console instance's teardown.
 
         TASK-1143 (F5): navigating away from Console unmounts the screen,
-        and ``on_unmount`` records how many runs/rounds its ``shutdown()``
-        call killed in ``app_instance._console_fleet_teardown_notice`` --
-        the app outlives this screen instance, and screens are never
-        cached (``TldwCli._create_navigation_screen`` always builds a
-        fresh instance, so there is no "same screen" to have shown a toast
-        on when it happened). A non-zero count here means the user left a
-        busy Console before this mount and the fleet was torn down without
-        being acknowledged; show it exactly once and clear the slot so an
-        ordinary mount (nothing killed, or already reported) stays silent.
+        and ``on_unmount`` (via ``_record_console_fleet_teardown``)
+        records the teardown's two truthful counts on the app object --
+        ``_console_fleet_teardown_notice`` for sessions ``shutdown()``
+        genuinely killed (active turn / pending approval, whose in-flight
+        children die with the turn) and, since PR3a-2 Task 4,
+        ``_console_fleet_survivor_notice`` for sessions whose only work
+        was cross-turn survivors, which KEEP RUNNING through teardown
+        (Task 1 A4 executed the old copy's lie: it called those
+        "cancelled" while they finished ``done``). The app outlives this
+        screen instance, and screens are never cached
+        (``TldwCli._create_navigation_screen`` always builds a fresh
+        instance). Each non-zero slot is shown exactly once and cleared
+        so an ordinary mount (nothing to report) stays silent.
         """
-        count = getattr(self.app_instance, "_console_fleet_teardown_notice", 0)
-        if not count:
-            return
-        self.app_instance._console_fleet_teardown_notice = 0
-        noun = "run" if count == 1 else "runs"
-        verb = "was" if count == 1 else "were"
-        self.app_instance.notify(
-            f"{count} agent {noun} {verb} cancelled when you left Console.",
-            severity="warning",
-        )
+        killed = getattr(self.app_instance, "_console_fleet_teardown_notice", 0)
+        surviving = getattr(self.app_instance, "_console_fleet_survivor_notice", 0)
+        if killed:
+            self.app_instance._console_fleet_teardown_notice = 0
+            noun = "run" if killed == 1 else "runs"
+            verb = "was" if killed == 1 else "were"
+            self.app_instance.notify(
+                f"{killed} agent {noun} {verb} cancelled when you left Console.",
+                severity="warning",
+            )
+        # PR3a-2 Task 4 (Task 1 A4): the pre-3a-2 notice counted these
+        # sessions in the "cancelled" toast above -- while their
+        # sub-agents in fact kept running through shutdown() and finished
+        # (executed, not inferred). Report what actually happens: the work
+        # continues in the background, its results land in the run log,
+        # its spend folds onto the message row (Task 3), and its settle
+        # raises the app-wide completion toast + unseen badge (this task).
+        if surviving:
+            self.app_instance._console_fleet_survivor_notice = 0
+            if surviving == 1:
+                copy = (
+                    "1 conversation's sub-agents kept running in the "
+                    "background when you left Console — you'll be notified "
+                    "as they finish."
+                )
+            else:
+                copy = (
+                    f"{surviving} conversations' sub-agents kept running in "
+                    "the background when you left Console — you'll be "
+                    "notified as they finish."
+                )
+            self.app_instance.notify(copy, severity="information")
 
     async def confirm_navigation(self) -> bool:
-        """Confirm leaving Console while the agent fleet still has live work.
+        """Delegate revision-pinned Console loss confirmation."""
 
-        TASK-1143 (F5): navigating away from Console unmounts this screen,
-        and ``on_unmount`` awaits ``ConsoleChatController.shutdown()`` --
-        cancelling every in-flight stream and denying every pending/parked
-        approval round for EVERY session this controller owns, not just
-        the one being viewed (see ``ConsoleChatController.shutdown``'s own
-        docstring). That is correct, by-design teardown -- screens are
-        never cached, so nothing could resolve those rounds through this
-        instance again regardless -- but it was previously silent. This
-        hook is the ``flush_pending_work`` sibling seam
-        ``TldwCli.handle_screen_navigation`` awaits before the switch
-        commits: returning ``False`` keeps this screen (and its
-        controller, and its fleet) mounted exactly like a flush veto.
-
-        Returns:
-            ``True`` when navigation may proceed -- an idle fleet (the
-            common case: no dialog, no delay), or the user chose "Leave"
-            in the confirmation dialog. ``False`` when the user chose
-            "Stay": the screen and its controller are left exactly as
-            they were, nothing cancelled, nothing denied.
-        """
         controller = self._console_chat_controller
         if controller is None:
             return True
-        busy_count = controller.busy_fleet_session_count()
-        if busy_count <= 0:
+        return await self._session.confirm_navigation(controller)
+
+    async def confirm_quit(self) -> bool:
+        """Delegate revision-pinned Console loss confirmation for app quit."""
+
+        controller = self._console_chat_controller
+        if controller is None:
             return True
-        noun = "run" if busy_count == 1 else "runs"
-        dialog = ConfirmationDialog(
-            title="Leave Console?",
-            message=(
-                f"{busy_count} agent {noun} will be cancelled if you "
-                "leave Console. Leave anyway?\n\n"
-                "Tab/Shift+Tab selects Stay or Leave, Enter activates the "
-                "selected button, Esc stays."
-            ),
-            confirm_label="Leave",
-            cancel_label="Stay",
-        )
-        # `push_screen_wait` (the usual way to await a dialog's result) may
-        # ONLY be called from within a worker -- `App.push_screen` raises
-        # `NoActiveWorker` otherwise, since blocking a bare Future-await
-        # for a result only a LATER message resolves is exactly the
-        # deadlock shape workers exist to make safe. `confirm_navigation`
-        # itself runs on `TldwCli.handle_screen_navigation`'s own call
-        # stack -- which TASK-1230 made a worker's call stack (see
-        # `TldwCli._dispatch_screen_navigation`), specifically so this
-        # await can never starve the App's own event routing for the
-        # dialog's lifetime -- but the wait is still delegated to its own
-        # worker here (rather than a bare `await push_screen_wait(...)`)
-        # so `confirm_navigation` keeps working correctly even if some
-        # future caller ever invokes it outside that worker context --
-        # `exit_on_error=False` so a broken dialog fails this navigation
-        # closed (see the caller's except branch) rather than crashing the
-        # app.
-        worker = self.run_worker(
-            self.app_instance.push_screen_wait(dialog),
-            exclusive=False,
-            exit_on_error=False,
-        )
-        proceed = await worker.wait()
-        return bool(proceed)
+        return await self._session.confirm_quit(controller)
+
+    def prepare_for_quit(self) -> None:
+        """Tombstone Console future work before application cleanup."""
+
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.begin_shutdown()
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        # task-15470: flush a pending debounced sidebar-state write FIRST,
+        # ahead of every other teardown step below -- several of those can
+        # raise, and a raised exception must not strand an unpersisted
+        # toggle-then-quit.
+        await self._flush_sidebar_state_now()
+        self._message.invalidate_console_speech_context()
+        self._console_auto_speak.unmount()
+        registry = self._image._h3_image_edit_registry()
+        store = self._console_chat_store
+        if store is not None:
+            terminal = getattr(self, "_console_h3_terminal_generations", None)
+            if terminal is None:
+                terminal = set()
+                self._console_h3_terminal_generations = terminal
+            for session in store.sessions():
+                operation = registry.request_cancel(session.id)
+                if operation is not None:
+                    terminal.add(operation.generation)
+        if getattr(self.app_instance, "_console_h3_image_edit_screen", None) is self:
+            self.app_instance._console_h3_image_edit_screen = None
+        self._video._drain_pending_console_videos()
         self._stop_console_transcript_sync_timer()
+        self._fleet._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()
+        await self._teardown_console_roleplay_persistence()
         # The pipeline hands-free loop's own two-statement abandon teardown
         # now lives in the decomposed controller (wave-2 console
         # decomposition, task 1); calling it here keeps this method one line
@@ -12806,48 +13872,37 @@ class ChatScreen(BaseAppScreen):
         # keeps this method one line per subsystem.
         await self._dictation.teardown()
         self._console_original_attempt_previews.clear()
+        self._hands_free.uninstall_console_hands_free_store_tap()
         controller = self._console_chat_controller
         if controller is not None:
-            # TASK-1143 (F5): snapshot what shutdown() is ABOUT to kill
-            # BEFORE calling it, using the SAME busy_fleet_session_count()
-            # confirm_navigation showed the user before they chose "Leave"
-            # (or that a non-navigation teardown, e.g. app exit, never got
-            # to show) -- the pre-navigate warning and the post-navigate
-            # record always agree on N. The app (not this doomed screen)
-            # holds the count so the NEXT Console mount -- a fresh
-            # instance; screens are never cached -- can report it via
-            # ``_notify_console_fleet_teardown_if_any``.
-            killed = controller.busy_fleet_session_count()
-            await controller.shutdown()
-            if killed:
-                self.app_instance._console_fleet_teardown_notice = killed
-        gateway = self._console_provider_gateway
-        close = getattr(gateway, "aclose", None)
-        if callable(close):
-            result = close()
-            if inspect.isawaitable(result):
-                await result
-        self._console_provider_gateway = None
-        self._console_chat_controller = None
+            await self._fleet._record_console_fleet_teardown()
+        else:
+            # No controller was ever built, but the view still has to let
+            # go: `detach_view` clears the store's `on_scope_flushed` and
+            # drops the claim.
+            await leave_console_runtime(self.app_instance, view=self)
         super().on_unmount()
 
-
     @classmethod
-    def _serialize_console_message(
-        cls, message: ConsoleChatMessage
-    ) -> dict[str, Any]:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        (unbound, `ChatScreen.X(...)`) for `_serialize_native_console_
-        state`'s staying call and the pre-existing test suite's
-        direct-call convention (8 sites)."""
+    def _serialize_console_message(cls, message: ConsoleChatMessage) -> dict[str, Any]:
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3**: message state
+        stopped travelling in the screen-state snapshot, so nothing in the
+        app serializes a Console message any more. Kept (unbound,
+        `ChatScreen.X(...)`) only for the pre-existing test suite's
+        direct-call convention; retiring it and its counterpart is a
+        separate, mechanical cleanup.
+        """
         return ConsoleMessageController._serialize_console_message(message)
 
     @classmethod
     def _restore_console_message(cls, payload: Any) -> ConsoleChatMessage | None:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        (unbound, `ChatScreen.X(...)`) for `_restore_native_console_
-        state`'s staying call and the pre-existing test suite's
-        direct-call convention (7 sites)."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3** -- see
+        `_serialize_console_message` above.
+        """
         return ConsoleMessageController._restore_console_message(payload)
 
     # App-object attribute holding staged-but-unsent attachments across screen
@@ -12876,6 +13931,10 @@ class ChatScreen(BaseAppScreen):
             if pendings:
                 stash[session.id] = tuple(pendings)
         setattr(app, self._CONSOLE_PENDING_STASH_ATTR, stash)
+        for completion in self._image._h3_image_edit_registry().completions():
+            self._image._filter_h3_attachment_from_app_stash(
+                completion.session_id, completion.attachment_id
+            )
 
     def _adopt_console_pending_attachments(self, store: ConsoleChatStore) -> None:
         """Re-stage stashed attachments into the restored store, then empty
@@ -12885,6 +13944,15 @@ class ChatScreen(BaseAppScreen):
         attempt releases the byte references, even when the stash turned out
         malformed or nothing could be adopted (self-healing; the bytes must
         never outlive their one restore opportunity).
+
+        task-15860 (Task 3): the store now SURVIVES the navigation, so the
+        session this re-stages into still holds the very pendings the stash
+        was copied from. Each adopted session is therefore cleared first —
+        without it every navigation would DOUBLE the staged attachments
+        (up to the cap) instead of restoring them. The stash stays
+        authoritative for exactly one thing the store cannot know: an H3
+        image edit that completed while Console was away has already been
+        filtered out of it.
         """
         app = getattr(self, "app_instance", None)
         if app is None:
@@ -12892,20 +13960,56 @@ class ChatScreen(BaseAppScreen):
         stash = getattr(app, self._CONSOLE_PENDING_STASH_ATTR, None)
         setattr(app, self._CONSOLE_PENDING_STASH_ATTR, {})
         if not isinstance(stash, dict) or not stash:
+            self._image._reconcile_h3_image_edit_completions(store)
             return
         live_ids = {session.id for session in store.sessions()}
+        completed_attachment_ids = {
+            completion.session_id: completion.attachment_id
+            for completion in self._image._h3_image_edit_registry().completions()
+        }
         for session_id, pendings in stash.items():
             if session_id not in live_ids:
                 continue
             if not isinstance(pendings, (list, tuple)):
                 continue
+            store.clear_pending_attachments(session_id)
             for pending in pendings:
+                if getattr(
+                    pending, "attachment_id", None
+                ) == completed_attachment_ids.get(session_id):
+                    continue
                 if not store.add_pending_attachment(session_id, pending):
                     break  # staging cap reached — matches live staging semantics
-
+        self._image._reconcile_h3_image_edit_completions(store)
 
     def _serialize_native_console_state(self) -> dict[str, Any] | None:
-        """Return the native Console in-session state for screen restoration."""
+        """Return the native Console VIEW state for screen restoration.
+
+        task-15860 (Task 3): message state no longer travels here. The
+        app-owned `ConsoleRuntime`'s store outlives every `ChatScreen`, so
+        `sessions`, `messages_by_session` and `active_session_id` are read
+        straight off the surviving store by the next visit -- carrying
+        copies in a `ScreenStateStore` snapshot made the snapshot a SECOND
+        source of truth that silently won at the next mount. Task 0's P3b
+        executed the cost: a wake turn that ran, spent money and stamped
+        the ledger while Console was unmounted persisted four rows, and
+        the user returning saw the two that predated the snapshot.
+
+        What stays is genuinely SCREEN-instance state, which dies with the
+        screen and has nowhere else to live: the image view-mode overrides,
+        the task-resume projection, the Library RAG source scope, the
+        staged live-work launch and the "evidence sent" memory.
+
+        The composer flush below stays too, and is now load-bearing rather
+        than incidental: it is the one place the VIEW's uncommitted draft
+        is written back into the store that will outlive it.
+
+        The pending-attachment stash also stays. It never travelled in this
+        payload (bytes are forbidden here; it lives on the APP object), so
+        it is not a second source of truth for message state -- and it is
+        what `_adopt_console_pending_attachments` re-stages the H3-filtered
+        set from.
+        """
         store = self._console_chat_store
         if store is None or not store.sessions():
             return None
@@ -12932,18 +14036,7 @@ class ChatScreen(BaseAppScreen):
 
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
-            "active_session_id": store.active_session_id,
             "task_resume_state": self._task_resume_state.to_dict(),
-            "sessions": [
-                self._session._console_session_to_state(session) for session in store.sessions()
-            ],
-            "messages_by_session": {
-                session.id: [
-                    self._serialize_console_message(message)
-                    for message in store.messages_for_session(session.id)
-                ]
-                for session in store.sessions()
-            },
             "image_view_modes": image_state.serialize(),
             # RAG-44: an edited Library RAG source selection is Console-local,
             # but it must survive a tab switch like the sessions around it --
@@ -12973,69 +14066,41 @@ class ChatScreen(BaseAppScreen):
             "console_evidence_sent_notice": sent_notice,
         }
 
-
     def _restore_native_console_state(self, payload: Any) -> None:
-        """Restore native Console in-session state saved by ``save_state``."""
+        """Restore native Console VIEW state saved by ``save_state``.
+
+        task-15860 (Task 3): this method no longer rebuilds the store. The
+        sessions, their transcripts and the active session are already
+        there -- the app-owned `ConsoleRuntime` holds the same
+        `ConsoleChatStore` across every navigation, and `store.restore_state`
+        would REPLACE its contents with a snapshot taken before the last
+        turn (Task 0's P3b: four persisted rows, two shown). Dropping the
+        replacement also stops five losses the snapshot round trip caused
+        by construction, because none of them had a slot in the payload:
+        the message TREE (branch/variant history was flattened to a linear
+        chain), the local active-leaf cursor, the `/rewind` context summary,
+        per-session speech preferences and the one-shot prefill.
+
+        Reaching the runtime here is still load-bearing:
+        `_complete_screen_navigation` restores the INCOMING screen before
+        `switch_screen` unmounts the outgoing one, so this is where the
+        incoming view CLAIMS the runtime (`ensure_console_runtime(app,
+        view=self)` -> `attach_view`), in time for the outgoing screen's
+        later `detach_view` to find a different claimant and do nothing.
+
+        Measured, not assumed: a mutation that removed no-runtime-touch
+        from this method went red on the headless-wake continuity test.
+        A weaker mutation -- swapping `_ensure_console_chat_store()` for a
+        bare `self._console_chat_store` read -- stayed GREEN, because that
+        attribute is itself a runtime-backed property and claims just the
+        same. So it is the runtime CONTACT that matters here, not this
+        particular spelling of it.
+        """
         if not isinstance(payload, dict):
-            return
-        raw_sessions = payload.get("sessions")
-        if not isinstance(raw_sessions, list) or not raw_sessions:
             return
 
         store = self._ensure_console_chat_store()
-        raw_messages_by_session = payload.get("messages_by_session")
-        messages_by_session = (
-            raw_messages_by_session if isinstance(raw_messages_by_session, dict) else {}
-        )
-        restored_sessions: list[ConsoleChatSession] = []
-        restored_messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
-        for raw_session in raw_sessions:
-            if not isinstance(raw_session, dict):
-                continue
-            session = self._session._console_session_from_state(raw_session)
-            restored_sessions.append(session)
-            restored_messages_by_session[session.id] = []
-            raw_messages = messages_by_session.get(session.id, [])
-            if not isinstance(raw_messages, list):
-                continue
-            for raw_message in raw_messages:
-                message = self._restore_console_message(raw_message)
-                if message is None:
-                    continue
-                self._rehydrate_console_message_image(message)
-                restored_messages_by_session[session.id].append(message)
-
-        # One batched `get_attachments_for_messages` call covers every
-        # restored message across every session in this pass, instead of a
-        # per-message round trip.
-        self._rehydrate_console_message_attachments(
-            [
-                message
-                for messages in restored_messages_by_session.values()
-                for message in messages
-            ]
-        )
-
-        active_session_id = payload.get("active_session_id")
-        active_session_id = (
-            str(active_session_id) if active_session_id is not None else ""
-        )
-        store.restore_state(
-            sessions=restored_sessions,
-            messages_by_session=restored_messages_by_session,
-            active_session_id=active_session_id,
-        )
-        # task-558: `restore_state` (unlike `restore_persisted_session`, the
-        # DB-resume path) does not itself hydrate `generation_metadata` --
-        # `_serialize_console_message` never serialized it into screen state
-        # (matching the no-bytes-in-screen-state policy for the sidecar
-        # row's provenance), so a tab-switch-restored generation message
-        # would otherwise lose its card. Must run AFTER `restore_state`,
-        # which is what populates the store's tree nodes
-        # `hydrate_generation_metadata` looks up by session id.
-        self._rehydrate_console_message_generation_metadata(
-            store, restored_messages_by_session
-        )
+        self._message.invalidate_console_speech_context()
         self._adopt_console_pending_attachments(store)
         self._console_visible_draft_session_id = None
         self._last_native_transcript_refresh_key = None
@@ -13079,21 +14144,29 @@ class ChatScreen(BaseAppScreen):
         raw_sent_notice = payload.get("console_evidence_sent_notice")
         self._console_evidence_sent_notice = (
             raw_sent_notice
-            if isinstance(raw_sent_notice, int) and not isinstance(raw_sent_notice, bool)
+            if isinstance(raw_sent_notice, int)
+            and not isinstance(raw_sent_notice, bool)
             else None
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        for `_restore_native_console_state`'s staying call and the
-        pre-existing test suite's direct-call convention."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3**: with the store
+        surviving the navigation there is no snapshot to rehydrate from --
+        the live message objects never lost their bytes. Kept for the
+        pre-existing test suite's direct-call convention.
+        """
         self._message._rehydrate_console_message_image(message)
 
     def _rehydrate_console_message_attachments(
         self, messages: list[ConsoleChatMessage]
     ) -> None:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        for `_restore_native_console_state`'s staying call."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3** -- see
+        `_rehydrate_console_message_image` above.
+        """
         self._message._rehydrate_console_message_attachments(messages)
 
     def _rehydrate_console_message_generation_metadata(
@@ -13101,8 +14174,11 @@ class ChatScreen(BaseAppScreen):
         store: "ConsoleChatStore",
         restored_messages_by_session: Dict[str, list[ConsoleChatMessage]],
     ) -> None:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        for `_restore_native_console_state`'s staying call."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3** -- see
+        `_rehydrate_console_message_image` above.
+        """
         self._message._rehydrate_console_message_generation_metadata(
             store, restored_messages_by_session
         )
@@ -13116,14 +14192,41 @@ class ChatScreen(BaseAppScreen):
             state["interface_type"] = "native_console"
         return state
 
+    def console_prompt_target_projection(
+        self,
+    ) -> ConsolePromptTargetProjection | None:
+        """Return the sanitized live Prompt target owned by the controller.
+
+        Returns:
+            The active Console target projection, or ``None`` when unavailable.
+        """
+        return self._prompts.console_prompt_target_projection()
+
     def restore_state(self, state: Dict[str, Any]) -> None:
         """Restore only state owned by the native Console."""
         super().restore_state(state)
         native_console_state = state.get("native_console_state")
         if native_console_state is not None:
             self._restore_native_console_state(native_console_state)
+        # task-15860 Task 5: the snapshot's `task_resume_state` is a VIEW
+        # projection taken when the last Console visit ended, so restoring
+        # it plainly (`_restore_native_console_state`) ERASES an approval
+        # round armed since -- the headless case, where a risk-tagged tool
+        # in a wake turn arms one with nothing mounted. The app-owned
+        # controller is the only source of truth for what is armed, so
+        # re-derive from it AFTER the snapshot lands. Measured: without
+        # this the attach-time remount ran, set the card, and was
+        # overwritten microseconds later by the snapshot.
+        #
+        # Scoped deliberately: this MOUNTS an armed round, it does not
+        # CLEAR a stale one. A snapshot carrying a `pending_approval` for
+        # a round that has since resolved still restores a dead card
+        # (clicking it resolves nothing -- `resolve_pending_approval`
+        # fails closed on the missing round id). That is a pre-existing
+        # defect on this path, no red was reproduced for it here, and
+        # fixing it belongs with whoever does.
+        self._console_runtime().remount_pending_approval()
         self.sync_task_resume_state()
-
 
     async def _consume_pending_chat_handoff(self) -> None:
         """Claim one Chat handoff and stage it directly in native Console."""
@@ -13226,16 +14329,14 @@ class ChatScreen(BaseAppScreen):
                         source_type=_safe_text(payload.item_type) or "rag-result",
                         title=title,
                         snippet=snippet or title,
-                        authority_label=_safe_text(payload.runtime_backend)
-                        or "local",
+                        authority_label=_safe_text(payload.runtime_backend) or "local",
                         content_ref=payload.content_ref,
                     ),
                 ),
             ).to_payload()
         except (TypeError, ValueError, ValidationError) as exc:
             logger.warning(
-                "Could not build evidence bundle for handoff "
-                "(exception_category={})",
+                "Could not build evidence bundle for handoff (exception_category={})",
                 type(exc).__name__,
             )
 
@@ -13250,7 +14351,7 @@ class ChatScreen(BaseAppScreen):
         # Library-RAG failure path does: staging syncs the rail state
         # synchronously, so a flag set afterwards misses that pass.
         self._pending_console_launch_auto_open_inspector = True
-        self._stage_console_library_rag_launch(
+        self._retrieval._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
                 source=payload.source,
                 title=payload.title,
@@ -13479,6 +14580,70 @@ class ChatScreen(BaseAppScreen):
             repository,
         )
 
+    def _sync_console_annotation_discovery(self, store: Any) -> None:
+        """Load persisted review annotations when the active conversation changes.
+
+        task-17169 slice 2 (the restore half of the inline marker): the map is
+        keyed by NATIVE message id, so a reload maps each stored row's
+        persisted message id back through the store's messages. Annotations
+        are local-only and written solely through this screen, so a reload is
+        needed only when the conversation changes -- live writes keep the map
+        current in between. The DB read runs off-thread (repo lesson: never
+        sqlite on the UI loop's sync tick) with exit_on_error=False.
+        """
+        session = getattr(store, "_sessions", {}).get(
+            getattr(store, "active_session_id", None)
+        )
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        if not conversation_id:
+            if self._console_annotation_loaded_conversation is not None:
+                self._console_annotation_loaded_conversation = None
+                self._console_annotation_previews = {}
+            return
+        conversation_id = str(conversation_id)
+        if conversation_id == self._console_annotation_loaded_conversation:
+            return
+        self._console_annotation_loaded_conversation = conversation_id
+        self._console_annotation_previews = {}
+        database = getattr(getattr(store, "persistence", None), "db", None)
+        if database is None:
+            return
+        self.run_worker(
+            self._load_console_annotation_previews(database, store, conversation_id),
+            exclusive=True,
+            group="console-annotation-previews",
+            exit_on_error=False,
+        )
+
+    async def _load_console_annotation_previews(
+        self, database: Any, store: Any, conversation_id: str
+    ) -> None:
+        """Worker body: read annotation rows and re-key them to native ids."""
+        try:
+            rows = await asyncio.to_thread(
+                database.get_transcript_annotations, conversation_id
+            )
+        except Exception:
+            logger.warning(
+                f"Console annotations: load failed for {conversation_id!r}",
+                exc_info=True,
+            )
+            return
+        if self._console_annotation_loaded_conversation != conversation_id:
+            return  # conversation switched while the read was in flight
+        native_by_persisted = {
+            message.persisted_message_id: message.id
+            for message in self._native_console_messages()
+            if message.persisted_message_id is not None
+        }
+        previews: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            native_id = native_by_persisted.get(row.get("message_id"))
+            if native_id is None:
+                continue
+            previews[native_id] = previews.get(native_id, ()) + (row["comment"],)
+        self._console_annotation_previews = previews
+
     def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
         """Dispatch one count lookup worker when eligible inputs change."""
         signature = self._console_citation_signature(messages)
@@ -13666,6 +14831,14 @@ class ChatScreen(BaseAppScreen):
     ) -> tuple[Any, ...]:
         """Return a lightweight signature for native transcript refresh skipping."""
         store = self._ensure_console_chat_store()
+        presentation_context = self._console_presentation_context()
+        presentation_signature = (
+            presentation_context.user_name,
+            presentation_context.assistant_kind,
+            presentation_context.character_name,
+            presentation_context.transcript_style.value,
+            presentation_context.revision,
+        )
         message_signatures = []
         for message in messages:
             variants = getattr(message, "variants", None)
@@ -13697,7 +14870,11 @@ class ChatScreen(BaseAppScreen):
                     getattr(message, "citation_presentation", None),
                 )
             )
-        return (store.active_session_id, tuple(message_signatures))
+        return (
+            store.active_session_id,
+            tuple(message_signatures),
+            presentation_signature,
+        )
 
     async def _sync_native_console_transcript(self) -> None:
         """Render native Console messages in the native transcript."""
@@ -13707,7 +14884,16 @@ class ChatScreen(BaseAppScreen):
             transcript = None
 
         messages = self._native_console_messages()
+        if region := self._console_transcript_region_or_none():
+            region.sync_recovery()
         if transcript is not None:
+            transcript.set_presentation_context(self._console_presentation_context())
+            # Turn file card spec: keeps the mounted transcript's provider
+            # factory current every tick -- late-bound so a session switch
+            # or a bridge becoming available never needs a fresh instance.
+            transcript.set_change_review_provider_factory(
+                self._console_change_review_provider
+            )
             self._sync_console_citation_count_discovery(messages)
             message_ids = {message.id for message in messages}
             controller = self._console_chat_controller
@@ -13730,7 +14916,17 @@ class ChatScreen(BaseAppScreen):
             if self._pending_console_swipe_selection is not None:
                 transcript.pending_selection_id = self._pending_console_swipe_selection
                 self._pending_console_swipe_selection = None
-            transcript.set_messages(messages)
+            transcript.set_messages(
+                messages,
+                session_id=self._ensure_console_chat_store().active_session_id,
+            )
+            # Live turn-activity line. `apply_turn_activity` hands back the
+            # EFFECTIVE value ("" unless a row is actually in flight), which
+            # is what joins the refresh key below -- so an idle transcript
+            # can never repaint once a second off a stale run snapshot.
+            turn_activity = transcript.apply_turn_activity(
+                self._agent.console_turn_activity()
+            )
             visible_citation_counts = {
                 message_id: count
                 for message_id, count in self._console_citation_counts.items()
@@ -13745,6 +14941,8 @@ class ChatScreen(BaseAppScreen):
             # only -- the banner shows above the boundary message when it is on
             # the rendered path, and disappears (inert) otherwise.
             store = self._ensure_console_chat_store()
+            self._sync_console_annotation_discovery(store)
+            transcript.set_annotation_previews(self._console_annotation_previews)
             summary_boundary_id: str | None = None
             if store.active_session_id is not None:
                 _summary, summary_boundary_id = store.session_context_summary(
@@ -13754,11 +14952,11 @@ class ChatScreen(BaseAppScreen):
             # TASK-371: reflect run state in the jump-to-latest pill when the
             # reader is scrolled up during / just after a streaming reply.
             transcript.sync_jump_indicator(self._current_console_run_status_value())
-            image_specs = self._build_console_image_specs(messages)
+            image_specs = self._image._build_console_image_specs(messages)
             transcript.set_image_specs(image_specs)
-            card_specs = self._build_generation_card_specs(messages)
+            card_specs = self._image._build_generation_card_specs(messages)
             transcript.set_generation_card_specs(card_specs)
-            video_specs = self._build_video_card_specs(messages)
+            video_specs = self._video._build_video_card_specs(messages)
             transcript.set_video_card_specs(video_specs)
             _state, cache = self._ensure_console_image_view()
             # Same bounded subset as `_build_console_image_specs` — computing
@@ -13780,7 +14978,7 @@ class ChatScreen(BaseAppScreen):
             # (cache-key, bytes) pairs) and the same in-flight guard set.
             pending_images.extend(
                 (cache_key, data)
-                for cache_key, data in self._pending_console_generation_card_images(
+                for cache_key, data in self._image._pending_console_generation_card_images(
                     messages, card_specs
                 )
                 if cache_key not in self._console_image_preparing
@@ -13825,8 +15023,17 @@ class ChatScreen(BaseAppScreen):
                 # before-boundary) must force a refresh so the banner appears
                 # or clears even when the message set is otherwise unchanged.
                 summary_boundary_id,
+                turn_activity,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
+                # task-18515: an annotation added, edited, or deleted must
+                # force a refresh on its own. Without this the marker row
+                # only changed when something ELSE in the key did -- phase 4
+                # looked correct because writing a note also dispatches a
+                # message, while edit/delete leave the app idle and left a
+                # deleted note's marker on screen (caught live).
+                tuple(sorted(self._console_annotation_previews.items())),
+                tuple(sorted(self._console_speech_states.items())),
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
@@ -13845,8 +15052,20 @@ class ChatScreen(BaseAppScreen):
         self._last_native_transcript_refresh_key = None
         self._sync_console_transcript_guidance()
 
-
     def _native_run_status_copy(self) -> str:
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        image_edit = (
+            self._image._h3_image_edit_registry().active(session_id)
+            if session_id is not None
+            else None
+        )
+        if image_edit is not None:
+            return (
+                "Stopping image edit…"
+                if image_edit.cancel_event.is_set()
+                else "Editing image…"
+            )
         controller = self._console_chat_controller
         if controller is None:
             return ""
@@ -13864,12 +15083,22 @@ class ChatScreen(BaseAppScreen):
         visibility contract. Falls back to the status value when a
         transition set no visible copy.
         """
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        image_edit = (
+            self._image._h3_image_edit_registry().active(session_id)
+            if session_id is not None
+            else None
+        )
+        if image_edit is not None:
+            return (
+                "Stopping image edit…"
+                if image_edit.cancel_event.is_set()
+                else "Editing image…"
+            )
         controller = self._console_chat_controller
         run_state = controller.run_state if controller is not None else None
-        if (
-            run_state is None
-            or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
-        ):
+        if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             return ""
         return run_state.visible_copy or run_state.status.value
 
@@ -13894,22 +15123,58 @@ class ChatScreen(BaseAppScreen):
         # unchanged ticks free. Active statuses only: terminal outcomes
         # already toast (task-2154.16/.17) and mark the tab.
         try:
-            status_chips = self.query_one(
-                "#console-status-chips", ConsoleStatusChips
-            )
+            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
         except QueryError:
             return
         active_run_copy = self._console_active_run_copy()
         status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
 
     async def _sync_native_console_chat_ui(self) -> None:
-        """Refresh visible Console-native state after send/stop transitions."""
+        """Refresh visible Console-native state after send/stop transitions.
+
+        **A torn-down screen renders nothing** (task-15860, cross-suite
+        leak). This tick is a screen-owned `console-sync` worker, and
+        Textual workers default to ``exit_on_error=True``: anything it
+        raises reaches ``App._handle_exception`` and takes the whole TUI
+        down. It also touches the DOM (``_sync_console_native_session_
+        tabs`` -> ``ConsoleSessionSurface.sync_sessions`` ->
+        ``query_one("#console-native-tab-strip")``), which is exactly what
+        a navigation away from Console removes. Three guards here close
+        every half of that: the entry check (a tick that STARTS after
+        teardown), the teardown-scoped ``except`` (a tick that is
+        mid-flight when teardown arrives), and the ``finally``'s re-arm
+        check (a tick that would CREATE one of the first kind).
+
+        Measured, not assumed: with a wake turn in flight, navigating away
+        from Console had this tick's own ``finally`` re-arm (below)
+        schedule a FRESH worker on the screen Textual had already closed;
+        that worker ran a full sync against the removed surface, raised
+        ``NoMatches``, and killed the app -- after which every later
+        ``post_message`` was silently dropped and navigation was dead.
+        """
+        if _console_screen_is_torn_down(self):
+            # The re-arm below is skipped for the same reason; clearing the
+            # flag keeps a resurrected screen from inheriting this one's
+            # coalesced request.
+            self._console_sync_requested = False
+            return
         if self._console_sync_in_progress:
             self._console_sync_requested = True
             return
         self._console_sync_in_progress = True
         self._record_ui_worker_started("console-sync")
         try:
+            store = self._console_chat_store
+            self._message.reconcile_console_speech_context()
+            if store is not None:
+                live_session_ids = {session.id for session in store.sessions()}
+                registry = self._image._h3_image_edit_registry()
+                prior_session_ids = getattr(self, "_console_h3_known_session_ids", None)
+                if prior_session_ids is not None:
+                    for missing_session_id in prior_session_ids - live_session_ids:
+                        registry.drop_session(missing_session_id)
+                self._console_h3_known_session_ids = live_session_ids
+                self._image._reconcile_h3_image_edit_completions(store)
             self._sync_console_chat_core_state()
             self._session._sync_console_session_draft()
             # PR#757 review (comment 4): warm the effective-scope cache for
@@ -13917,7 +15182,7 @@ class ChatScreen(BaseAppScreen):
             # reads it -- see `_warm_console_effective_scope_cache_if_stale`
             # docstring for why the picker/resume/flush warmers alone leave
             # a restore_state-reactivated session uncovered.
-            await self._warm_console_effective_scope_cache_if_stale()
+            await self._retrieval._warm_console_effective_scope_cache_if_stale()
             # Fix-wave (Critical, Task 4 review): this is the trigger for the
             # "what's in play" chat-dictionary summary now -- it replaces the
             # removed app-level `watch_current_chat_conversation_id`/
@@ -13929,15 +15194,26 @@ class ChatScreen(BaseAppScreen):
             # `_sync_console_control_bar()` below so that call's inspector
             # build already sees the freshly recomputed cache instead of one
             # stale frame behind.
-            await self._refresh_active_dictionaries_summary_if_scope_changed()
-            await self._refresh_active_world_books_summary_if_scope_changed()
+            await (
+                self._retrieval._refresh_active_dictionaries_summary_if_scope_changed()
+            )
+            await self._retrieval._refresh_active_world_books_summary_if_scope_changed()
             # P3c Task 4: mirrors the dictionary/world-book scope-guarded
             # refresh pattern immediately above -- safe to call unconditionally
             # on every sync tick because the refresh is itself scope-guarded
             # (no-op when the active character hasn't changed) and never
             # raises (see `_refresh_active_character_avatar_if_scope_changed`
             # docstring, T3).
-            await self._refresh_active_character_avatar_if_scope_changed()
+            await self._character._refresh_active_character_avatar_if_scope_changed()
+            # TASK-18060 Task 5 (review-rail spec §2): same scope-guarded
+            # shape as the dictionary/world-book refreshes above, except the
+            # recompute itself is a fire-and-forget `thread=True` worker
+            # rather than an awaited `asyncio.to_thread` -- see
+            # `_dispatch_console_changed_files_worker`'s docstring for why.
+            # Placed before the control-bar sync below so a conversation
+            # switch's synchronous cache clear (spec §2 hygiene) is already
+            # visible when that sync reads `_build_console_changed_files_state`.
+            self._sync_console_changed_files_if_scope_changed()
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can
@@ -13946,27 +15222,67 @@ class ChatScreen(BaseAppScreen):
             # fresh post-await state (PR #660 review caught the reuse as a
             # staleness regression — the one-tuple-per-tick dedupe is
             # withdrawn for the visibility half).
-            rail_state = self._current_console_rail_state()
-            self._sync_console_control_bar(rail_state)
-            self._sync_console_settings_summary()
-            self._sync_console_mode_bar()
-            await self._sync_console_native_session_tabs()
-            self._sync_console_workspace_context()
-            await self._sync_native_console_transcript()
-            self._sync_console_rail_visibility_if_changed(
-                self._current_console_rail_state()
-            )
+            #
+            # TASK-22201: the workspace-context builds of one tick (the rail
+            # states here, the workspace-context push, the control bar's and
+            # agent section's inspector legs — six per tick, measured) share
+            # ONE fingerprint-validated build through this scope. The PR
+            # #660 ruling is kept by MECHANISM rather than by always
+            # rebuilding: a session created/activated across the awaits
+            # changes the store fingerprint and the later reads rebuild,
+            # while a settled tick pays for one build. Task-scoped: only
+            # THIS coroutine's task reads the cache — workers and handlers
+            # interleaving during the awaits keep building live.
+            with self._workspace.tick_workspace_build_scope():
+                rail_state = self._current_console_rail_state()
+                self._sync_console_control_bar(rail_state)
+                self._sync_console_settings_summary()
+                self._sync_console_mode_bar()
+                await self._sync_console_native_session_tabs()
+                self._dispatch_active_console_roleplay_refresh()
+                self._sync_console_workspace_context()
+                project_instruction_ui.sync_project_instruction_status_for_screen(
+                    self
+                )
+                await self._sync_native_console_transcript()
+                self._sync_console_rail_visibility_if_changed(
+                    self._current_console_rail_state()
+                )
             self._dispatch_console_rail_preference_prune()
+        except Exception:
+            # Teardown-scoped ONLY. A tick that was mid-flight when the
+            # screen was closed is querying widgets Textual has already
+            # removed; that is not a defect to surface, and surfacing it
+            # here means killing the app (this runs in a worker whose
+            # `exit_on_error` is Textual's default True). Anything raised
+            # by a LIVE screen still propagates untouched -- narrowing to
+            # `NoMatches` would not be narrower in the way that matters,
+            # since a torn-down DOM raises several different types
+            # depending on how far the tick had got.
+            if not _console_screen_is_torn_down(self):
+                raise
+            # fmt: off
+            logger.debug(
+                "Console sync tick raced this screen's teardown; nothing to "
+                "render.",
+            )
+            # fmt: on
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
             if self._console_sync_requested:
                 self._console_sync_requested = False
-                self.run_worker(
-                    self._sync_native_console_chat_ui(),
-                    exclusive=True,
-                    group="console-sync",
-                )
+                # A dead screen must not re-arm itself: `run_worker` here
+                # runs AFTER Textual's unmount sweep
+                # (`Widget._on_unmount` -> `workers.cancel_node`), so the
+                # worker it creates is never in the cancelled set and
+                # outlives the screen that owns it.
+                if not _console_screen_is_torn_down(self):
+                    self.run_worker(
+                        self._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
 
     async def _sync_console_native_session_tabs(self) -> None:
         """Refresh native Console session tabs from store state."""
@@ -13975,12 +15291,14 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         store = self._ensure_console_chat_store()
+        defaults = self._session._default_console_session_settings()
         store.ensure_session(
             title=self._workspace._console_initial_session_title_for_workspace(
                 store.workspace_context.active_workspace_id
             ),
             workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._session._default_console_session_settings(),
+            settings=defaults,
+            canonical_settings_baseline=defaults,
         )
         self._session._ensure_active_console_session_settings()
         controller = getattr(self, "_console_chat_controller", None)
@@ -13988,14 +15306,29 @@ class ChatScreen(BaseAppScreen):
             controller.streaming_session_id() if controller is not None else None
         )
         sessions = store.sessions()
+        # PR3a-2 Task 4: viewing IS the clear -- the active session's
+        # conversation carrying the durable unseen-completion mark means
+        # the user is now looking at the conversation the badge points to,
+        # so the mark (and with it every surface it drives) is cleared
+        # through the named seam. Guarded by the cached set first, so the
+        # common no-mark tick costs no DB access.
         # Parallel-agents spec PA-T8: per-session fleet marker (RUNNING /
         # NEEDS_APPROVAL / FINISHED_OK / FINISHED_FAILED), superseding the
         # legacy single-session `streaming_session_id` cursor above for tabs
         # that have a controller -- `run_marker_for` already derives RUNNING
         # from the same live-busy definition `streaming_session_id` used, so
         # this is a strict superset, not a second notion of "in-flight".
-        run_markers = (
-            {session.id: controller.run_marker_for(session.id) for session in sessions}
+        # PR3a-2 Task 4 threads the durable unseen-completion mark in as
+        # the lowest-precedence marker (`_console_run_marker_with_unseen`).
+        run_markers = self._fleet.prepare_session_run_markers(
+            tuple(sessions),
+            store.active_session_id,
+        )
+        queue_counts = (
+            {
+                session.id: controller.activity_for(session.id).queued_count
+                for session in sessions
+            }
             if controller is not None
             else None
         )
@@ -14005,6 +15338,7 @@ class ChatScreen(BaseAppScreen):
             active_session_id=store.active_session_id,
             streaming_session_id=streaming_session_id,
             run_markers=run_markers,
+            queue_counts=queue_counts,
         )
 
     async def _append_native_console_system_message(
@@ -14025,7 +15359,7 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_chat_ui()
             controller = self._console_chat_controller
             if controller is None:
-                self._invalidate_console_persisted_rows_cache()
+                self._workspace._invalidate_console_persisted_rows_cache()
                 self._stop_console_transcript_sync_timer()
                 return
             # Fix round 1 / Critical 1 (parallel-agents spec PA-T8 review):
@@ -14051,15 +15385,35 @@ class ChatScreen(BaseAppScreen):
             # TASK-251's TTL cache exists to prevent; the resulting bound
             # on staleness is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`
             # (2s), the documented backstop for exactly this gap.
+            # task-15862: a wake delivery scheduled but not yet busy (the
+            # coordinator's `_delivering` is set synchronously BEFORE its
+            # asyncio task first runs) must not let a poll beat in that gap
+            # self-stop -- the wake turn would then stream with no poll and
+            # freeze exactly as before the delivery hook existed.
+            wake = getattr(controller, "fleet_wake", None)
+            delivering_read = getattr(wake, "delivering_conversation_id", None)
+            wake_delivering = (
+                callable(delivering_read) and delivering_read() is not None
+            )
             if (
                 controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
                 and controller.in_flight_run_count() == 0
+                and not wake_delivering
             ):
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
                 # the browser promptly instead of waiting out the TTL.
-                self._invalidate_console_persisted_rows_cache()
+                self._workspace._invalidate_console_persisted_rows_cache()
                 self._stop_console_transcript_sync_timer()
+                # PR3a-2 Task 4 (task-15664): this stop edge is EXACTLY
+                # where the UI used to go blind on a surviving sub-agent
+                # -- no run occupies a slot, so this poll dies while a
+                # child is still working and nothing repaints its elapsed
+                # segment, the tab glyphs, or (on settle) the unseen
+                # badge. Hand off to the 1s survivor tick, which runs only
+                # while a drain is still owed and stops itself after one
+                # final paint.
+                self._fleet._maybe_start_console_fleet_survivor_tick()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
         self._record_ui_timer_created("console-transcript-sync")
@@ -14072,6 +15426,8 @@ class ChatScreen(BaseAppScreen):
         finally:
             self._record_ui_timer_stopped("console-transcript-sync")
             self._console_transcript_sync_timer = None
+
+    # -- PR3a-2 Task 4 (task-15664): the survivor tick ---------------------
 
     async def _submit_console_native_draft(
         self, draft: str, session_id: str | None = None
@@ -14086,6 +15442,16 @@ class ChatScreen(BaseAppScreen):
         # behavior for the (overwhelmingly common) single-session case.
         if session_id is None:
             session_id = controller.store.active_session_id or ""
+        dispatch_composer = self._console_composer_or_none()
+        dispatch_draft_revision = (
+            (
+                dispatch_composer.edit_serial,
+                dispatch_composer.capture_draft_snapshot().generation,
+            )
+            if dispatch_composer is not None
+            and self._console_visible_draft_session_id == session_id
+            else None
+        )
         task = asyncio.current_task()
         if task is not None:
             # See `_on_console_submission_accepted`: it fires synchronously
@@ -14105,7 +15471,7 @@ class ChatScreen(BaseAppScreen):
             # racing the scheduling gap between `run_worker(...)` and this
             # coroutine body actually running could submit into whichever
             # session the user switched TO instead of the dispatching one.
-            result = await controller.submit_draft(draft, session_id=session_id)
+            result = await controller.run_prompt_chain(draft, session_id=session_id)
         except Exception:
             # An unexpected submit crash must not eat the keypress-cleared
             # draft — and must not escape the worker (exit_on_error would
@@ -14125,7 +15491,7 @@ class ChatScreen(BaseAppScreen):
         # TASK-251: a submit may have created/updated a persisted
         # conversation (title, updated_at) -- invalidate so the browser
         # reflects it on the very next sync instead of the TTL window.
-        self._invalidate_console_persisted_rows_cache()
+        self._workspace._invalidate_console_persisted_rows_cache()
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
@@ -14180,6 +15546,14 @@ class ChatScreen(BaseAppScreen):
             result.should_clear_draft
             and composer_visible_for_session
             and inflight_stash is None
+            and (
+                dispatch_draft_revision is None
+                or (
+                    composer.edit_serial,
+                    composer.capture_draft_snapshot().generation,
+                )
+                == dispatch_draft_revision
+            )
         ):
             # Stashed sends were cleared at the keypress — clearing again
             # here would eat keystrokes typed after Enter (the next draft).
@@ -14413,7 +15787,45 @@ class ChatScreen(BaseAppScreen):
         else:
             parse = CommandParse(kind=KIND_NOT_COMMAND)
 
-        if parse.kind in (KIND_COMMAND, KIND_FALLBACK):
+        argument_free_rewind = (
+            parse.kind == KIND_COMMAND
+            and parse.name == REWIND_COMMAND_NAME
+            and parse.args == ""
+        )
+        if argument_free_rewind:
+            self._console_unknown_send_armed = None
+            opening_composer = composer if stash is None else None
+            opening_revision = None
+            if opening_composer is not None:
+                opening_revision = (
+                    opening_composer.edit_serial,
+                    opening_composer.capture_draft_snapshot().generation,
+                    draft,
+                )
+            opened = False
+            try:
+                opened = await self._console_command_rewind(parse)
+            finally:
+                if not opened and composer is not None:
+                    composer.restore_stashed_draft(stash)
+            if opened and opening_composer is not None and opening_revision is not None:
+                current = self._console_composer_or_none()
+                current_snapshot = (
+                    current.capture_draft_snapshot()
+                    if current is opening_composer
+                    else None
+                )
+                if (
+                    current is opening_composer
+                    and current.edit_serial == opening_revision[0]
+                    and current_snapshot is not None
+                    and current_snapshot.generation == opening_revision[1]
+                    and current.draft_text() == opening_revision[2]
+                ):
+                    self._clear_console_composer_draft()
+            return False
+
+        if parse.kind == KIND_COMMAND:
             # Commands operate on the live composer draft (`/prompt` replaces
             # it wholesale, unrecognized handlers leave it untouched) — put
             # the stash back first so their semantics stay identical.
@@ -14436,9 +15848,9 @@ class ChatScreen(BaseAppScreen):
             # known-but-blocked command, not an unrecognized one, so a
             # repeated Enter shows the same response again rather than
             # silently falling through to a literal send.
-            context = await self._fetch_console_skill_context()
-            blocked_summaries = self._console_skill_blocked_summaries(context)
-            if await self._console_skill_blocked_match_response(
+            context = await self._skill._fetch_console_skill_context()
+            blocked_summaries = self._skill._console_skill_blocked_summaries(context)
+            if await self._skill._console_skill_blocked_match_response(
                 parse.name, blocked_summaries
             ):
                 if composer is not None:
@@ -14462,88 +15874,10 @@ class ChatScreen(BaseAppScreen):
     async def _dispatch_console_draft_send(
         self, draft: str, stash: "ConsoleDraftStash | None" = None
     ) -> bool:
-        """Run the send-blocked/readiness gate, then queue ``draft`` as the
-        user turn (the normal-text-send tail, shared with the skill-picker
-        `$name` submit path so both go through the exact same gating).
+        """Compatibility delegate for the one typed queue-aware dispatcher."""
 
-        ``stash`` is the keypress-captured draft of a keyboard send
-        (TASK-340): restored on every blocked path here, handed to the
-        in-flight slot on queue so the accept/refuse sites can consume it.
-
-        Returns:
-            ``True`` once the submit has actually been queued via
-            ``run_worker`` (a caller-visible "this is really going out"
-            signal); ``False`` when blocked or when a run is already in
-            progress, in which case nothing is queued and an explanatory
-            row/toast was already shown.
-        """
-        if blocked_reason := self._console_send_blocked_reason():
-            self._restore_console_send_stash(stash)
-            setup_blocked_reason = self._console_setup_blocked_reason()
-            if setup_blocked_reason and not blocked_reason.startswith(
-                "Console send blocked: Library Search/RAG"
-            ):
-                await self._append_native_console_system_message(setup_blocked_reason)
-                self.app_instance.notify(
-                    setup_blocked_reason,
-                    severity="warning",
-                )
-                self._focus_console_composer_if_needed(force=True)
-                return False
-            await self._append_native_console_system_message(blocked_reason)
-            self._focus_console_composer_if_needed(force=True)
-            return False
-        controller = self._ensure_console_chat_controller()
-        # Task 4 (D2 fix wave): resolve/create the session to submit into
-        # HERE, before `target_session_id` is read, rather than leaving that
-        # as an implicit side effect of the `_console_send_blocked_reason()`
-        # call above (which happens to already do this via
-        # `_active_console_settings_readiness` -> `_ensure_active_console_
-        # session_settings`, whenever it doesn't return early). Making the
-        # call explicit means a fresh profile's FIRST send never keys the
-        # stash map / worker group / double-send gate below on `""` even if
-        # that upstream call's own internals ever change -- the invariant
-        # is asserted right at the point that matters, not inherited
-        # incidentally from an unrelated gate a few lines up. This is a
-        # synchronous call (no `await` before `target_session_id` is read),
-        # so there is no scheduling gap for the store's active session to
-        # change out from under it.
-        self._session._ensure_active_console_session_settings()
-        # Fix round 1 (minor): normalize the same way the controller side
-        # already does (`store.active_session_id or ""`) -- `None` is a
-        # valid (if unlikely, post-mount) dict key, but every other
-        # per-session map in this train keys on the normalized string, so
-        # a stray `None` here would silently start a SEPARATE bucket for
-        # "no session" instead of colliding predictably. After the call
-        # above, this is never actually `""` for a real send -- the `or ""`
-        # stays only as a defensive normalization, not a live code path.
-        target_session_id = controller.store.active_session_id or ""
-        refusal = controller.send_refusal_copy(target_session_id)
-        if refusal:
-            self._restore_console_send_stash(stash)
-            self.app_instance.notify(refusal, severity="warning")
-            return False
-        # Task 3b: keyed by THIS dispatch's own session -- a bare `= stash`
-        # assignment (the old singular slot) would let a DIFFERENT
-        # session's concurrent dispatch either clobber this entry with its
-        # own stash, or wipe it to None before this session's worker ever
-        # reads it (Task 3 made two dispatches genuinely interleave).
-        if stash is not None:
-            self._console_inflight_send_stashes[target_session_id] = stash
-        else:
-            self._console_inflight_send_stashes.pop(target_session_id, None)
-        self._note_console_follow_intent()
-        # group=f"console-run-{session_id}": a PER-SESSION group (parallel-
-        # agents spec Sec2) so UI-sync kicks -- and sends in OTHER sessions --
-        # can never cancel this session's in-flight run (TASK-228 originated
-        # the dedicated group; scoping it per session keeps concurrent
-        # sessions' exclusive workers from cancelling each other).
-        self.run_worker(
-            self._submit_console_native_draft(draft, target_session_id),
-            exclusive=True,
-            group=f"console-run-{target_session_id}",
-        )
-        return True
+        result = await self._prompt_queue.dispatch(draft, stash=stash)
+        return result.status is not ConsolePromptDispatchStatus.REFUSED
 
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
@@ -14572,11 +15906,15 @@ class ChatScreen(BaseAppScreen):
         PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
         SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
+        FEWER_PERMISSION_PROMPTS_COMMAND_NAME: (
+            FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID
+        ),
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
         GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
         GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
         STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
+        RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -14596,17 +15934,8 @@ class ChatScreen(BaseAppScreen):
 
         A ``handler_id`` that resolves to nothing (an unrecognized command
         name) is consumed silently: nothing is sent and the draft is left
-        untouched. The ``KIND_FALLBACK`` branch below is dead code as of
-        the hard removal (Task 4 of the `$`-mention migration): no caller
-        registers a fallback resolver anymore, so
-        ``self._console_command_registry.parse`` never produces that kind.
-        Kept only because the grammar's generic
-        ``register_fallback_resolver`` extension point itself is not being
-        removed -- a future caller could still register one.
+        untouched.
         """
-        if parse.kind == KIND_FALLBACK:
-            await self._console_command_run_skill(parse.name, parse.args)
-            return
         handler_id = self._CONSOLE_COMMAND_NAME_TO_HANDLER_ID.get(parse.name)
         # F5 (task-9 review): the composer-menu entry that BUILDS a
         # /generate-image draft was gated, but typing (or pasting) the
@@ -14636,11 +15965,15 @@ class ChatScreen(BaseAppScreen):
             "insert-prompt": self._console_command_insert_prompt,
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
+            FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID: (
+                self._console_command_fewer_permission_prompts
+            ),
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
             GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
             GENERATE_VIDEO_COMMAND_HANDLER_ID: self._console_command_generate_video,
             STREAM_VIDEO_COMMAND_HANDLER_ID: self._console_command_stream_video,
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
+            RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -14854,803 +16187,150 @@ class ChatScreen(BaseAppScreen):
             )
         return
 
-    def _console_imagegen_inflight_sessions(self) -> set[str]:
-        """Return the lazily-created set of sessions with a batch in flight.
+    async def _console_command_research(self, parse: CommandParse) -> None:
+        """``/research <question>``: launch a local deep-research run whose
+        completed report is delivered back into THIS conversation (task-16481).
 
-        Not initialized in ``__init__`` — mirrors the getattr/setdefault
-        pattern the composer/store use for other screen-owned, purely
-        in-memory bookkeeping — so `/generate-image` never assumes it ran
-        during construction.
+        The run executes in a worker; the handoff inserts an assistant
+        message on completion, and the existing terminal-run notification
+        remains the fallback when insertion is impossible.
         """
-        sessions = getattr(self, "_imagegen_inflight_sessions", None)
-        if sessions is None:
-            sessions = set()
-            self._imagegen_inflight_sessions = sessions
-        return sessions
+        from tldw_chatbook.UI.Console_Modules.research_command import (
+            parse_research_command,
+        )
 
-    def _console_imagegen_inflight_message_ids(self) -> set[str]:
-        """Return the lazily-created set of messages with a regenerate-append in flight.
-
-        Mirrors ``_console_imagegen_inflight_sessions``'s lazy
-        getattr/setdefault pattern but keyed by MESSAGE id, not session id:
-        the regenerate (``♻``) action appends one variant to a single
-        generation message, and this guard must not block regenerate on one
-        message in a session while another message in the same session is
-        still generating.
-        """
-        message_ids = getattr(self, "_imagegen_inflight_message_ids", None)
-        if message_ids is None:
-            message_ids = set()
-            self._imagegen_inflight_message_ids = message_ids
-        return message_ids
-
-    def _console_generate_image_conversation_pairs(
-        self, store: Any, session_id: str
-    ) -> list[tuple[str, str]]:
-        """Return the session's completed, non-empty messages as ``(role, content)``.
-
-        Feeds `prepare_generation_request`'s no-prompt "generate from
-        conversation" path. The just-typed ``/generate-image`` invocation
-        itself is never in this list -- command dispatch intercepts before
-        the composer draft is ever appended to the store as a message.
-        """
-        return [
-            (
-                message.role.value
-                if hasattr(message.role, "value")
-                else str(message.role),
-                message.content,
-            )
-            for message in store.messages_for_session(session_id)
-            if message.status == "complete"
-            and message.content
-            and message.content.strip()
-        ]
-
-    async def _console_generate_image_llm_context_options(
-        self, cfg: Any
-    ) -> LLMContextOptions:
-        """Resolve the LLM-composed conversation-context path's config +
-        active provider identity (Task-559 AC1).
-
-        Mirrors how a normal Console chat send resolves provider/model --
-        `_build_console_provider_selection` + `ConsoleProviderGateway.
-        resolve_for_send` -- rather than inventing new resolution logic, so
-        `/generate-image` with no prompt always composes against whatever
-        provider+model the session is actually configured to chat with,
-        including llama.cpp's bounded ``/health`` reachability probe
-        (`ConsoleProviderGateway._is_reachable`, capped at
-        ``PROBE_TIMEOUT_SECONDS`` -- NOT config/env-only for that provider;
-        every other provider's resolution IS config/env-only). Calling it
-        directly on the UI loop here matches exactly what a normal Console
-        send already does at this same point; the resulting
-        `LLMContextOptions` is what later runs the ACTUAL (potentially
-        slow/blocking) LLM call off the UI loop, inside
-        `asyncio.to_thread(prepare_generation_request, ...)`.
-
-        Never raises -- any failure resolving the provider (an unexpected
-        exception from the gateway) degrades to a not-ready
-        `LLMContextOptions`, which `compose_llm_context_prompt` treats
-        exactly like "no provider configured": skip straight to the
-        keyword extractor. The config kill-switch
-        (`cfg.context_llm_enabled`) is checked first so a disabled session
-        never even attempts the (cheap but still not free) provider
-        resolution.
-
-        Args:
-            cfg: The current `ImageGenerationConfig`
-                (`Image_Generation.config.get_image_generation_config`).
-
-        Returns:
-            An `LLMContextOptions` ready to hand to
-            `prepare_generation_request`.
-        """
-        if not cfg.context_llm_enabled:
-            return LLMContextOptions(
-                enabled=False,
-                turns=cfg.context_llm_turns,
-                timeout_seconds=cfg.context_llm_timeout_seconds,
-                provider_ready=False,
-            )
         try:
-            selection = self._build_console_provider_selection()
-            gateway = self._ensure_console_provider_gateway()
-            resolution = await gateway.resolve_for_send(selection)
-        except Exception as exc:  # noqa: BLE001 - graceful fallback is load-bearing here
-            logger.debug(
-                f"generate-image: provider resolution for LLM context failed: {exc!r}"
+            intent = parse_research_command(parse.args or "")
+        except ValueError as usage_error:
+            await self._append_native_console_system_message(
+                f"/research: {usage_error}"
             )
-            return LLMContextOptions(
-                enabled=True,
-                turns=cfg.context_llm_turns,
-                timeout_seconds=cfg.context_llm_timeout_seconds,
-                provider_ready=False,
+            return
+        question = intent.question
+        source_policy = intent.source_policy
+        provider_overrides = intent.provider_overrides()
+        conversation_id = self._current_console_conversation_id()
+        if not conversation_id:
+            await self._append_native_console_system_message(
+                "Deep research needs an active conversation to deliver its report into."
             )
-        return LLMContextOptions(
-            enabled=True,
-            turns=cfg.context_llm_turns,
-            timeout_seconds=cfg.context_llm_timeout_seconds,
-            provider_ready=resolution.ready,
-            api_endpoint=resolution.execution_key or None,
-            model=resolution.model,
-            api_key=resolution.api_key,
+            return
+        app = self.app
+        local_service = getattr(app, "local_research_service", None)
+        if local_service is None:
+            await self._append_native_console_system_message(
+                "Local research service is unavailable; cannot start a run."
+            )
+            return
+
+        from tldw_chatbook.Research_Interop.chat_handoff import (
+            insert_research_completion_message,
+        )
+        from tldw_chatbook.Research_Interop.local_research_engine import (
+            LocalResearchEngine,
+        )
+
+        search_params: dict = {}
+        paper_search_fn = None
+        try:
+            from tldw_chatbook.Tools.web_tool_impls import deep_search_pipeline_params
+
+            search_params = deep_search_pipeline_params()
+            if getattr(app, "research_window_academic_enabled", False):
+                from tldw_chatbook.Research_Interop.academic_providers import (
+                    search_papers,
+                )
+
+                paper_search_fn = search_papers
+        except Exception:
+            pass
+
+        db = getattr(app, "chachanotes_db", None)
+
+        async def _run_research() -> None:
+            launch_kwargs: dict = {
+                "query": question,
+                "chat_handoff": {
+                    "conversation_id": conversation_id,
+                    "origin": "console",
+                },
+                "source_policy": source_policy,
+            }
+            if provider_overrides:
+                launch_kwargs["provider_overrides"] = provider_overrides
+            engine = LocalResearchEngine(
+                local_service,
+                search_params=search_params,
+                paper_search_fn=paper_search_fn,
+                completion_handoff=(
+                    (lambda payload: insert_research_completion_message(db, payload))
+                    if db is not None
+                    else None
+                ),
+            )
+            try:
+                # TASK-21105 review fix: launch_run is the store's FIRST USE
+                # now that the research DB opens lazily, so a corrupt or
+                # unreadable database raises HERE rather than at app boot
+                # (where construction failure used to null the service and
+                # trip the unavailable-guard above). It must sit inside the
+                # worker's guard: this worker runs with Textual's default
+                # exit_on_error=True, so an unhandled raise tears down the
+                # whole app.
+                run = local_service.launch_run(**launch_kwargs)
+                await engine.execute_run(run["id"])
+            except Exception as exc:  # noqa: BLE001 - worker must not crash the screen
+                logger.warning(f"Console research run failed: {exc}")
+
+        self.run_worker(
+            _run_research(),
+            group="console-research",
+            exclusive=False,
+            description=f"Console research: {question[:60]}",
+        )
+        policy_note = (
+            f" [policy: {source_policy}]" if source_policy != "balanced" else ""
+        )
+        await self._append_native_console_system_message(
+            f"Deep research started: {question}{policy_note}\n"
+            "The report will be added to this conversation when the run "
+            "completes."
         )
 
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
-        """Resolve and run one `/generate-image` batch.
-
-        Grammar: ``[:backend] [@style] <prompt>`` (tokens in any order), or
-        no prompt at all to generate from the session's conversation
-        context. `prepare_generation_request` (`Chat/console_generate_image.py`)
-        owns all of that decision logic -- style-token resolution, prompt
-        composition against a template, and the conversation-context
-        fallback (optionally LLM-composed, Task-559 AC1) -- so it stays
-        independently unit-testable; this handler just executes its result.
-
-        Refusals (a `GenerationRefusal` from `prepare_generation_request`,
-        no resolvable/configured backend, or a batch already running for
-        this session) leave the composer draft untouched, mirroring
-        `/system`'s no-system-part behavior, and never touch the store.
-        Once a batch is actually going to run the draft is cleared up front
-        (this IS the "successful dispatch" point — not "successful
-        generation"): the blocking batch loop (`run_generation_batch`) then
-        runs off the UI loop via `asyncio.to_thread`, exactly like
-        `_prep_console_images`. On the zero-success path the original draft
-        is restored so the user can edit and retry -- and the same restore
-        happens if `run_generation_batch` RAISES outright instead of
-        returning a zero-success `BatchResult` (an `except Exception`
-        around the whole batch call/append/sync sequence; the failure is
-        reported as a system message either way). One or more successes
-        append a single generation message via
-        `ConsoleChatStore.append_generation_message` with a trailing
-        partial status line when some variants failed. The in-flight guard
-        is always cleared in a `finally`, so a crashed/cancelled batch
-        never wedges the session against further `/generate-image`
-        commands.
-
-        `prepare_generation_request` itself now also runs via
-        `asyncio.to_thread` (not called directly on the UI loop, unlike
-        before this AC): on the no-prompt path it may attempt an LLM call
-        (`compose_llm_context_prompt`) to compose a richer prompt from
-        conversation context, which is blocking network I/O and must never
-        run on the event loop -- exactly the same offloading rule
-        `run_generation_batch` already follows below. The provider identity
-        for that call is resolved first, on the loop, via
-        `_console_generate_image_llm_context_options` -- the same cheap
-        resolution a normal Console send does at this point (config/env
-        for most providers; llama.cpp additionally does its own bounded
-        ``/health`` reachability probe there, same as a normal send).
-        """
-        args = parse_generate_image_args(parse.args)
-        store = self._ensure_console_chat_store()
-        session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._session._default_console_session_settings(),
-        )
-        conversation_pairs = self._console_generate_image_conversation_pairs(
-            store, session.id
-        )
-        cfg = get_image_generation_config()
-        llm_context: LLMContextOptions | None = None
-        if not args.prompt.strip():
-            llm_context = await self._console_generate_image_llm_context_options(cfg)
-        prepared: PreparedGeneration | GenerationRefusal = await asyncio.to_thread(
-            prepare_generation_request, args, conversation_pairs, llm_context
-        )
-        if isinstance(prepared, GenerationRefusal):
-            # Task 4 (background-write audit): every append below threads
-            # `session_id=session.id` explicitly -- this handler already
-            # spans real await gaps (the two `asyncio.to_thread` calls
-            # above/below), and `session` is this batch's owning session,
-            # captured once at the top. Re-resolving "active" implicitly
-            # (the old behavior) would misattribute the outcome to whatever
-            # session the user switched to while the batch was running.
-            await self._append_native_console_system_message(
-                prepared.reason, session_id=session.id
-            )
-            return
-        backend = args.backend or cfg.default_backend
-        if not backend:
-            await self._append_native_console_system_message(
-                "No image generation backend configured. Set "
-                "[image_generation].default_backend, or use "
-                "/generate-image :backend <prompt>.",
-                session_id=session.id,
-            )
-            return
-        catalog = list_image_models_for_catalog()
-        entry = next((item for item in catalog if item.get("name") == backend), None)
-        if entry is None or not entry.get("is_configured"):
-            await self._append_native_console_system_message(
-                f"Image backend '{backend}' is not enabled/configured. "
-                "Check [image_generation] settings.",
-                session_id=session.id,
-            )
-            return
-        inflight = self._console_imagegen_inflight_sessions()
-        if session.id in inflight:
-            await self._append_native_console_system_message(
-                "An image generation is already running for this session.",
-                session_id=session.id,
-            )
-            return
-        inflight.add(session.id)
-        # Capture draft before clearing so we can restore it on zero-success.
-        composer = self._console_composer_or_none()
-        saved_draft = composer.draft_text() if composer is not None else ""
-        self._clear_console_composer_draft()
-        try:
-            count = clamp_initial_batch(cfg.default_batch, cfg.max_variants_per_message)
-            batch = await asyncio.to_thread(
-                run_generation_batch,
-                backend=backend,
-                prompt=prepared.prompt,
-                negative_prompt=prepared.negative_prompt,
-                seed=None,
-                count=count,
-                style_name=prepared.style_name,
-                width=prepared.width,
-                height=prepared.height,
-                steps=prepared.steps,
-                cfg_scale=prepared.cfg_scale,
-            )
-            if not batch.successes:
-                # Restore the saved draft so the user can edit and retry.
-                if composer is not None and saved_draft:
-                    composer.clear_draft()
-                    composer.insert_text_as_paste(saved_draft)
-                detail = "; ".join(batch.errors) or "unknown error"
-                await self._append_native_console_system_message(
-                    f"Image generation failed: {detail}", session_id=session.id
-                )
-                return
-            store.append_generation_message(
-                session.id,
-                content=generation_content_marker(prepared.prompt),
-                variants=batch.successes,
-                persist=True,
-            )
-            if len(batch.successes) < count:
-                store.append_message(
-                    session.id,
-                    role=ConsoleMessageRole.SYSTEM,
-                    content=(
-                        f"{len(batch.successes)}/{count} generated "
-                        f"({'; '.join(batch.errors)})"
-                    ),
-                )
-            await self._sync_native_console_chat_ui()
-        except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare app crash
-            # task-558: `run_generation_batch` itself raising (as opposed to
-            # catching a per-variant failure and returning it in
-            # `batch.errors`, the zero-success path above) used to propagate
-            # straight past the draft-restore logic -- the user's typed
-            # prompt was gone with no way to recover it. Mirrors the
-            # zero-success restore exactly.
-            if composer is not None and saved_draft:
-                composer.clear_draft()
-                composer.insert_text_as_paste(saved_draft)
-            logger.opt(exception=True).error(
-                f"Image generation batch raised for session {session.id}: {exc}"
-            )
-            await self._append_native_console_system_message(
-                f"Image generation failed: {exc}", session_id=session.id
-            )
-        finally:
-            inflight.discard(session.id)
+        """Delegate the registry-bound image command to its controller."""
+        await self._image._console_command_generate_image(parse)
 
     # -- /generate-video (task-3401.5) --------------------------------------
 
-    def _console_videogen_inflight_sessions(self) -> set[str]:
-        """Per-session guard mirroring ``_console_imagegen_inflight_sessions``."""
-        inflight = getattr(self, "_console_videogen_inflight", None)
-        if inflight is None:
-            inflight = set()
-            self._console_videogen_inflight = inflight
-        return inflight
-
-    def _console_videogen_cancel_events(self) -> dict[str, "threading.Event"]:
-        """Session id -> cancel event for the in-flight video generation."""
-        events = getattr(self, "_console_videogen_cancels", None)
-        if events is None:
-            events = {}
-            self._console_videogen_cancels = events
-        return events
-
-    def _ensure_console_video_store(self) -> VideoStore:
-        """Return the Console VideoStore, driving the ADR-044 startup sweep once.
-
-        ``session`` retention wipes last run's files; ``ttl`` applies its
-        age/cap. A sweep failure degrades to "every video renders expired",
-        never a boot-time crash.
-        """
-        store = getattr(self, "_console_video_store", None)
-        if store is None:
-            store = VideoStore()
-            self._console_video_store = store
-            try:
-                store.enforce_retention()
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Console video store retention sweep failed."
-                )
-        return store
-
-    def _build_video_card_specs(
-        self, messages
-    ) -> dict[str, ConsoleVideoCardSpec]:
-        """Build video-generation card payloads, resolving each slug to its file.
-
-        A message whose file is missing (restart/expiry/LRU eviction) stays
-        in the map as an ``"expired"`` tombstone spec -- the card renders
-        the named tombstone instead of dropping the row (ADR-044).
-        """
-        store = self._ensure_console_video_store()
-        specs: dict[str, ConsoleVideoCardSpec] = {}
-        for message in messages:
-            meta = getattr(message, "video_metadata", None)
-            if meta is None:
-                continue
-            path = store.resolve(message.id, meta.name)
-            specs[message.id] = ConsoleVideoCardSpec(
-                message_id=message.id,
-                meta=meta,
-                status="ready" if path is not None else "expired",
-                file_path=str(path) if path is not None else None,
-            )
-        return specs
-
     async def _console_command_generate_video(self, parse: CommandParse) -> None:
-        """Resolve and run one ``/generate-video`` generation (task-3401.5).
+        """Delegate the registry-bound video command to its controller."""
+        await self._video._console_command_generate_video(parse)
 
-        Mirrors ``_console_command_generate_image``: refusals leave the
-        composer draft untouched and never touch the store; the draft clears
-        on dispatch and is restored on failure; the blocking generation runs
-        via ``asyncio.to_thread``; the in-flight guard and cancel event are
-        always cleared in a ``finally`` so a crashed/cancelled run never
-        wedges the session. Cancellation is cooperative: the composer's Stop
-        button (visible while a video generation is in flight) sets the
-        event the MiniMax adapter polls.
-        """
-        from uuid import uuid4
-
-        args = parse_generate_video_args(parse.args)
-        store = self._ensure_console_chat_store()
-        session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._session._default_console_session_settings(),
+    async def _wait_for_console_screen_result(self, screen) -> Any:
+        """Wait for a Console modal through a non-exclusive Textual worker."""
+        worker = self.run_worker(
+            self.app_instance.push_screen_wait(screen),
+            exclusive=False,
+            exit_on_error=False,
         )
-        if not args.prompt:
-            await self._append_native_console_system_message(
-                GENERATE_VIDEO_USAGE_TEXT, session_id=session.id
-            )
-            return
-        # @style resolution (task-3401.12): an unknown style refuses with
-        # the available catalog; a resolved style composes the prompt and
-        # contributes duration/fps/ratio defaults.
-        style_params: dict = {}
-        prompt_text = args.prompt
-        negative_text: str | None = None
-        if args.style is not None:
-            from tldw_chatbook.Video_Generation.video_templates import (
-                apply_video_template,
-                get_all_video_templates,
-                get_video_template,
-            )
+        return await worker.wait()
 
-            template = get_video_template(args.style)
-            if template is None:
-                available = ", ".join(sorted(get_all_video_templates()))
-                await self._append_native_console_system_message(
-                    f"Unknown video style '@{args.style}' — available: {available}.",
-                    session_id=session.id,
-                )
-                return
-            prompt_text, negative_text = apply_video_template(template, args.prompt)
-            style_params = dict(template.default_params)
-        cfg = get_video_generation_config()
-        backend = args.backend or cfg.default_backend
-        if not backend:
-            await self._append_native_console_system_message(
-                "No video generation backend configured. Set "
-                "[video_generation].default_backend, or use "
-                "/generate-video :backend <prompt>.",
-                session_id=session.id,
-            )
-            return
-        from tldw_chatbook.Video_Generation.adapter_registry import (
-            get_registry as _get_video_registry,
-        )
-
-        if _get_video_registry().resolve_backend(backend) is None:
-            await self._append_native_console_system_message(
-                f"Video backend '{backend}' is not enabled. Check "
-                "[video_generation].enabled_backends.",
-                session_id=session.id,
-            )
-            return
-        # Cost-confirm gate (AC: paid backends only, settings-toggleable).
-        if cfg.confirm_cost_estimate and is_paid_backend(backend):
-            from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
-                CancelConfirmationDialog,
-            )
-
-            confirmed = await self.push_screen_wait(
-                CancelConfirmationDialog(
-                    title="Generate video?",
-                    message=estimate_video_cost_text(
-                        backend, style_params.get("duration_seconds")
-                    ),
-                    confirm_text="Generate",
-                    cancel_text="Cancel",
-                )
-            )
-            if not confirmed:
-                return
-        inflight = self._console_videogen_inflight_sessions()
-        if session.id in inflight:
-            await self._append_native_console_system_message(
-                "A video generation is already running for this session.",
-                session_id=session.id,
-            )
-            return
-        inflight.add(session.id)
-        # Capture draft before clearing so we can restore it on failure.
-        composer = self._console_composer_or_none()
-        saved_draft = composer.draft_text() if composer is not None else ""
-        self._clear_console_composer_draft()
-        cancel_event = threading.Event()
-        self._console_videogen_cancel_events()[session.id] = cancel_event
-        message_id = str(uuid4())
-        await self._append_native_console_system_message(
-            f"⏳ Generating video on {backend}… (Stop cancels)",
-            session_id=session.id,
-        )
-        try:
-            meta, _path = await asyncio.to_thread(
-                run_video_generation,
-                backend=backend,
-                prompt=prompt_text,
-                negative_prompt=negative_text or None,
-                duration_seconds=style_params.get("duration_seconds"),
-                fps=style_params.get("fps"),
-                ratio=style_params.get("ratio"),
-                message_id=message_id,
-                cancel_event=cancel_event,
-                video_store=self._ensure_console_video_store(),
-            )
-            store.append_video_message(
-                session.id,
-                video_metadata=meta,
-                persist=True,
-                message_id=message_id,
-            )
-            await self._sync_native_console_chat_ui()
-        except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare crash
-            if composer is not None and saved_draft:
-                composer.clear_draft()
-                composer.insert_text_as_paste(saved_draft)
-            logger.opt(exception=True).error(
-                f"Video generation raised for session {session.id}: {exc}"
-            )
-            await self._append_native_console_system_message(
-                f"Video generation failed: {exc}", session_id=session.id
-            )
-        finally:
-            inflight.discard(session.id)
-            self._console_videogen_cancel_events().pop(session.id, None)
-
-    async def _play_console_video(self, message_id: str) -> None:
-        """Open the ephemeral video file with the OS default player (v1).
-
-        The in-app player screens land with tasks 3401.9/.10; until then the
-        honest playback path is the system player. A missing file (tombstone)
-        re-syncs so the card renders expired, then reports.
-        """
+    def _open_video_with_os(path: Path) -> None:
+        """Launch a video path with the platform default player."""
         import subprocess
         import sys
 
-        store = self._ensure_console_chat_store()
-        try:
-            message = store.get_message(message_id)
-        except KeyError:
-            self.app_instance.notify(
-                "Console message no longer exists.", severity="warning"
-            )
-            return
-        meta = getattr(message, "video_metadata", None)
-        if meta is None:
-            return
-        path = self._ensure_console_video_store().resolve(message.id, meta.name)
-        if path is None:
-            await self._sync_native_console_chat_ui()
-            self.app_instance.notify(
-                "The ephemeral video file is gone — regenerate to recreate it.",
-                severity="warning",
-            )
-            return
-        # task-3401.10: the modal player screen is the real playback surface
-        # (audio + sync + seek); the OS player remains as the fallback when
-        # ffmpeg/ffplay are not installed (with one guidance notice).
-        from tldw_chatbook.Media_Playback.player_pipeline import (
-            playback_tools_available,
-        )
-
-        tools_ok, guidance = playback_tools_available()
-        if tools_ok:
-            from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
-
-            self.app_instance.push_screen(VideoPlayerScreen(str(path), title=meta.name))
-            return
-        self.app_instance.notify(guidance, severity="information")
-        try:
-            if sys.platform == "darwin":
-                subprocess.Popen(["open", str(path)])  # nosec B603 - app-generated path
-            elif sys.platform.startswith("win"):
-                os.startfile(str(path))  # type: ignore[attr-defined]  # nosec B606
-            else:
-                subprocess.Popen(["xdg-open", str(path)])  # nosec B603
-        except Exception as exc:
-            logger.opt(exception=True).warning(f"Console video play failed: {exc}")
-            self.app_instance.notify(
-                f"Could not open the video: {exc}", severity="error"
-            )
-
-    async def _save_console_video_copy(self, message_id: str) -> None:
-        """Copy the ephemeral video file out to the user's save location.
-
-        The ONLY byte escape hatch for the ephemeral model -- always an
-        explicit user act (ADR-044). Mirrors
-        ``_save_console_message_image``'s destination/collision pattern.
-        """
-        import shutil
-
-        from rich.markup import escape as escape_markup
-
-        store = self._ensure_console_chat_store()
-        try:
-            message = store.get_message(message_id)
-        except KeyError:
-            self.app_instance.notify(
-                "Console message no longer exists.", severity="warning"
-            )
-            return
-        meta = getattr(message, "video_metadata", None)
-        if meta is None:
-            return
-        path = self._ensure_console_video_store().resolve(message.id, meta.name)
-        if path is None:
-            await self._sync_native_console_chat_ui()
-            self.app_instance.notify(
-                "The ephemeral video file is gone — regenerate to recreate it.",
-                severity="warning",
-            )
-            return
-
-        def _copy_to_disk() -> "Path":
-            from tldw_chatbook.Utils.path_validation import validate_path_simple
-
-            save_location = validate_path_simple(
-                os.path.expanduser(
-                    get_cli_setting("chat.videos", "save_location", "~/Downloads")
-                )
-            )
-            save_location.mkdir(parents=True, exist_ok=True)
-            target = save_location / f"{meta.name}.mp4"
-            counter = 1
-            while target.exists():
-                target = save_location / f"{meta.name}_{counter}.mp4"
-                counter += 1
-            shutil.copy2(path, target)
-            return target
-
-        try:
-            written = await asyncio.to_thread(_copy_to_disk)
-        except Exception as exc:
-            logger.opt(exception=True).warning("Console save-video copy failed.")
-            self.app_instance.notify(
-                f"Could not save the video: {escape_markup(str(exc))}", severity="error"
-            )
-            return
-        self.app_instance.notify(f"Video saved to {escape_markup(str(written))}")
-
-    async def _regenerate_console_video_message(self, message_id: str) -> None:
-        """Regenerate a video message from its persisted facts (tombstone or not).
-
-        Appends a NEW video message (videos have no variants) rebuilt from
-        the stored ``VideoGenerationMetadata`` -- same backend/prompt/model/
-        shape -- with ``seed`` forced to ``-1`` so the recreation is never a
-        byte-duplicate. The per-session in-flight guard and cancel-event
-        bookkeeping mirror ``_console_command_generate_video`` exactly.
-        """
-        from uuid import uuid4
-
-        store = self._ensure_console_chat_store()
-        try:
-            message = store.get_message(message_id)
-        except KeyError:
-            self.app_instance.notify(
-                "Console message no longer exists.", severity="warning"
-            )
-            return
-        meta = getattr(message, "video_metadata", None)
-        if meta is None:
-            return
-        session_id = store.session_id_for_message(message_id)
-        inflight = self._console_videogen_inflight_sessions()
-        if session_id in inflight:
-            await self._append_native_console_system_message(
-                "A video generation is already running for this session.",
-                session_id=session_id,
-            )
-            return
-        inflight.add(session_id)
-        cancel_event = threading.Event()
-        self._console_videogen_cancel_events()[session_id] = cancel_event
-        new_message_id = str(uuid4())
-        try:
-            new_meta, _path = await asyncio.to_thread(
-                run_video_generation,
-                backend=meta.backend,
-                prompt=meta.prompt,
-                negative_prompt=meta.negative_prompt or None,
-                duration_seconds=(
-                    int(meta.duration_seconds) if meta.duration_seconds else None
-                ),
-                fps=int(meta.fps) if meta.fps else None,
-                width=meta.width,
-                height=meta.height,
-                ratio=meta.ratio,
-                seed=-1,
-                model=meta.model,
-                message_id=new_message_id,
-                cancel_event=cancel_event,
-                video_store=self._ensure_console_video_store(),
-            )
-            store.append_video_message(
-                session_id,
-                video_metadata=new_meta,
-                persist=True,
-                message_id=new_message_id,
-            )
-            await self._sync_native_console_chat_ui()
-        except Exception as exc:  # noqa: BLE001 - reported, never a bare crash
-            logger.opt(exception=True).error(
-                f"Video regeneration raised for message {message_id}: {exc}"
-            )
-            await self._append_native_console_system_message(
-                f"Video regeneration failed: {exc}", session_id=session_id
-            )
-        finally:
-            inflight.discard(session_id)
-            self._console_videogen_cancel_events().pop(session_id, None)
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])  # nosec B603
+        elif sys.platform.startswith("win"):
+            os.startfile(str(path))  # type: ignore[attr-defined]  # nosec B606
+        else:
+            subprocess.Popen(["xdg-open", str(path)])  # nosec B603
 
     async def _console_command_stream_video(self, parse: CommandParse) -> None:
-        """Resolve and play one ``/stream-video <url>`` (task-3401.11).
-
-        Resolution (egress-gated redirect walk, yt-dlp subprocess fallback,
-        seekability probe) is blocking network I/O, so it runs via
-        ``asyncio.to_thread``; the player screen opens on success with the
-        stream's seek capability and the AC5 time box. Nothing is written
-        to disk on any path.
-        """
-        url = (parse.args or "").strip()
-        if not url:
-            await self._append_native_console_system_message(
-                "Usage: /stream-video <url>"
-            )
-            return
-        from tldw_chatbook.Media_Playback.stream_resolve import (
-            MAX_STREAM_SECONDS,
-            StreamResolutionError,
-            resolve_stream_url,
-        )
-
-        try:
-            resolution = await asyncio.to_thread(resolve_stream_url, url)
-        except StreamResolutionError as exc:
-            await self._append_native_console_system_message(
-                f"Cannot stream that URL: {exc}"
-            )
-            return
-        except Exception as exc:  # egress refusal or unexpected resolution failure
-            logger.opt(exception=True).warning(f"stream resolution failed: {exc}")
-            await self._append_native_console_system_message(
-                f"Cannot stream that URL: {exc}"
-            )
-            return
-        from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
-
-        self.app_instance.push_screen(
-            VideoPlayerScreen(
-                resolution.final_url,
-                title="stream",
-                seekable=resolution.seekable,
-                max_seconds=MAX_STREAM_SECONDS,
-            )
-        )
-
-    async def _regenerate_console_generation_variant(self, message_id: str) -> None:
-        """Append one new generated variant to an existing generation message.
-
-        This is the generation-message branch of the selected-message
-        regenerate (``♻``) action (Task 8): unlike text regeneration it
-        never creates an LLM sibling turn -- it rebuilds a request from the
-        message's position-0 (canonical) ``GenerationVariantMeta`` -- same
-        backend/prompt/negative/style -- with ``seed`` forced to ``-1`` so
-        the new variant is never a duplicate of the kept image, generates ONE
-        variant off the UI loop (mirroring ``_console_command_generate_image``'s
-        ``asyncio.to_thread(run_generation_batch, ...)`` offload), appends it
-        via ``ConsoleChatStore.append_generation_variant``, and browses to
-        the newly-appended index.
-
-        Refuses with a status line and makes no mutation when a generation
-        is already running for this message, or the message already carries
-        ``[image_generation].max_variants_per_message`` variants. A failed
-        batch (zero successes) leaves the existing message completely
-        untouched, per spec §4 ("a failed append leaves the existing
-        message untouched and reports the error"). The in-flight guard is
-        always cleared in a ``finally``, so a crashed/cancelled batch never
-        wedges this message against further regenerate presses.
-        """
-        store = self._ensure_console_chat_store()
-        try:
-            message = store.get_message(message_id)
-        except KeyError:
-            self.app_instance.notify(
-                "Console message action target no longer exists.",
-                severity="warning",
-            )
-            return
-        if not message.generation_metadata:
-            return
-        inflight = self._console_imagegen_inflight_message_ids()
-        if message_id in inflight:
-            self.app_instance.notify(
-                "An image generation is already running for this message.",
-                severity="warning",
-            )
-            return
-        cfg = get_image_generation_config()
-        if len(message.generation_metadata) >= cfg.max_variants_per_message:
-            self.app_instance.notify(
-                f"Already at the maximum of {cfg.max_variants_per_message} "
-                "variants for this message.",
-                severity="warning",
-            )
-            return
-        inflight.add(message_id)
-        try:
-            base_meta = message.generation_metadata[0]
-            batch = await asyncio.to_thread(
-                run_generation_batch,
-                backend=base_meta.backend,
-                prompt=base_meta.prompt,
-                negative_prompt=base_meta.negative_prompt or None,
-                seed=-1,
-                count=1,
-                style_name=base_meta.style,
-            )
-            if not batch.successes:
-                detail = "; ".join(batch.errors) or "unknown error"
-                self.app_instance.notify(
-                    f"Image regeneration failed: {detail}", severity="error"
-                )
-                return
-            data, mime_type, meta = batch.successes[0]
-            session_id = store.session_id_for_message(message_id)
-            new_position = store.append_generation_variant(
-                session_id,
-                message_id,
-                data=data,
-                mime_type=mime_type,
-                meta=meta,
-                persist=True,
-            )
-            self._console_generation_browse()[message_id] = new_position
-            await self._sync_native_console_chat_ui()
-        finally:
-            inflight.discard(message_id)
+        """Delegate the registry-bound stream command to its controller."""
+        await self._video._console_command_stream_video(parse)
 
     # Preview length used to build `/rewind` menu rows -- collapses the
     # prompt to one line and truncates it (with a trailing ellipsis) via the
@@ -15695,19 +16375,22 @@ class ChatScreen(BaseAppScreen):
         rows.reverse()
         return tuple(rows)
 
-    async def _console_command_rewind(self, parse: CommandParse) -> None:
+    async def _console_command_rewind(self, parse: CommandParse) -> bool:
         """Open the `/rewind` menu over the active session's prior USER prompts.
 
         Collects the active path's USER-turn rows (newest first) and pushes
         `ConsoleRewindModal`; a session with no USER turns yet (or no active
         session at all) is a no-op notify rather than an empty modal.
+
+        Returns:
+            True when the modal opened; False when no USER prompt rows exist.
         """
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         rows = self._console_rewind_prompt_rows(session_id) if session_id else ()
         if not rows:
             self.app_instance.notify("Nothing to rewind.", severity="warning")
-            return
+            return False
 
         async def _apply_choice(choice: "ConsoleRewindChoice | None") -> None:
             await self._apply_console_rewind_choice(session_id, choice)
@@ -15716,6 +16399,7 @@ class ChatScreen(BaseAppScreen):
             ConsoleRewindModal(prompts=rows),
             callback=_apply_choice,
         )
+        return True
 
     async def _apply_console_rewind_choice(
         self, session_id: str, choice: "ConsoleRewindChoice | None"
@@ -15824,314 +16508,39 @@ class ChatScreen(BaseAppScreen):
             composer.clear_draft()
             self._sync_console_command_popup()
 
-
     async def _open_console_system_prompt_editor(self) -> None:
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
         await self._prompts._open_console_system_prompt_editor()
 
-    # ------------------------------------------------------------------
-    # Task 9 (Skills spec, Phase 2), reshaped by the `$`-mention migration
-    # (Task 4 hard removal): `/skills` registered command (bare list /
-    # `$name` run-form hint) + the KIND_UNKNOWN needs-review hint.
-    # Invocation itself is the controller-side `$name` mention.
-    # ------------------------------------------------------------------
-
-    # Bounded skill-search page size for the picker's `skill_search`
-    # callable -- mirrors `_CONSOLE_PROMPT_SEARCH_LIMIT`'s <= 25-row bound.
-    _CONSOLE_SKILL_SEARCH_LIMIT = 25
-
-    async def _fetch_console_skill_context(self) -> Mapping[str, Any]:
-        """Fetch a FRESH ``skills_scope_service.get_context`` payload.
-
-        Used by every list/search/hint path -- always an authoritative
-        fetch, never a cached snapshot.
-        Returns ``{}`` (never raises) when the service is unavailable or the
-        call fails, so callers can treat "no skills" and "service down" the
-        same way: an empty candidate/blocked population.
-        """
-        service = getattr(self.app_instance, "skills_scope_service", None)
-        get_context = getattr(service, "get_context", None)
-        if not callable(get_context):
-            return {}
-        try:
-            context = await get_context(mode="local")
-        except Exception:
-            logger.opt(exception=True).warning("Console skill context fetch failed.")
-            return {}
-        return context if isinstance(context, Mapping) else {}
-
-    @staticmethod
-    def _console_skill_trusted_candidates_from_context(
-        context: Mapping[str, Any],
-    ) -> tuple[SkillCommandCandidate, ...]:
-        """Build the trusted, user-invocable candidate population.
-
-        Scoped to ``user_invocable and not trust_blocked`` (blocked skills
-        are excluded here even though ``get_context``'s own
-        ``available_skills`` should already exclude them -- defensive, since
-        a caller-supplied fake service isn't guaranteed to uphold that).
-        Stably sorted by case-folded name (Task 7 review note) so result
-        order never depends on the backend's own iteration order.
-        """
-        available = (
-            context.get("available_skills") if isinstance(context, Mapping) else None
-        )
-        candidates = [
-            SkillCommandCandidate(
-                name=str(item.get("name")),
-                description=str(item.get("description") or ""),
-            )
-            for item in (available or [])
-            if isinstance(item, Mapping)
-            and item.get("name")
-            and item.get("user_invocable", True)
-            and not item.get("trust_blocked", False)
-        ]
-        candidates.sort(key=lambda candidate: candidate.name.casefold())
-        return tuple(candidates)
-
-    @staticmethod
-    def _console_skill_blocked_summaries(
-        context: Mapping[str, Any],
-    ) -> tuple[Mapping[str, Any], ...]:
-        """Return the needs-review (trust-blocked) skill summaries, named only."""
-        blocked = (
-            context.get("blocked_skills") if isinstance(context, Mapping) else None
-        )
-        return tuple(
-            item
-            for item in (blocked or [])
-            if isinstance(item, Mapping) and item.get("name")
-        )
-
-    async def _refresh_console_skill_candidates(self) -> None:
-        """Refresh the cached trusted-candidate snapshot for the fallback resolver.
-
-        Called on Console mount/resume; the fallback resolver itself always
-        reads through ``self._console_skill_candidates`` via a closure, so
-        updating this attribute is all a refresh needs to do.
-        """
-        context = await self._fetch_console_skill_context()
-        self._console_skill_candidates = (
-            self._console_skill_trusted_candidates_from_context(context)
-        )
-        # Pick up newly-arrived skill entries in an open popup without
-        # waiting for the next keystroke.
-        self._sync_console_command_popup()
-
-    async def _console_skill_search(self, query: str) -> list[Mapping[str, object]]:
-        """Bounded, fresh-fetched trusted-skill search for the skill picker."""
-        context = await self._fetch_console_skill_context()
-        candidates = self._console_skill_trusted_candidates_from_context(context)
-        normalized_query = query.strip().casefold()
-        if normalized_query:
-            candidates = tuple(
-                candidate
-                for candidate in candidates
-                if normalized_query in candidate.name.casefold()
-                or normalized_query in candidate.description.casefold()
-            )
-        return [
-            {"name": candidate.name, "description": candidate.description}
-            for candidate in candidates[: self._CONSOLE_SKILL_SEARCH_LIMIT]
-        ]
-
-    @staticmethod
-    def _split_console_skill_name_args(text: str) -> tuple[str, str]:
-        """Split ``text`` (already stripped) into its leading word and the rest.
-
-        Mirrors ``console_command_grammar._split_leading_token``'s single-
-        whitespace-character split rule, used here to pull a skill name back
-        out of `/skills <name> [args]`'s own ``args`` text.
-        """
-        for index, character in enumerate(text):
-            if character.isspace():
-                return text[:index], text[index + 1 :]
-        return text, ""
-
     async def _console_command_skills(self, parse: CommandParse) -> None:
-        """Handle the registered `/skills` command: bare list, or `<name> [args]` hint.
+        await self._skill._console_command_skills(parse)
 
-        Hard removal (Task 4 of the `$`-mention migration): `/skills` only
-        ever lists now -- a typed `<name> [args]` never resolves or runs
-        anything, it just points the user at the `$name` invocation form
-        via a transcript hint row (the same mechanism the list uses).
-        """
-        args = parse.args.strip()
-        if not args:
-            context = await self._fetch_console_skill_context()
-            candidates = self._console_skill_trusted_candidates_from_context(context)
+    async def _console_command_fewer_permission_prompts(
+        self, parse: CommandParse
+    ) -> None:
+        """Render local MCP prompt-reduction recommendations."""
+        del parse
+        self._clear_console_composer_draft()
+        service = getattr(self.app_instance, "unified_mcp_service", None)
+        loader = getattr(service, "permission_prompt_recommendations", None)
+        if not callable(loader):
             await self._append_native_console_system_message(
-                format_skills_list(candidates)
+                "MCP prompt recommendations unavailable - MCP service is not ready."
             )
             return
-        name, _rest = self._split_console_skill_name_args(args)
-        await self._append_native_console_system_message(
-            f"Run skills by typing ${name} — /skills only lists them."
-        )
-
-    async def _console_command_run_skill(self, name: str, args: str) -> None:
-        """Resolve and run a skill by name (spec Slash surface run semantics).
-
-        Hard removal (Task 4 of the `$`-mention migration): neither of this
-        method's original two callers reach it anymore -- `/skills <name>`
-        now always shows a static `$name` hint instead
-        (`_console_command_skills`), and the bare `/skill-name` fallback
-        dispatch (`KIND_FALLBACK`) that used to route here has no resolver
-        registered to ever produce that parse kind. Left in place (with the
-        picker chain it opens) since nothing currently calls it; if that
-        changes, it still re-resolves against a FRESH ``get_context`` (never
-        a cached snapshot) for the authoritative trust decision.
-        """
-        args = cap_skill_args(args)
-        context = await self._fetch_console_skill_context()
-        trusted_candidates = self._console_skill_trusted_candidates_from_context(
-            context
-        )
-        blocked_summaries = self._console_skill_blocked_summaries(context)
-        resolution = resolve_skill_command(name, args, trusted_candidates)
-
-        if resolution.kind == "resolved":
-            await self._run_resolved_console_skill(resolution.name, args)
-            return
-        if resolution.kind == "ambiguous":
-            await self._open_console_skill_picker(name, args)
-            return
-
-        # resolution.kind == "none": distinguish "genuinely absent" from
-        # "exists but needs review" before falling back to the picker --
-        # review-mandated addition (Task 8 review): a typed name/prefix that
-        # matches ONLY needs-review skills must not read like the generic
-        # empty state. Shares `_console_skill_blocked_match_response` with
-        # the composer's KIND_UNKNOWN dispatch site.
-        if await self._console_skill_blocked_match_response(name, blocked_summaries):
-            return
-        if args:
-            await self._open_console_skill_picker(name, args)
-            return
-        await self._append_skill_refuse_row(
-            name, CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT
-        )
-
-    async def _console_skill_blocked_match_response(
-        self, name: str, blocked_summaries: tuple[Mapping[str, Any], ...]
-    ) -> bool:
-        """Surface the needs-review response for ``name`` against blocked skill summaries.
-
-        Called from the composer's `KIND_UNKNOWN` dispatch site (a bare
-        draft that matched no registered command -- there is no fallback
-        resolver to claim it anymore, hard removal Task 4) so a typed
-        name/prefix that matches ONLY needs-review (trust-blocked) skills
-        reads as a distinguishing hint instead of the generic
-        "Unknown command" copy. `_console_command_run_skill`'s "none" branch
-        also calls this (fold-in from the Task 9 fix-wave review), though
-        that method currently has no live caller of its own -- see its
-        docstring.
-
-        Args:
-            name: The typed command word (no leading slash).
-            blocked_summaries: Fresh ``get_context``-derived blocked-skill
-                summaries (never a cached snapshot).
-
-        Returns:
-            ``True`` when a blocked match was found and a response was
-            appended (an exact match appends the ``SKILL_UNTRUSTED_REFUSE``
-            row; one or more prefix matches append the
-            ``CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE`` hint) -- the caller
-            should stop further handling. ``False`` when ``name`` matches no
-            blocked skill at all, so the caller falls through to its own
-            default (the generic "Unknown command" hint for the composer's
-            `KIND_UNKNOWN` site).
-        """
-        name_lower = name.lower()
-        exact_blocked = next(
-            (
-                item
-                for item in blocked_summaries
-                if str(item.get("name") or "").lower() == name_lower
-            ),
-            None,
-        )
-        if exact_blocked is not None:
-            reason = str(
-                exact_blocked.get("trust_reason_code")
-                or exact_blocked.get("trust_status")
-                or "needs review"
+        try:
+            report = await loader()
+        except Exception as exc:  # noqa: BLE001 -- render recovery, never send command
+            logger.warning(
+                "MCP prompt recommendations command failed (exception_type={})",
+                type(exc).__name__,
             )
-            await self._append_skill_refuse_row(
-                str(exact_blocked.get("name") or name), reason
-            )
-            return True
-        prefix_blocked = [
-            item
-            for item in blocked_summaries
-            if str(item.get("name") or "").lower().startswith(name_lower)
-        ]
-        if prefix_blocked:
             await self._append_native_console_system_message(
-                CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE.format(
-                    count=len(prefix_blocked)
-                )
+                "MCP prompt recommendations unavailable - local analysis failed."
             )
-            return True
-        return False
-
-    async def _run_resolved_console_skill(self, name: str, args: str) -> None:
-        """Submit a resolved skill's raw `$name [args]` command as the user turn.
-
-        Hard removal (Task 4 of the `$`-mention migration): this composes
-        the `$`-sigil invocation form now, not `/name [args]`. The
-        substitution rule renders it at payload build time -- this method
-        only sends the literal, unmodified command text through the exact
-        same send-blocked/readiness gate a normal Enter-to-send goes
-        through. The old composer-staged TOOL "driving this turn" marker
-        was deleted along with the bare `/name` dispatch it annotated (Task
-        4 fix wave): the visible `$name` USER row is itself the transcript
-        record of which skill drove the turn.
-        """
-        raw_command = f"${name} {args}" if args else f"${name}"
-        await self._dispatch_console_draft_send(raw_command)
-
-    async def _append_skill_refuse_row(self, name: str, reason: str) -> None:
-        """Append the `SKILL_UNTRUSTED_REFUSE` transcript row for a run attempt.
-
-        Covers all three "nothing runs" buckets the spec groups together:
-        untrusted (present but trust-blocked), edited (a fallback-cached
-        resolution that no longer holds at fresh re-resolution), and absent
-        (no matching skill at all). The draft is deliberately left
-        untouched by this method -- the composer never gets cleared on a
-        refusal, so the user can correct the name in place.
-        """
+            return
         await self._append_native_console_system_message(
-            SKILL_UNTRUSTED_REFUSE.format(name=name, reason=reason)
-        )
-
-    async def _open_console_skill_picker(self, initial_query: str, args: str) -> None:
-        """Open the skill picker prefilled with ``initial_query`` (ambiguous or 0-match-with-args).
-
-        ``args`` is the text that followed the unresolved word -- preserved
-        across the picker detour so a picked skill still runs with whatever
-        parameters the user already typed, exactly as a direct resolution
-        would have.
-        """
-
-        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
-            self._focus_console_composer_if_needed(force=True)
-            if record is None:
-                return
-            picked_name = str(record.get("name") or "").strip()
-            if not picked_name:
-                return
-            self.run_worker(
-                self._run_resolved_console_skill(picked_name, args), exclusive=False
-            )
-
-        self.app.push_screen(
-            ConsoleSkillPickerModal(
-                initial_query=initial_query,
-                skill_search=self._console_skill_search,
-            ),
-            callback=_apply_picker_choice,
+            format_permission_prompt_report(report)
         )
 
     @on(Input.Changed, "#console-command-input")
@@ -16145,8 +16554,20 @@ class ChatScreen(BaseAppScreen):
         must invalidate a pending unknown-command arm -- otherwise a user
         could edit away from an armed unknown draft and back to the exact
         same text and have a *second*, unrelated Enter silently send it.
+
+        PR3a-2 Task 5: this is also the auto-wake retry poke for the
+        user-wins-ties deferral. This handler (unlike its
+        ``DraftChanged`` sibling) fires on EVERY draft mutation from any
+        source -- typing, backspace-to-empty, clear, ``load_draft`` -- so
+        the moment the composer empties, the user's sending claim is gone
+        and a deferred wake may try again. A no-op when nothing is
+        pending (``retry_soon`` -> gated ``_attempt``).
         """
         self._console_unknown_send_armed = None
+        if not str(event.value or "").strip():
+            wake = getattr(self._console_chat_controller, "fleet_wake", None)
+            if wake is not None:
+                wake.retry_soon()
 
     @on(Button.Pressed, "#console-composer-collapse")
     def handle_console_composer_collapse(self, event: Button.Pressed) -> None:
@@ -16159,6 +16580,18 @@ class ChatScreen(BaseAppScreen):
         """Expand the Console composer and restore draft focus."""
         event.stop()
         self._set_console_composer_collapsed(False)
+
+    @on(Button.Pressed, "#console-status-collapse")
+    def handle_console_status_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the Console status row."""
+        event.stop()
+        self._set_console_status_chips_collapsed(True)
+
+    @on(Button.Pressed, "#console-status-expand")
+    def handle_console_status_expand(self, event: Button.Pressed) -> None:
+        """Expand the Console status row."""
+        event.stop()
+        self._set_console_status_chips_collapsed(False)
 
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""
@@ -16174,11 +16607,18 @@ class ChatScreen(BaseAppScreen):
         # stop_active_run() would only toast "No active Console run to stop."
         # The cancel event wakes the adapter's poll loop immediately.
         store = self._console_chat_store
-        active_session_id = (
-            store.active_session_id if store is not None else None
+        active_session_id = store.active_session_id if store is not None else None
+        image_edit = (
+            self._image._h3_image_edit_registry().request_cancel(active_session_id)
+            if active_session_id is not None
+            else None
         )
+        if image_edit is not None:
+            self.app_instance.notify("Stopping image edit…", severity="information")
+            self._request_console_control_bar_sync()
+            return
         cancel_event = (
-            self._console_videogen_cancel_events().get(active_session_id)
+            self._video._console_videogen_cancel_events().get(active_session_id)
             if active_session_id is not None
             else None
         )
@@ -16533,17 +16973,13 @@ class ChatScreen(BaseAppScreen):
             row with that id carries one.
         """
         try:
-            transcript = self.query_one(
-                "#console-native-transcript", ConsoleTranscript
-            )
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:
             transcript = None
         if transcript is not None:
             row = transcript.display_message(message_id)
             run_id = (
-                getattr(row, "change_review_run_id", None)
-                if row is not None
-                else None
+                getattr(row, "change_review_run_id", None) if row is not None else None
             )
             if run_id:
                 return str(run_id)
@@ -16555,16 +16991,11 @@ class ChatScreen(BaseAppScreen):
             return None
         return str(run_id) if run_id else None
 
-    def _open_change_review(self, run_id: str | None = None) -> None:
-        """Push the Change Review screen for the active conversation.
+    def _console_change_review_provider(self):
+        """The v-opener's provider recipe, shared with the turn file card.
 
-        TASK-1972. Honest empty states are the SCREEN's job: opening with no
-        recorded turns shows "No file changes recorded", so this opener only
-        needs a provider -- absent (no tracker / no git / no persisted
-        conversation) it explains instead of silently no-oping.
-
-        Args:
-            run_id: Turn to select on open; ``None`` opens the latest.
+        Returns None whenever any collaborator is missing -- the card
+        degrades to the marker header; only the v opener toasts.
         """
         bridge = self._ensure_console_agent_bridge()
         conversation_id = None
@@ -16585,35 +17016,176 @@ class ChatScreen(BaseAppScreen):
             else None
         )
         if provider is None:
+            return None
+        # TASK-1974: reverts refuse while a run is active -- the engine's
+        # probe reads THIS controller's live run state each time.
+        if controller is not None:
+            # CONSOLE_ACTIVE_RUN_STATUSES is this module's own constant.
+            provider.run_active = lambda: (
+                controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
+            )
+        return provider
+
+    def _console_change_review_workspace_roots(self) -> "tuple[str, ...] | None":
+        """The live workspace roots to hand the Review screen (TASK-16801 arc B).
+
+        Without these, `current` mode never appears for a fresh conversation
+        that has no recorded turns yet -- the screen's own candidate set is
+        otherwise just the distinct roots across snapshot rows, which is
+        empty until an agent run has actually written something. This reads
+        the SAME field `console_chat_controller.py` turns into `change_roots`
+        for the tracker (`resolve_turn_execution_context(...).workspace_roots`),
+        so `current` mode detects against exactly the root the next turn
+        would track.
+
+        Same degrade posture as `_console_change_review_provider` just
+        above: any missing collaborator or raised exception yields ``None``
+        rather than breaking the opener -- `ChangeReviewScreen` already
+        treats ``None`` as "no live roots" (its pre-existing default).
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return None
+        try:
+            active = controller.store.active_session_id
+            if not active:
+                return None
+            return controller.resolve_turn_execution_context(active).workspace_roots
+        except Exception:  # noqa: BLE001 -- opener must degrade, not raise
+            return None
+
+    def _open_change_review(
+        self,
+        run_id: str | None = None,
+        *,
+        initial_path: str | None = None,
+        initial_snapshot_id: int | None = None,
+    ) -> None:
+        """Push the Change Review screen for the active conversation.
+
+        TASK-1972. Honest empty states are the SCREEN's job: opening with no
+        recorded turns shows "No file changes recorded", so this opener only
+        needs a provider -- absent (no tracker / no git / no persisted
+        conversation) it explains instead of silently no-oping.
+
+        Args:
+            run_id: Turn to select on open; ``None`` opens the latest.
+            initial_path: TASK-18060 Task 5 (review-rail spec §2's
+                click-through recipe): the rail's own opener passes the
+                pressed row's file so the screen opens focused on it
+                instead of the turn's first leaf. ``None`` for every other
+                (pre-existing) caller -- byte-compatible default.
+            initial_snapshot_id: Paired with ``initial_path`` -- disambiguates
+                two windows of the SAME run covering the same path (spec
+                §2). ``None`` when the caller has no snapshot row to pin to.
+        """
+        provider = self._console_change_review_provider()
+        if provider is None:
             self.app_instance.notify(
                 "Change review needs git and a saved conversation.",
                 severity="warning",
             )
             return
-        # TASK-1974: reverts refuse while a run is active -- the engine's
-        # probe reads THIS controller's live run state each time.
-        if controller is not None:
-            # CONSOLE_ACTIVE_RUN_STATUSES is this module's own constant.
-            provider.run_active = (
-                lambda: controller.run_state.status
-                in CONSOLE_ACTIVE_RUN_STATUSES
-            )
         from tldw_chatbook.UI.Screens.change_review_screen import (
             ChangeReviewScreen,
         )
 
-        # initial_run_id rides the constructor: a post-push select_turn call
-        # raced the screen's own compose (NoMatches) -- caught by the opener
-        # wiring test.
-        self.app.push_screen(ChangeReviewScreen(provider, initial_run_id=run_id))
+        # TASK-16801 arc B (Task 9): the conversation's LIVE workspace
+        # roots -- see `_console_change_review_workspace_roots`'s docstring
+        # for why this matters (it is what makes `current` mode reachable
+        # from a fresh conversation with no recorded turns).
+        workspace_roots = self._console_change_review_workspace_roots()
+
+        # initial_run_id/initial_path/initial_snapshot_id all ride the
+        # constructor: a post-push select_turn/select_file call raced the
+        # screen's own compose (NoMatches) -- caught by the opener wiring
+        # test (TASK-1972 / TASK-18060 Task 3).
+        self.app.push_screen(
+            ChangeReviewScreen(
+                provider,
+                initial_run_id=run_id,
+                initial_path=initial_path,
+                initial_snapshot_id=initial_snapshot_id,
+                workspace_roots=workspace_roots,
+            ),
+            callback=self._on_console_change_review_dismissed,
+        )
+
+    def _on_console_change_review_dismissed(self, _result: Any = None) -> None:
+        """Reset the changed-files guard when the Review screen closes.
+
+        TASK-18060 Task 5 (review-rail spec §2's note-change invalidation),
+        docstring corrected in the final-review fix round: Task 7 shipped
+        the Review screen's OWN note-mutation UI directly on
+        `ChangeReviewScreen` -- inline `c`/`C` comment creation and
+        per-note delete (`_open_comment_input`/`_save_comment_input`/
+        `_delete_review_note`). Unlike the turn file card's save/delete
+        handlers, which post `NotesChanged` and reset the guard
+        synchronously on EVERY mutation (see
+        `handle_console_turn_file_card_notes_changed`), the Review screen
+        posts nothing back to this screen while it is open -- a save or
+        delete there only refreshes its own notes strip in place. This
+        dismissal callback is therefore the ONLY point that invalidates
+        the rail's `✎ N` badges for anything mutated in-screen: it fires
+        once, when the screen closes, regardless of how many notes were
+        added or removed while it was up. Costs one extra guarded
+        recompute per screen close (cheap: the provider degrades
+        gracefully and the recompute is off-thread).
+        """
+        self._last_console_changed_files_scope = None
+        self._sync_console_changed_files_if_scope_changed()
 
     @on(Button.Pressed, "#console-inspector-review-changes")
-    def handle_console_inspector_review_changes(
-        self, event: Button.Pressed
-    ) -> None:
+    def handle_console_inspector_review_changes(self, event: Button.Pressed) -> None:
         """Open the Change Review screen from the run inspector (TASK-1972)."""
         event.stop()
         self._open_change_review()
+
+    @on(ConsoleTurnFileCard.ReviewRequested)
+    def handle_console_turn_file_card_review_requested(
+        self, event: ConsoleTurnFileCard.ReviewRequested
+    ) -> None:
+        """Open the Change Review screen from a card's own `Review` button.
+
+        TASK-16800 (V1.5): the same opener recipe as `v` and the run
+        inspector's own button above, except the run id needs no lookup at
+        all -- the card that posted this message already knows exactly
+        which run it renders.
+        """
+        event.stop()
+        self._open_change_review(event.run_id)
+
+    @on(ConsoleTurnFileCard.NotesChanged)
+    def handle_console_turn_file_card_notes_changed(
+        self, event: ConsoleTurnFileCard.NotesChanged
+    ) -> None:
+        """A card's note save/delete: reset the changed-files guard.
+
+        TASK-18060 Task 5 (review-rail spec §2's note-change invalidation):
+        the guard tuple only moves on a NEW run, so without this the rail's
+        `✎ N` badges would go stale after a note is added or removed on an
+        already-reviewed turn.
+        """
+        event.stop()
+        self._last_console_changed_files_scope = None
+        self._sync_console_changed_files_if_scope_changed()
+
+    @on(ConsoleChangedFilesSection.FileSelected)
+    def handle_console_changed_files_selected(
+        self, event: ConsoleChangedFilesSection.FileSelected
+    ) -> None:
+        """A rail row press: open the Review screen scoped to that file.
+
+        TASK-18060 Task 5 (review-rail spec §2's click-through recipe):
+        the row already knows its exact identity -- no lookup needed,
+        mirroring the card's own `ReviewRequested` opener above.
+        """
+        event.stop()
+        self._open_change_review(
+            event.run_id,
+            initial_path=event.path,
+            initial_snapshot_id=event.snapshot_id,
+        )
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
@@ -16666,7 +17238,6 @@ class ChatScreen(BaseAppScreen):
         for the pre-existing test suite's direct-call convention."""
         return self._message._console_save_as_destinations(message)
 
-
     async def _save_console_message_image(self, message_id: str) -> None:
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
         for the pre-existing test suite's direct-call convention."""
@@ -16676,9 +17247,6 @@ class ChatScreen(BaseAppScreen):
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
         for the pre-existing test suite's direct-call convention."""
         await self._message._save_console_message_as_note(message_id)
-
-
-
 
     async def _open_console_message_edit_modal(
         self, *, message_id: str, content: str
@@ -16698,9 +17266,6 @@ class ChatScreen(BaseAppScreen):
         return ConsoleMessageController._parse_console_message_action_button_id(
             button_id
         )
-
-
-
 
     async def _summarize_console_up_to(
         self,
@@ -16722,7 +17287,6 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(result.visible_copy, severity=severity)
         await self._sync_native_console_chat_ui()
 
-
     def _select_console_message_variant(
         self, message_id: str, *, direction: str
     ) -> str | None:
@@ -16732,83 +17296,6 @@ class ChatScreen(BaseAppScreen):
         return self._message._select_console_message_variant(
             message_id, direction=direction
         )
-
-    def _select_console_generation_variant(
-        self, message: ConsoleChatMessage, *, direction: str
-    ) -> None:
-        """Move a generation message's ephemeral browsed-variant index (clamped).
-
-        The generation-message counterpart of ``_select_console_message_variant``:
-        purely screen-side, in-memory state (``self._generation_browse``) --
-        never touches the store/DB, matching `<`/`>` browsing's documented
-        ephemeral-vs-durable-Keep split (spec §5.2). A no-op at either end of
-        the variant list (nothing before the first / after the last), mirroring
-        the text-sibling version's own boundary behavior.
-        """
-        variant_count = len(message.generation_metadata)
-        if variant_count <= 1:
-            return
-        browse = self._console_generation_browse()
-        current = browse.get(message.id, 0)
-        if not (0 <= current < variant_count):
-            current = 0
-        if direction == "variant-previous":
-            target = current - 1
-        elif direction == "variant-next":
-            target = current + 1
-        else:
-            return
-        if target < 0 or target >= variant_count:
-            return
-        browse[message.id] = target
-
-    def _keep_console_generation_variant(self, message: ConsoleChatMessage) -> None:
-        """Promote the browsed variant to canonical (position 0) -- durable.
-
-        A no-op when the browsed index is already 0 (nothing to promote) or
-        ``message`` isn't a generation message. Defensive: ``available_actions()``
-        only ever offers "keep" when ``generation_browsed_index != 0`` (which
-        implies a generation message), but this guards direct callers too.
-
-        ``store.keep_generation_variant`` swaps attachment bytes between
-        position 0 and the browsed position, but the render cache
-        (``_build_generation_card_specs``) still holds the OLD decoded
-        images under the composite keys ``f"{message_id}:{i}"`` -- and the
-        prep path skips re-decoding whatever is already cached. Left alone,
-        the card would keep showing the pre-keep canonical image (paired
-        with the now-correct details block) until the next full reload or
-        an unrelated LRU eviction. Evict every variant key for this message
-        so the next spec build re-decodes from the now-correct in-memory
-        bytes; ``generation_card_signature``'s ``decoded`` bit then drives
-        the row rebuild once prep catches up.
-        """
-        if not message.generation_metadata:
-            return
-        browse = self._console_generation_browse()
-        browsed_index = browse.get(message.id, 0)
-        if browsed_index <= 0 or browsed_index >= len(message.generation_metadata):
-            return
-        store = self._ensure_console_chat_store()
-        session_id = store.session_id_for_message(message.id)
-        variant_count = len(message.generation_metadata)
-        store.keep_generation_variant(
-            session_id, message.id, position=browsed_index, persist=True
-        )
-        browse[message.id] = 0
-        # `evict_session` is key-agnostic despite its session-closing name
-        # and docstring -- it just pops whatever string keys it's handed
-        # from the image/pixels dicts and clears their failure marks, which
-        # is exactly what a composite `f"{message_id}:{i}"` key needs too.
-        _state, cache = self._ensure_console_image_view()
-        stale_keys = [f"{message.id}:{i}" for i in range(variant_count)]
-        cache.evict_session(stale_keys)
-        # `getattr(..., None)`, not `self._console_image_preparing`: bare
-        # test screens built via `ChatScreen.__new__` (bypassing `__init__`,
-        # which normally seeds this set) never touch the in-flight prep
-        # guard, so it may not exist yet.
-        preparing = getattr(self, "_console_image_preparing", None)
-        if preparing is not None:
-            preparing.difference_update(stale_keys)
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar.
@@ -16842,6 +17329,40 @@ class ChatScreen(BaseAppScreen):
         self._console_control_bar_sync_scheduled = True
         self.call_after_refresh(self._run_coalesced_control_bar_sync)
 
+    @on(ConsoleAutoSpeakChanged)
+    def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:
+        """Delegate a Console auto-speak state change.
+
+        Args:
+            event: Change event carrying the requested enabled state.
+        """
+        event.stop()
+        self._hands_free.on_console_auto_speak_changed(event)
+
+    @on(ConsoleAutoSpeakResumeRequested)
+    def on_console_auto_speak_resume_requested(
+        self, event: ConsoleAutoSpeakResumeRequested
+    ) -> None:
+        """Delegate a Console auto-speak resume request.
+
+        Args:
+            event: Resume request from the Console speech controls.
+        """
+        event.stop()
+        self._hands_free.on_console_auto_speak_resume_requested(event)
+
+    @on(ConsoleAutoSpeakRetryRequested)
+    def on_console_auto_speak_retry_requested(
+        self, event: ConsoleAutoSpeakRetryRequested
+    ) -> None:
+        """Delegate a Console auto-speak retry request.
+
+        Args:
+            event: Retry request from the Console speech controls.
+        """
+        event.stop()
+        self._hands_free.on_console_auto_speak_retry_requested(event)
+
     def _run_coalesced_control_bar_sync(self) -> None:
         """Execute one coalesced control-bar sync (task-3010)."""
         self._console_control_bar_sync_scheduled = False
@@ -16866,28 +17387,7 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context
         )
         workbench_state = self._build_console_workbench_state(control_state)
-        control_state_changed = control_state != self._last_console_control_state
-        workbench_state_changed = workbench_state != self._last_console_workbench_state
-        if control_state_changed or workbench_state_changed:
-            try:
-                control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
-            except QueryError:
-                control_bar = None
-            if control_bar is not None:
-                control_bar.sync_state(control_state, actions=workbench_state.actions)
-            try:
-                status_chips = self.query_one(
-                    "#console-status-chips", ConsoleStatusChips
-                )
-            except QueryError:
-                status_chips = None
-            if status_chips is not None:
-                status_chips.sync_state(control_state)
-            self._sync_console_workbench_state(
-                control_state, workbench_state=workbench_state
-            )
-            self._last_console_control_state = control_state
-            self._last_console_workbench_state = workbench_state
+        self._push_console_control_state_if_changed(control_state, workbench_state)
         self._sync_console_transcript_guidance()
         # TASK-251 (audit P1 B1) -- DEVIATION FROM THE BRIEF, documented in
         # the task-251 report: the brief's Change 3 asked to skip this
@@ -16912,17 +17412,35 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             inspector = None
+        try:
+            authority_summary = self.query_one(
+                "#console-send-authority-summary", ConsoleSendAuthoritySummary
+            )
+        except QueryError:
+            authority_summary = None
         inspector_state = self._build_console_inspector_state(
             self._pending_console_launch_context
         )
         if inspector is not None:
+            # Strict ownership validates the complete snapshot before the
+            # resilient pinned projection publishes any part of it.
             inspector.sync_state(inspector_state)
+        if authority_summary is not None:
+            authority_summary.sync_state(inspector_state)
+        # TASK-18060 Task 5: same in-place sync shape as the run inspector
+        # immediately above -- reads only the cached summary, never the
+        # DB/git (the guard-gated recompute lives in
+        # `_sync_console_changed_files_if_scope_changed`, called earlier
+        # this same tick by `_sync_native_console_chat_ui`).
+        self._sync_console_changed_files_section()
         self._sync_console_composer_action_state(
             can_save_chatbook=inspector_state.can_save_chatbook
             and self._console_chatbook_action_available()
         )
         if rail_state is None:
-            rail_state = self._current_console_rail_state()
+            rail_state = self._current_console_rail_state(
+                inspector_state=inspector_state
+            )
         self._sync_console_rail_visibility_if_changed(rail_state)
         # Cost-ticker PR3 (task-5): deliberately OUTSIDE the
         # `control_state_changed or workbench_state_changed` guard above
@@ -16932,6 +17450,55 @@ class ChatScreen(BaseAppScreen):
         # cache TTL counts down with no control-state change at all.
         # `_sync_console_cost_chip` owns its own equality guard.
         self._sync_console_cost_chip()
+        self._console_auto_speak.sync_controls()
+
+    def _push_console_control_state_if_changed(
+        self,
+        control_state: ConsoleControlState,
+        workbench_state: Any,
+    ) -> bool:
+        """Push control/Workbench state into the widgets only when it moved.
+
+        The one place `_last_console_control_state` /
+        `_last_console_workbench_state` are read and written (task-15452).
+        Every caller that pushes must go through here: the control bar
+        consumes `workbench_state.actions` as well as `control_state`, so a
+        caller that pushed only the Workbench widgets and then recorded the
+        new `_last_*` values would make the NEXT `_sync_console_control_bar`
+        see "unchanged" and skip a control-bar refresh it still owed --
+        which is exactly the trap the draft-edit path used to avoid only by
+        never recording anything.
+
+        Args:
+            control_state: Freshly built Console control/readiness state.
+            workbench_state: Workbench state built from that control state.
+
+        Returns:
+            True when the widgets were pushed, False when nothing moved.
+        """
+        if (
+            control_state == self._last_console_control_state
+            and workbench_state == self._last_console_workbench_state
+        ):
+            return False
+        try:
+            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+        except QueryError:
+            control_bar = None
+        if control_bar is not None:
+            control_bar.sync_state(control_state, actions=workbench_state.actions)
+        try:
+            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
+        except QueryError:
+            status_chips = None
+        if status_chips is not None:
+            status_chips.sync_state(control_state)
+        self._sync_console_workbench_state(
+            control_state, workbench_state=workbench_state
+        )
+        self._last_console_control_state = control_state
+        self._last_console_workbench_state = workbench_state
+        return True
 
     def _sync_console_workbench_state(
         self,
@@ -16948,9 +17515,6 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             pass
-        # TASK-2154.1 (LY-10): the header (and its status badge) is hidden in
-        # compact-height mode, so keep the control-bar marker mirroring it.
-        self._sync_console_compact_status_marker()
         try:
             self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
                 workbench_state.modes
@@ -16971,10 +17535,26 @@ class ChatScreen(BaseAppScreen):
             pass
 
     def _sync_console_workbench_actions_from_draft(self) -> None:
-        """Refresh Workbench command readiness after composer draft changes."""
-        self._sync_console_workbench_state(
-            self._build_console_control_state(self._pending_console_launch_context)
-        )
+        """Refresh Workbench command readiness after composer draft changes.
+
+        Runs on every printable keystroke, so it goes through the same
+        equality gate as `_sync_console_control_bar` (task-15452): before
+        that it rebuilt and re-pushed Workbench state unconditionally --
+        ~12 layout-invalidating `Static.update` calls plus two
+        `sort_children` (which bump the DOM version up the whole ancestor
+        chain and so evict the screen-wide `query_one` cache) for a state
+        that is identical between any two characters of a word.
+
+        `_sync_console_command_popup` stays OUTSIDE the gate: the popup
+        filters on the draft text itself, which moves on every keystroke
+        while the derived Workbench state does not.
+        """
+        with self._console_derivation_scope():
+            control_state = self._build_console_control_state(
+                self._pending_console_launch_context
+            )
+            workbench_state = self._build_console_workbench_state(control_state)
+        self._push_console_control_state_if_changed(control_state, workbench_state)
         self._sync_console_command_popup()
 
     def _console_command_popup_or_none(self) -> ConsoleCommandPopup | None:
@@ -16983,14 +17563,32 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return None
 
+    #: Draft text `_sync_console_command_popup` last ran against, or
+    #: None before the first sync. A CLASS attribute, deliberately: the
+    #: hand-built `ChatScreen.__new__()` test fixtures never run `__init__`,
+    #: and this programme has shipped one fixture AttributeError per wave.
+    _console_popup_synced_draft: str | None = None
+
     def _sync_console_command_popup(self) -> None:
-        """Show/hide the slash-command popup from the current composer draft."""
+        """Show/hide the slash-command popup from the current composer draft.
+
+        Records the draft text it ran against (NOT the composer's
+        `_draft_generation` -- that is an undo-checkpoint counter that
+        `insert_text` never advances; a gate on it no-oped on every
+        keystroke, measured), so
+        `_ensure_console_command_popup_current` can tell a popup that is
+        merely CLOSED (Escape) from one that is STALE (an edit happened but
+        its `DraftChanged` has not been delivered yet). Recorded on every
+        path, including the hide paths -- "synced" means "reflects this
+        draft", not "open".
+        """
         popup = self._console_command_popup_or_none()
         if popup is None:
             return
         composer = self._console_composer_or_none()
         if composer is None:
             return
+        self._console_popup_synced_draft = composer.draft_text()
         if composer.has_paste_segments():
             popup.hide()
             return
@@ -17003,6 +17601,26 @@ class ChatScreen(BaseAppScreen):
             popup.hide()
             return
         popup.show_suggestions(suggestions)
+
+    def _ensure_console_command_popup_current(self) -> None:
+        """Re-sync the popup only if the draft moved since the last sync.
+
+        Closes the same-driver-read window (task-3790): when `/`+Down or
+        `/`+Enter arrive in one read, the second key's routing used to
+        consult a popup whose `DraftChanged` was still queued. Re-deriving
+        here is safe ONLY because it is gated on the synced draft text -- an ungated
+        re-sync would re-open a popup the user just dismissed with Escape
+        (dismissal edits nothing, so the text does not move, so this
+        is a no-op for it). The queued `DraftChanged` still delivers and
+        re-runs the full sync; by then the generation matches and
+        `show_suggestions` is idempotent for identical rows, so the
+        highlight a routed Down moved is not yanked back.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        if composer.draft_text() != self._console_popup_synced_draft:
+            self._sync_console_command_popup()
 
     def _dismiss_console_command_popup(self) -> bool:
         """Hide the popup if open. Returns True when it was open."""
@@ -17032,7 +17650,6 @@ class ChatScreen(BaseAppScreen):
         popup = self._console_command_popup_or_none()
         if popup is not None and popup.is_open:
             popup.reposition()
-
 
     def _persist_console_composer_draft_after_history_navigation(
         self, composer: ConsoleComposerBar
@@ -17111,6 +17728,35 @@ class ChatScreen(BaseAppScreen):
             getattr(self.app_instance, "open_console_live_work_primary_action", None)
         )
 
+    def _dispatch_console_recovery_action(
+        self,
+        session_id: str,
+        assistant_message_id: str,
+        action: str,
+    ) -> None:
+        """Run one mounted recovery intent against the currently pinned owner."""
+
+        controller = self._console_chat_controller
+        if controller is None or not session_id or not assistant_message_id:
+            return
+        recovery = controller.store.dispatch_recovery_for_session(session_id)
+        if (
+            recovery is None
+            or recovery.assistant_message_id != assistant_message_id
+            or not recovery.recovery_needed
+        ):
+            return
+        revision = controller.prompt_queue_registry.snapshot(session_id).revision
+        self.run_worker(
+            self._prompt_queue.handle_primary_intent(
+                session_id,
+                action=action,
+                expected_revision=revision,
+            ),
+            exclusive=True,
+            group="console-dispatch-recovery-action",
+        )
+
     def _sync_console_composer_action_state(
         self,
         *,
@@ -17132,21 +17778,83 @@ class ChatScreen(BaseAppScreen):
         run_active = False
         send_blocked = False
         controller = self._console_chat_controller
+        queue_presentation = None
         if controller is not None:
             run_state = getattr(controller, "run_state", None)
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
+            active_id = controller.store.active_session_id or ""
+            if active_id:
+                queue_presentation = self._prompt_queue.presentation_for(
+                    active_id,
+                    composer_collapsed=composer.collapsed,
+                )
+                # TASK-22000 (owner decision, 2026-08-24): for a session with
+                # a live queue projection the PRESENTATION is the authority on
+                # whether Send accepts a draft -- not the raw run state. That
+                # was ADR-046's original shape (an assignment here, not an
+                # `or`); `2c7fcd200` folded `send_blocked` back in with `or`
+                # alongside the new recovery predicate, and since
+                # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
+                # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
+                # presentation` already reads as `occupies_slot`, the only
+                # thing that `or` could still change was the one state ADR-046
+                # exists for: an ACCEPTED live turn, which must read "Queue"
+                # and admit a FIFO follow-up. It rendered as a greyed-out
+                # button labelled "Queue" for the whole duration of every run.
+                #
+                # Nothing is lost by deferring: before acceptance the same
+                # projection returns "Preparing..." with `send_enabled=False`,
+                # so an unaccepted live run still refuses. The recovery
+                # predicate stays in the `or` and still refuses for a genuinely
+                # unresolved owner (see `dispatch_recovery_blocks_submission`).
+                send_blocked = (
+                    not queue_presentation.send_enabled
+                    or controller.store.dispatch_recovery_blocks_submission(active_id)
+                )
+                try:
+                    queue_region = self.query_one(
+                        "#console-prompt-queue", ConsolePromptQueueRegion
+                    )
+                except QueryError:
+                    pass
+                else:
+                    queue_region.sync_presentation(active_id, queue_presentation)
+                composer.sync_prompt_queue_state(
+                    count=queue_presentation.count,
+                    paused=queue_presentation.paused,
+                )
+                try:
+                    recovery_region = self.query_one(
+                        "#console-dispatch-recovery",
+                        ConsoleDispatchRecoveryRegion,
+                    )
+                except QueryError:
+                    pass
+                else:
+                    recovery_region.sync_recovery(
+                        active_id,
+                        controller.store.dispatch_recovery_for_presentation(active_id),
+                    )
         # task-3401.5: an in-flight video generation shows the same Stop
         # affordance (it sets the adapter's cooperative cancel event).
         store_for_videogen = self._console_chat_store
         active_session_id = (
-            store_for_videogen.active_session_id if store_for_videogen is not None else None
+            store_for_videogen.active_session_id
+            if store_for_videogen is not None
+            else None
         )
         videogen_active = (
             active_session_id is not None
-            and active_session_id in self._console_videogen_inflight_sessions()
+            and active_session_id in self._video._console_videogen_inflight_sessions()
         )
-        run_active = run_active or videogen_active
+        image_edit_active = (
+            active_session_id is not None
+            and self._image._h3_image_edit_registry().active(active_session_id)
+            is not None
+        )
+        run_active = run_active or videogen_active or image_edit_active
+        send_blocked = send_blocked or image_edit_active
         setup_blocked_reason = self._console_setup_blocked_reason()
         attachment_blocked_reason = self._console_attachment_blocked_reason()
         send_blocked = (
@@ -17162,8 +17870,26 @@ class ChatScreen(BaseAppScreen):
             run_active=run_active,
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
-            setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
+            setup_blocked_reason=(
+                setup_blocked_reason
+                or attachment_blocked_reason
+                or (
+                    queue_presentation.send_tooltip
+                    if queue_presentation is not None
+                    and not queue_presentation.send_enabled
+                    else ""
+                )
+            ),
             ephemeral=self._console_active_session_is_ephemeral(),
+            send_label=(
+                queue_presentation.send_label
+                if queue_presentation is not None
+                else "Send"
+            ),
+            # task-15862 AC#3: mid-wake, the queue tooltip above rode the
+            # setup slot and painted as "finish provider setup"; the flag
+            # makes the composer name the wake instead.
+            wake_turn_active=self._fleet._console_wake_turn_active(active_session_id),
         )
         composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy
@@ -17264,59 +17990,7 @@ class ChatScreen(BaseAppScreen):
             return
         compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
         shell.set_class(compact, "-console-compact")
-        # TASK-2154.1 (LY-10): the compact class just hid/showed the header
-        # badge, so the control-bar stand-in must follow immediately instead
-        # of waiting for the next workbench sync.
-        self._sync_console_compact_status_marker()
-
-    def _sync_console_compact_status_marker(self) -> None:
-        """Mirror the header status badge into the control bar when compact.
-
-        TASK-2154.1 (LY-10): below CONSOLE_COMPACT_HEIGHT_ROWS the
-        `-console-compact` rule hides #console-workbench-header -- including
-        the Ready/Running/Blocked badge, the only persistent status identity.
-        #console-compact-status-marker (first child of the always-visible
-        control-bar action row) shows the same label and `status-*` class
-        for exactly as long as the header is hidden. Visibility is driven
-        from Python (not CSS) so harness apps without the full stylesheet
-        behave identically.
-        """
-        try:
-            shell = self.query_one("#console-shell")
-            marker = self.query_one("#console-compact-status-marker", Static)
-        except QueryError:
-            return
-        if not shell.has_class("-console-compact"):
-            if marker.display:
-                marker.styles.display = "none"
-                marker.display = False
-            marker._console_compact_status_applied = None
-            return
-        try:
-            header = self.query_one("#console-workbench-header", DestinationHeader)
-            badge = header.query_one("#workbench-header-status", Static)
-        except QueryError:
-            return
-        status = header.state.status
-        badge_text = getattr(badge.renderable, "plain", str(badge.renderable))
-        applied = getattr(marker, "_console_compact_status_applied", None)
-        if applied == (status, badge_text, True):
-            return
-        marker.update(badge_text)
-        marker.tooltip = f"Console status: {badge_text}" if badge_text else None
-        for candidate in (
-            "ready",
-            "running",
-            "blocked",
-            "error",
-            "paused",
-            "empty",
-            "loading",
-        ):
-            marker.set_class(candidate == status, f"status-{candidate}")
-        marker.styles.display = "block"
-        marker.display = True
-        marker._console_compact_status_applied = (status, badge_text, True)
+        self._request_console_context_allocation_reconcile()
 
     @on(Resize)
     def _adapt_console_workspace_to_width(self, event: Resize) -> None:
@@ -17339,38 +18013,67 @@ class ChatScreen(BaseAppScreen):
             self.query_one("#console-workspace-grid")
         except QueryError:
             return
-        self._sync_console_rail_visibility_if_changed(
-            self._current_console_rail_state(available_columns=event.size.width)
+        focused = self.app.focused
+        left_rail = self.query_one("#console-left-rail")
+        right_rail = self.query_one("#console-right-rail")
+        left_handle = self.query_one("#console-context-rail-handle")
+        right_handle = self.query_one("#console-inspector-rail-handle")
+        focused_in_left_rail = self._is_descendant_or_self(focused, left_rail)
+        focused_in_right_rail = self._is_descendant_or_self(focused, right_rail)
+        focused_in_left_handle = self._is_descendant_or_self(focused, left_handle)
+        focused_in_right_handle = self._is_descendant_or_self(focused, right_handle)
+        rail_state = self._current_console_rail_state(
+            available_columns=event.size.width
         )
-
-    @on(DescendantFocus)
-    def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
-        """Swap the rail regions' inline frame to the accent while focused.
-
-        TASK-359: F6's rail stop focuses the collapse button; the region
-        border is inline-styled (single-frame contract), so this is the
-        only place a visible pane-stop indicator can be painted.
-        """
-        for rail_id in ("console-left-rail", "console-right-rail"):
-            try:
-                rail = self.query_one(f"#{rail_id}")
-            except QueryError:
+        self._sync_console_rail_visibility_if_changed(rail_state)
+        for focused_in_rail, focused_in_handle, rail_open, rail, handle, buttons in (
+            (
+                focused_in_left_rail,
+                focused_in_left_handle,
+                rail_state.left_open,
+                left_rail,
+                left_handle,
+                ("#console-context-rail-open", "#console-context-rail-collapse"),
+            ),
+            (
+                focused_in_right_rail,
+                focused_in_right_handle,
+                rail_state.right_open,
+                right_rail,
+                right_handle,
+                (
+                    "#console-inspector-rail-open",
+                    "#console-inspector-rail-collapse",
+                ),
+            ),
+        ):
+            if focused_in_rail and not rail_open:
+                target, button_selector = handle, buttons[0]
+            elif focused_in_handle and rail_open:
+                target, button_selector = rail, buttons[1]
+            else:
                 continue
-            focused_within = False
-            node = event.widget
-            while node is not None:
-                if node is rail:
-                    focused_within = True
-                    break
-                node = node.parent
-            border = (
-                CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
-            )
-            # styles.border_top holds (str, Color) — compare against the
-            # parsed color, or the dedup guard never dedups (review #739).
-            current_kind, current_color = rail.styles.border_top
-            if current_kind != border[0] or current_color != Color.parse(border[1]):
-                rail.styles.border = border
+            button = self.query_one(button_selector, Button)
+            if target.display and button.display:
+                button.focus()
+
+    @on(DescendantBlur)
+    @on(DescendantFocus)
+    def _paint_console_rail_focus_frame(
+        self, event: DescendantFocus | DescendantBlur
+    ) -> None:
+        """Paint dimension-stable workbench focus cues.
+
+        TASK-20937.3: expanded rails and collapsed handles keep the exact
+        same border cells focused or unfocused. The focus class reinforces
+        the owning control with bold/underline/background, so color is not
+        the only cue. The transcript owns neither divider; its class marks
+        only the stable title row.
+        """
+        focused = (
+            event.widget if isinstance(event, DescendantFocus) else self.app.focused
+        )
+        sync_console_focus_paint(self, focused)
 
     #: Task 4 fix-round-2 (I3): how long `_recover_stuck_console_send_stash`
     #: waits before treating `_console_pending_send_stash` as abandoned.
@@ -17442,6 +18145,7 @@ class ChatScreen(BaseAppScreen):
             realtime.controller.on_keypress()
         if not self._should_capture_console_input(composer):
             return
+        self._ensure_console_command_popup_current()
         popup = self._console_command_popup_or_none()
         if popup is not None and popup.is_open:
             if event.key == "up":
@@ -17459,10 +18163,19 @@ class ChatScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
                 return
-        if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
-            composer.select_all_draft()
-            event.stop()
-            event.prevent_default()
+        # Decomposition wave 5: the keys whose whole handling is a composer
+        # operation (select-all and caret movement, including Up/Down's
+        # history-recall-first shape, which still falls through UNCONSUMED
+        # on a boundary row where nothing moved) now live on the composer
+        # itself. TASK-3749 added the draft-EDITING keys to that set -- they
+        # post `ConsoleComposerBar.DraftChanged`, which
+        # `_handle_console_composer_draft_edit` below turns back into the
+        # Workbench/guidance resync this method used to do inline. That
+        # includes the printable fallthrough, so this delegation is now also
+        # where ordinary typing lands. Everything below stays because it
+        # reaches past the composer -- the clipboard, undo/redo's store
+        # persistence, send, transcript paging.
+        if composer.handle_console_key(event):
             return
         if (
             event.key in {"ctrl+c", "super+c", "cmd+c", "meta+c"}
@@ -17471,80 +18184,6 @@ class ChatScreen(BaseAppScreen):
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(composer.draft_text())
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key in {"backspace", "ctrl+h"}:
-            composer.delete_left()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "delete":
-            composer.delete_right()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "left":
-            composer.move_cursor_left()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "right":
-            # TASK-1364: with a ghost-text suggestion visible (caret at end,
-            # live draft), Right accepts it instead of moving the caret.
-            if not composer.accept_ghost_text():
-                composer.move_cursor_right()
-            event.stop()
-            event.prevent_default()
-            return
-        # Vertical caret movement differs from every neighbor above: those
-        # always consume the key (there is always somewhere to move -- even
-        # at a boundary, left/right/home/end land on a valid, if unchanged,
-        # offset). `move_cursor_up`/`move_cursor_down` instead return False
-        # on the first/last visual row, and the composer moves nothing at
-        # all -- so the event must fall through UNCONSUMED in that case,
-        # preserving whatever up/down would otherwise do on this screen
-        # (nothing today; a future transcript scroll or default focus
-        # behavior must not be silently swallowed by a no-op composer move).
-        # TASK-1364: on exactly those boundary rows, Up/Down first offer
-        # prompt-history recall (the composer gates on first/last visual row
-        # of the wrapped draft); only when recall declines does ordinary
-        # caret movement get its chance.
-        if event.key == "up":
-            if composer.recall_history_previous() or composer.move_cursor_up():
-                event.stop()
-                event.prevent_default()
-                return
-        if event.key == "down":
-            if composer.recall_history_next() or composer.move_cursor_down():
-                event.stop()
-                event.prevent_default()
-                return
-        if event.key == "home":
-            composer.move_cursor_home()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "end":
-            composer.move_cursor_end()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "ctrl+w":
-            composer.delete_word_left()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        # TASK-381: Shift+Enter is the natural newline chord, but terminals
-        # deliver it as a plain CR (which sends), so also accept Ctrl+J -- a
-        # control code that survives every terminal -- as a portable newline.
-        if event.key in ("shift+enter", "ctrl+j"):
-            composer.insert_text("\n")
-            self._sync_console_workbench_actions_from_draft()
-            self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
             return
@@ -17575,7 +18214,7 @@ class ChatScreen(BaseAppScreen):
                     "Console send is unavailable.", severity="error"
                 )
                 return
-            if send_button.disabled:
+            if send_button.disabled and send_button.display:
                 # TASK-2154.6 (FR-04): Send is now genuinely disabled
                 # while blocked/empty, and `Button.press()` is a no-op
                 # on a disabled control — a plain press here would
@@ -17586,9 +18225,7 @@ class ChatScreen(BaseAppScreen):
                 # handler a press reaches, exactly as the voice-send
                 # path already does for its synthesized press.
                 self.run_worker(
-                    self.handle_console_send_message(
-                        Button.Pressed(send_button)
-                    )
+                    self.handle_console_send_message(Button.Pressed(send_button))
                 )
                 return
             if not send_button.display:
@@ -17653,14 +18290,6 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if event.key == "ctrl+u":
-            # TASK-1281: this is the one call site that opts into undo --
-            # an accidental full clear is exactly what undo exists for.
-            composer.clear_draft(record_history=True)
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
         if event.key == "ctrl+z":
             self._console_composer_undo()
             event.stop()
@@ -17695,16 +18324,608 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if (
-            event.is_printable
-            and event.character is not None
-            and not _is_modified_chord(event.key)
-        ):
-            composer.insert_text(event.character)
-            self._sync_console_workbench_actions_from_draft()
+
+    @on(ConsoleComposerBar.DraftChanged)
+    def _handle_console_composer_draft_edit(
+        self, event: ConsoleComposerBar.DraftChanged
+    ) -> None:
+        """React to a draft edit the composer made handling a Console key.
+
+        TASK-3749, the inverse of what `on_key` used to do inline: instead
+        of the screen editing the draft through the composer and then
+        calling itself back, the composer announces the edit and the screen
+        does the two screen-owned follow-ups here -- re-derive Workbench
+        command readiness (which is also what opens/closes the
+        slash-command popup), and, for a text-ADDING edit only, retire the
+        first-run guidance. Deletions deliberately do not dismiss it: "the
+        user has started composing" is a claim only an insertion makes, and
+        that is precisely the split those keys had before the message
+        existed.
+
+        NOT to be confused with the sibling `_on_console_composer_draft_
+        changed` (`Input.Changed` on the composer's hidden compatibility
+        input), which fires on EVERY draft mutation from any source --
+        `load_draft`, paste, dictation, a session restore -- and disarms
+        the unknown-command escape. That signal is deliberately not reused
+        here: syncing the Workbench and dismissing guidance off it would
+        fire those on mutation paths that do neither today. (The two also
+        must not share a method NAME: the second definition would silently
+        replace the first in the class body, which is exactly how the
+        first draft of this handler killed the disarm subscription.)
+
+        `event.stop()` because this is a Console-composer-internal
+        notification: nothing above the screen subscribes, so letting it
+        bubble on would only cost a dispatch.
+
+        Args:
+            event: The composer's draft-change notification.
+        """
+        event.stop()
+        self._sync_console_workbench_actions_from_draft()
+        if event.is_insertion:
             self._dismiss_console_guidance()
-            event.stop()
-            event.prevent_default()
+
+    @on(ConsoleSelectionQuoteRequested)
+    def _console_selection_quote_requested(
+        self, event: ConsoleSelectionQuoteRequested
+    ) -> None:
+        """Insert a transcript selection into the composer as a block quote.
+
+        Console selection phase 1: the transcript's floating menu posted
+        this after its "Add to chat" action; the quote lands at the
+        composer's caret (end of draft when unfocused). ``event.stop()``
+        because nothing above this screen subscribes -- the transcript
+        already consumed the originating ``AddToChat``.
+        """
+        event.stop()
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        composer.insert_quote(event.quote)
+        if not event.quote.strip():
+            # The row range was cleared while the menu was open (streaming
+            # replace, reconciliation): ``insert_quote`` is a no-op on
+            # blank input, and notifying "Added selection to composer"
+            # for an insert that never happened would be a lie (final
+            # review).
+            return
+        self.notify("Added selection to composer")
+
+    @on(ConsoleSideChatRequested)
+    def _console_side_chat_requested(self, event: ConsoleSideChatRequested) -> None:
+        """Open the ephemeral side-chat modal about a transcript selection.
+
+        Console selection phase 2: the transcript's floating menu posted
+        this after its "More Details" / "Ask in Side Chat" action. More
+        Details renders the configured prompt template with the capped
+        quote and auto-sends on mount; Ask opens the modal freeform. The
+        model resolves from ``[console] sidechat_model`` when set, else
+        falls back to the active session's provider selection (the modal's
+        identity line shows the request; the service applies the
+        precedence). Nothing is persisted: the side-chat service streams
+        through the provider gateway only, and the reply never leaves the
+        modal. ``event.stop()`` because nothing above this screen
+        subscribes -- the transcript already consumed the originating
+        menu action.
+        """
+        event.stop()
+        if not event.quote.strip():
+            # Same blank-selection window as ``_console_selection_quote_
+            # requested`` above: the row range was cleared while the menu
+            # was open (streaming replace, reconciliation), so there is
+            # nothing to ask about -- pushing the modal (or auto-sending
+            # a contentless More Details prompt) would be a lie (T5 final
+            # review).
+            return
+        sidechat_model = str(get_cli_setting("console", "sidechat_model", "") or "")
+        template = str(
+            get_cli_setting(
+                "console",
+                "sidechat_prompt_template",
+                DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
+            )
+            or ""
+        )
+        auto_send_prompt = (
+            render_prompt(template, event.quote)
+            if event.mode == ConsoleSideChatRequested.MODE_MORE_DETAILS
+            else None
+        )
+        self.app.push_screen(
+            ConsoleSideChatModal(
+                service=ConsoleSideChatService(self._ensure_console_provider_gateway()),
+                provider_selection=self._build_console_provider_selection(),
+                sidechat_model=sidechat_model,
+                quote=event.quote,
+                auto_send_prompt=auto_send_prompt,
+            )
+        )
+
+    @on(ConsoleSelectionNoteRequested)
+    def on_console_selection_note_requested(
+        self, event: ConsoleSelectionNoteRequested
+    ) -> None:
+        """Save a transcript selection as a note (task-18156 Task 6).
+
+        Title = the quote's first line capped at 48 characters; content =
+        the quote plus a provenance line naming the session and date. The
+        write goes through the store's persistence DB (the same seam the
+        annotation write uses) off-thread -- never sqlite on the UI loop --
+        and every failure is a toast, never an exception: losing a note
+        must not disturb the selection flow that produced it.
+
+        Args:
+            event: The note request carrying the capped selection quote.
+        """
+        event.stop()
+        quote = event.quote.strip()
+        if not quote:
+            return
+        self.run_worker(
+            self._create_console_selection_note(event.quote),
+            group="console-selection-note",
+            exit_on_error=False,
+        )
+
+    async def _create_console_selection_note(self, quote: str) -> None:
+        """Worker body: derive title/content and write the note."""
+        from tldw_chatbook.Utils.input_validation import validate_text_input
+        from tldw_chatbook.Widgets.Console.console_selection import (
+            SELECTION_QUOTE_CAP,
+        )
+
+        # Boundary check through the shared module (PR #1813 review). The
+        # quote is already cap_quote-bounded at the transcript; this is the
+        # belt-and-suspenders size gate for any future caller. allow_html
+        # because transcript selections legitimately contain code --
+        # "<script" included -- and notes render as plain text.
+        if not validate_text_input(
+            quote, max_length=SELECTION_QUOTE_CAP + 64, allow_html=True
+        ):
+            self.notify("Selection is too large to save as a note.", severity="warning")
+            return
+        first_line = quote.strip().splitlines()[0]
+        title = first_line if len(first_line) <= 48 else first_line[:47] + "\u2026"
+        try:
+            controller = self._ensure_console_chat_controller()
+            store = controller.store
+            database = (
+                getattr(store.persistence, "db", None) if store.persistence else None
+            )
+            if database is None:
+                self.notify(
+                    "Notes are unavailable (no notes database).",
+                    severity="warning",
+                )
+                return
+            session = getattr(store, "_sessions", {}).get(store.active_session_id)
+            session_title = str(getattr(session, "title", "") or "Console")
+            from datetime import datetime as _dt
+
+            stamp = _dt.now().strftime("%Y-%m-%d")
+            content = f"{quote}\n\n\u2014 Console selection, {session_title}, {stamp}"
+            await asyncio.to_thread(database.add_note, title, content)
+        except Exception:
+            # Never log the title: it is arbitrary selected transcript text
+            # and can be a secret (PR #1813 review).
+            logger.warning(
+                f"Console selection note: write failed (title length {len(title)})",
+                exc_info=True,
+            )
+            self.notify("Could not create the note.", severity="warning")
+            return
+        # Selection text is untrusted markup: Textual's toast silently EATS
+        # bracketed spans ("[INFO] server up" loses its tag; "[x for x in y]"
+        # erases the whole title) -- and this toast is the only confirmation
+        # the user gets.
+        self.notify(f"Note created: {escape_markup(title)}")
+
+    @on(ConsoleSelectionFeedbackRequested)
+    def on_console_selection_feedback_requested(
+        self, event: ConsoleSelectionFeedbackRequested
+    ) -> None:
+        """Compose structured review feedback and route it via the prompt queue.
+
+        Console selection phase 3 (task 5): the transcript's floating menu
+        posted this after its "Request changes" / "LGTM" / "Comment"
+        action on a selection in agent output. The flow collects an
+        optional comment, composes the plan-task-5 template -- action
+        header line, ``> ``-quoted selection (blank lines a bare ``>``,
+        mirroring ``insert_quote``), optional comment appended verbatim --
+        and dispatches through ``_prompt_queue``, the ONLY send seam: it
+        queues behind an active run, sends immediately otherwise, and
+        owns every refusal toast. The composer draft is never touched
+        (the user may be mid-typed), and ``submit_draft`` is never called
+        (it refuses during runs).
+
+        Synchronous handler dispatching a worker because
+        ``push_screen_wait`` raises ``NoActiveWorker`` outside one (see
+        ``EvalsScreen._on_delete_bench_pressed``'s identical note); the
+        action/quote are captured here, before the worker's first line
+        runs. The modal returns the stripped comment — ``""`` for a
+        comment-less submit (feedback still flows, no comment block) —
+        or ``None`` for Cancel/Escape/backdrop, which abandons the whole
+        feedback (plan task 5: modal escape dispatches nothing).
+        ``event.stop()`` because nothing above this screen subscribes --
+        the transcript already consumed the originating menu action.
+        """
+        event.stop()
+        if not event.quote.strip():
+            # Same blank-selection window as the quote/side-chat guards:
+            # the row range was cleared while the menu was open.
+            return
+        if self._console_selection_feedback_inflight:
+            # Rapid double-trigger (double-Enter before the menu unmounts):
+            # one flow, one modal, one dispatch, one durable record. Phase 4
+            # raised the stakes from a duplicate chat message to duplicate
+            # sidecar/annotation rows, so the documented phase-3 limitation
+            # is now closed rather than accepted.
+            return
+        self._console_selection_feedback_inflight = True
+        action, quote = event.action, event.quote
+        self.run_worker(
+            self._console_selection_feedback_flow(
+                action, quote, event.anchor_message_id
+            ),
+            group="console-selection-feedback",
+        )
+
+    def _record_console_feedback_event(
+        self, action: str, quote: str, comment: str, anchor_message_id: str | None
+    ) -> None:
+        """Write the durable audit record for one dispatched feedback event.
+
+        task-17169 (phase 4): the feedback itself is ephemeral -- composed
+        into the next user message and gone. This lands it in the ADR-066
+        trajectory sidecar as an ``user_feedback`` event keyed to the
+        quoted row, so a run's review history survives a restart.
+
+        Called only for feedback that is actually dispatched (a cancelled
+        modal abandons the whole thing, so there is nothing to audit), and
+        only when the originating row supplied an anchor -- without one
+        there is no message to key the row to. It NEVER raises: the store
+        seam already swallows its own failures, and this guard covers the
+        lookup path too, because losing an audit record must not cost the
+        user the feedback they actually wrote.
+        """
+        if not anchor_message_id:
+            return
+        try:
+            controller = self._ensure_console_chat_controller()
+            session_id = controller.store.active_session_id
+            if not session_id:
+                return
+            controller.store.record_feedback_event(
+                session_id,
+                anchor_message_id=anchor_message_id,
+                action=action,
+                quote=quote,
+                comment=comment or None,
+            )
+            # Slice 2 of the both-homes decision (task-17169): a Comment with
+            # an actual note ALSO persists as a row-anchored annotation for
+            # the inline marker. Only Comment -- the spec's "Comment ...
+            # additionally persists an annotation" -- and only with text (an
+            # empty submit has nothing to mark the row with). Inside the same
+            # never-raises guard: neither durable write may cost the dispatch.
+            if action == ConsoleSelectionFeedbackRequested.ACTION_COMMENT and comment:
+                annotation_id = controller.store.record_feedback_annotation(
+                    session_id,
+                    anchor_message_id=anchor_message_id,
+                    quote=quote,
+                    comment=comment,
+                )
+                if annotation_id:
+                    # The inline marker updates immediately; the next sync
+                    # tick pushes the map to the mounted transcript.
+                    existing = self._console_annotation_previews.get(
+                        anchor_message_id, ()
+                    )
+                    self._console_annotation_previews[anchor_message_id] = existing + (
+                        comment,
+                    )
+        except Exception:
+            logger.warning(
+                "Console selection feedback: audit record failed for anchor "
+                f"{anchor_message_id!r}; the feedback itself was dispatched.",
+                exc_info=True,
+            )
+
+    async def _console_selection_feedback_flow(
+        self, action: str, quote: str, anchor_message_id: str | None = None
+    ) -> None:
+        """Comment modal, then compose and dispatch the feedback message.
+
+        Runs as a worker (see the handler above). NOT ``exclusive=True``:
+        this coroutine awaits ``push_screen_wait``, whose internal
+        ``asyncio.shield`` protects the wait -- not the already-mounted
+        modal -- from cancellation, so a superseding exclusive cancel
+        would strand a live modal with no owner for its result (the
+        ``EvalsScreen._on_delete_bench_pressed`` rationale).
+        """
+        try:
+            comment = await self.app.push_screen_wait(
+                ConsoleFeedbackCommentModal(action=action, quote=quote)
+            )
+            if comment is None:
+                return
+            lines = [CONSOLE_FEEDBACK_MESSAGE_HEADERS.get(action, "[Comment]")]
+            lines.extend(
+                f"> {line}" if line.strip() else ">" for line in quote.splitlines()
+            )
+            if comment:
+                lines.append(comment)
+            # Audit BEFORE the dispatch: the queue may block behind an active
+            # run, and the record is about what the user said, not about when
+            # the send drained.
+            # OFF-THREAD for the same reason the notes flow's writes are:
+            # `run_worker(coroutine)` runs on the event loop, so these two
+            # SQLite writes were blocking the UI, and a contended writer
+            # waits out the connection's 15s busy timeout.
+            await asyncio.to_thread(
+                self._record_console_feedback_event,
+                action,
+                quote,
+                comment,
+                anchor_message_id,
+            )
+            await self._prompt_queue.dispatch("\n".join(lines))
+        finally:
+            # Every exit path -- submit, cancel, or an error above -- releases
+            # the in-flight guard; a latched flag would silently kill the
+            # feature after its first use.
+            self._console_selection_feedback_inflight = False
+
+    @on(ConsoleReviewNotesRequested)
+    def on_console_review_notes_requested(
+        self, event: ConsoleReviewNotesRequested
+    ) -> None:
+        """Open the review-notes modal for one message's annotations.
+
+        task-18515 review-note management, task 3: posted by
+        ``ConsoleAnnotationMarker.on_click`` and by
+        ``ConsoleTranscript.action_open_review_notes`` (the ``n`` binding).
+        Dispatches a worker because ``push_screen_wait`` requires an active
+        worker context (see ``_console_selection_feedback_flow``'s identical
+        note); ``event.stop()`` because nothing above this screen subscribes.
+
+        ``_console_review_notes_inflight`` guards a rapid double-trigger the
+        same way ``_console_selection_feedback_inflight`` guards the
+        selection-feedback flow: the worker is deliberately NOT exclusive
+        (see the flow's own docstring), so a re-trigger while a flow is
+        still in flight is ignored here rather than stacking a second
+        modal with its own independent DB-bound closures.
+        """
+        event.stop()
+        if self._console_review_notes_inflight:
+            # Rapid double-trigger (double marker-click or double-`n` before
+            # the first worker's off-thread read resolves): one flow, one
+            # modal, one set of DB-bound closures.
+            return
+        self._console_review_notes_inflight = True
+        self.run_worker(
+            self._console_review_notes_flow(event.anchor_message_id),
+            group="console-review-notes",
+            exit_on_error=False,
+        )
+
+    async def _console_review_notes_flow(self, anchor_message_id: str) -> None:
+        """Resolve, browse, and (maybe) mutate one message's review notes.
+
+        Runs as a worker (see the handler above); NOT ``exclusive=True`` for
+        the same reason ``_console_selection_feedback_flow`` isn't --
+        ``push_screen_wait``'s internal ``asyncio.shield`` protects the wait,
+        not the already-mounted modal, from cancellation, so a superseding
+        exclusive cancel would strand a live modal with no owner for its
+        result. The handler's inflight flag is this flow's actual mutual
+        exclusion; the ``finally`` below releases it on every exit path.
+
+        The NATIVE anchor id is resolved to its persisted message id via the
+        store's own messages (the inverse of ``_load_console_annotation_
+        previews``'s ``native_by_persisted`` map), rows are read off-thread,
+        and -- when at least one row matches -- the modal is pushed with
+        ``on_edit``/``on_delete`` wrappers that write straight to SQLite
+        (single-row indexed writes, the same synchronous-on-the-UI-thread
+        precedent as ``_record_console_feedback_event``'s annotation write)
+        and never raise. A change forces the existing discovery machinery to
+        reload the preview map on its next sync tick.
+        """
+        try:
+            controller = self._ensure_console_chat_controller()
+            store = controller.store
+            database = (
+                getattr(store.persistence, "db", None) if store.persistence else None
+            )
+            if database is None:
+                self.notify(
+                    "Review notes are unavailable (no notes database).",
+                    severity="warning",
+                )
+                return
+            session = getattr(store, "_sessions", {}).get(store.active_session_id)
+            conversation_id = getattr(session, "persisted_conversation_id", None)
+            if not conversation_id:
+                self.notify("No review notes for this message.", severity="warning")
+                return
+            conversation_id = str(conversation_id)
+            persisted_by_native = {
+                message.id: message.persisted_message_id
+                for message in self._native_console_messages()
+            }
+            persisted_message_id = persisted_by_native.get(anchor_message_id)
+            if persisted_message_id is None:
+                self.notify("No review notes for this message.", severity="warning")
+                return
+            try:
+                rows = await asyncio.to_thread(
+                    database.get_transcript_annotations,
+                    conversation_id,
+                    str(persisted_message_id),
+                )
+            except Exception:
+                logger.warning(
+                    f"Console review notes: load failed for {conversation_id!r}",
+                    exc_info=True,
+                )
+                self.notify("Could not load review notes.", severity="warning")
+                return
+            # The query already filtered by anchor; this keeps the flow
+            # correct if a caller ever passes unfiltered rows.
+            matching = [
+                row
+                for row in rows
+                if str(row.get("message_id")) == str(persisted_message_id)
+            ]
+            if not matching:
+                self.notify("No review notes for this message.", severity="warning")
+                return
+            rows_by_id = {str(row["annotation_id"]): row for row in matching}
+
+            def _conversation_still_current() -> bool:
+                """Guard the write against a conversation switch mid-modal.
+
+                The flow captured ``conversation_id`` when it opened; a
+                background switch while the modal is up would otherwise
+                write into a conversation the user has left.
+                """
+                live = getattr(store, "_sessions", {}).get(store.active_session_id)
+                return str(getattr(live, "persisted_conversation_id", "") or "") == (
+                    conversation_id
+                )
+
+            def _edit_blocking(annotation_id: str, new_comment: str) -> bool:
+                """Runs on a worker thread (see ``_on_edit``)."""
+                row = rows_by_id.get(annotation_id)
+                if row is None:
+                    return False
+                # Lost-update guard without a schema change: the row's
+                # updated_at is the version we loaded. If someone else wrote
+                # in the meantime, refuse rather than clobber silently.
+                current = {
+                    str(fresh["annotation_id"]): fresh
+                    for fresh in database.get_transcript_annotations(
+                        conversation_id, str(row["message_id"])
+                    )
+                }.get(annotation_id)
+                if current is None or str(current.get("updated_at")) != str(
+                    row.get("updated_at")
+                ):
+                    return False
+                database.upsert_transcript_annotation(
+                    conversation_id=conversation_id,
+                    row_key=row["row_key"],
+                    message_id=row["message_id"],
+                    quote_text=row["quote_text"],
+                    comment=new_comment,
+                    annotation_id=annotation_id,
+                )
+                # Keep the snapshot's version current so a second edit in the
+                # same modal session is not mistaken for a conflict.
+                refreshed = {
+                    str(fresh["annotation_id"]): fresh
+                    for fresh in database.get_transcript_annotations(
+                        conversation_id, str(row["message_id"])
+                    )
+                }.get(annotation_id)
+                if refreshed is not None:
+                    rows_by_id[annotation_id] = refreshed
+                return True
+
+            async def _on_edit(annotation_id: str, new_comment: str) -> bool:
+                from tldw_chatbook.Utils.input_validation import validate_text_input
+                from tldw_chatbook.Widgets.Console.console_selection import (
+                    SELECTION_QUOTE_CAP,
+                )
+
+                # Boundary check through the shared module, matching the
+                # create-note path. allow_html because a review note about
+                # code legitimately contains markup-looking text and notes
+                # render as plain text; size is the enforceable bound.
+                if not validate_text_input(
+                    new_comment, max_length=SELECTION_QUOTE_CAP, allow_html=True
+                ):
+                    self.notify("That note is too long to save.", severity="warning")
+                    return False
+                if not _conversation_still_current():
+                    self.notify(
+                        "The conversation changed; that note was not edited.",
+                        severity="warning",
+                    )
+                    return False
+                try:
+                    # OFF-THREAD: a SQLite write on the UI event loop waits out
+                    # the connection's 15s busy timeout under contention, with
+                    # the interface frozen.
+                    ok = await asyncio.to_thread(
+                        _edit_blocking, annotation_id, new_comment
+                    )
+                except Exception:
+                    logger.warning(
+                        f"Console review notes: edit failed for {annotation_id!r}",
+                        exc_info=True,
+                    )
+                    self.notify("Could not save the note.", severity="warning")
+                    return False
+                if not ok:
+                    self.notify(
+                        "That note changed elsewhere; reopen it to edit.",
+                        severity="warning",
+                    )
+                return ok
+
+            async def _on_delete(annotation_id: str) -> bool:
+                if not _conversation_still_current():
+                    self.notify(
+                        "The conversation changed; that note was not deleted.",
+                        severity="warning",
+                    )
+                    return False
+                try:
+                    return bool(
+                        await asyncio.to_thread(
+                            database.soft_delete_transcript_annotation, annotation_id
+                        )
+                    )
+                except Exception:
+                    logger.warning(
+                        f"Console review notes: delete failed for {annotation_id!r}",
+                        exc_info=True,
+                    )
+                    self.notify("Could not delete the note.", severity="warning")
+                    return False
+
+            changed = await self.app.push_screen_wait(
+                ConsoleReviewNotesModal(
+                    matching, on_edit=_on_edit, on_delete=_on_delete
+                )
+            )
+            if changed:
+                # Reload INLINE and push to the transcript, rather than
+                # marking the conversation stale and waiting for the next
+                # sync tick. Live verification caught the difference: the
+                # transcript sync timer only runs while a run is active, so
+                # the annotation-WRITE precedent appeared to refresh live
+                # only because it dispatches a message (starting a run).
+                # Edit/delete leave the app idle, so a tick-dependent
+                # reload left a deleted note's marker on screen until the
+                # user's next send. We are already in a worker here, so the
+                # loader can simply be awaited.
+                # Only if the user is still IN this conversation: a switch
+                # while the modal was open would otherwise re-latch the old
+                # id and paint its previews onto the new transcript for a
+                # frame. The discovery tick reloads the live conversation.
+                if _conversation_still_current():
+                    self._console_annotation_loaded_conversation = conversation_id
+                    await self._load_console_annotation_previews(
+                        database, store, conversation_id
+                    )
+                    await self._sync_native_console_transcript()
+        finally:
+            # Every exit path -- empty-notes toast, modal cancel/dismiss, or
+            # an error above -- releases the in-flight guard; a latched flag
+            # would silently kill the feature after its first use (same
+            # precedent as `_console_selection_feedback_flow`'s finally).
+            self._console_review_notes_inflight = False
 
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"
@@ -17798,18 +19019,90 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         event.prevent_default()
 
+    def _dismiss_console_selection_menus_outside_transcript(
+        self, target: object
+    ) -> None:
+        """Fold selection menus when a click lands outside every transcript.
+
+        Console selection phase 1 (click-outside dismissal, screen half).
+        Clicks that stay INSIDE a transcript are handled there (rows stop
+        their own clicks; the transcript's ``on_click`` owns the in-area
+        dismissal), so this only fires for clicks that bubbled up from
+        elsewhere -- the composer, the control bar, the rail: the user
+        moved on, and a menu left floating over the transcript folds with
+        no side effects (ADR-068's dismiss contract). The ancestor walk is
+        the guard: a transcript-area click that somehow reached this
+        screen handler finds its ``ConsoleTranscript`` ancestor and is
+        left alone. Menus whose removal is already scheduled (Textual
+        marks them ``_pruning`` synchronously) are skipped so a repeated
+        dismissal stays single-shot per menu.
+
+        TASK-21119 (idle cost): this runs on BOTH ``on_mouse_down`` and
+        ``on_click`` of the same physical press, on every press anywhere on
+        the Console -- and it used to open with two full-screen ``query``
+        walks (plus a third inside ``_remove_selection_menu``) on the
+        largest DOM in the app: 6 walks per rail press, 3 per composer
+        press, virtually always to find nothing. Both collections now come
+        from the widgets' own registries (constructor-registered, so they
+        can never miss a mounted node) with attachment re-derived from the
+        live DOM, and the pass returns before any of it when there is
+        nothing to dismiss. "Nothing to dismiss" deliberately covers more
+        than a mounted menu: keyboard-selection mode arms a highlight with
+        no menu, and that highlight must still fold on a click elsewhere.
+
+        Args:
+            target: The clicked widget (``event.widget``/``event.control``).
+        """
+        # The ancestor walk stays FIRST (review round 1, MINOR-2): it is the
+        # cheapest exit and it owns the drag hot path -- every press inside a
+        # transcript returns here having touched neither registry.
+        node: object = target
+        while node is not None:
+            if isinstance(node, (ConsoleTranscript, ConsoleSelectionMenu)):
+                return  # the transcript/menu own their in-area interaction
+            node = getattr(node, "parent", None)
+        menus = selection_menus_on_screen(self)
+        # Only transcripts the cleanup would actually change; on the rest,
+        # all three steps below are provable no-ops (see
+        # ``ConsoleTranscript.has_pending_selection_ui``).
+        transcripts = [
+            transcript
+            for transcript in console_transcripts_on_screen(self)
+            if transcript.has_pending_selection_ui
+        ]
+        if not menus and not transcripts:
+            return  # the common case: no selection UI anywhere on the screen
+        # Menus mount on the screen now; route the dismissal through every
+        # transcript's centralized selection-UI cleanup (clears highlight +
+        # manager state), then remove any stragglers (e.g. menus mounted by
+        # harnesses without a transcript ancestor).
+        for transcript in transcripts:
+            transcript._remove_selection_menu()
+            transcript.selection_manager.cancel()
+            transcript._selection_origin_row = None
+        for menu in menus:
+            if not getattr(menu, "_pruning", False):
+                menu.remove()
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Dismiss selection UI before descendants may consume the click."""
+        target = getattr(event, "widget", None) or getattr(event, "control", None)
+        if target is None:
+            try:
+                target, _offset = self.get_widget_at(event.screen_x, event.screen_y)
+            except Exception:
+                target = None
+        self._dismiss_console_selection_menus_outside_transcript(target)
+
     def on_click(self, event: Click) -> None:
         """Reset pending paste unfurl confirmation when clicking outside the token."""
         target = getattr(event, "widget", None) or getattr(event, "control", None)
+        self._dismiss_console_selection_menus_outside_transcript(target)
         if getattr(target, "id", None) == "console-command-visible-text":
             return
         if getattr(target, "id", None) == "console-rail-system-line":
             event.stop()
             self.run_worker(self._open_console_system_prompt_editor(), exclusive=False)
-            return
-        if getattr(target, "id", None) == "console-agent-section-subagents":
-            event.stop()
-            self._agent._toggle_console_agent_drilldown_from_subagents_click()
             return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
@@ -17842,14 +19135,21 @@ class ChatScreen(BaseAppScreen):
         model: Optional[str] = None,
         temperature: Optional[str] = None,
     ) -> None:
-        """Push sidebar control values back into the compact shell bar."""
+        """Push sidebar control values back into the compact shell bar.
+
+        task-16474: this programmatic sync no longer writes the
+        ``_console_control_provider``/``_console_control_model`` mirrors --
+        those track genuine user selections only (the mirrors outrank
+        ``chat_defaults`` when fresh session defaults are derived, so
+        ambient writes decided the provider of the next session). The bar's
+        displayed values and the session settings replacement below are
+        unchanged.
+        """
         updates: Dict[str, str] = {}
         if provider is not None:
             updates["provider"] = provider
-            self._console_control_provider = provider
         if model is not None:
             updates["model"] = model
-            self._console_control_model = model
         if temperature is not None:
             updates["temperature"] = temperature
 
@@ -17934,6 +19234,38 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        # task-17652: a Settings change to the status-row position must land
+        # on this cached screen without a recompose.
+        apply_status_chips_position(self)
+        # task-15475: consume the mount's one-shot token. On the FIRST visit
+        # this resume is the mount's own, and on_mount already dispatched the
+        # skill-candidate worker and scheduled the task-resume sync; running
+        # them again here just doubled the work. Consumed (not merely read),
+        # so every subsequent resume refreshes normally.
+        mount_already_refreshed = self._console_mount_visit_refreshed
+        self._console_mount_visit_refreshed = False
+        # task-18310: reconcile the Console session against the registry's
+        # active workspace on EVERY resume, including the mount's own --
+        # deliberately NOT gated by `mount_already_refreshed` like the
+        # worker refreshes below. Every in-Console activation path (Alt+W
+        # switcher, the shared create modal, conversation-browser row-open)
+        # already keeps the registry and the store's active session in
+        # lockstep, so the common case is an O(1) early exit; the mount
+        # path itself never reconciles against the registry, and the store
+        # is app-level (it can carry a session that predates this screen's
+        # first mount), so skipping it here on the mount's own resume would
+        # leave that gap uncaught. Cross-screen activation (Settings'
+        # create-modal/"Set active" button, Library's create-workspace
+        # flow) only updates the registry -- this is the seam that repairs
+        # the resulting drift. See
+        # `ConsoleWorkspaceController._reconcile_console_session_with_registry`.
+        try:
+            self._workspace._reconcile_console_session_with_registry()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to reconcile Console session with registry-active workspace"
+            )
+        self._session.consume_pending_console_first_chat_intent()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via
@@ -17943,7 +19275,8 @@ class ChatScreen(BaseAppScreen):
         # stale block and the modal could stick even after setup completed
         # elsewhere.
         self._sync_console_transcript_guidance()
-        self.sync_task_resume_state()
+        if not mount_already_refreshed:
+            self.sync_task_resume_state()
         self._register_console_footer_shortcuts()
         # Delayed exactly like the `on_mount` consumption below, to give the
         # native composer a chance to finish mounting on first navigation to
@@ -17956,9 +19289,25 @@ class ChatScreen(BaseAppScreen):
         # regardless of which lifecycle hook scheduled it.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
+        # PR3a-2 Task 4: mirrors the on_mount claim -- a completion staged
+        # while the user was on another screen is claimed on resume too.
+        self.set_timer(
+            0.15,
+            self._fleet.consume_pending_console_fleet_completion,
+        )
         self.call_after_refresh(self._restore_console_workbench_focus)
-        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
-        # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
+        repair_dispatched = self._consume_pending_console_roleplay_repair()
+        if (
+            not repair_dispatched
+            and not self._consume_pending_console_identity_refresh()
+        ):
+            self._dispatch_active_console_roleplay_refresh()
+        if not mount_already_refreshed:
+            self.run_worker(
+                self._skill._refresh_console_skill_candidates(), exclusive=False
+            )
+        # Textual's MRO dispatch also invokes BaseAppScreen's shared reconciliation;
+        # this handler extends that resume event with Console-owned replay work.
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
         """Update native Console task-resume state and refresh its cards."""
@@ -17996,9 +19345,9 @@ class ChatScreen(BaseAppScreen):
         machinery" convention, rather than a bespoke copy per bridge.
         Deliberately does NOT touch ``task_resume_state``/``set_task_
         resume_state`` -- that slot is reserved for whichever session is
-        actually being viewed (``_set_console_pending_approval``/
-        ``_set_console_pending_skill_install``/``_set_console_pending_
-        skill_script`` above); parking must never steal the mounted card
+        actually being viewed (``_set_console_pending_approval`` and the
+        `ConsoleSkillController` pending-state setters); parking must never
+        steal the mounted card
         out from under the session the user is currently looking at. The
         controller's own ``_parked_approval_payloads``/``_parked_skill_
         install_payloads``/``_parked_skill_script_payloads`` maps
@@ -18127,8 +19476,16 @@ class ChatScreen(BaseAppScreen):
                 and last_round_ids <= self._console_toasted_park_round_ids
             ):
                 return
-        session_title, workspace_name = self._workspace._console_session_title_and_workspace_name(
-            controller, session_id
+        session_title, workspace_name = (
+            self._workspace._console_session_title_and_workspace_name(
+                controller, session_id
+            )
+        )
+        session_title = escape_markup(
+            sanitize_character_display_label(session_title, max_characters=500)
+        )
+        workspace_name = escape_markup(
+            sanitize_character_display_label(workspace_name, max_characters=500)
         )
         self.app_instance.notify(
             f"Agent in {session_title} ({workspace_name}) needs approval."
@@ -18161,21 +19518,24 @@ class ChatScreen(BaseAppScreen):
             ``session_id``.
         """
         ids: set[str] = set()
-        mcp_payload = controller._parked_approval_payloads.get(session_id)
-        if mcp_payload is not None:
-            round_id = mcp_payload.get("round_id")
-            if round_id:
-                ids.add(f"mcp:{round_id}")
-        install_payload = controller._parked_skill_install_payloads.get(session_id)
-        if install_payload is not None:
-            request_id = install_payload.get("request_id")
-            if request_id:
-                ids.add(f"install:{request_id}")
-        script_payload = controller._parked_skill_script_payloads.get(session_id)
-        if script_payload is not None:
-            request_id = script_payload.get("request_id")
-            if request_id:
-                ids.add(f"script:{request_id}")
+        for prefix, store, id_key in (
+            ("mcp", controller._parked_approval_payloads, "round_id"),
+            ("install", controller._parked_skill_install_payloads, "request_id"),
+            ("script", controller._parked_skill_script_payloads, "request_id"),
+        ):
+            # PR0 (task-15661): `_parked_approval_payloads` is keyed by
+            # ROUND now, so a session can retain SEVERAL payloads at once
+            # and a `.get(session_id)` would find none of them. Scanning by
+            # the payload's own `session_id` reads either key shape, which
+            # also means the two skill maps needed no change here when they
+            # were re-keyed. Returning EVERY live id (not just the
+            # session's mounted head) is what this method already promises
+            # and what the caller's dedupe needs: a genuinely new sibling
+            # round must still toast.
+            for payload in controller._session_round_payloads(store, session_id):
+                round_id = payload.get(id_key)
+                if round_id:
+                    ids.add(f"{prefix}:{round_id}")
         return frozenset(ids)
 
     def _notify_console_run_outcome(
@@ -18207,8 +19567,16 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         if controller is None:
             return
-        session_title, workspace_name = self._workspace._console_session_title_and_workspace_name(
-            controller, session_id
+        session_title, workspace_name = (
+            self._workspace._console_session_title_and_workspace_name(
+                controller, session_id
+            )
+        )
+        session_title = escape_markup(
+            sanitize_character_display_label(session_title, max_characters=500)
+        )
+        workspace_name = escape_markup(
+            sanitize_character_display_label(workspace_name, max_characters=500)
         )
         verb = "finished" if status is ConsoleRunStatus.COMPLETED else "failed"
         self.app_instance.notify(f"Agent in {session_title} ({workspace_name}) {verb}.")
@@ -18230,34 +19598,6 @@ class ChatScreen(BaseAppScreen):
         """
         self.app_instance.notify(visible_copy, severity="error")
 
-    def _set_console_pending_skill_install(
-        self, payload: Dict[str, Any] | None
-    ) -> None:
-        """Set/clear the pending skill-install confirm, then sync the task cards.
-
-        UI-thread bridge target for ConsoleChatController.
-        request_skill_install_confirm, invoked via call_from_thread. Mutates
-        only pending_skill_install so an in-flight approval/resume state is
-        never clobbered.
-        """
-        current = self._task_resume_state
-        self.set_task_resume_state(replace(current, pending_skill_install=payload))
-
-    def _set_console_pending_skill_script(self, payload: Dict[str, Any] | None) -> None:
-        """Set/clear the pending skill-script confirm, then sync the task cards.
-
-        UI-thread bridge target for ``ConsoleChatController.
-        request_skill_script_confirm``, invoked via ``call_from_thread``
-        (task-5). Mutates only ``pending_skill_script`` so an in-flight
-        approval/resume state is never clobbered.
-
-        Args:
-            payload: The pending confirm's dict (see
-                ``SkillScriptConfirmCard.set_script``), or None to clear it.
-        """
-        current = self._task_resume_state
-        self.set_task_resume_state(replace(current, pending_skill_script=payload))
-
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
@@ -18278,42 +19618,18 @@ class ChatScreen(BaseAppScreen):
             )
 
     @on(SkillInstallConfirmCard.InstallDecided)
-    def handle_console_skill_install_decided(
-        self, event: SkillInstallConfirmCard.InstallDecided
-    ) -> None:
-        """Forward the user's install decision to the controller's worker thread.
-
-        TASK-910: ``event.request_id`` MUST be threaded through unchanged --
-        ``ConsoleChatController.resolve_pending_skill_install`` silently
-        drops a resolve whose id doesn't match the currently-armed round,
-        mirroring ``handle_console_skill_script_decided``'s identical
-        contract below.
-        """
+    def handle_console_skill_install_decided(self, event: Any) -> None:
         event.stop()
-        controller = self._console_chat_controller
-        if controller is not None:
-            controller.resolve_pending_skill_install(
-                event.allow, request_id=event.request_id
-            )
+        self._skill.handle_console_skill_install_decided(
+            event.allow, request_id=event.request_id
+        )
 
     @on(SkillScriptConfirmCard.ScriptDecided)
-    def handle_console_skill_script_decided(
-        self, event: SkillScriptConfirmCard.ScriptDecided
-    ) -> None:
-        """Forward the user's run decision to the controller's worker thread.
-
-        ``event.request_id`` MUST be threaded through unchanged: ``Console
-        ChatController.resolve_pending_skill_script`` (task-5) silently
-        drops a resolve whose id doesn't match the currently-armed round,
-        which is exactly what ``SkillScriptConfirmCard.ScriptDecided``
-        carries it for.
-        """
+    def handle_console_skill_script_decided(self, event: Any) -> None:
         event.stop()
-        controller = self._console_chat_controller
-        if controller is not None:
-            controller.resolve_pending_skill_script(
-                event.allow, event.remember, request_id=event.request_id
-            )
+        self._skill.handle_console_skill_script_decided(
+            event.allow, event.remember, request_id=event.request_id
+        )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
@@ -18328,6 +19644,14 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-composer-menu":
             event.stop()
             await self._open_console_composer_menu()
+            return
+        if button_id == "console-prompt-improvement-undo":
+            event.stop()
+            self._undo_console_prompt_improvement()
+            return
+        if button_id == "console-prompt-improvement-review":
+            event.stop()
+            self._open_console_prompt_comparison()
             return
         if button_id == "console-send-message":
             await self.handle_console_send_message(event)
@@ -18405,109 +19729,26 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-workspace-conversation-search-clear":
             event.stop()
-            if self._console_conversation_browser_search_timer is not None:
-                self._console_conversation_browser_search_timer.stop()
-                self._console_conversation_browser_search_timer = None
-            if self._console_workspace_conversation_search_timer is not None:
-                self._console_workspace_conversation_search_timer.stop()
-                self._console_workspace_conversation_search_timer = None
-            self._console_conversation_browser_query = ""
-            self._console_conversation_browser_search_token += 1
-            self._console_conversation_browser_rows = ()
-            self._console_conversation_browser_total = None
-            self._console_conversation_browser_error = ""
-            self._console_workspace_conversation_query = ""
-            self._console_workspace_conversation_search_token += 1
-            self._console_workspace_conversation_search_rows = ()
-            self._console_workspace_conversation_search_total = None
-            self._console_workspace_conversation_search_error = ""
-            self._sync_console_workspace_context()
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            self._workspace.clear_console_conversation_browser_search()
+            return
+        if button_id == "console-workspace-search-retry":
+            event.stop()
+            self.run_worker(
+                self._workspace.retry_workspace_tree_search(),
+                group="console-workspace-tree-search",
+                exclusive=True,
+            )
             return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
-            conversation_id = str(
-                getattr(event.button, "conversation_id", "") or ""
-            ).strip()
-            row_key = str(getattr(event.button, "row_key", "") or "").strip()
-            browser_row = self._find_console_browser_row(
-                row_key or conversation_id,
-                conversation_id=conversation_id,
+            await self._workspace.open_console_workspace_conversation(
+                str(getattr(event.button, "conversation_id", "") or ""),
+                row_key=str(getattr(event.button, "row_key", "") or ""),
             )
-            if browser_row is not None:
-                self._workspace._activate_console_workspace_for_browser_row(browser_row)
-                row_conversation_id = str(browser_row.conversation_id or "").strip()
-                session_id = self._session._console_session_id_for_browser_row(browser_row)
-            else:
-                row_conversation_id = conversation_id
-                session_id = self._workspace._console_session_id_for_workspace_conversation(
-                    conversation_id
-                )
-            if session_id is None:
-                if not row_conversation_id:
-                    self.app_instance.notify(
-                        "This conversation row is no longer available.",
-                        severity="warning",
-                    )
-                    return
-                # task-457(b): the resume is awaited inline and can be slow or
-                # fail; flag the pressed row loading for the duration so it does
-                # not read as a dead click, and always clear it afterwards (a
-                # successful resume also recomposes the rail, which drops the
-                # flag; the finally covers the not-resumable/error return).
-                self._set_console_conversation_row_loading(row_conversation_id, True)
-                try:
-                    resumed = await self._workspace._resume_console_workspace_conversation(
-                        row_conversation_id,
-                        target_scope_type=(
-                            browser_row.scope_type if browser_row is not None else None
-                        ),
-                        target_workspace_id=(
-                            browser_row.workspace_id
-                            if browser_row is not None
-                            else None
-                        ),
-                    )
-                finally:
-                    self._set_console_conversation_row_loading(
-                        row_conversation_id, False
-                    )
-                if resumed:
-                    await self._refresh_console_conversation_browser_after_selection()
-                    return
-                if resumed is None:
-                    # Transient failure; the resume path already explained it.
-                    return
-                # TASK-717: the record is missing - say so honestly (Library
-                # has no affordance for a nonexistent record) and mark the
-                # row visibly broken so it stops presenting as openable.
-                self._mark_console_conversation_row_broken(row_conversation_id)
-                self.app_instance.notify(
-                    "This saved conversation could not be loaded - "
-                    "its record is missing.",
-                    severity="warning",
-                )
-                return
-            controller = self._ensure_console_chat_controller()
-            if controller.store.active_session_id != session_id:
-                if browser_row is None:
-                    self._workspace._set_active_workspace_for_console_session(session_id)
-                controller.switch_session(session_id)
-                await self._sync_native_console_chat_ui()
-                # task-7 review: an already-open native tab for this
-                # conversation is never ephemeral, but the PREVIOUS active
-                # session might have been -- `_sync_native_console_chat_ui`
-                # above never touches the temporary chip (see
-                # `_sync_console_temporary_chip`), so without this the chip
-                # could keep reading "Temporary" after switching onto a
-                # saved conversation.
-                self._sync_console_temporary_chip()
-            self._focus_console_composer_if_needed(force=True)
-            await self._refresh_console_conversation_browser_after_selection()
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
-            await self._session._close_console_session_tab(
+            self._session.start_close_console_session_tab(
                 button_id.removeprefix("console-close-session-tab-")
             )
             return
@@ -18523,8 +19764,102 @@ class ChatScreen(BaseAppScreen):
                 return
 
     def watch_sidebar_state(self, new_state: dict) -> None:
-        """Auto-save when sidebar state changes."""
-        self._save_sidebar_state()
+        """Debounce persistence when sidebar state changes.
+
+        task-15470: this used to call `_save_sidebar_state()` directly --
+        synchronous open+parse+rewrite of `ui_state.toml` on the event loop,
+        once per `Collapsible.Toggled`. Now it only marks the state dirty and
+        (re)arms one debounce timer; a burst of toggles collapses into a
+        single write, dispatched off the loop by
+        `_flush_sidebar_state_after_debounce`. `on_unmount` force-flushes any
+        pending write so a toggle immediately followed by quit is not lost.
+        """
+        self._schedule_sidebar_state_save()
+
+    def _schedule_sidebar_state_save(self) -> None:
+        """Mark the sidebar state dirty and (re)arm the debounce timer.
+
+        The single scheduling point -- `watch_sidebar_state` and any direct
+        caller that mutates `ui_state.collapsible_states` without going
+        through the reactive (e.g. a bulk reset that may reassign an
+        already-`{}` `sidebar_state`, which the reactive would then treat as
+        a no-op and never call the watcher for) both route through here so
+        a pending write is unconditionally scheduled.
+        """
+        self._sidebar_state_dirty = True
+        if self._sidebar_state_save_timer is not None:
+            self._sidebar_state_save_timer.stop()
+        self._sidebar_state_save_timer = self.set_timer(
+            SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS,
+            self._flush_sidebar_state_after_debounce,
+        )
+
+    def _flush_sidebar_state_after_debounce(self) -> None:
+        """Debounce timer callback: hand the actual write to a worker."""
+        self._sidebar_state_save_timer = None
+        self._sidebar_state_persist_worker = self.run_worker(
+            self._persist_sidebar_state_off_loop(),
+            exclusive=True,
+            group="sidebar-state-persist",
+        )
+
+    async def _persist_sidebar_state_off_loop(self) -> None:
+        """Write `ui_state.toml` on a worker thread, off the event loop.
+
+        Snapshots `self.ui_state` here, on the main thread, before handing
+        the write to `to_thread` -- a further toggle can still arrive and
+        mutate `collapsible_states` while this write is in flight, and it
+        must not race the worker thread's read of that same dict.
+
+        Clears `_sidebar_state_dirty` immediately after taking the
+        snapshot, NOT after the write completes (review round,
+        task-15470): the awaited `to_thread` call below yields to the
+        event loop, and a further toggle can land while this write is
+        still in flight. Clearing dirty only after the write finished
+        would blindly stamp it False again on completion -- clobbering
+        the True a mid-flight toggle had just set -- so a quit landing
+        before that toggle's own new debounce timer fires would see
+        `dirty=False` and lose it. Clearing right here instead means the
+        dirty flag always answers "is there a toggle newer than the
+        snapshot this worker is holding", which a mid-flight toggle
+        correctly flips back to True.
+        """
+        snapshot = self._sidebar_state_snapshot()
+        self._sidebar_state_dirty = False
+        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
+
+    async def _flush_sidebar_state_now(self) -> None:
+        """Force-flush a pending sidebar-state write (unmount/quit path).
+
+        Cancels any pending debounce timer and writes off the loop via
+        `to_thread` so the screen never unmounts with an unpersisted toggle
+        -- the AC #2 flush-on-quit guarantee. If a debounced write is
+        already in flight (the timer fired moments before quit), this waits
+        for it rather than dispatching a second writer against the same
+        file -- `_write_sidebar_state_snapshot` does an unlocked
+        read-modify-write of `ui_state.toml`, so two concurrent writers
+        could interleave.
+        """
+        if self._sidebar_state_save_timer is not None:
+            self._sidebar_state_save_timer.stop()
+            self._sidebar_state_save_timer = None
+        worker = self._sidebar_state_persist_worker
+        if worker is not None and not worker.is_finished:
+            try:
+                await worker.wait()
+            except Exception as error:
+                logger.error(
+                    "Pending sidebar-state write failed: {}", type(error).__name__
+                )
+            # Falls through to the dirty re-check below (review round,
+            # task-15470) rather than returning here: a toggle can land
+            # while THIS await was in flight, re-dirtying the state after
+            # the awaited worker already took its own snapshot. Returning
+            # unconditionally after the wait would silently drop it.
+        if self._sidebar_state_dirty:
+            snapshot = self._sidebar_state_snapshot()
+            await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
+            self._sidebar_state_dirty = False
 
     def _load_sidebar_state(self) -> None:
         """Load sidebar state from config file."""
@@ -18557,8 +19892,27 @@ class ChatScreen(BaseAppScreen):
             logger.error(f"Failed to load sidebar state: {e}")
             self.sidebar_state = {}
 
-    def _save_sidebar_state(self) -> None:
-        """Save sidebar state to config file."""
+    def _sidebar_state_snapshot(self) -> Dict[str, Any]:
+        """Copy the sidebar-persisted fields off `self.ui_state`.
+
+        `collapsible_states` is a plain mutable dict; taking this copy on
+        the caller's thread (always the main/event-loop thread -- see
+        `_persist_sidebar_state_off_loop`) before handing the write to a
+        worker thread means the worker never reads `self.ui_state` directly,
+        so a toggle arriving while that write is in flight cannot race it.
+        """
+        return {
+            "collapsible_states": dict(self.ui_state.collapsible_states),
+            "search_query": self.ui_state.sidebar_search_query,
+            "last_active_section": self.ui_state.last_active_section,
+        }
+
+    def _write_sidebar_state_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Write a pre-captured sidebar-state snapshot to `ui_state.toml`.
+
+        Safe to call from a worker thread: touches only the passed-in
+        `snapshot`, never `self.ui_state`.
+        """
         config_path = _get_effective_config_path().parent / "ui_state.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -18571,21 +19925,28 @@ class ChatScreen(BaseAppScreen):
                 data = {}
 
             # Update sidebar section
-            data["sidebar"] = {
-                "collapsible_states": dict(self.ui_state.collapsible_states),
-                "search_query": self.ui_state.sidebar_search_query,
-                "last_active_section": self.ui_state.last_active_section,
-            }
+            data["sidebar"] = snapshot
 
             # Save back to file
             with open(config_path, "w") as f:
                 toml.dump(data, f)
 
             logger.debug(
-                f"Saved sidebar state with {len(self.ui_state.collapsible_states)} collapsibles"
+                f"Saved sidebar state with {len(snapshot['collapsible_states'])} collapsibles"
             )
         except Exception as e:
             logger.error(f"Failed to save sidebar state: {e}")
+
+    def _save_sidebar_state(self) -> None:
+        """Save sidebar state to config file, synchronously, on this thread.
+
+        Convenience wrapper around `_sidebar_state_snapshot` +
+        `_write_sidebar_state_snapshot` for a caller that is already off the
+        event loop (a worker thread via `to_thread`) or does not care (a
+        direct test call). Callers on the event loop that must NOT block it
+        should go through `watch_sidebar_state`'s debounce instead.
+        """
+        self._write_sidebar_state_snapshot(self._sidebar_state_snapshot())
 
     def _restore_collapsible_states(self) -> None:
         """Restore collapsible states from saved state."""
@@ -18700,7 +20061,7 @@ class ChatScreen(BaseAppScreen):
                 else:
                     collapsible.collapsed = True
 
-            self._save_sidebar_state()
+            self._schedule_sidebar_state_save()
             logger.info("Reset sidebar to default state")
             self.notify("Settings reset to defaults", severity="success")
         except Exception as e:

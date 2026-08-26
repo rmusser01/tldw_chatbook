@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchCheckpoint,
+    )
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
+    from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
     from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
@@ -38,6 +43,88 @@ class ConsoleRunStatus(str, Enum):
     RETRYING = "retrying"
 
 
+#: Console selection phase 3: run statuses during which an agent run counts
+#: as active for selection review feedback -- Request changes / LGTM arm
+#: (feedback queues behind the run via the prompt-queue seam); anything
+#: else leaves those two menu actions gated (Comment never gates).
+#: Single source of truth: both consumers derive from this set -- the
+#: transcript's selection gating (a string frozenset of the values) and
+#: the screen's active-run constant (used for the transcript poll timer,
+#: the sub-agent badge cache, and the same feedback gating). New active
+#: statuses must be added here, never at a consumer.
+FEEDBACK_ACTIVE_RUN_STATUSES: frozenset["ConsoleRunStatus"] = frozenset(
+    {
+        ConsoleRunStatus.VALIDATING,
+        ConsoleRunStatus.STREAMING,
+        ConsoleRunStatus.CHECKING_CITATIONS,
+        ConsoleRunStatus.RETRYING,
+    }
+)
+
+
+class ConsoleSubmissionOrigin(str, Enum):
+    """Origin of a Console turn entering the accepted-send boundary.
+
+    ``AGENT_WAKE`` (PR3a-2 Task 5) is a machine-injected auto-wake turn:
+    it requires a coordinator-issued ``AgentWakeAuthorization`` (the
+    queue-token precedent), writes NO USER transcript row (a SYSTEM-class
+    machine-origin notice instead), never clears the composer, and its
+    notice reaches the model as a payload-only trailing user-role entry.
+    """
+
+    MANUAL = "manual"
+    QUEUED = "queued"
+    AGENT_WAKE = "agent_wake"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleQueuedAcceptanceEvent:
+    """Content-free notice that one claimed queue entry became a real turn."""
+
+    session_id: str
+    entry_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleControllerActivity:
+    """Single content-free lifecycle projection for Console fleet consumers."""
+
+    session_id: str
+    occupies_slot: bool
+    preparing_before_acceptance: bool
+    accepted_live_turn: bool
+    needs_approval: bool
+    queued_count: int
+    queue_paused: bool
+    terminal_notification_eligible: bool
+
+    @property
+    def has_queued_work(self) -> bool:
+        """Return whether queue-owned future work controls this session."""
+
+        return self.queued_count > 0
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleLifecycleImpact:
+    """Revisioned, content-free loss impact derived from Console activity."""
+
+    revision: int
+    live_run_count: int
+    queued_session_count: int
+    unsent_prompt_count: int
+
+    @property
+    def has_loss_risk(self) -> bool:
+        """Return whether leaving would discard or cancel Console work."""
+
+        return bool(
+            self.live_run_count
+            or self.queued_session_count
+            or self.unsent_prompt_count
+        )
+
+
 class ConsoleRunMarker(str, Enum):
     """Fleet-visible run marker for a session (parallel-agents spec §6).
 
@@ -53,6 +140,18 @@ class ConsoleRunMarker(str, Enum):
     NEEDS_APPROVAL = "needs-approval"
     FINISHED_OK = "finished-ok"
     FINISHED_FAILED = "finished-failed"
+    #: PR3a-2 Task 4: a background SUB-AGENT of this conversation settled
+    #: after its turn had already returned, and the user has not viewed
+    #: the conversation since. Deliberately distinct from FINISHED_OK/
+    #: FINISHED_FAILED, which announce a TURN's unvisited outcome -- a
+    #: survivor finishing is a different event (the turn it belonged to
+    #: ended long ago, possibly in a previous app run: this marker is
+    #: backed by the durable ``fleet_unseen`` conversation-local mark, so
+    #: it survives restart where the turn markers cannot). Derived in the
+    #: screen layer (the controller has no marks service); lowest
+    #: precedence of the non-NONE markers -- any live or unvisited TURN
+    #: state outranks it.
+    SUBAGENT_UNSEEN = "subagent-unseen"
 
 
 #: Glyph shown for each `ConsoleRunMarker` on Console session tabs and
@@ -66,6 +165,7 @@ CONSOLE_RUN_MARKER_GLYPHS: dict[ConsoleRunMarker, str] = {
     ConsoleRunMarker.NEEDS_APPROVAL: "◆",
     ConsoleRunMarker.FINISHED_OK: "✓",
     ConsoleRunMarker.FINISHED_FAILED: "✗",
+    ConsoleRunMarker.SUBAGENT_UNSEEN: "◈",
 }
 
 
@@ -90,6 +190,10 @@ CONSOLE_RUN_MARKER_MEANINGS: dict[ConsoleRunMarker, str] = {
     ConsoleRunMarker.NEEDS_APPROVAL: "waiting for approval",
     ConsoleRunMarker.FINISHED_OK: "finished — unseen",
     ConsoleRunMarker.FINISHED_FAILED: "failed — unseen",
+    # Deliberately "ended", not "finished": the durable mark behind this
+    # marker is set for error/cancelled survivor settles too, and the
+    # tooltip must not promise success the run log may contradict.
+    ConsoleRunMarker.SUBAGENT_UNSEEN: "sub-agent ended in background — unseen",
 }
 
 #: Reverse lookup from rendered glyph to its meaning, for callers along the
@@ -107,8 +211,352 @@ CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH: dict[str, str] = {
 }
 
 
-ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
+@dataclass(frozen=True, slots=True)
+class ConsoleFleetCompletionTarget:
+    """Deep-link payload for a background sub-agent completion (PR3a-2 Task 4).
+
+    Staged on the ``HandoffChannel.CONSOLE_FLEET_COMPLETION`` single-slot
+    channel by the fleet drain consumer when a survivor settles while
+    Console is NOT the active screen; the next Console mount claims it and
+    switches to the named conversation's session. ``conversation_id`` is
+    the bridge's durable id (the persisted conversation id when the
+    session was saved, the native session id otherwise), so the claimer
+    matches it against both ``session.persisted_conversation_id`` and
+    ``session.id``.
+
+    Attributes:
+        conversation_id: The settled conversation's durable id (required).
+        session_id: The native Console session id the drain event carried,
+            when known -- a faster exact match for a still-open session.
+    """
+
+    conversation_id: str
+    session_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.conversation_id, str) or not isinstance(
+            self.session_id, str
+        ):
+            raise TypeError("Console fleet completion target ids must be text")
+        normalized = self.conversation_id.strip()
+        if not normalized:
+            raise ValueError("Console fleet completion target needs a conversation id")
+        object.__setattr__(self, "conversation_id", normalized)
+        object.__setattr__(self, "session_id", self.session_id.strip())
+
+
+ConsoleMessageStatus = Literal[
+    "complete", "pending", "streaming", "stopped", "failed", "discarded"
+]
 ConsoleMessageFeedback = Literal["up", "down"]
+ConsoleActivityKind = Literal[
+    "thinking",
+    "tool",
+    "spawn",
+    "tasks",
+    "changes",
+    "feedback",
+    "warning",
+    "activity",
+]
+ConsoleActivityStatus = Literal["success", "blocked", "failed", "done"]
+
+_CONSOLE_ACTIVITY_KINDS = frozenset(
+    {
+        "thinking",
+        "tool",
+        "spawn",
+        "tasks",
+        "changes",
+        "feedback",
+        "warning",
+        "activity",
+    }
+)
+_CONSOLE_ACTIVITY_STATUSES = frozenset({"success", "blocked", "failed", "done"})
+
+
+CONSOLE_DISPATCH_UNRECONSTRUCTABLE_REASON = (
+    "Retry response is unavailable because one-shot prefill or transient evidence "
+    "cannot be reconstructed exactly."
+)
+CONSOLE_DISPATCH_IN_FLIGHT_REASON = "Recovery action is already in progress."
+CONSOLE_DISPATCH_DUPLICATE_WARNING = (
+    "Retry anyway may send a duplicate request because delivery status is unknown."
+)
+CONSOLE_DISPATCH_DISCARDED_COPY = "Response discarded."
+CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY = (
+    "Finish or discard the pending turn before saving."
+)
+
+
+class ConsoleDispatchRecoveryActionId(str, Enum):
+    """Explicit actions available for a device-local dispatch owner."""
+
+    RETRY_RESPONSE = "retry_response"
+    RETRY_ANYWAY = "retry_anyway"
+    DISCARD = "discard"
+
+
+class ConsoleDispatchRecoveryKind(str, Enum):
+    """Bounded loader and runtime outcomes for one assistant owner."""
+
+    ACCEPTED = "accepted"
+    DISPATCH_STARTED = "dispatch_started"
+    EPHEMERAL_ACCEPTED = "ephemeral_accepted"
+    EPHEMERAL_DISPATCH_STARTED = "ephemeral_dispatch_started"
+    REMOTE_ACCEPTED = "remote_accepted"
+    REMOTE_DISPATCH_STARTED = "remote_dispatch_started"
+    CONTINUATION = "continuation"
+    QUARANTINED = "quarantined"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleDispatchRecoveryAction:
+    """Literal, UI-neutral action state for dispatch recovery."""
+
+    action_id: ConsoleDispatchRecoveryActionId
+    label: str
+    enabled: bool
+    disabled_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action_id, ConsoleDispatchRecoveryActionId):
+            raise TypeError("action_id must be a ConsoleDispatchRecoveryActionId")
+        if not isinstance(self.label, str) or not self.label:
+            raise ValueError("recovery action label must be non-empty text")
+        if type(self.enabled) is not bool:
+            raise TypeError("recovery action enabled must be a bool")
+        if not isinstance(self.disabled_reason, str):
+            raise TypeError("recovery action disabled_reason must be text")
+        if self.enabled and self.disabled_reason:
+            raise ValueError("enabled recovery actions cannot have a disabled reason")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleDispatchRecoveryState:
+    """One body-free, app-lifetime recovery projection for an assistant."""
+
+    kind: ConsoleDispatchRecoveryKind
+    assistant_message_id: str
+    conversation_id: str
+    visible_copy: str
+    actions: tuple[ConsoleDispatchRecoveryAction, ...]
+    warning: str = ""
+    error_code: str | None = None
+    checkpoint: "ConsoleDispatchCheckpoint | None" = field(
+        default=None,
+        repr=False,
+    )
+    queue_entry_id: str | None = None
+    preparation_id: str | None = None
+    in_flight: bool = False
+    runtime_active: bool = False
+    recovery_needed: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, ConsoleDispatchRecoveryKind):
+            raise TypeError("kind must be a ConsoleDispatchRecoveryKind")
+        if not isinstance(self.assistant_message_id, str):
+            raise TypeError("assistant_message_id must be text")
+        if not isinstance(self.conversation_id, str):
+            raise TypeError("conversation_id must be text")
+        if not isinstance(self.visible_copy, str) or not self.visible_copy:
+            raise ValueError("recovery visible_copy must be non-empty text")
+        if type(self.actions) is not tuple or any(
+            not isinstance(action, ConsoleDispatchRecoveryAction)
+            for action in self.actions
+        ):
+            raise TypeError("actions must contain recovery actions")
+        if not isinstance(self.warning, str):
+            raise TypeError("warning must be text")
+        if type(self.in_flight) is not bool:
+            raise TypeError("in_flight must be a bool")
+        if type(self.runtime_active) is not bool:
+            raise TypeError("runtime_active must be a bool")
+        if type(self.recovery_needed) is not bool:
+            raise TypeError("recovery_needed must be a bool")
+        if self.error_code is not None and (
+            not isinstance(self.error_code, str)
+            or not self.error_code
+            or len(self.error_code) > 64
+        ):
+            raise ValueError("recovery error_code is invalid")
+
+    def with_in_flight(self, in_flight: bool) -> "ConsoleDispatchRecoveryState":
+        """Return an exact action-disabled/enabled projection for one intent."""
+
+        if type(in_flight) is not bool:
+            raise TypeError("in_flight must be a bool")
+        if in_flight == self.in_flight:
+            return self
+        actions = tuple(
+            replace(
+                action,
+                enabled=False,
+                disabled_reason=CONSOLE_DISPATCH_IN_FLIGHT_REASON,
+            )
+            for action in self.actions
+        )
+        if not in_flight:
+            truth = getattr(self.checkpoint, "reconstructability", None)
+            reconstructable = bool(
+                truth is not None
+                and truth.attachments_reconstructable
+                and truth.evidence_reconstructable
+                and truth.prefill_reconstructable
+            )
+            actions = _console_dispatch_actions(
+                self.kind,
+                reconstructable=reconstructable,
+                in_flight=False,
+            )
+        return replace(self, actions=actions, in_flight=in_flight)
+
+    def with_runtime_truth(
+        self,
+        *,
+        runtime_active: bool,
+        recovery_needed: bool,
+    ) -> "ConsoleDispatchRecoveryState":
+        """Return the same owner with explicit runtime/recovery truth."""
+
+        if type(runtime_active) is not bool or type(recovery_needed) is not bool:
+            raise TypeError("dispatch runtime truth must be bools")
+        return replace(
+            self,
+            runtime_active=runtime_active,
+            recovery_needed=recovery_needed,
+        )
+
+
+def _console_dispatch_actions(
+    kind: ConsoleDispatchRecoveryKind,
+    *,
+    reconstructable: bool,
+    in_flight: bool,
+) -> tuple[ConsoleDispatchRecoveryAction, ...]:
+    if kind not in {
+        ConsoleDispatchRecoveryKind.ACCEPTED,
+        ConsoleDispatchRecoveryKind.DISPATCH_STARTED,
+        ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+        ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+    }:
+        return ()
+    started = kind in {
+        ConsoleDispatchRecoveryKind.DISPATCH_STARTED,
+        ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+    }
+    retry_id = (
+        ConsoleDispatchRecoveryActionId.RETRY_ANYWAY
+        if started
+        else ConsoleDispatchRecoveryActionId.RETRY_RESPONSE
+    )
+    retry_enabled = reconstructable and not in_flight
+    retry_reason = ""
+    if in_flight:
+        retry_reason = CONSOLE_DISPATCH_IN_FLIGHT_REASON
+    elif not reconstructable:
+        retry_reason = CONSOLE_DISPATCH_UNRECONSTRUCTABLE_REASON
+    discard_enabled = not in_flight
+    return (
+        ConsoleDispatchRecoveryAction(
+            retry_id,
+            "Retry anyway" if started else "Retry response",
+            retry_enabled,
+            retry_reason,
+        ),
+        ConsoleDispatchRecoveryAction(
+            ConsoleDispatchRecoveryActionId.DISCARD,
+            "Discard",
+            discard_enabled,
+            "" if discard_enabled else CONSOLE_DISPATCH_IN_FLIGHT_REASON,
+        ),
+    )
+
+
+def console_dispatch_recovery_from_checkpoint(
+    checkpoint: "ConsoleDispatchCheckpoint",
+    *,
+    ephemeral: bool = False,
+    in_flight: bool = False,
+) -> ConsoleDispatchRecoveryState:
+    """Derive exact local actions from one validated dispatch owner."""
+
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchCheckpoint,
+        ConsoleDispatchCheckpointState,
+    )
+
+    if not isinstance(checkpoint, ConsoleDispatchCheckpoint):
+        raise TypeError("checkpoint must be a ConsoleDispatchCheckpoint")
+    started = checkpoint.state is ConsoleDispatchCheckpointState.DISPATCH_STARTED
+    if ephemeral:
+        kind = (
+            ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED
+            if started
+            else ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+        )
+    else:
+        kind = (
+            ConsoleDispatchRecoveryKind.DISPATCH_STARTED
+            if started
+            else ConsoleDispatchRecoveryKind.ACCEPTED
+        )
+    truth = checkpoint.reconstructability
+    reconstructable = bool(
+        truth.attachments_reconstructable
+        and truth.evidence_reconstructable
+        and truth.prefill_reconstructable
+    )
+    return ConsoleDispatchRecoveryState(
+        kind=kind,
+        assistant_message_id=checkpoint.assistant_message_id,
+        conversation_id=checkpoint.conversation_id,
+        visible_copy=(
+            "Response delivery status is unknown on the source device."
+            if started
+            else "Response accepted; waiting for dispatch."
+        ),
+        warning=CONSOLE_DISPATCH_DUPLICATE_WARNING if started else "",
+        actions=_console_dispatch_actions(
+            kind,
+            reconstructable=reconstructable,
+            in_flight=in_flight,
+        ),
+        checkpoint=checkpoint,
+        queue_entry_id=checkpoint.queue_entry_id,
+        preparation_id=checkpoint.preparation_id,
+        in_flight=in_flight,
+    )
+
+
+@dataclass(frozen=True)
+class ConsoleActivityPresentation:
+    """Bounded, session-only presentation facts for one activity marker."""
+
+    kind: ConsoleActivityKind
+    label: str
+    status: ConsoleActivityStatus
+
+    def __post_init__(self) -> None:
+        """Reject unbounded labels and values outside the public vocabulary."""
+        if self.kind not in _CONSOLE_ACTIVITY_KINDS:
+            raise ValueError("activity kind is invalid")
+        if (
+            not isinstance(self.label, str)
+            or not self.label.strip()
+            or len(self.label) > 200
+            or "\n" in self.label
+            or "\r" in self.label
+        ):
+            raise ValueError(
+                "activity label must be a non-empty single line <= 200 chars"
+            )
+        if self.status not in _CONSOLE_ACTIVITY_STATUSES:
+            raise ValueError("activity status is invalid")
+
+
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"
 DEFAULT_CONSOLE_SESSION_TITLE = "Chat 1"
 
@@ -427,8 +875,14 @@ class ConsoleChatMessage:
     #: ``attachments`` (index i describes attachment position i). An empty
     #: tuple (the default) means this is NOT a generation message.
     generation_metadata: tuple["GenerationVariantMeta", ...] = ()
+    #: Captured provider exchanges for this turn (Conversation Inspector).
+    #: Tuple for snapshot-safety; the store replaces, never mutates.
+    exchanges: tuple["ExchangeCapture", ...] = ()
     #: Safe current-session citation UI state. Never persisted or restored.
     citation_presentation: ConsoleCitationPresentation | None = None
+    #: Structured activity-header facts. Session-only; never persisted,
+    #: restored, sent to a provider, or written to the agent run log.
+    activity_presentation: ConsoleActivityPresentation | None = None
     #: TASK-1860: the FULL, untruncated tool result behind a TOOL marker.
     #: ``content`` is a preview capped by the Console display setting, so
     #: without this the whole result was unreachable from the transcript --
@@ -463,6 +917,21 @@ class ConsoleChatMessage:
     # field is that machine consumers (reseed, exports, summaries) read it
     # instead of string-matching UI copy in ``content``.
     metadata: "MessageMetadata | None" = None
+    # Private provider state owned by this exact assistant generation. It is
+    # deliberately excluded from repr/render content while remaining part of
+    # ordinary dataclass equality/copy semantics.
+    provider_continuation: "ProviderContinuationCheckpoint | None" = field(
+        default=None,
+        repr=False,
+    )
+    # Safe restore/display facts kept separate from the private checkpoint.
+    provider_continuation_warning: str | None = None
+    provider_continuation_remote: bool = False
+    provider_continuation_message_version: int | None = None
+    # Portable closed lifecycle state.  Continuation actions stay separately
+    # gated until a restored owner has a committed, freshly rebound version.
+    assistant_generation_state: str | None = None
+    provider_continuation_actions_enabled: bool = True
     # task-3401.4: structured facts about a generated VIDEO (slug name,
     # prompt/backend/seed/shape) -- the tombstone card's payload after the
     # ephemeral bytes are gone (ADR-044). Persisted as a namespaced key in
@@ -472,6 +941,15 @@ class ConsoleChatMessage:
     # resume+edit can never clobber the video payload). None for every
     # non-video message.
     video_metadata: "VideoGenerationMetadata | None" = None
+    #: Render-only live activity line for an IN-FLIGHT assistant row ("⚙
+    #: read_file · 4s"). Set by nothing that owns messages: the store never
+    #: writes it, no persistence path reads it, and it is never echoed to a
+    #: model or a run log. ``ConsoleTranscript`` alone stamps it, on a
+    #: throwaway ``replace()`` copy made inside its row-planning walk (the
+    #: same seam ``tool_output_full`` expansion uses), from a value the
+    #: 0.2s Console poll re-derives every tick. It is therefore always
+    #: ``""`` on every message the rest of the app ever sees.
+    live_activity: str = ""
 
 
 @dataclass(frozen=True)
@@ -526,6 +1004,44 @@ class ConsoleVariantSet:
 
 
 @dataclass(frozen=True)
+class ProjectInstructionPreview:
+    """Disposable, user-requested preview of automatic project context.
+
+    Only ``next_send_payload`` may contain the instruction body. The remaining
+    fields are content-free metadata suitable for the Context diagnostics UI.
+    """
+
+    relative_source: str | None
+    scope: str
+    byte_count: int
+    outcomes: tuple[str, ...]
+    warning_codes: tuple[str, ...]
+    next_send_payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ProjectInstructionActivationEvent:
+    """Content-free notice that project guidance changed for one run."""
+
+    relative_sources: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
+    outcome_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        fields = (
+            self.relative_sources,
+            self.scopes,
+            self.outcome_codes,
+        )
+        if any(
+            not isinstance(value, str) or "\n" in value or "\r" in value
+            for values in fields
+            for value in values
+        ):
+            raise ValueError("project instruction event values must be single-line text")
+
+
+@dataclass(frozen=True)
 class ConsoleContextSnapshot:
     """Independent snapshot of current transcript and next-send provider payload.
 
@@ -538,6 +1054,7 @@ class ConsoleContextSnapshot:
 
     current_messages: list[ConsoleChatMessage]
     next_send_payload: dict[str, Any]
+    project_instruction_preview: ProjectInstructionPreview | None = None
 
 
 def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:

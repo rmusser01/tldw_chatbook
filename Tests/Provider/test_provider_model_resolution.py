@@ -36,12 +36,13 @@ def _entry(
     model_id: str,
     *,
     source: str,
+    provider: str = "OpenAI",
     capability_status: str = "unknown",
     persisted: bool = False,
 ) -> MergedModelEntry:
     return MergedModelEntry(
-        provider="OpenAI",
-        provider_list_key="OpenAI",
+        provider=provider,
+        provider_list_key=provider,
         model_id=model_id,
         display_name=model_id,
         source=source,
@@ -95,7 +96,7 @@ async def test_model_options_merge_explicit_saved_models_and_catalog_scope() -> 
         (
             _entry(
                 "gpt-4o",
-                source="saved",
+                source="persisted_discovered",
                 capability_status="known",
                 persisted=True,
             ),
@@ -120,6 +121,12 @@ async def test_model_options_merge_explicit_saved_models_and_catalog_scope() -> 
 async def test_model_options_keep_discovery_out_of_capped_dropdowns() -> None:
     scope = CatalogScopeFixture(
         (
+            _entry(
+                "saved",
+                source="persisted_discovered",
+                capability_status="known",
+                persisted=True,
+            ),
             _entry("runtime-one", source="runtime_discovered"),
             _entry("runtime-two", source="runtime_discovered"),
         )
@@ -150,8 +157,8 @@ async def test_model_options_keep_discovery_out_of_capped_dropdowns() -> None:
 @pytest.mark.parametrize(
     ("discovered_count", "expected_count"),
     [
-        (SELECTOR_MERGE_CAP, SELECTOR_MERGE_CAP + 1),
-        (SELECTOR_MERGE_CAP + 1, 1),
+        (SELECTOR_MERGE_CAP - 1, SELECTOR_MERGE_CAP),
+        (SELECTOR_MERGE_CAP, 1),
     ],
 )
 async def test_model_options_enforce_the_configured_merge_cap_boundary(
@@ -160,12 +167,57 @@ async def test_model_options_enforce_the_configured_merge_cap_boundary(
 ) -> None:
     options = await resolve_provider_model_options(
         {"OpenRouter": ["saved"]},
-        CatalogScopeFixture(_runtime_entries(discovered_count)),
+        CatalogScopeFixture(
+            (
+                _entry(
+                    "saved",
+                    source="persisted_discovered",
+                    capability_status="known",
+                    persisted=True,
+                ),
+                *_runtime_entries(discovered_count),
+            )
+        ),
         provider="OpenRouter",
     )
 
     assert len(options) == expected_count
     assert options[0].model_id == "saved"
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_discovered_models_use_capped_selector_merge() -> None:
+    at_cap = tuple(
+        _entry(
+            f"qwen-runtime-{index}",
+            source="runtime_discovered",
+            provider="QwenCloud",
+        )
+        for index in range(SELECTOR_MERGE_CAP)
+    )
+    over_cap = at_cap + (
+        _entry(
+            "qwen-runtime-over-cap",
+            source="runtime_discovered",
+            provider="QwenCloud",
+        ),
+    )
+
+    capped_options = await resolve_provider_model_options(
+        {"QwenCloud": ["saved-model"]},
+        CatalogScopeFixture(at_cap),
+        provider="QwenCloud",
+    )
+    oversized_options = await resolve_provider_model_options(
+        {"QwenCloud": ["saved-model"]},
+        CatalogScopeFixture(over_cap),
+        provider="QwenCloud",
+    )
+
+    assert [option.model_id for option in capped_options] == [
+        f"qwen-runtime-{index}" for index in range(SELECTOR_MERGE_CAP)
+    ]
+    assert oversized_options == []
 
 
 @pytest.mark.asyncio
@@ -177,7 +229,7 @@ async def test_oversized_catalog_still_preserves_the_current_model() -> None:
         current_model="session-only",
     )
 
-    assert [option.model_id for option in options] == ["session-only", "saved"]
+    assert [option.model_id for option in options] == ["session-only"]
 
 
 @pytest.mark.asyncio

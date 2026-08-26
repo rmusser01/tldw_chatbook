@@ -79,7 +79,7 @@ class LoadingState(Container):
         if self.auto_start and self.loader:
             self.start_loading()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="loading-states-start-loading")
     async def start_loading(self) -> None:
         """Start the loading process."""
         self.is_loading = True
@@ -229,10 +229,34 @@ class InlineLoader(Static):
         self.error_text = error_text
         self.state = "loading"  # loading, success, error
         self.dots = 0
+        # task-22220: handle for the 0.5 s dots tick -- the pre-fix code
+        # discarded it, leaving one immortal timer per mounted indicator
+        # ticking on long after set_success/set_error.
+        self._dots_timer = None
 
     async def on_mount(self) -> None:
-        """Start the loading animation."""
-        self.set_interval(0.5, self._update_dots)
+        """Start the loading animation (only when actually loading)."""
+        if self.state == "loading":
+            self._start_dots_timer()
+
+    def _start_dots_timer(self) -> None:
+        """Arm the 0.5 s dots tick (idempotent; task-22220)."""
+        if self._dots_timer is None:
+            self._dots_timer = self.set_interval(0.5, self._update_dots)
+
+    def _stop_dots_timer(self) -> None:
+        """Stop the dots tick and drop the dead handle (task-22220).
+
+        The stopped Timer is also discarded from the pump's timer set so
+        repeated reset()/terminal cycles don't accumulate dead Timer
+        objects for the widget's mounted lifetime.
+        """
+        timer = self._dots_timer
+        if timer is None:
+            return
+        self._dots_timer = None
+        timer.stop()
+        self._timers.discard(timer)
 
     def _update_dots(self) -> None:
         """Update the loading dots animation."""
@@ -246,6 +270,7 @@ class InlineLoader(Static):
 
     def set_success(self) -> None:
         """Set the loader to success state."""
+        self._stop_dots_timer()
         self.state = "success"
         self.update(f"✓ {self.success_text}")
         self.add_class("success")
@@ -253,6 +278,7 @@ class InlineLoader(Static):
 
     def set_error(self, message: Optional[str] = None) -> None:
         """Set the loader to error state."""
+        self._stop_dots_timer()
         self.state = "error"
         error_text = message or self.error_text
         self.update(f"✗ {error_text}")
@@ -266,6 +292,11 @@ class InlineLoader(Static):
         self.update(self.loading_text)
         self.add_class("loading")
         self.remove_class("success", "error")
+        # task-22220: re-arm the tick a terminal state stopped. Guarded on a
+        # running pump so a reset on a pre-mount/unmounted widget arms
+        # nothing (on_mount covers the pre-mount case).
+        if self.is_running:
+            self._start_dots_timer()
 
 
 # Messages

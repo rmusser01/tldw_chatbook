@@ -25,6 +25,9 @@ from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
 
 
+DEFAULT_SOURCE_FREQUENCY_SECONDS = 3600
+
+
 class SourceSelected(Message):
     """Posted when the user selects a source in the sources table."""
 
@@ -36,7 +39,8 @@ class SourceSelected(Message):
 class CreateSourceRequested(Message):
     """Posted when the user submits the new-source form."""
 
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, runtime_backend: str, payload: dict[str, Any]) -> None:
+        self.runtime_backend = runtime_backend
         self.payload = payload
         super().__init__()
 
@@ -50,14 +54,16 @@ class ExportOpmlRequested(Message):
 
 
 class CreateFormDraftChanged(Message):
-    """Posted whenever a create-form free-text field changes.
+    """Posted whenever a create-form draft field changes.
 
     `SourcesPane` lives inside a `WatchlistsWorkbench` region, and that
-    workbench's `region_layout` reactive is `recompose=True` — collapsing or
-    expanding *any* region (including one unrelated to Sources, e.g. `[` on
-    the left rail) rebuilds the whole workbench and constructs a brand new
-    `SourcesPane`. Without this message the screen has no way to know what
-    was typed, so the draft would be silently lost on the next such rebuild.
+    region is swapped for a freshly built one whenever it collapses or
+    expands, or whenever the section switches — each of which constructs a
+    brand new `SourcesPane`. (Until task-15461 the trigger was wider still:
+    `region_layout` was `recompose=True`, so `[` on the left rail — a region
+    unrelated to Sources — rebuilt this pane too.) Without this message the
+    screen has no way to know what was typed, so the draft would be silently
+    lost on the next such rebuild.
     The owning screen mirrors this into its own state and seeds it back into
     the freshly-constructed pane.
     """
@@ -70,6 +76,8 @@ class CreateFormDraftChanged(Message):
         ignore_selectors: str | None = None,
         source_type: str | None = None,
         destination: Any = None,
+        active: bool | None = None,
+        frequency: int | None = None,
     ) -> None:
         self.name = name
         self.url = url
@@ -88,6 +96,8 @@ class CreateFormDraftChanged(Message):
         #: string, never None, precisely so the two cases stay distinct.
         self.source_type = source_type
         self.destination = destination
+        self.active = active
+        self.frequency = frequency
         super().__init__()
 
 
@@ -115,7 +125,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: `compose()`.
     _SELECTED_ROW_STYLE = "reverse bold"
 
-    sources = reactive[list[dict[str, Any]]]([], recompose=True)
+    sources = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_source = reactive[dict[str, Any] | None](None)
     #: TASK-2309. The source ids ("id" field, the same namespaced form
     #: `selected_source` carries) with a check currently in flight anywhere
@@ -128,13 +138,27 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: reason `selected_source` above is not), so `watch_busy_source_ids`
     #: repaints the one button that can show it, surgically.
     busy_source_ids = reactive[frozenset[str]](frozenset())
-    search_query = reactive("", recompose=True)
-    source_type_filter = reactive("all", recompose=True)
-    status_filter = reactive("all", recompose=True)
-    active_filter = reactive("all", recompose=True)
-    tags_filter = reactive("", recompose=True)
+    #: task-15460: the five filters are PLAIN reactives. All five were
+    #: `recompose=True`, so a single character typed into the search box (or
+    #: the tags box) tore down and rebuilt this entire pane -- toolbar, the
+    #: eight-control create form if it happened to be open, and the table --
+    #: and `recompose()` then had to put focus back into the input it had
+    #: just destroyed. A `DataTable`'s rows are data, not widgets, so
+    #: re-populating it (`_refresh_table_rows`) mounts nothing and leaves
+    #: the focused `Input`, its caret and any open form exactly where they
+    #: were. The create-form reactives below stay `recompose=True`: those
+    #: genuinely change WHICH CONTROLS EXIST.
+    search_query = reactive("")
+    source_type_filter = reactive("all")
+    status_filter = reactive("all")
+    active_filter = reactive("all")
+    tags_filter = reactive("")
     show_create_form = reactive(False, recompose=True)
     show_filter_editor = reactive(False, recompose=True)
+    create_runtime_backend = reactive("local")
+    create_form_source_types = reactive[tuple[str, ...]](
+        ("rss", "atom", "url"), recompose=True
+    )
     # Seed values for the create form's free-text inputs. No `recompose=True`:
     # these only need to be read once per `compose()` call (to seed the
     # Input's `value=`), which already happens whenever `show_create_form` (or
@@ -142,6 +166,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     create_draft_name = reactive("")
     create_draft_url = reactive("")
     create_draft_tags = reactive("")
+    create_draft_active = reactive(True)
     # TASK-1362 (spec §2). Seeds `#sources-create-ignore-selectors`. Its
     # default is the shipped noise set, so a form that has never been touched
     # opens *prefilled and visible* -- that prefill lives here, in the form,
@@ -159,7 +184,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     # workbench rebuild constructs a brand new pane, and re-deriving the
     # destination from the scope there would silently overwrite a choice the
     # user had already made in a form that is still open.
-    watchlist_choices = reactive[list[dict[str, Any]]]([])
+    watchlist_choices = reactive[list[dict[str, Any]]](list)
     default_destination = reactive[Any]("unassigned")
     create_draft_destination = reactive[Any]("unassigned")
     # TASK-2302. The chosen source type, which decides whether the
@@ -261,11 +286,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: leaving the control alone reproduces the database default (TASK-1210).
     _FREQUENCY_OPTIONS = [
         ("Every 15m", 900),
-        ("Every 1h", 3600),
+        ("Every 1h", DEFAULT_SOURCE_FREQUENCY_SECONDS),
         ("Every 6h", 21_600),
         ("Every 24h", 86_400),
     ]
-    _DEFAULT_FREQUENCY_SECONDS = 3600
+    create_draft_frequency = reactive(DEFAULT_SOURCE_FREQUENCY_SECONDS)
 
     #: Which create-form control `recompose()` should focus once it has
     #: remounted this pane's children. See `recompose` for why focus has to
@@ -276,15 +301,20 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: follow-up). See that method's docstring for why a bound is safe here.
     _CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS = 20
 
-    #: TASK-2302 adds `Web page`. Every other entry here is a FEED type, and
-    #: `ignore_selectors` (an element-level rule) can only ever affect a
-    #: scraped page -- so before this the create form could not produce a
-    #: single source the noise field applied to, which is why that field read
-    #: as decorative prefill. `url` is the value
-    #: `LocalWatchlistsService._local_type_for_source_type` accepts verbatim
-    #: and the value `normalize_local_subscription_row` publishes back, so
-    #: this one entry serves the create Select and the filter Select alike.
-    _TYPE_OPTIONS = [
+    #: UI labels are pane-owned while each backend owns its ordered form
+    #: contract. The filter vocabulary stays broader and backend-independent.
+    _SOURCE_TYPE_LABELS = {
+        "rss": "RSS",
+        "atom": "Atom",
+        "feed": "Feed",
+        "playlist": "Playlist",
+        "channel": "Channel",
+        "url": "Web page",
+        "site": "Site",
+        "forum": "Forum",
+    }
+
+    _FILTER_TYPE_OPTIONS = [
         ("All", "all"),
         ("RSS", "rss"),
         ("Atom", "atom"),
@@ -308,6 +338,39 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         ("Inactive", "inactive"),
     ]
 
+    def configure_create_backend(
+        self, backend: str, source_types: tuple[str, ...]
+    ) -> None:
+        """Configure the backend and ordered source types used by the form.
+
+        Args:
+            backend: ``local`` or ``server``.
+            source_types: Non-empty backend form contract containing ``rss``.
+
+        Raises:
+            ValueError: If either contract value is invalid.
+        """
+        if backend not in {"local", "server"}:
+            raise ValueError("Create backend must be 'local' or 'server'.")
+        if (
+            not isinstance(source_types, tuple)
+            or not source_types
+            or "rss" not in source_types
+        ):
+            raise ValueError("Create source types must be non-empty and include 'rss'.")
+
+        if self.is_mounted:
+            self.create_runtime_backend = backend
+            self.create_form_source_types = source_types
+            if self.create_draft_source_type not in source_types:
+                self.create_draft_source_type = "rss"
+            return
+
+        self.set_reactive(SourcesPane.create_runtime_backend, backend)
+        self.set_reactive(SourcesPane.create_form_source_types, source_types)
+        if self.create_draft_source_type not in source_types:
+            self.set_reactive(SourcesPane.create_draft_source_type, "rss")
+
     def compose(self):
         with Vertical(id="sources-toolbar"):
             # TASK-995: `compact=True` on every Input/Select in a
@@ -329,7 +392,10 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     # `select_on_focus=True` makes the programmatic refocus
                     # after a recompose select ALL text, so the user's next
                     # keystroke REPLACES the half-typed query instead of
-                    # appending to it.
+                    # appending to it. Typing no longer causes that
+                    # recompose (task-15460), but opening the create form
+                    # still does, and a click back into the box must land
+                    # the caret rather than arm the term for deletion.
                     select_on_focus=False,
                     compact=True,
                 )
@@ -350,7 +416,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # hover. A compact Select has no border for a border-title
                 # to sit on either way (TASK-2300).
                 yield PruneSafeSelect(
-                    self._TYPE_OPTIONS,
+                    self._FILTER_TYPE_OPTIONS,
                     value=self.source_type_filter,
                     id="sources-type-select",
                     allow_blank=False,
@@ -471,16 +537,18 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     Static("Type", classes="sources-create-field-label"),
                     PruneSafeSelect(
                         [
-                            (label, value)
-                            for label, value in self._TYPE_OPTIONS
-                            if value != "all"
+                            (self._SOURCE_TYPE_LABELS[value], value)
+                            for value in self.create_form_source_types
                         ],
                         value=self.create_draft_source_type,
                         id="sources-create-type",
                         allow_blank=False,
                     ),
                     Static("Active", classes="sources-create-active-label"),
-                    Switch(value=True, id="sources-create-active"),
+                    Switch(
+                        value=self.create_draft_active,
+                        id="sources-create-active",
+                    ),
                     classes="sources-create-type-row",
                 )
                 # TASK-2302 AC#1: where this source will LAND, stated before
@@ -508,22 +576,21 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # `compact=True` on both, matching the toolbar strips two rows
                 # above: it takes the row from three rows to one, which is the
                 # rest of what the noise field below costs (TASK-1362).
-                yield Horizontal(
-                    Input(
+                with Horizontal(classes="sources-create-tags-row"):
+                    yield Input(
                         placeholder="Tags (comma separated)",
                         id="sources-create-tags",
                         value=self.create_draft_tags,
                         compact=True,
-                    ),
-                    PruneSafeSelect(
-                        self._FREQUENCY_OPTIONS,
-                        value=self._DEFAULT_FREQUENCY_SECONDS,
-                        id="sources-create-frequency",
-                        allow_blank=False,
-                        compact=True,
-                    ),
-                    classes="sources-create-tags-row",
-                )
+                    )
+                    if self.create_runtime_backend == "local":
+                        yield PruneSafeSelect(
+                            self._FREQUENCY_OPTIONS,
+                            value=self.create_draft_frequency,
+                            id="sources-create-frequency",
+                            allow_blank=False,
+                            compact=True,
+                        )
                 # The noise control, spec §2: prefilled, visible, and editable
                 # before the source is ever checked. A source's *volume* is
                 # not the problem -- a page whose ad slot or view counter
@@ -538,7 +605,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # destination above. The Inspector's own copy of this editor
                 # has always been gated the same way
                 # (`_is_url_family_source`).
-                if self._type_takes_ignore_selectors(self.create_draft_source_type):
+                if (
+                    self.create_runtime_backend == "local"
+                    and self._type_takes_ignore_selectors(
+                        self.create_draft_source_type
+                    )
+                ):
                     yield self._ignore_selectors_field()
                 # `.dialog-buttons` is the same one-row, side-by-side pairing
                 # `WatchlistNameDialog` uses for its own Create/Cancel, so the
@@ -549,9 +621,6 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     yield Button("Create", id="sources-create-submit", variant="success")
                     yield Button("Cancel", id="sources-create-cancel", variant="default")
 
-        selected_key = (
-            str(self.selected_source.get("id")) if self.selected_source else None
-        )
         table = DataTable(id="sources-table")
         # TASK-2313, AC#2: "checked"/"Check now" is the vocabulary this
         # screen uses everywhere else for the same fetch action (the
@@ -559,19 +628,51 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # checked on its normal schedule."); this column was the one
         # holdout still saying "scraped".
         table.add_columns("Name", "Type", "Status", "Last checked", "Active")
-        filtered = self._filtered_sources()
-        for source in filtered:
+        self._populate_table(table)
+        yield table
+
+    def _populate_table(self, table: DataTable) -> None:
+        """Add one row per filtered source, painting the selected one.
+
+        Shared by `compose()` and `_refresh_table_rows` so the initial paint
+        and a filter change can never draw the same row differently.
+
+        Args:
+            table: The sources table, already carrying its columns and empty
+                of rows.
+        """
+        selected_key = (
+            str(self.selected_source.get("id")) if self.selected_source else None
+        )
+        for source in self._filtered_sources():
             row_key = str(source.get("id") or id(source))
             table.add_row(
                 *self._source_row_cells(source, row_key == selected_key),
                 key=row_key,
             )
-        # `compose()` just painted the highlight fresh from `selected_source`
-        # itself, so this is authoritative going forward -- see
+        # The rows were just painted fresh from `selected_source` itself, so
+        # this is authoritative going forward -- see
         # `_update_selection_highlight`'s docstring for why a later,
-        # non-recomposing selection change needs to know what to revert.
+        # non-rebuilding selection change needs to know what to revert.
         self._highlighted_source_key = selected_key
-        yield table
+
+    def _refresh_table_rows(self) -> None:
+        """Re-populate the table for a filter change, without a recompose.
+
+        task-15460. `DataTable` rows are data rather than widgets, so
+        clearing and re-adding them destroys no widget: the toolbar, an open
+        create form, the focused `Input` and its caret all survive a
+        keystroke that changes what the table shows. `clear()` keeps the
+        columns, which `_update_selection_highlight` reads back.
+        """
+        try:
+            table = self.query_one("#sources-table", DataTable)
+        except NoMatches:
+            # Seeded before mount by `_build_detail_pane`; `compose()` will
+            # apply the filter when it builds the table.
+            return
+        table.clear()
+        self._populate_table(table)
 
     @classmethod
     def _type_takes_ignore_selectors(cls, source_type: Any) -> bool:
@@ -789,6 +890,24 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             results.append(source)
         return results
 
+    # task-15460: one watcher per filter, all doing the same in-place
+    # re-populate. Written out rather than shared through a `watch` alias so
+    # each reactive's name still appears where a reader looks for it.
+    def watch_search_query(self, search_query: str) -> None:
+        self._refresh_table_rows()
+
+    def watch_source_type_filter(self, source_type_filter: str) -> None:
+        self._refresh_table_rows()
+
+    def watch_status_filter(self, status_filter: str) -> None:
+        self._refresh_table_rows()
+
+    def watch_active_filter(self, active_filter: str) -> None:
+        self._refresh_table_rows()
+
+    def watch_tags_filter(self, tags_filter: str) -> None:
+        self._refresh_table_rows()
+
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "sources-search-input":
             self.search_query = event.value
@@ -831,6 +950,8 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 ignore_selectors=self.create_draft_ignore_selectors,
                 source_type=self.create_draft_source_type,
                 destination=self.create_draft_destination,
+                active=self.create_draft_active,
+                frequency=self.create_draft_frequency,
             )
         )
 
@@ -839,6 +960,8 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self.create_draft_name = ""
         self.create_draft_url = ""
         self.create_draft_tags = ""
+        self.create_draft_active = True
+        self.create_draft_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
         # Back to the pane's defaults, not to whatever was just submitted:
         # the next form is a NEW source, which starts at the scope the user
         # is looking at (TASK-2302) and at the default feed type.
@@ -932,13 +1055,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
         task-3071 adds a third case ahead of these, checked first: the
         search box (`#sources-search-input`) held focus when the teardown
-        started. `search_query` is `reactive(..., recompose=True)`, so
-        every keystroke in it rebuilds this pane, which used to destroy
+        started. It used to be that `search_query` was `reactive(...,
+        recompose=True)`, so every keystroke rebuilt this pane and destroyed
         the focused input mid-word -- only the first character of a search
         ever landed (the exact bug `ItemsPane.recompose` fixed in
-        task-2513). Search focus is restored to the fresh input and the
-        create-form path below is skipped for that rebuild, so a still-
-        armed `_pending_create_focus` cannot yank the caret out of the box.
+        task-2513). task-15460 removed that trigger (the filters are plain
+        reactives now), but the case remains live for every OTHER rebuild
+        that can land while the search box is focused -- a `sources` reload,
+        a region collapse, the create form opening. Search focus is restored
+        to the fresh input and the create-form path below is skipped for
+        that rebuild, so a still-armed `_pending_create_focus` cannot yank
+        the caret out of the box.
 
         Two create-form cases are handled, and only these two — focus is
         never taken from anywhere outside this pane's own create form or
@@ -979,10 +1106,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         #     `_focused_create_field_id()` is `None` and
         #     `_pending_create_focus` (armed to field 0 by
         #     `watch_show_create_form`) still supplies the target.
-        # task-3071: the search box is this pane's OTHER focusable the
-        # recompose destroys (`search_query` is `reactive(...,
-        # recompose=True)`, so every keystroke rebuilds the pane) --
-        # capture it alongside the create-form cases. `self.screen.focused`,
+        # task-3071: the search box is this pane's OTHER focusable a
+        # recompose destroys -- no longer once per keystroke (task-15460),
+        # but still on every rebuild that can land while the user is typing
+        # -- so capture it alongside the create-form cases.
+        # `self.screen.focused`,
         # NOT `self.app.focused`, for the same ScreenStackError reason
         # `ItemsPane.recompose` documents.
         try:
@@ -1170,12 +1298,31 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             # that (they are seeded from these same reactives) and
             # `recompose` re-homes focus, which for this control lands back
             # on the Select the user just used.
-            self.create_draft_source_type = str(event.value or "rss")
-            self._post_create_draft_changed()
+            source_type = str(event.value or "rss")
+            if source_type in self.create_form_source_types:
+                self.create_draft_source_type = source_type
+                self._post_create_draft_changed()
         elif event.select.id == "sources-create-watchlist":
             self.create_draft_destination = event.value
             self._post_create_draft_changed()
+        elif event.select.id == "sources-create-frequency":
+            try:
+                self.create_draft_frequency = int(event.value)
+            except (TypeError, ValueError):
+                self.create_draft_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
+            self._post_create_draft_changed()
         event.stop()
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        """Mirror the Active switch into the durable create-form draft.
+
+        Args:
+            event: The switch-change event emitted by the create form.
+        """
+        if event.switch.id == "sources-create-active":
+            self.create_draft_active = event.value
+            self._post_create_draft_changed()
+            event.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
@@ -1213,7 +1360,32 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         if not validate_url(url):
             self.app.notify("Source URL must be a valid http(s) URL.", severity="error")
             return
-        source_type = str(self.query_one("#sources-create-type", Select).value or "rss")
+        submitted_type = self.query_one("#sources-create-type", Select).value
+        raw_text = str(submitted_type)
+        source_type = raw_text
+        if source_type not in self.create_form_source_types:
+            text = strip_control_characters(raw_text)
+            text = " ".join(text.split())
+            if len(text) > 40:
+                text = f"{text[:39]}…"
+            display = self._SOURCE_TYPE_LABELS.get(source_type, text or "Unknown")
+            labels = [
+                self._SOURCE_TYPE_LABELS[value]
+                for value in self.create_form_source_types
+            ]
+            if len(labels) == 1:
+                choices = labels[0]
+            elif len(labels) == 2:
+                choices = " or ".join(labels)
+            else:
+                choices = f"{', '.join(labels[:-1])}, or {labels[-1]}"
+            self.app.notify(
+                f"{self.create_runtime_backend.title()} sources don't support "
+                f"'{display}'. Choose {choices}.",
+                severity="error",
+                markup=False,
+            )
+            return
         active = self.query_one("#sources-create-active", Switch).value
         tags_text = sanitize_string(self.query_one("#sources-create-tags", Input).value.strip(), max_length=1000)
         raw_tags = [tag.strip() for tag in tags_text.split(",") if tag.strip()] if tags_text else []
@@ -1224,49 +1396,6 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 tags.append(clean)
             else:
                 self.app.notify(f"Tag '{tag}' was skipped due to invalid content.", severity="warning")
-        try:
-            check_frequency = int(
-                self.query_one("#sources-create-frequency", Select).value
-            )
-        except (TypeError, ValueError):
-            check_frequency = self._DEFAULT_FREQUENCY_SECONDS
-        # Whatever the field holds, verbatim apart from outer whitespace and
-        # control characters (TASK-1362). Not re-split, not reformatted: a
-        # comma inside a line is a CSS selector group, so splitting on commas
-        # would break `:is(.a, .b)`. Empty means empty -- a user who cleared
-        # the field is saying "watch everything on this page", and re-filling
-        # the default here would overrule them silently.
-        # Read through the DOM, not through the draft, and only when the
-        # field is actually on screen: TASK-2302 renders it for url-family
-        # types alone, and a feed source carries no selectors by definition.
-        # `_clear_create_draft` keeps the draft prefilled for the next form,
-        # so reading the draft here would file the shipped default against
-        # every RSS source ever created from this form.
-        if self.query("#sources-create-ignore-selectors"):
-            ignore_selectors = sanitize_string(
-                self.query_one("#sources-create-ignore-selectors", TextArea).text,
-                max_length=self._IGNORE_SELECTORS_MAX_LENGTH,
-            ).strip()
-        else:
-            ignore_selectors = ""
-        # Refuse a selector CSS cannot parse, here, while the text is still on
-        # screen and the user can see which line. `ContentExtractor` now skips
-        # a bad line rather than aborting the check, but a silently-skipped
-        # rule is still a rule the user believes is suppressing noise and that
-        # is doing nothing -- and nothing else in the product would ever tell
-        # them. Only NON-EMPTY lines are checked, so the cleared field above
-        # stays a valid instruction.
-        bad_selector = first_invalid_selector(ignore_selectors)
-        if bad_selector is not None:
-            # markup=False: selectors are full of `[`, which Textual's toast
-            # markup would otherwise eat or choke on -- `[class*="ad"]` must
-            # reach the user verbatim, since naming the line IS the message.
-            self.app.notify(
-                invalid_selector_message(bad_selector),
-                severity="error",
-                markup=False,
-            )
-            return
         # TASK-2302 AC#1/#2: whatever the destination Select is SHOWING is
         # what travels with the request. Read off the mounted control rather
         # than off `create_draft_destination` so the payload cannot disagree
@@ -1278,21 +1407,53 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         watchlist_id = (
             None if destination == self.UNASSIGNED_DESTINATION else int(destination)
         )
+        payload: dict[str, Any] = {
+            "name": name,
+            "url": url,
+            "source_type": source_type,
+            "active": active,
+            "tags": tags,
+            # `None` means Unassigned, which is a real destination and not a
+            # missing one -- the pane always supplies this key.
+            "watchlist_id": watchlist_id,
+        }
+        if self.create_runtime_backend == "local":
+            try:
+                check_frequency = int(
+                    self.query_one("#sources-create-frequency", Select).value
+                )
+            except NoMatches:
+                # Backend changes recompose asynchronously. If the user
+                # submits before the Local-only control remounts, preserve
+                # the frequency already held by the durable form draft.
+                check_frequency = self.create_draft_frequency
+            except (TypeError, ValueError):
+                check_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
+            # Read selectors only when the Local control is mounted. Empty is
+            # a deliberate request to watch every part of the page.
+            if self.query("#sources-create-ignore-selectors"):
+                ignore_selectors = sanitize_string(
+                    self.query_one(
+                        "#sources-create-ignore-selectors", TextArea
+                    ).text,
+                    max_length=self._IGNORE_SELECTORS_MAX_LENGTH,
+                ).strip()
+            else:
+                ignore_selectors = ""
+            bad_selector = first_invalid_selector(ignore_selectors)
+            if bad_selector is not None:
+                self.app.notify(
+                    invalid_selector_message(bad_selector),
+                    severity="error",
+                    markup=False,
+                )
+                return
+            payload["check_frequency"] = check_frequency
+            payload["ignore_selectors"] = ignore_selectors
         self.post_message(
             CreateSourceRequested(
-                {
-                    "name": name,
-                    "url": url,
-                    "source_type": source_type,
-                    "active": active,
-                    "tags": tags,
-                    "check_frequency": check_frequency,
-                    "ignore_selectors": ignore_selectors,
-                    # `None` means Unassigned, which is a real destination
-                    # and not a missing one -- the pane always supplies this
-                    # key.
-                    "watchlist_id": watchlist_id,
-                }
+                self.create_runtime_backend,
+                payload,
             )
         )
         # ``show_create_form`` is ``recompose=True``. Closing it immediately

@@ -16,6 +16,10 @@ from tldw_chatbook.Video_Generation.adapters.base import (
 )
 from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
 from tldw_chatbook.Video_Generation.request_validation import validate_video_generation_request
+from tldw_chatbook.Video_Generation.video_formats import (
+    canonical_video_extension,
+    video_container_for_mime,
+)
 
 
 def build_request(
@@ -124,6 +128,11 @@ def run_generation(
         VideoGenerationError: If the backend is not enabled/available, the
             request fails validation, or the adapter fails to load.
     """
+    try:
+        canonical_video_extension(request.format)
+    except ValueError as exc:
+        raise VideoGenerationError("Invalid video generation request format") from exc
+
     registry = get_registry()
     resolved = registry.resolve_backend(request.backend)
     if resolved is None:
@@ -152,4 +161,13 @@ def run_generation(
     adapter = registry.get_adapter(resolved)
     if adapter is None:
         raise VideoGenerationError(f"Adapter for backend {resolved!r} failed to load.")
-    return _generate_with_optional_cancel(adapter, request, cancel_event)
+    result = _generate_with_optional_cancel(adapter, request, cancel_event)
+    try:
+        result_container = result.container
+        canonical_video_extension(result_container)
+        mime_container = video_container_for_mime(result.content_type)
+    except Exception:
+        raise VideoGenerationError("Invalid video generation result format") from None
+    if request.format != result_container or result_container != mime_container:
+        raise VideoGenerationError("Invalid video generation result format")
+    return result

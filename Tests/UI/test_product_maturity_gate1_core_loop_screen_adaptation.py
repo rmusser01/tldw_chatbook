@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 
 import pytest
-from textual.app import App
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
@@ -21,7 +22,10 @@ from Tests.UI.test_destination_shells import (
 )
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+    ChatScreen,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -82,7 +86,10 @@ async def _wait_for_visible_text(
     )
 
 
-class ConsoleHarness(App[None]):
+class ConsoleHarness(ConsolidatedCSSApp):
+    # Hosts the real ChatScreen, so it needs the consolidated widget CSS the
+    # real app loads (TASK-15450) -- otherwise every widget whose DEFAULT_CSS
+    # moved into the generated sheets mounts unstyled here.
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -218,8 +225,22 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         assert "Console" in text
         assert "Conversation" in text
         assert "Sources" in text
-        assert "Choose provider" in text or "Open Settings" in text
-        assert "Inspector" in text
+        # Any of the three provider-recovery affordances counts; which one
+        # shows depends on config state. With the real test config
+        # (task-15270) a fresh profile has `[chat_defaults] provider =
+        # "OpenAI"` and no key, so the label is the configure-key one --
+        # asserted through the product constant rather than a copy of it.
+        assert (
+            "Choose provider" in text
+            or "Open Settings" in text
+            or CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
+        )
+        context_button = console.query_one("#console-context-rail-open", Button)
+        assert context_button.label == "Context->"
+        assert context_button.tooltip == "Open Context rail"
+        inspector_button = console.query_one("#console-inspector-rail-open", Button)
+        assert inspector_button.label == "<-Inspect"
+        assert inspector_button.tooltip == "Open Inspector rail"
 
 
 @pytest.mark.asyncio
@@ -277,12 +298,12 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         assert not seen_routes
 
         screen.query_one("#library-row-create-flashcards", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-study-handoff-detail")
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-canvas")
 
         assert _active_destination_screen(host) is screen
         assert (
             screen.query_one("#library-canvas")
-            in screen.query_one("#library-study-handoff-detail").ancestors
+            in screen.query_one("#library-study-handoff-canvas").ancestors
         )
         assert screen._library_selected_row_id == "create-flashcards"
         assert screen.query_one("#library-row-create-flashcards").has_class(

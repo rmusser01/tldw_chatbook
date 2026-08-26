@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Checkbox, Input, Select, Static
 
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 
 
-class MutationsApp(App):
+class MutationsApp(ConsolidatedCSSApp):
     def __init__(self, record=None, slots=()) -> None:
         super().__init__()
         self.record = record

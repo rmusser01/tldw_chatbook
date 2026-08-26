@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
+import importlib
+import struct
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +12,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Select, Static, Switch
+from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -18,6 +21,7 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_voice_input import (
     DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
     DEFAULT_REALTIME_MODEL,
@@ -27,7 +31,6 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
 )
-from tldw_chatbook import config as config_module
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
@@ -36,8 +39,14 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
 )
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
+from tldw_chatbook.TTS.openai_compatible_config import (
+    normalize_openai_compatible_endpoint,
+    openai_destination_fingerprint,
+)
 from tldw_chatbook.UI.Lab_Modules import lab_speech_status as lab_speech_status_module
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -47,18 +56,21 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     CredentialIntent,
     GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSValidationError,
+    ProcessProviderTestEvidenceStore,
+    build_provider_test_fingerprint,
     load_global_speech_tts_state,
 )
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
+    SpeechTTSRuntimeStatusStore,
+)
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
     SpeechTTSNavigationTarget,
     SpeechTTSRuntimeState,
     SpeechTTSRuntimeStatus,
     SpeechTTSStatusFreshness,
-)
-from tldw_chatbook.UI.Speech.speech_runtime_status import (
-    SpeechLocalDependencyAvailability,
-    SpeechTTSRuntimeStatusStore,
 )
 from tldw_chatbook.Widgets.Settings_Widgets import (
     speech_tts_settings_panel as speech_tts_settings_panel_module,
@@ -66,6 +78,44 @@ from tldw_chatbook.Widgets.Settings_Widgets import (
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
+
+
+_LOCAL_SPEECH_RUNTIME_IMPORT_ROOTS = frozenset(
+    {
+        "nemo",
+        "faster_whisper",
+        "lightning_whisper_mlx",
+        "parakeet_mlx",
+        "kokoro_onnx",
+        "chatterbox",
+        "boson_multimodal",
+    }
+)
+
+
+def _install_local_runtime_import_guards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    import_attempts: list[str] = []
+    real_import = builtins.__import__
+    real_import_module = importlib.import_module
+
+    def reject_local_runtime_import(name: str) -> None:
+        if name.split(".", 1)[0] in _LOCAL_SPEECH_RUNTIME_IMPORT_ROOTS:
+            import_attempts.append(name)
+            raise AssertionError(f"must not import local runtime {name}")
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        reject_local_runtime_import(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    def guarded_import_module(name: str, package: str | None = None):
+        reject_local_runtime_import(name)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    monkeypatch.setattr(importlib, "import_module", guarded_import_module)
+    return import_attempts
 
 
 async def _settle(pilot) -> None:
@@ -110,6 +160,7 @@ class _PanelHarness(App[None]):
         observation: TTSNativeCapabilityObservation | None = None,
         current_configuration_revision: int | None = None,
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
+        provider_test_evidence: ProcessProviderTestEvidenceStore | None = None,
     ) -> None:
         super().__init__()
         self.configure_provider = configure_provider
@@ -121,6 +172,7 @@ class _PanelHarness(App[None]):
         self.observation = observation
         self.current_configuration_revision = current_configuration_revision
         self.runtime_status_store = runtime_status_store
+        self.provider_test_evidence = provider_test_evidence
         self.events: list[STTSSettingsSaveEvent] = []
         self.navigation: list[NavigateToScreen] = []
 
@@ -133,6 +185,7 @@ class _PanelHarness(App[None]):
             audio_cpp_observation=self.observation,
             audio_cpp_configuration_revision=self.current_configuration_revision,
             runtime_status_store=self.runtime_status_store,
+            provider_test_evidence=self.provider_test_evidence,
             id="panel",
         )
 
@@ -811,7 +864,7 @@ async def test_audio_cpp_recovery_opens_speech_lab_playground_without_provider_w
     assert app.navigation[0].screen_context == {
         "view": "playground",
         "provider": "audio_cpp",
-        "intent": "refresh-models",
+        "intent": "test",
     }
 
 
@@ -859,6 +912,95 @@ async def test_settings_inspector_keeps_audio_cpp_ready_when_local_deps_missing(
 
 
 @pytest.mark.asyncio
+async def test_settings_connection_uses_sample_over_unsupported_catalog() -> None:
+    state = _audio_cpp_state(saved_provider=True)
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=4,
+    )
+    evidence = ProcessProviderTestEvidenceStore()
+    evidence.record_catalog(fingerprint, SpeechTTSConnectionState.UNSUPPORTED)
+    pcm = struct.pack("<h", 100) * 32
+    fmt = struct.pack("<HHIIHH", 1, 1, 16_000, 32_000, 2, 16)
+    wave_body = (
+        b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
+    wav = b"RIFF" + struct.pack("<I", len(wave_body)) + wave_body
+    assert evidence.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format="wav",
+        content_type="audio/wav",
+        body=wav,
+    )
+    app = _PanelHarness(
+        state=state,
+        current_configuration_revision=4,
+        provider_test_evidence=evidence,
+    )
+
+    async with app.run_test(size=(150, 80)):
+        assert "Saved" in str(
+            app.query_one("#settings-speech-status-provider-configuration").render()
+        )
+        connection = str(
+            app.query_one("#settings-speech-status-provider-connection").render()
+        )
+        assert "reachable" in connection
+        assert "catalog unsupported" in connection
+        assert "sample reachable" in connection
+
+
+@pytest.mark.asyncio
+async def test_settings_connection_invalidates_evidence_at_changed_revision() -> None:
+    state = _audio_cpp_state(saved_provider=True)
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=4,
+    )
+    evidence = ProcessProviderTestEvidenceStore()
+    evidence.record_catalog(fingerprint, SpeechTTSConnectionState.REACHABLE)
+    app = _PanelHarness(
+        state=state,
+        current_configuration_revision=5,
+        provider_test_evidence=evidence,
+    )
+
+    async with app.run_test(size=(150, 80)):
+        connection = str(
+            app.query_one("#settings-speech-status-provider-connection").render()
+        )
+        assert "not_tested" in connection
+        assert "catalog not_tested" in connection
+
+
+def test_local_runtime_import_guards_intercept_static_and_dynamic_imports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import_attempts = _install_local_runtime_import_guards(monkeypatch)
+
+    def import_nemo_asr():
+        import nemo.collections.asr
+
+        return nemo.collections.asr
+
+    with pytest.raises(AssertionError, match="nemo.collections.asr"):
+        import_nemo_asr()
+    with pytest.raises(AssertionError, match="faster_whisper"):
+        importlib.import_module("faster_whisper")
+
+    assert import_attempts == ["nemo.collections.asr", "faster_whisper"]
+
+
+@pytest.mark.asyncio
 async def test_first_settings_mount_probes_local_speech_dependencies_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -875,9 +1017,7 @@ async def test_first_settings_mount_probes_local_speech_dependencies_once(
         "find_spec",
         find_spec,
     )
-    import_probe = Mock(side_effect=AssertionError("must not import local runtimes"))
-    monkeypatch.setattr(lab_speech_status_module, "check_tts_deps", import_probe)
-    monkeypatch.setattr(lab_speech_status_module, "check_stt_deps", import_probe)
+    imported_local_runtimes = _install_local_runtime_import_guards(monkeypatch)
     app = _PanelHarness(state=_audio_cpp_state(saved_provider=True))
 
     async with app.run_test(size=(150, 80)):
@@ -898,7 +1038,7 @@ async def test_first_settings_mount_probes_local_speech_dependencies_once(
         "chatterbox",
         "boson_multimodal",
     ]
-    import_probe.assert_not_called()
+    assert imported_local_runtimes == []
 
 
 @pytest.mark.asyncio
@@ -1117,7 +1257,9 @@ async def test_settings_dismissal_cancel_preserves_dirty_speech_owner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready() -> None:
+async def test_saved_but_unavailable_and_transient_reconfiguration_are_not_ready() -> (
+    None
+):
     app = _PanelHarness(
         configure_provider="audio_cpp",
         state=_audio_cpp_state(),
@@ -1149,6 +1291,11 @@ async def test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready() 
         assert "Reconfiguring" in str(
             app.query_one("#settings-speech-status-provider-runtime").render()
         )
+        pending_copy = str(
+            app.query_one("#settings-speech-save-result", Static).render()
+        )
+        assert "Runtime reconfiguration" in pending_copy
+        assert "audio.cpp: pending" in pending_copy
 
         panel.receive_stts_settings_runtime_result(
             STTSSettingsSaveResult(
@@ -1203,6 +1350,55 @@ async def test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready() 
         assert "Unavailable" in str(
             app.query_one("#settings-speech-status-provider-runtime").render()
         )
+
+
+@pytest.mark.asyncio
+async def test_staged_managed_save_is_pending_apply_not_reconfiguring() -> None:
+    state = _audio_cpp_state()
+    state.providers["audio_cpp"].update(
+        AudioCppConfig(
+            mode="managed",
+            managed_binary_path="/private/test/audiocpp_server",
+            managed_server_json_path="/private/test/server.json",
+        ).to_mapping()
+    )
+    app = _PanelHarness(
+        configure_provider="audio_cpp",
+        state=state,
+        current_configuration_revision=4,
+    )
+
+    async with app.run_test(size=(150, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "external"
+        await pilot.pause()
+        panel.request_save()
+        await pilot.pause()
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=1,
+                persisted=True,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 5},
+                provider_runtime_revisions={"audio_cpp": 9},
+                staged_provider_ids=frozenset({"audio_cpp"}),
+            )
+        )
+        await pilot.pause()
+
+        runtime = str(
+            app.query_one("#settings-speech-status-provider-runtime").render()
+        )
+        assert "Not checked" in runtime
+        assert "Reconfiguring" not in runtime
+        pending_copy = str(
+            app.query_one("#settings-speech-save-result", Static).render()
+        )
+        assert "active audio.cpp configuration remains unchanged" in pending_copy
+        assert "Open Speech Lab" in pending_copy
+        assert "apply External mode" in pending_copy
+        assert ("audio_cpp", 1) not in panel._provider_runtime_request_observed_at
 
 
 @pytest.mark.asyncio
@@ -1320,6 +1516,55 @@ async def test_real_stylesheet_keeps_fields_usable_and_outer_detail_scrollable()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
+async def test_real_stylesheet_keeps_managed_setup_reachable_at_supported_widths(
+    terminal_size: tuple[int, int],
+) -> None:
+    host = _StyledDestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=terminal_size) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        configure = screen.query_one("#settings-speech-configure-provider", Select)
+        configure.value = "audio_cpp"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-provider-audio_cpp",
+            timeout=4.0,
+        )
+        mode = screen.query_one("#settings-speech-audio_cpp-mode", Select)
+        mode.value = "managed"
+        await pilot.pause()
+
+        binary = screen.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path", Input
+        )
+        browse = screen.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path-browse", Button
+        )
+        binary.scroll_visible(animate=False)
+        await pilot.pause()
+        assert binary.region.width >= 16
+        assert browse.region.y == binary.region.y
+        assert browse.region.x + browse.region.width <= pilot.app.size.width
+
+        advanced = screen.query_one("#settings-speech-audio-cpp-advanced", Collapsible)
+        advanced.collapsed = False
+        await pilot.pause(0.6)
+        grace = screen.query_one(
+            "#settings-speech-audio_cpp-managed-termination-grace-seconds", Input
+        )
+        grace.scroll_visible(animate=False)
+        await pilot.pause()
+        assert grace.region.width >= 16
+        assert 0 <= grace.region.y < pilot.app.size.height
+
+        save = screen.query_one("#settings-speech-save", Button)
+        save.scroll_visible(animate=False)
+        await pilot.pause()
+        assert 0 <= save.region.y < pilot.app.size.height
+
+
+@pytest.mark.asyncio
 async def test_category_reloads_the_latest_runtime_config_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(
         settings_screen_module,
@@ -1377,7 +1622,7 @@ async def test_each_provider_form_mounts_its_complete_bounded_inventory() -> Non
 
 
 @pytest.mark.asyncio
-async def test_panel_exposes_path_pickers_and_no_managed_audio_cpp_controls() -> None:
+async def test_panel_exposes_mode_specific_managed_audio_cpp_setup_controls() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(220, 80)) as pilot:
         screen = await _open_speech_tts(host, pilot)
@@ -1410,22 +1655,615 @@ async def test_panel_exposes_path_pickers_and_no_managed_audio_cpp_controls() ->
         await _wait_for_selector(
             screen, pilot, "#settings-speech-provider-audio_cpp", timeout=4.0
         )
+        mode = screen.query_one("#settings-speech-audio_cpp-mode", Select)
+        external_fields = screen.query_one("#settings-speech-audio-cpp-external-fields")
+        managed_fields = screen.query_one("#settings-speech-audio-cpp-managed-fields")
+        lifecycle_fields = screen.query_one(
+            "#settings-speech-audio-cpp-managed-lifecycle-fields"
+        )
+        assert mode.value == "external"
+        assert external_fields.display is True
+        assert managed_fields.display is False
+        assert lifecycle_fields.display is False
+
+        mode.focus()
+        mode.value = "managed"
+        await pilot.pause()
+
+        assert mode.has_focus is True
+        assert external_fields.display is False
+        assert managed_fields.display is True
+        assert lifecycle_fields.display is True
+        assert screen.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path-browse", Button
+        )
+        assert screen.query_one(
+            "#settings-speech-audio_cpp-managed-server-json-path-browse", Button
+        )
+        assert screen.query_one("#settings-speech-audio-cpp-use-detected", Button)
+        assert (
+            screen.query_one(
+                "#settings-speech-audio_cpp-managed-startup-timeout-seconds",
+                Input,
+            ).value
+            == "30.0"
+        )
+        assert (
+            screen.query_one(
+                "#settings-speech-audio_cpp-managed-health-check-interval-seconds",
+                Input,
+            ).value
+            == "10.0"
+        )
+        assert (
+            screen.query_one(
+                "#settings-speech-audio_cpp-managed-termination-grace-seconds",
+                Input,
+            ).value
+            == "5.0"
+        )
         audio_text = " ".join(
             node.renderable.plain
             if hasattr(node.renderable, "plain")
             else str(node.renderable)
             for node in screen.query("#settings-speech-provider-audio_cpp Static")
         ).lower()
-        for forbidden in (
-            "binary path",
+        for required in (
+            "managed local server",
+            "execute the selected file",
             "server.json",
-            "bind address",
-            "launch server",
-            "restart server",
-            "supervise",
-            "stop server",
+            "127.0.0.1",
+            "working directory",
+            "relative paths",
         ):
-            assert forbidden not in audio_text
+            assert required in audio_text
+        for forbidden_id in (
+            "settings-speech-audio-cpp-start-test",
+            "settings-speech-audio-cpp-restart",
+            "settings-speech-audio-cpp-shutdown",
+            "settings-speech-audio-cpp-process-status",
+            "settings-speech-audio-cpp-diagnostics",
+        ):
+            assert not screen.query(f"#{forbidden_id}")
+
+
+@pytest.mark.asyncio
+async def test_first_managed_switch_defaults_to_guided_and_preserves_manual_draft() -> (
+    None
+):
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 70)) as pilot:
+        mode = app.query_one("#settings-speech-audio_cpp-mode", Select)
+        mode.value = "managed"
+        await pilot.pause()
+
+        setup_source = app.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source",
+            Select,
+        )
+        guided = app.query_one("#settings-speech-audio-cpp-guided-fields")
+        manual = app.query_one("#settings-speech-audio-cpp-manual-json-fields")
+        assert setup_source.value == "guided"
+        assert guided.display is True
+        assert manual.display is False
+        assert app.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path-browse", Button
+        )
+        assert app.query_one("#settings-speech-audio-cpp-guided-add-package", Button)
+        assert app.query_one(
+            "#settings-speech-audio_cpp-guided-default-model-id", Select
+        )
+        assert app.query_one(
+            "#settings-speech-audio_cpp-guided-backend-preference", Select
+        )
+
+        manual_binary = app.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path", Input
+        )
+        manual_binary.value = "/manual/audiocpp_server"
+        setup_source.value = "user_json"
+        await pilot.pause()
+
+        assert guided.display is False
+        assert manual.display is True
+        assert manual_binary.value == "/manual/audiocpp_server"
+
+        setup_source.value = "guided"
+        await pilot.pause()
+        assert guided.display is True
+        assert manual_binary.value == "/manual/audiocpp_server"
+
+
+@pytest.mark.asyncio
+async def test_guided_scan_review_and_save_remain_inert_and_handoff_to_sample(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    package_root = tmp_path / "Supertonic-3-GGUF"
+    package_root.mkdir()
+    (package_root / "supertonic-3-orig.gguf").write_bytes(
+        b"GGUF" + struct.pack("<I", 3)
+    )
+    lifecycle_calls: list[str] = []
+
+    async def forbidden_start(self, *_args, **_kwargs):
+        del self
+        lifecycle_calls.append("start")
+        raise AssertionError("Settings started managed audio.cpp")
+
+    monkeypatch.setattr(AudioCppSupervisor, "ensure_running", forbidden_start)
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(170, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path", Input
+        ).value = str(binary)
+
+        panel._audio_cpp_package_picker_result(package_root)
+        await _settle(pilot)
+
+        package_text = " ".join(
+            str(node.renderable)
+            for node in app.query(".settings-speech-audio-cpp-package-copy")
+        )
+        assert "Supertonic 3 Original-Dtype GGUF" in package_text
+        assert "supertonic / supertonic_3_orig" in package_text
+        assert "Text-to-speech" in package_text
+        assert "Exact reviewed recipe" in package_text
+        assert "audio.cpp 0.5.1" in package_text
+        assert "supertonic-3-orig" in package_text
+        assert "Loads lazily" in package_text
+        assert "remain in memory until Shutdown" in package_text
+        assert str(tmp_path) not in package_text
+        assert (
+            app.query_one(
+                "#settings-speech-audio_cpp-guided-default-model-id",
+                Select,
+            ).value
+            == "supertonic-3-orig"
+        )
+        unsaved_handoff = app.query_one(
+            "#settings-speech-audio-cpp-open-lab",
+            Button,
+        )
+        assert str(unsaved_handoff.label) == "Save Settings before opening Speech Lab"
+        assert unsaved_handoff.disabled is True
+        assert "saved configuration" in str(unsaved_handoff.tooltip)
+
+        await pilot.click("#settings-speech-save")
+        await _settle(pilot)
+
+        assert lifecycle_calls == []
+        assert len(app.events) == 1
+        saved = app.events[0].settings["audio_cpp"]
+        assert saved["mode"] == "managed"
+        assert saved["managed_setup_source"] == "guided"
+        assert saved["guided_binary_path"] == str(binary)
+        assert saved["guided_default_model_id"] == "supertonic-3-orig"
+        assert len(saved["guided_packages"]) == 1
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 2},
+                provider_runtime_revisions={"audio_cpp": 1},
+                staged_provider_ids=frozenset({"audio_cpp"}),
+            )
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "Configuration saved — ready to test" in result
+        handoff = app.query_one("#settings-speech-audio-cpp-open-lab", Button)
+        assert str(handoff.label) == "Open Speech Lab & Hear a Sample"
+        handoff.press()
+        await _settle(pilot)
+        assert app.navigation[-1].screen_name == "stts"
+        assert app.navigation[-1].screen_context == {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": SpeechTTSNavigationIntent.TEST.value,
+        }
+
+
+@pytest.mark.asyncio
+async def test_guided_reference_required_default_does_not_promise_sample(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    package_root = tmp_path / "reviewed-models"
+    package_root.mkdir()
+    (package_root / "supertonic-3-orig.gguf").write_bytes(
+        b"GGUF" + struct.pack("<I", 3)
+    )
+    (package_root / "pocket-tts-english-bf16.gguf").write_bytes(
+        b"GGUF" + struct.pack("<I", 3)
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(170, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path", Input
+        ).value = str(binary)
+        panel._audio_cpp_package_picker_result(package_root)
+        await _settle(pilot)
+
+        package_text = " ".join(
+            str(node.renderable)
+            for node in app.query(".settings-speech-audio-cpp-package-copy")
+        )
+        assert "pocket_tts / pocket_tts_english_bf16" in package_text
+        assert "Reference: Required" in package_text
+        assert "voice setup" in package_text
+
+        default_model = app.query_one(
+            "#settings-speech-audio_cpp-guided-default-model-id", Select
+        )
+        default_model.value = "pocket-tts-english-bf16"
+        await pilot.pause()
+        handoff = app.query_one("#settings-speech-audio-cpp-open-lab", Button)
+        assert str(handoff.label) == "Save Settings before opening Speech Lab"
+        assert handoff.disabled is True
+
+        panel.request_save()
+        await _settle(pilot)
+        assert len(app.events) == 1
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 2},
+                provider_runtime_revisions={"audio_cpp": 1},
+                staged_provider_ids=frozenset({"audio_cpp"}),
+            )
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "Configuration saved — ready to test" in result
+        assert "test the saved Guided settings" in result
+        assert "Hear a Sample" not in result
+        handoff = app.query_one("#settings-speech-audio-cpp-open-lab", Button)
+        assert str(handoff.label) == "Open Speech Lab to Test Connection"
+        assert handoff.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_guided_save_rechecks_accepted_package_before_posting(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    package_root = tmp_path / "Supertonic-3-GGUF"
+    package_root.mkdir()
+    model = package_root / "supertonic-3-orig.gguf"
+    model.write_bytes(b"GGUF" + struct.pack("<I", 3))
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(170, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path", Input
+        ).value = str(binary)
+        panel._audio_cpp_package_picker_result(package_root)
+        await _settle(pilot)
+
+        model.write_bytes(b"GGUF" + struct.pack("<I", 3) + b"changed")
+        await pilot.click("#settings-speech-save")
+        await _settle(pilot)
+
+        assert app.events == []
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "changed" in result.lower()
+        assert "scan" in result.lower()
+        assert app.query_one(
+            "#settings-speech-audio_cpp-guided-packages-error",
+            Static,
+        ).renderable
+
+
+@pytest.mark.asyncio
+async def test_guided_scan_late_cancelled_root_cannot_mutate_newer_draft(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    older_root = tmp_path / "PocketTTS"
+    older_root.mkdir()
+    (older_root / "pocket-tts-english-q8_0.gguf").write_bytes(
+        b"GGUF" + struct.pack("<I", 3)
+    )
+    newer_root = tmp_path / "Supertonic"
+    newer_root.mkdir()
+    (newer_root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + struct.pack("<I", 3))
+    real_scan = speech_tts_settings_panel_module.scan_audio_cpp_package_root_async
+    older_started = asyncio.Event()
+    release_older = asyncio.Event()
+
+    async def reordered_scan(path: Path, *, request_revision: int):
+        if path == older_root:
+            older_started.set()
+            try:
+                await release_older.wait()
+            except asyncio.CancelledError:
+                # Model an uncooperative filesystem call that completes after its
+                # worker was cancelled; the revision fence must still reject it.
+                pass
+        return await real_scan(path, request_revision=request_revision)
+
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "scan_audio_cpp_package_root_async",
+        reordered_scan,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(170, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+
+        panel._audio_cpp_package_picker_result(older_root)
+        await asyncio.wait_for(older_started.wait(), timeout=1.0)
+        panel._audio_cpp_package_picker_result(newer_root)
+        await pilot.pause()
+        release_older.set()
+        await _settle(pilot)
+
+        model_ids = {
+            package.public_model_id for package in panel._audio_cpp_guided_packages()
+        }
+        assert model_ids == {"supertonic-3-orig"}
+
+
+@pytest.mark.asyncio
+async def test_guided_source_round_trip_fences_an_inflight_package_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_root = tmp_path / "Supertonic"
+    package_root.mkdir()
+    (package_root / "supertonic-3-orig.gguf").write_bytes(
+        b"GGUF" + struct.pack("<I", 3)
+    )
+    real_scan = speech_tts_settings_panel_module.scan_audio_cpp_package_root_async
+    scan_started = asyncio.Event()
+    release_scan = asyncio.Event()
+
+    async def delayed_scan(path: Path, *, request_revision: int):
+        scan_started.set()
+        try:
+            await release_scan.wait()
+        except asyncio.CancelledError:
+            # A blocking filesystem call may still return after cancellation.
+            pass
+        return await real_scan(path, request_revision=request_revision)
+
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "scan_audio_cpp_package_root_async",
+        delayed_scan,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(170, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+
+        panel._audio_cpp_package_picker_result(package_root)
+        await asyncio.wait_for(scan_started.wait(), timeout=1.0)
+        source = app.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source",
+            Select,
+        )
+        source.value = "user_json"
+        await pilot.pause()
+        source.value = "guided"
+        await pilot.pause()
+        release_scan.set()
+        await _settle(pilot)
+
+        assert panel._audio_cpp_guided_packages() == ()
+
+
+@pytest.mark.asyncio
+async def test_panel_does_not_offer_unqualified_managed_mode_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "_AUDIO_CPP_MANAGED_UI_SUPPORTED",
+        False,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)):
+        mode = app.query_one("#settings-speech-audio_cpp-mode", Select)
+
+        assert [value for _label, value in mode._options] == ["external"]
+        assert mode.value == "external"
+        assert (
+            app.query_one("#settings-speech-audio-cpp-managed-fields").display is False
+        )
+        notice = str(
+            app.query_one(
+                "#settings-speech-audio-cpp-managed-platform-notice",
+                Static,
+            ).render()
+        ).lower()
+        assert "windows" in notice
+        assert "external" in notice
+
+
+@pytest.mark.asyncio
+async def test_use_detected_updates_only_the_unsaved_managed_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detected = "/opt/homebrew/bin/audiocpp_server"
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "detect_audio_cpp_server_binary",
+        lambda: detected,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one("#settings-speech-audio-cpp-use-detected", Button).press()
+        await pilot.pause()
+
+        assert (
+            app.query_one("#settings-speech-audio_cpp-guided-binary-path", Input).value
+            == detected
+        )
+        assert app.events == []
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "draft" in result.lower()
+        assert "not started" in result.lower()
+        assert detected not in result
+
+
+@pytest.mark.asyncio
+async def test_failed_detection_preserves_the_existing_binary_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "detect_audio_cpp_server_binary",
+        lambda: None,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        binary = app.query_one("#settings-speech-audio_cpp-guided-binary-path", Input)
+        binary.value = "/keep/existing/draft"
+        app.query_one("#settings-speech-audio-cpp-use-detected", Button).press()
+        await pilot.pause()
+
+        assert binary.value == "/keep/existing/draft"
+        assert app.events == []
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "not found" in result.lower()
+        assert "browse" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_managed_save_validates_files_without_starting_or_contacting_tts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    server_json = tmp_path / "server.json"
+    server_json.write_text('{"host":"127.0.0.1","port":19004}', encoding="utf-8")
+    lifecycle_calls: list[str] = []
+
+    async def forbidden_start(self, *_args, **_kwargs):
+        del self
+        lifecycle_calls.append("start")
+        raise AssertionError("Settings started managed audio.cpp")
+
+    monkeypatch.setattr(AudioCppSupervisor, "ensure_running", forbidden_start)
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "user_json"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path", Input
+        ).value = str(binary)
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-server-json-path", Input
+        ).value = str(server_json)
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert lifecycle_calls == []
+        assert len(app.events) == 1
+        saved = app.events[0].settings["audio_cpp"]
+        assert saved["mode"] == "managed"
+        assert saved["base_url"] == AudioCppConfig().base_url
+        assert saved["managed_binary_path"] == str(binary)
+        assert saved["managed_server_json_path"] == str(server_json)
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 2},
+                provider_runtime_revisions={"audio_cpp": 1},
+                staged_provider_ids=frozenset({"audio_cpp"}),
+            )
+        )
+        await pilot.pause()
+        pending_copy = str(
+            app.query_one("#settings-speech-save-result", Static).render()
+        )
+        assert "active audio.cpp configuration remains unchanged" in pending_copy
+        assert "apply the saved Managed settings" in pending_copy
+        assert "restart and apply" not in pending_copy
+
+
+@pytest.mark.asyncio
+async def test_invalid_managed_binary_is_adjacent_safe_and_posts_no_save(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "private-missing-audiocpp_server"
+    server_json = tmp_path / "server.json"
+    server_json.write_text('{"host":"127.0.0.1","port":19005}', encoding="utf-8")
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "user_json"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path", Input
+        ).value = str(missing)
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-server-json-path", Input
+        ).value = str(server_json)
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events == []
+        error = str(
+            app.query_one(
+                "#settings-speech-audio_cpp-managed-binary-path-error", Static
+            ).renderable
+        )
+        assert "executable" in error.lower()
+        assert str(missing) not in error
 
 
 @pytest.mark.asyncio
@@ -1452,6 +2290,33 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
         await pilot.pause()
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_mounting_external_audio_cpp_settings_never_starts_managed_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launches: list[str] = []
+
+    async def forbidden_start(self, *_args, **_kwargs):
+        del self
+        launches.append("ensure_running")
+        raise AssertionError("Settings launched managed audio.cpp")
+
+    monkeypatch.setattr(AudioCppSupervisor, "ensure_running", forbidden_start)
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        configure = screen.query_one("#settings-speech-configure-provider", Select)
+        configure.value = "audio_cpp"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-provider-audio_cpp",
+            timeout=4.0,
+        )
+
+    assert launches == []
 
 
 @pytest.mark.asyncio
@@ -1586,6 +2451,39 @@ async def test_cache_reload_failure_keeps_persistence_and_runtime_results_distin
 
 
 @pytest.mark.asyncio
+async def test_default_rollback_failure_keeps_retry_draft_and_warns_about_restart() -> (
+    None
+):
+    app = _PanelHarness(configure_provider="audio_cpp", state=_audio_cpp_state())
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one(
+            "#settings-speech-audio_cpp-synthesis-timeout-seconds",
+            Input,
+        ).value = "321"
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=1,
+                persisted=True,
+                provider_statuses={"audio_cpp": "applied"},
+                provider_configuration_revisions={"audio_cpp": 7},
+                provider_runtime_revisions={"audio_cpp": 41},
+                defaults_activated=False,
+                defaults_activation_status="rollback_failed",
+            )
+        )
+
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "rollback failed" in result
+        assert "restart may use the new default" in result
+        assert "previous default remains active" not in result
+        assert panel.has_unsaved_changes() is True
+
+
+@pytest.mark.asyncio
 async def test_invalid_save_is_field_specific_and_posts_no_event() -> None:
     app = _PanelHarness(configure_provider="audio_cpp")
     async with app.run_test(size=(150, 60)) as pilot:
@@ -1653,6 +2551,257 @@ async def test_credential_operations_are_separate_from_ordinary_save() -> None:
 
         assert app.events[1].settings == {}
         assert app.events[1].delete_setting_keys == ("openai_api_key",)
+
+
+@pytest.mark.asyncio
+async def test_openai_authentication_control_and_official_preset_are_explicit() -> None:
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+                    "OPENAI_AUTH_MODE": "none",
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="openai", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        authentication = app.query_one(
+            "#settings-speech-openai-authentication-mode", Select
+        )
+        assert authentication.value == "none"
+        assert [(str(label), value) for label, value in authentication._options] == [
+            ("API key", "api_key"),
+            ("None", "none"),
+        ]
+
+        preset = app.query_one("#settings-speech-openai-official-preset", Button)
+        preset.scroll_visible(animate=False)
+        await pilot.pause()
+        preset.press()
+        await pilot.pause()
+
+        assert authentication.value == "api_key"
+        assert (
+            app.query_one("#settings-speech-openai-base-url", Input).value
+            == "https://api.openai.com/v1/audio/speech"
+        )
+
+
+@pytest.mark.asyncio
+async def test_plaintext_none_save_requires_confirmation_before_posting() -> None:
+    app = _PanelHarness(configure_provider="openai")
+    endpoint = "http://voice.example.test:8765/v1/audio/speech"
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-openai-base-url", Input).value = endpoint
+        app.query_one(
+            "#settings-speech-openai-authentication-mode", Select
+        ).value = "none"
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events == []
+        assert app.screen.query_one("#settings-speech-openai-none-http-confirm")
+
+        await pilot.click("#settings-speech-openai-none-http-confirm")
+        await pilot.pause()
+
+        assert len(app.events) == 1
+        fingerprint = openai_destination_fingerprint(
+            "openai", normalize_openai_compatible_endpoint(endpoint)
+        )
+        assert app.events[0].settings["OPENAI_AUTH_MODE"] == "none"
+        assert app.events[0].settings["OPENAI_NONE_HTTP_CONFIRMATION"] == fingerprint
+        assert app.events[0].settings["OPENAI_NONE_HTTP_CONFIRMATION"] != endpoint
+
+
+@pytest.mark.asyncio
+async def test_switching_back_to_api_key_clears_confirmation_and_saved_baseline() -> (
+    None
+):
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "none",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="openai", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one(
+            "#settings-speech-openai-authentication-mode", Select
+        ).value = "api_key"
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events[0].delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={"openai": "applied"},
+                provider_configuration_revisions={"openai": 2},
+                provider_runtime_revisions={"openai": 2},
+            )
+        )
+        await pilot.pause()
+
+        assert panel.state.openai_plaintext_confirmation is None
+        assert panel.original_state.openai_plaintext_confirmation is None
+        assert panel.has_unsaved_changes() is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_persisted_confirmation_cleanup_settles_saved_baseline() -> None:
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="openai", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events[0].delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={},
+            )
+        )
+        await pilot.pause()
+
+        assert panel.state.openai_plaintext_confirmation_cleanup_needed is False
+        assert (
+            panel.original_state.openai_plaintext_confirmation_cleanup_needed is False
+        )
+        assert panel.request_save() is None
+        assert len(app.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_provider_save_cleans_stale_confirmation_after_success() -> None:
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="elevenlabs", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        assert panel.has_unsaved_changes() is True
+        assert app.events == []
+        original_source = panel.state.provider_sources["elevenlabs"]
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        event = app.events[0]
+        assert event.settings == {}
+        assert event.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+        assert panel.state.openai_plaintext_confirmation_cleanup_needed is True
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=event.request_id or 0,
+                persisted=True,
+                provider_statuses={},
+            )
+        )
+        await pilot.pause()
+
+        assert panel.state.openai_plaintext_confirmation_cleanup_needed is False
+        assert (
+            panel.original_state.openai_plaintext_confirmation_cleanup_needed is False
+        )
+        assert panel.state.provider_sources["elevenlabs"] is original_source
+        assert panel.original_state.provider_sources["elevenlabs"] is original_source
+        assert panel.has_unsaved_changes() is False
+
+
+@pytest.mark.asyncio
+async def test_cross_provider_failed_save_keeps_stale_confirmation_dirty() -> None:
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="elevenlabs", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=False,
+                provider_statuses={},
+                failure_phase="before_replace",
+            )
+        )
+        await pilot.pause()
+
+        assert panel.state.openai_plaintext_confirmation_cleanup_needed is True
+        assert panel.original_state.openai_plaintext_confirmation_cleanup_needed is True
+        assert panel.has_unsaved_changes() is True
 
 
 @pytest.mark.asyncio
@@ -1802,16 +2951,23 @@ async def test_environment_credential_is_read_only_and_editor_starts_empty() -> 
     async with app.run_test(size=(150, 150)) as pilot:
         credential = app.query_one("#settings-speech-openai-credential")
         rendered = " ".join(str(node.render()) for node in credential.query(Static))
-        assert "Environment" in rendered
-        assert "read-only" in rendered
-        assert "shadowed" in rendered
+        assert "outside Chatbook" in rendered
+        assert "OPENAI_API_KEY" not in rendered
         assert "synthetic-local-fallback" not in rendered
         assert "synthetic-environment-value" not in rendered
+        details = app.query_one("#settings-speech-details", Collapsible)
+        technical_copy = " ".join(str(node.render()) for node in details.query(Static))
+        assert "Environment" in technical_copy
+        assert "OPENAI_API_KEY" in technical_copy
+        assert "read-only" in technical_copy
+        assert "shadowed" in technical_copy
+        assert "synthetic-local-fallback" not in technical_copy
+        assert "synthetic-environment-value" not in technical_copy
 
         edit = app.query_one("#settings-speech-openai-credential-edit", Button)
         edit.scroll_visible(animate=False)
         await pilot.pause()
-        await pilot.click("#settings-speech-openai-credential-edit")
+        edit.press()
         await pilot.pause()
 
         editor = app.screen.query_one(
@@ -1876,15 +3032,20 @@ async def test_environment_owned_legacy_paths_are_labeled_and_read_only(
             f"#settings-speech-{provider_id}-{field_id}-browse",
             Button,
         )
-        rendered = " ".join(
-            str(node.render()) for node in app.query(".settings-detail-row")
+        primary_copy = " ".join(
+            str(node.render())
+            for node in app.query(".settings-detail-row")
+            if node.is_on_screen
         )
+        details = app.query_one("#settings-speech-details", Collapsible)
+        technical_copy = " ".join(str(node.render()) for node in details.query(Static))
 
         assert field.disabled is True
         assert browse.disabled is True
-        assert environment_variable in rendered
-        assert "read-only" in rendered
-        assert "/environment/runtime-path" not in rendered
+        assert environment_variable not in primary_copy
+        assert environment_variable in technical_copy
+        assert "read-only" in technical_copy
+        assert "/environment/runtime-path" not in technical_copy
 
 
 @pytest.mark.asyncio
@@ -1946,6 +3107,41 @@ async def test_revert_clears_local_validation_errors() -> None:
             "#settings-speech-audio_cpp-base-url-error",
             Static,
         ).renderable
+
+
+@pytest.mark.asyncio
+async def test_managed_validation_expands_advanced_field_before_focusing() -> None:
+    state = _audio_cpp_state()
+    state.providers["audio_cpp"].update(
+        {
+            "managed_binary_path": "/private/test/audiocpp_server",
+            "managed_server_json_path": "/private/test/server.json",
+            "managed_health_check_interval_seconds": 1.0,
+        }
+    )
+    app = _PanelHarness(configure_provider="audio_cpp", state=state)
+
+    async with app.run_test(size=(150, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        advanced = app.query_one("#settings-speech-audio-cpp-advanced", Collapsible)
+        assert advanced.collapsed is True
+
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        assert panel.request_save() is None
+        await pilot.pause()
+
+        field = app.query_one(
+            "#settings-speech-audio_cpp-managed-health-check-interval-seconds",
+            Input,
+        )
+        error = app.query_one(
+            "#settings-speech-audio_cpp-managed-health-check-interval-seconds-error",
+            Static,
+        )
+        assert advanced.collapsed is False
+        assert app.focused is field
+        assert error.renderable
 
 
 @pytest.mark.asyncio
@@ -2024,6 +3220,291 @@ async def test_settings_generic_save_and_revert_actions_route_to_speech_panel() 
 
         request_save.assert_called_once_with()
         revert_to_saved.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
+    app = _StyledPanelHarness(
+        configure_provider="audio_cpp",
+        observation=_audio_cpp_observation(),
+        current_configuration_revision=4,
+    )
+    async with app.run_test(size=(150, 55)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        details = panel.query_one("#settings-speech-details", Collapsible)
+        scope = panel.query_one("#settings-speech-scope-inspector", Collapsible)
+
+        assert details.collapsed is True
+        assert scope.collapsed is True
+        visible_copy = " ".join(
+            str(widget.render())
+            for widget in panel.query(Static)
+            if widget.display and widget.is_on_screen
+        ).casefold()
+        assert "task: set up" in visible_copy
+        assert "current status" in visible_copy
+        assert "revision" not in visible_copy
+        assert "effective source" not in visible_copy
+
+        default_provider = panel.query_one("#settings-speech-default-provider", Select)
+        assert default_provider.value == "openai"
+        default_provider.value = "audio_cpp"
+        await pilot.pause()
+        assert "Unsaved" in str(
+            panel.query_one("#settings-speech-default-status", Static).render()
+        )
+
+        details = panel.query_one("#settings-speech-details", Collapsible)
+        scope = panel.query_one("#settings-speech-scope-inspector", Collapsible)
+        details.collapsed = False
+        scope.collapsed = False
+        await pilot.pause()
+        assert panel.query_one(
+            "#settings-speech-status-provider-configuration", Static
+        ).is_on_screen
+        assert (
+            "revision"
+            in " ".join(
+                str(widget.render())
+                for widget in details.query(Static)
+                if widget.is_on_screen
+            ).casefold()
+        )
+
+        await panel.recompose()
+        await pilot.pause()
+
+        assert (
+            panel.query_one("#settings-speech-details", Collapsible).collapsed is True
+        )
+        assert (
+            panel.query_one("#settings-speech-scope-inspector", Collapsible).collapsed
+            is True
+        )
+
+
+@pytest.mark.asyncio
+async def test_production_bundle_applies_speech_disclosure_styles() -> None:
+    bundled_css = _BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        "#settings-speech-details,\n#settings-speech-scope-inspector",
+        "#settings-speech-details > CollapsibleTitle,\n"
+        "#settings-speech-scope-inspector > CollapsibleTitle",
+        "#settings-speech-details > Contents,\n"
+        "#settings-speech-scope-inspector > Contents",
+    ):
+        assert selector in bundled_css
+
+    app = _StyledPanelHarness(configure_provider="audio_cpp")
+    assert Path(app.CSS_PATH).resolve() == _BUNDLE.resolve()
+
+    async with app.run_test(size=(120, 40)):
+        details = app.query_one("#settings-speech-details", Collapsible)
+        title = details.query_one("CollapsibleTitle")
+        contents = details.query_one("Contents")
+
+        assert details.styles.width.value == 100
+        assert details.styles.width.unit.name == "WIDTH"
+        assert str(details.styles.height) == "auto"
+        assert details.styles.min_height.value == 3
+        assert details.styles.margin.top == 1
+        assert details.styles.padding.width == 0
+        assert title.styles.height.value == 3
+        assert title.styles.min_height.value == 3
+        assert title.styles.padding.top == 1
+        assert title.styles.padding.width == 2
+        assert str(contents.styles.height) == "auto"
+        assert contents.styles.padding.width == 2
+
+
+@pytest.mark.asyncio
+async def test_managed_guided_selection_provenance_stays_in_collapsed_details() -> None:
+    state = _audio_cpp_state()
+    state.providers["audio_cpp"].update(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_source": "path",
+        }
+    )
+    app = _StyledPanelHarness(configure_provider="audio_cpp", state=state)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        details = panel.query_one("#settings-speech-details", Collapsible)
+        guided_fields = panel.query_one("#settings-speech-audio-cpp-guided-fields")
+
+        assert guided_fields.display is True
+        assert details.collapsed is True
+        provenance = details.query_one(
+            "#settings-speech-audio_cpp-guided-binary-source",
+            Static,
+        )
+        assert provenance.is_on_screen is False
+        visible_copy = " ".join(
+            str(widget.render())
+            for widget in panel.query(Static)
+            if widget.display and widget.is_on_screen
+        ).casefold()
+        assert "task: set up audio.cpp" in visible_copy
+        assert "current status:" in visible_copy
+        assert "selection source" not in visible_copy
+
+        details.collapsed = False
+        await pilot.pause()
+        assert provenance.is_on_screen is True
+        assert (
+            "guided binary selection source: path"
+            in str(provenance.render()).casefold()
+        )
+
+        await panel.recompose()
+        await pilot.pause()
+
+        remounted_details = panel.query_one("#settings-speech-details", Collapsible)
+        assert remounted_details.collapsed is True
+        assert (
+            remounted_details.query_one(
+                "#settings-speech-audio_cpp-guided-binary-source",
+                Static,
+            ).is_on_screen
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blur() -> (
+    None
+):
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        request_save = Mock()
+        revert_to_saved = AsyncMock()
+        panel.request_save = request_save
+        panel.revert_to_saved = revert_to_saved
+
+        configure = screen.query_one("#settings-speech-configure-provider", Select)
+        configure.value = "openai"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-openai-base-url",
+            timeout=4.0,
+        )
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        panel.request_save = request_save
+        panel.revert_to_saved = revert_to_saved
+        endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
+        endpoint.value = "http://127.0.0.1:8765/v1/audio/speech"
+        endpoint.focus()
+        await pilot.pause()
+        await pilot.press("end")
+        command_allowed = Mock(wraps=panel.command_allowed)
+        panel.command_allowed = command_allowed
+        await pilot.press("s", "r")
+
+        assert endpoint.value.endswith("speechsr")
+        assert command_allowed.call_args_list == []
+        assert panel.command_allowed("s") is False
+        assert panel.command_allowed("left") is True
+        request_save.assert_not_called()
+        revert_to_saved.assert_not_awaited()
+
+        text_area = TextArea("")
+        await panel.mount(text_area)
+        text_area.focus()
+        await pilot.press("s", "r")
+
+        assert text_area.text == "sr"
+        assert panel.command_allowed("r") is False
+        request_save.assert_not_called()
+        revert_to_saved.assert_not_awaited()
+
+        save = panel.query_one("#settings-speech-save", Button)
+        save.focus()
+        await pilot.press("s")
+        await pilot.pause()
+        request_save.assert_called_once_with()
+        assert any(item.args == ("s",) for item in command_allowed.call_args_list)
+
+        await pilot.press("r")
+        await pilot.pause()
+        revert_to_saved.assert_awaited_once_with()
+        assert any(item.args == ("r",) for item in command_allowed.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> None:
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        request_save = Mock()
+        revert_to_saved = AsyncMock()
+        panel.request_save = request_save
+        panel.revert_to_saved = revert_to_saved
+        configure = screen.query_one("#settings-speech-configure-provider", Select)
+        configure.value = "openai"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-openai-base-url",
+            timeout=4.0,
+        )
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        panel.request_save = request_save
+        panel.revert_to_saved = revert_to_saved
+        endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
+
+        endpoint.focus()
+        await pilot.click("#settings-speech-save")
+        request_save.assert_called_once_with()
+
+        endpoint.focus()
+        await pilot.click("#settings-speech-revert")
+        await pilot.pause()
+        revert_to_saved.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
+async def test_speech_disclosures_and_actions_remain_reachable(
+    terminal_size: tuple[int, int],
+) -> None:
+    host = _StyledDestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=terminal_size) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        for selector in (
+            "#settings-speech-details",
+            "#settings-speech-scope-inspector",
+        ):
+            disclosure = screen.query_one(selector, Collapsible)
+            title = disclosure.query_one("CollapsibleTitle")
+            title.scroll_visible(animate=False)
+            await pilot.pause()
+            assert title.can_focus
+            assert 0 <= title.region.x
+            assert title.region.x + title.region.width <= pilot.app.size.width
+            assert 0 <= title.region.y < pilot.app.size.height
+
+        save = screen.query_one("#settings-speech-save", Button)
+        save.scroll_visible(animate=False)
+        await pilot.pause()
+        assert 0 <= save.region.y < pilot.app.size.height
 
 
 @pytest.mark.asyncio
@@ -2482,6 +3963,80 @@ async def test_realtime_and_tts_changes_save_together_in_one_click(
             )
         )
         assert panel.has_unsaved_changes() is False
+
+
+@pytest.mark.asyncio
+async def test_guided_save_keeps_later_realtime_edits_dirty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    package_root = tmp_path / "Supertonic-3-GGUF"
+    package_root.mkdir()
+    (package_root / "supertonic-3-orig.gguf").write_bytes(
+        b"GGUF" + struct.pack("<I", 3)
+    )
+    validation_started = asyncio.Event()
+    release_validation = asyncio.Event()
+    persisted: list[tuple[tuple, dict]] = []
+
+    async def block_revalidation(_packages: object) -> tuple[()]:
+        validation_started.set()
+        await release_validation.wait()
+        return ()
+
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "revalidate_audio_cpp_guided_packages",
+        block_revalidation,
+    )
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: (persisted.append((args, kwargs)), True)[1],
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(170, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path", Input
+        ).value = str(binary)
+        panel._audio_cpp_package_picker_result(package_root)
+        await _settle(pilot)
+
+        realtime_model = app.query_one("#settings-speech-realtime-model", Input)
+        realtime_model.value = "snapshot-a"
+        await pilot.pause()
+        await pilot.click("#settings-speech-save")
+        await asyncio.wait_for(validation_started.wait(), timeout=2.0)
+
+        realtime_model.value = "later-edit-b"
+        await pilot.pause()
+        release_validation.set()
+        await _settle(pilot)
+
+        assert persisted[0][0][0]["realtime"]["model"] == "snapshot-a"
+        assert len(app.events) == 1
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 1},
+                provider_runtime_revisions={"audio_cpp": 0},
+                staged_provider_ids=frozenset({"audio_cpp"}),
+            )
+        )
+        await pilot.pause()
+
+        assert panel._realtime_original.model == "snapshot-a"
+        assert panel._realtime_draft.model == "later-edit-b"
+        assert panel.has_unsaved_changes() is True
 
 
 @pytest.mark.asyncio

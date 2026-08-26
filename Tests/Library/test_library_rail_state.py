@@ -1,9 +1,18 @@
 """Library rail preference contracts."""
 
+import inspect
+
+import pytest
+
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_rail_state import (
     LIBRARY_RAIL_SECTION_IDS,
+    LibraryLifecycle,
     LibraryRailPreferences,
+    aggregate_library_lifecycle,
+    coerce_library_lifecycle,
     coerce_library_rail_preferences,
+    serialize_library_lifecycle,
     serialize_library_rail_preferences,
 )
 
@@ -45,3 +54,92 @@ def test_coerce_unknown_input_returns_defaults():
     assert coerce_library_rail_preferences(None) == LibraryRailPreferences()
     assert coerce_library_rail_preferences("junk") == LibraryRailPreferences()
     assert coerce_library_rail_preferences(42) == LibraryRailPreferences()
+
+
+def test_missing_lifecycle_uses_unknown_only_for_new_profile():
+    assert (
+        coerce_library_lifecycle(None, is_new_profile=True) is LibraryLifecycle.UNKNOWN
+    )
+    assert (
+        coerce_library_lifecycle(None, is_new_profile=False)
+        is LibraryLifecycle.EXPANDED
+    )
+
+
+def test_corrupt_lifecycle_fails_safe_to_expanded_without_resetting_sections():
+    sections = {"browse_open": "off", "details_open": "true"}
+    expected_sections = LibraryRailPreferences(browse_open=False, details_open=True)
+
+    for corrupt in ("", "starter-ish", 0, {}, []):
+        assert (
+            coerce_library_lifecycle(corrupt, is_new_profile=True)
+            is LibraryLifecycle.EXPANDED
+        )
+        assert coerce_library_rail_preferences(sections) == expected_sections
+
+
+def test_lifecycle_round_trips_beside_section_preferences():
+    preferences = LibraryRailPreferences(create_open=False, details_open=True)
+    stored = {
+        "sections": serialize_library_rail_preferences(preferences),
+        "lifecycle": serialize_library_lifecycle(LibraryLifecycle.STARTER),
+    }
+
+    assert stored["lifecycle"] == "starter"
+    assert (
+        coerce_library_lifecycle(stored["lifecycle"], is_new_profile=False)
+        is LibraryLifecycle.STARTER
+    )
+    assert coerce_library_rail_preferences(stored["sections"]) == preferences
+
+    for lifecycle in LibraryLifecycle:
+        serialized = serialize_library_lifecycle(lifecycle)
+        assert serialized == lifecycle.value
+        assert coerce_library_lifecycle(serialized, is_new_profile=False) is lifecycle
+
+
+def test_lifecycle_aggregation_accepts_exactly_six_evidence_enums():
+    assert tuple(inspect.signature(aggregate_library_lifecycle).parameters) == (
+        "lifecycle",
+        "evidence",
+    )
+    empty = [LibraryContentEvidence.EMPTY] * 6
+    assert (
+        aggregate_library_lifecycle(LibraryLifecycle.UNKNOWN, empty)
+        is LibraryLifecycle.STARTER
+    )
+    with pytest.raises(ValueError, match="exactly six"):
+        aggregate_library_lifecycle(LibraryLifecycle.UNKNOWN, empty[:5])
+    with pytest.raises(ValueError, match="exactly six"):
+        aggregate_library_lifecycle(
+            LibraryLifecycle.UNKNOWN, empty + [LibraryContentEvidence.EMPTY]
+        )
+    with pytest.raises(TypeError, match="LibraryContentEvidence"):
+        aggregate_library_lifecycle(
+            LibraryLifecycle.UNKNOWN,
+            [*empty[:5], "empty"],  # type: ignore[list-item]
+        )
+
+
+def test_lifecycle_aggregation_positive_wins_and_unknown_prevents_starter():
+    assert (
+        aggregate_library_lifecycle(
+            LibraryLifecycle.UNKNOWN,
+            [
+                LibraryContentEvidence.UNKNOWN,
+                LibraryContentEvidence.EMPTY,
+                LibraryContentEvidence.HAS_USER_CONTENT,
+                LibraryContentEvidence.EMPTY,
+                LibraryContentEvidence.EMPTY,
+                LibraryContentEvidence.EMPTY,
+            ],
+        )
+        is LibraryLifecycle.GRADUATED
+    )
+    assert (
+        aggregate_library_lifecycle(
+            LibraryLifecycle.UNKNOWN,
+            [LibraryContentEvidence.EMPTY] * 5 + [LibraryContentEvidence.UNKNOWN],
+        )
+        is LibraryLifecycle.UNKNOWN
+    )

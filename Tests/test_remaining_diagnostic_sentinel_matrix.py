@@ -21,7 +21,7 @@ DOMAIN_OWNERS = [
     ("rag_search", "tldw_chatbook.RAG_Search.simplified.search_service"),
     ("ingestion", "tldw_chatbook.Local_Ingestion.Document_Processing_Lib"),
     ("media_database", "tldw_chatbook.DB.Client_Media_DB_v2"),
-    ("notes_sync", "tldw_chatbook.Notes.sync_engine"),
+    ("notes_sync", "tldw_chatbook.Notes.notes_sync_runtime"),
     # content_processor was retired in TASK-1220; monitoring_engine is the live
     # subscriptions module that WatchlistCheckHandler actually calls.
     ("subscriptions", "tldw_chatbook.Subscriptions.monitoring_engine"),
@@ -159,3 +159,71 @@ def test_third_party_payload_is_file_filtered_but_remains_available_to_ui(
 
     assert any(PRIVATE_SENTINEL in message for message in collecting.messages)
     assert PRIVATE_SENTINEL not in _all_generations(path)
+
+
+# ---------------------------------------------------------------------------
+# TASK-19555: this suite used to prove the metadata-only guarantee by
+# attaching a filtered FILE handler beside an unfiltered ``_CollectingHandler``
+# and asserting only against the file. The app installs exactly such an
+# unfiltered collector -- ``TldwCli._setup_buffered_logging``'s
+# ``PersistentLogHandler``, root logger, level NOTSET -- and
+# ``LogsWindow._on_copy_all`` joins its buffer onto the system clipboard. The
+# collector above is a stand-in that nothing shares with production, so the
+# omission below is the one that mattered: the REAL collector was never
+# asserted against at all.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("operation", "module_name"), DOMAIN_OWNERS)
+def test_remaining_domain_records_stay_out_of_the_clipboard_artifact(
+    operation: str,
+    module_name: str,
+) -> None:
+    """The app's own collector, not a stand-in: no sentinel on the share path."""
+    from tldw_chatbook.app import TldwCli
+
+    class _AppStub:
+        pass
+
+    stub = _AppStub()
+    root = logging.getLogger()
+    old_level = root.level
+    root.setLevel(logging.DEBUG)
+    TldwCli._setup_buffered_logging(stub)
+    sink_id = loguru_logger.add(_forward_loguru_to_standard, level="DEBUG")
+    domain_logger = logging.getLogger(module_name)
+    try:
+        domain_logger.debug("query=%s", PRIVATE_SENTINEL)
+        domain_logger.info("content=%s", PRIVATE_SENTINEL)
+        try:
+            raise RuntimeError(PRIVATE_SENTINEL)
+        except RuntimeError:
+            domain_logger.exception("operation failed: %s", PRIVATE_SENTINEL)
+        _emit_owned_loguru_payload(
+            module_name,
+            f"response body and config value: {PRIVATE_SENTINEL}",
+        )
+        log_persistent_metadata(
+            domain_logger,
+            logging.INFO,
+            "operation_complete",
+            operation=operation,
+            status="success",
+            duration_ms=12,
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+        root.removeHandler(stub._persistent_log_handler)
+        root.setLevel(old_level)
+
+    shareable = "\n".join(stub._log_buffer)
+    assert PRIVATE_SENTINEL not in shareable
+    assert "sk-not-a-real-key" not in shareable
+    # Not a drop: the schema-validated event and triage metadata survive.
+    assert "event=operation_complete" in shareable
+    assert f"operation={operation}" in shareable
+    assert "exception_type=RuntimeError" in shareable
+    # The live view keeps the payload -- redacting it would empty the Logs
+    # screen of the content it exists to show (see TASK-19555's argument).
+    rendered = "\n".join(message for _l, _n, message in stub._log_records)
+    assert PRIVATE_SENTINEL in rendered

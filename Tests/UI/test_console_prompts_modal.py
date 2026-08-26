@@ -12,8 +12,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.screen import ModalScreen
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
+from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
@@ -134,6 +136,16 @@ def _brief(identifier: str = "prompt-1", *, artifact_type: str = "prompt"):
     }
 
 
+def _choose_save_action(root: Any, action: str) -> None:
+    """Choose one currently offered action from the editor's Save menu."""
+    menu = root.query_one("#prompt-editor-save-menu", Select)
+    offered = [
+        value for _label, value in menu._options if value is not Select.NULL
+    ]
+    assert action in offered
+    menu.value = action
+
+
 class _PromptBackend:
     def __init__(self, *, pages: Mapping[int, Mapping[str, Any]] | None = None) -> None:
         self.pages = dict(pages or {})
@@ -225,6 +237,7 @@ class _Harness(App):
     ) -> None:
         super().__init__()
         self.backend = backend
+        self.results: list[object] = []
         self.improve_unavailable_reason = improve_unavailable_reason
         self.configure_provider = configure_provider
         self.improvement_kwargs = dict(improvement_kwargs or {})
@@ -247,7 +260,8 @@ class _Harness(App):
                 improve_unavailable_reason=self.improve_unavailable_reason,
                 **self.improvement_kwargs,
                 **kwargs,
-            )
+            ),
+            callback=self.results.append,
         )
 
 
@@ -255,6 +269,10 @@ class _StyledHarness(_Harness):
     """Modal harness with the same bundled stylesheet as the real Console."""
 
     CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+
+class _ApplyOverlay(ModalScreen[None]):
+    """Top-screen sentinel used to prove stale apply completion is harmless."""
 
 
 class _ImprovementDriver:
@@ -605,7 +623,9 @@ async def test_late_source_completion_is_rejected() -> None:
         await pilot.pause()
         modal._list_page = list_page
         late_local = asyncio.create_task(modal.reload_browse())
-        await local_started.wait()
+        await wait_for_background_signal(
+            local_started, late_local, what="the late local browse reload"
+        )
         await modal.switch_source("server")
         release_local.set()
         await late_local
@@ -711,7 +731,7 @@ async def test_normalized_browse_detail_and_update_use_source_id_not_composite_i
         assert backend.detail_calls == [("local", source_id)]
         assert app.screen.state.selected_identity == source_id
 
-        app.screen.query_one("#prompt-editor-update-original", Button).press()
+        _choose_save_action(app.screen, "update")
         await pilot.pause()
         await pilot.pause()
 
@@ -790,7 +810,7 @@ async def test_real_normalized_local_prompt_round_trip_opens_updates_and_uses_so
             assert app.screen.state.selected_identity == prompt_uuid
             assert backend.detail_calls == [("local", prompt_uuid)]
 
-            app.screen.query_one("#prompt-editor-update-original", Button).press()
+            _choose_save_action(app.screen, "update")
             await pilot.pause()
             await pilot.pause()
 
@@ -871,6 +891,7 @@ async def test_filled_prompt_footer_paints_apply_checkboxes_at_supported_sizes(
         await pilot.pause()
 
         editor = app.screen.query_one(PromptBlockEditor)
+        outer_footer = app.screen.query_one("#console-prompts-footer")
         footer = editor.query_one("#prompt-editor-footer")
         lane_options = editor.query_one("#prompt-editor-lane-options")
         actions = editor.query_one("#prompt-editor-actions")
@@ -881,7 +902,7 @@ async def test_filled_prompt_footer_paints_apply_checkboxes_at_supported_sizes(
         assert user.value is True
 
         for checkbox, label in (
-            (system, "Apply system prompt to this session"),
+            (system, "Replace this session's System prompt"),
             (user, "Apply User"),
         ):
             rendered = _rendered_lines(checkbox)
@@ -896,21 +917,38 @@ async def test_filled_prompt_footer_paints_apply_checkboxes_at_supported_sizes(
             )
 
         assert footer.has_class("two-row")
+        apply_reason = editor.query_one("#prompt-editor-apply-reason", Static)
+        apply_explanation = str(apply_reason.renderable)
+        assert "active session" in apply_explanation
+        assert "System changes only" in apply_explanation
+        painted_apply_explanation = "\n".join(
+            apply_reason.render_line(row).text
+            for row in range(apply_reason.region.height)
+        )
+        assert (
+            "System changes only on Apply in this active session"
+            in " ".join(painted_apply_explanation.split())
+        )
         assert lane_options.region.bottom <= actions.region.y
+        assert editor.region.bottom <= outer_footer.region.y
 
         action_widgets = [
-            editor.query_one(selector, Button)
+            editor.query_one(selector)
             for selector in (
-                "#prompt-editor-back",
-                "#prompt-editor-save-prompt",
-                "#prompt-editor-save-recipe",
-                "#prompt-editor-update-original",
                 "#prompt-editor-apply",
+                "#prompt-editor-save-menu",
             )
         ]
+        editor_back = editor.query_one("#prompt-editor-back", Button)
+        assert not editor_back.is_on_screen, (
+            editor_back.styles.display,
+            editor_back.region,
+            editor_back.display,
+        )
         for action in action_widgets:
             assert action.region.width > 0 and action.region.height > 0
             assert editor.region.contains_region(action.region)
+            assert action.region.bottom <= outer_footer.region.y
         for left, right in zip(action_widgets, action_widgets[1:]):
             assert left.region.right <= right.region.x
 
@@ -927,6 +965,9 @@ async def test_filled_prompt_footer_paints_apply_checkboxes_at_supported_sizes(
         await pilot.press("tab")
         await pilot.pause()
         assert app.focused is action_widgets[0]
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is action_widgets[1]
 
 
 @pytest.mark.asyncio
@@ -1027,15 +1068,13 @@ async def test_source_capabilities_gate_only_unsupported_structured_saves() -> N
         await app.screen.open_artifact("prompt-1")
         await pilot.pause()
 
-        assert (
-            app.screen.query_one("#prompt-editor-save-prompt", Button).disabled is False
-        )
-        recipe = app.screen.query_one("#prompt-editor-save-recipe", Button)
-        update = app.screen.query_one("#prompt-editor-update-original", Button)
-        assert recipe.disabled is True
-        assert "does not support block_recipe" in str(recipe.tooltip)
-        assert update.disabled is True
-        assert "conditional updates" in str(update.tooltip)
+        save_menu = app.screen.query_one("#prompt-editor-save-menu", Select)
+        assert save_menu.disabled is False
+        assert [
+            value for _label, value in save_menu._options if value is not Select.NULL
+        ] == ["prompt"]
+        assert "does not support block_recipe" in str(save_menu.tooltip)
+        assert "conditional updates" in str(save_menu.tooltip)
 
 
 @pytest.mark.asyncio
@@ -1097,6 +1136,350 @@ async def test_root_escape_dismisses_and_restores_composer_focus() -> None:
         assert getattr(app.focused, "id", None) == "console-native-composer"
 
 
+async def _dismissal_gesture(pilot: Any, gesture: str) -> None:
+    if gesture == "escape":
+        await pilot.press("escape")
+    else:
+        await pilot.click(offset=(0, 0))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_clean_root_dismissal_returns_exact_result_once(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is not modal
+        assert app.results == [None]
+        assert getattr(app.focused, "id", None) == "console-native-composer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_clean_nested_dismissal_closes_whole_workbench(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        back = modal.query_one("#console-prompts-back", Button)
+        assert back.display is True
+        assert str(back.label) == "Back"
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is not modal
+        assert app.results == [None]
+        assert getattr(app.focused, "id", None) == "console-native-composer"
+
+
+async def _open_dirty_prompt_mode(
+    modal: ConsolePromptsModal, pilot: Any, mode: str
+) -> TextArea:
+    if mode == "edit":
+        await modal.open_artifact("prompt-1")
+    else:
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+    await pilot.pause()
+    editor = modal.query_one("#prompt-block-content-role", TextArea)
+    editor.focus()
+    await pilot.pause()
+    modal.mark_dirty()
+    return editor
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edit", "recipe"])
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_dirty_dismissal_reveals_guard(
+    mode: str,
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await _open_dirty_prompt_mode(modal, pilot, mode)
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+
+        guard = modal.query_one("#console-prompts-dirty-guard")
+        assert app.screen is modal
+        assert guard.display is True
+        assert modal.state.mode == mode
+        assert app.results == []
+        assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edit", "recipe"])
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_guard_visible_cannot_be_bypassed(
+    mode: str,
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        editor = await _open_dirty_prompt_mode(modal, pilot, mode)
+        await pilot.press("escape")
+        await pilot.pause()
+        guard = modal.query_one("#console-prompts-dirty-guard")
+        assert guard.display is True
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+        if gesture == "escape":
+            assert guard.display is False
+            assert app.focused is editor
+        else:
+            assert guard.display is True
+            assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edit", "recipe"])
+async def test_prompts_repeated_visible_close_preserves_guard_editor_focus(
+    mode: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        editor = await _open_dirty_prompt_mode(modal, pilot, mode)
+        close = modal.query_one("#console-prompts-close", Button)
+        close.press()
+        await pilot.pause()
+        guard = modal.query_one("#console-prompts-dirty-guard")
+        assert guard.display is True
+        assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+
+        close.press()
+        await pilot.pause()
+        assert guard.display is True
+        assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+        assert app.results == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert guard.display is False
+        assert app.focused is editor
+        assert app.results == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edit", "recipe"])
+@pytest.mark.parametrize("activation", ["click", "keyboard"])
+async def test_prompts_close_activation_restores_last_content_focus(
+    mode: str,
+    activation: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        editor = await _open_dirty_prompt_mode(modal, pilot, mode)
+        close = modal.query_one("#console-prompts-close", Button)
+        if activation == "click":
+            await pilot.click("#console-prompts-close")
+        else:
+            close.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+        await pilot.pause()
+
+        guard = modal.query_one("#console-prompts-dirty-guard")
+        assert guard.display is True
+        assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+        assert app.results == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert guard.display is False
+        assert app.focused is editor
+        assert app.results == []
+
+
+@pytest.mark.asyncio
+async def test_prompts_expanded_select_descendant_owns_primary_click() -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        source = modal.query_one("#console-prompts-source", Select)
+        await pilot.click("#console-prompts-source")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert source.expanded is True
+        overlay = modal.query_one("SelectOverlay")
+        assert overlay.display is True
+        await pilot.click(overlay, offset=(1, 1))
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+        assert app.focused is overlay
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_active_improvement_dismissal_cancels_once(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    improve_calls = 0
+
+    async def improve(snapshot: Any) -> PromptImprovementOutcome:
+        nonlocal improve_calls
+        improve_calls += 1
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return PromptImprovementOutcome(
+            request_id=snapshot.request_id, kind="no_change"
+        )
+
+    kwargs = driver.kwargs()
+    kwargs["improve"] = improve
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        auto = modal.query_one("#console-prompts-auto-improve", Button)
+        auto.focus()
+        auto.press()
+        await wait_for_signal(started, what="the prompt improvement starting")
+        await pilot.pause()
+        focused_before = app.focused
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert modal.state.mode == "improve"
+        assert modal._active_request_id is None
+        assert modal._improvement_worker is not None
+        assert modal._improvement_worker.is_cancelled
+        assert improve_calls == 1
+        assert app.results == []
+        assert app.focused is focused_before
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "Cancelling..."
+        )
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert driver.applies == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_cancelling_improvement_dismissal_stays_in_transaction(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def improve(snapshot: Any) -> PromptImprovementOutcome:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return PromptImprovementOutcome(
+            request_id=snapshot.request_id, kind="no_change"
+        )
+
+    kwargs = driver.kwargs()
+    kwargs["improve"] = improve
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await wait_for_signal(started, what="the prompt improvement starting")
+        cancel = modal.query_one("#console-prompts-improvement-cancel", Button)
+        cancel.focus()
+        await pilot.pause()
+        cancel.press()
+        await pilot.pause()
+        assert modal._improvement_worker is not None
+        assert modal._improvement_worker.is_cancelled
+        focused_before = app.focused
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert modal.state.mode == "improve"
+        assert app.results == []
+        assert app.focused is focused_before
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "Cancelling..."
+        )
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert driver.applies == []
+
+
 @pytest.mark.asyncio
 async def test_late_local_detail_cannot_open_after_switching_to_server() -> None:
     backend = _PromptBackend()
@@ -1119,7 +1502,9 @@ async def test_late_local_detail_cannot_open_after_switching_to_server() -> None
         modal._detail = detail
 
         late_open = asyncio.create_task(modal.open_artifact("late-local"))
-        await local_started.wait()
+        await wait_for_background_signal(
+            local_started, late_open, what="the late local detail open"
+        )
         await modal.switch_source("server")
         release_local.set()
         await late_open
@@ -1154,7 +1539,9 @@ async def test_late_first_detail_cannot_replace_newer_selection() -> None:
         modal._detail = detail
 
         first_open = asyncio.create_task(modal.open_artifact("prompt-a"))
-        await first_started.wait()
+        await wait_for_background_signal(
+            first_started, first_open, what="the first detail open"
+        )
         await modal.open_artifact("prompt-b")
         release_first.set()
         await first_open
@@ -1196,7 +1583,9 @@ async def test_source_switch_clears_foreign_rows_before_unavailable_result() -> 
         assert modal.query("#console-prompts-result-local-only")
 
         switch = asyncio.create_task(modal.switch_source("server"))
-        await server_started.wait()
+        await wait_for_background_signal(
+            server_started, switch, what="the server source switch"
+        )
         foreign_rows_visible_while_loading = bool(
             modal.query("#console-prompts-result-local-only")
         )
@@ -1238,7 +1627,7 @@ async def test_recipe_save_as_prompt_becomes_the_guarded_saved_prompt() -> None:
         await pilot.pause()
         assert modal.state.working_copy_unsaved is True
 
-        modal.query_one("#prompt-editor-save-prompt", Button).press()
+        _choose_save_action(modal, "prompt")
         await pilot.pause()
         await pilot.pause()
 
@@ -1251,15 +1640,18 @@ async def test_recipe_save_as_prompt_becomes_the_guarded_saved_prompt() -> None:
         assert "Saved Prompt" in str(
             modal.query_one("#console-prompts-location", Static).renderable
         )
-        update = modal.query_one("#prompt-editor-update-original", Button)
-        assert update.disabled is False
-        assert update.tooltip in (None, "")
+        save_menu = modal.query_one("#prompt-editor-save-menu", Select)
+        assert "update" in [
+            value
+            for _label, value in save_menu._options
+            if value is not Select.NULL
+        ]
         assert (
             str(modal.query_one("#prompt-editor-update-reason", Static).renderable)
             == ""
         )
 
-        update.press()
+        _choose_save_action(modal, "update")
         await pilot.pause()
         await pilot.pause()
 
@@ -1300,7 +1692,7 @@ async def test_existing_prompt_save_recipe_does_not_retarget_prompt_working_copy
             lambda message, **_kwargs: notifications.append(str(message)),
         )
 
-        modal.query_one("#prompt-editor-save-recipe", Button).press()
+        _choose_save_action(modal, "recipe")
         await pilot.pause()
         await pilot.pause()
 
@@ -1312,15 +1704,19 @@ async def test_existing_prompt_save_recipe_does_not_retarget_prompt_working_copy
         assert modal._selected_record is original_record
         assert modal._decoded is original_decoded
         assert warning.display is True
-        update = modal.query_one("#prompt-editor-update-original", Button)
-        assert update.disabled is False
+        save_menu = modal.query_one("#prompt-editor-save-menu", Select)
+        assert "update" in [
+            value
+            for _label, value in save_menu._options
+            if value is not Select.NULL
+        ]
         assert notifications == ["Recipe saved as a new artifact."]
 
         backend.save_result = _detail(
             identifier="prompt-original",
             version=5,
         )
-        update.press()
+        _choose_save_action(modal, "update")
         await pilot.pause()
         await pilot.pause()
 
@@ -1364,7 +1760,7 @@ async def test_recipe_derived_prompt_save_recipe_stays_unsaved_and_not_updatable
             lambda message, **_kwargs: notifications.append(str(message)),
         )
 
-        modal.query_one("#prompt-editor-save-recipe", Button).press()
+        _choose_save_action(modal, "recipe")
         await pilot.pause()
         await pilot.pause()
 
@@ -1375,12 +1771,13 @@ async def test_recipe_derived_prompt_save_recipe_stays_unsaved_and_not_updatable
         assert modal.state.dirty is True
         assert modal._selected_record is original_record
         assert modal._decoded is original_decoded
-        update = modal.query_one("#prompt-editor-update-original", Button)
-        assert update.disabled is True
+        save_menu = modal.query_one("#prompt-editor-save-menu", Select)
+        assert "update" not in [
+            value
+            for _label, value in save_menu._options
+            if value is not Select.NULL
+        ]
         assert notifications == ["Recipe saved as a new artifact."]
-
-        update.press()
-        await pilot.pause()
 
     assert len(backend.save_calls) == 1
 
@@ -1418,7 +1815,7 @@ async def test_name_only_prompt_save_response_warns_and_keeps_working_copy_unpro
             ),
         )
 
-        modal.query_one("#prompt-editor-save-prompt", Button).press()
+        _choose_save_action(modal, "prompt")
         await pilot.pause()
         await pilot.pause()
 
@@ -1428,7 +1825,12 @@ async def test_name_only_prompt_save_response_warns_and_keeps_working_copy_unpro
         assert modal.state.working_copy_unsaved is True
         assert modal.state.dirty is True
         assert modal._selected_record is original_record
-        assert modal.query_one("#prompt-editor-update-original", Button).disabled
+        save_menu = modal.query_one("#prompt-editor-save-menu", Select)
+        assert "update" not in [
+            value
+            for _label, value in save_menu._options
+            if value is not Select.NULL
+        ]
 
     assert notifications == [
         (
@@ -1466,7 +1868,7 @@ async def test_stale_compiled_text_warns_that_definition_wins_and_save_repairs()
         assert "definition is authoritative" in warning_copy
         assert "Saving repairs" in warning_copy
 
-        modal.query_one("#prompt-editor-save-prompt", Button).press()
+        _choose_save_action(modal, "prompt")
         await pilot.pause()
         await pilot.pause()
 
@@ -1494,7 +1896,7 @@ async def test_host_apply_deferral_replaces_ready_copy_and_has_no_apply_path() -
         )
         assert apply_button.disabled is True
         assert "Apply unavailable" in apply_copy
-        assert "save the Prompt" in apply_copy
+        assert "save this Prompt" in apply_copy
         assert "Ready" not in apply_copy
         apply_button.press()
         await pilot.pause()
@@ -1576,9 +1978,9 @@ async def test_improve_surface_names_exact_paths_and_shows_captured_context() ->
             )
         ]
         assert labels == [
-            "Analyze and auto-improve",
-            "Analyze and user review",
-            "Create or follow a structured recipe",
+            "Replace draft automatically",
+            "Analyze and user review (Recommended)",
+            "Build a reusable prompt",
         ]
         assert app.screen.query_one("#console-prompts-auto-improve", Button).disabled
         assert app.screen.query_one("#console-prompts-review-improve", Button).disabled
@@ -1588,6 +1990,22 @@ async def test_improve_surface_names_exact_paths_and_shows_captured_context() ->
         assert "Be accurate." in str(
             app.screen.query_one("#console-prompts-current-system", TextArea).text
         )
+        analysis_context = app.screen.query_one(
+            "#console-prompts-include-system", Checkbox
+        )
+        assert str(analysis_context.label) == (
+            "Let the improver read the current System prompt"
+        )
+        assert analysis_context.value is True
+        assert analysis_context.disabled is False
+        analysis_explanation = str(
+            app.screen.query_one(
+                "#console-prompts-analysis-context-disclosure", Static
+            ).renderable
+        )
+        assert analysis_explanation == (
+            "Used only to improve the draft. It does not change this session."
+        )
         current_user = app.screen.query_one("#console-prompts-current-user", TextArea)
         assert "PRIVATE BODY" not in current_user.text
         assert "/private/notes.txt" not in current_user.text
@@ -1596,6 +2014,197 @@ async def test_improve_surface_names_exact_paths_and_shows_captured_context() ->
             app.screen.query_one("#console-prompts-provider-summary", Static).renderable
         )
         assert "OpenAI" in status and "gpt-test" in status
+
+
+@pytest.mark.asyncio
+async def test_recipe_chooser_explains_each_starting_point_before_selection() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+
+        assert str(
+            app.screen.query_one(
+                "#console-prompts-recipe-outcome-description", Static
+            ).renderable
+        ) == (
+            "Outcome-first starts with Goal, context and evidence, constraints, "
+            "and output; reveal optional guidance when useful."
+        )
+        assert str(
+            app.screen.query_one(
+                "#console-prompts-recipe-saved-description", Static
+            ).renderable
+        ) == "Saved Recipe reuses a format from Library > Prompts."
+        assert str(
+            app.screen.query_one(
+                "#console-prompts-recipe-blank-description", Static
+            ).renderable
+        ) == "Blank starts with empty System and User lanes for your own blocks."
+        outcome = app.screen.query_one(
+            "#console-prompts-recipe-outcome-first", Button
+        )
+        blank = app.screen.query_one("#console-prompts-recipe-blank", Button)
+        outcome.focus()
+        await pilot.pause()
+        assert outcome.region.height >= 3
+        assert "Outcome-first" in "".join(_rendered_lines(outcome))
+        assert "&#160;Outcome-first&#160;" in app.export_screenshot()
+        blank.focus()
+        await pilot.pause()
+        assert blank.region.height >= 3
+        assert "Blank" in "".join(_rendered_lines(blank))
+
+        outcome.press()
+        await pilot.pause()
+
+        for block_id in ("goal", "context-evidence", "constraints", "output"):
+            assert app.screen.query_one(f"#prompt-block-{block_id}").display
+        for block_id in (
+            "role",
+            "personality",
+            "collaboration-style",
+            "success-criteria",
+            "stop-rules",
+        ):
+            assert not app.screen.query_one(f"#prompt-block-{block_id}").display
+        reveal = app.screen.query_one("#prompt-editor-show-optional", Button)
+        assert str(reveal.label) == "Show 5 optional blocks"
+
+
+@pytest.mark.asyncio
+async def test_recipe_save_confirms_library_destination_and_opens_saved_identity() -> None:
+    backend = _PromptBackend()
+    backend.save_result = {
+        **_detail(artifact_type="recipe", identifier="77", version=1),
+        "id": "local:prompt:recipe-uuid-77",
+        "local_id": 77,
+        "source_id": "recipe-uuid-77",
+        "name": "Reusable analysis",
+    }
+    driver = _ImprovementDriver()
+    opened: list[tuple[str, str]] = []
+
+    def open_library(source: str, identity: str) -> bool:
+        opened.append((source, identity))
+        return True
+
+    app = _Harness(
+        backend,
+        improvement_kwargs={
+            **driver.kwargs(),
+            "open_library_prompt": open_library,
+        },
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        app.screen.query_one(
+            "#console-prompts-recipe-outcome-first", Button
+        ).press()
+        await pilot.pause()
+
+        _choose_save_action(app.screen, "recipe")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(backend.save_calls) == 1
+        confirmation = app.screen.query_one(
+            "#console-prompts-recipe-save-confirmation", Static
+        )
+        assert str(confirmation.renderable) == (
+            "Reusable analysis saved to Library > Prompts as a Recipe."
+        )
+        open_library = app.screen.query_one(
+            "#console-prompts-open-saved-recipe", Button
+        )
+        assert open_library.display is True
+        assert open_library.has_focus
+
+        open_library.press()
+        await pilot.pause()
+
+    assert opened == [("local", "77")]
+    assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_recipe_saved_confirmation_disables_unsupported_library_target() -> None:
+    backend = _PromptBackend()
+    app = _Harness(
+        backend,
+        improvement_kwargs={
+            "open_library_prompt": lambda _source, _identity: True,
+        },
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("recipe")
+        modal.query_one(
+            "#console-prompts-recipe-outcome-first", Button
+        ).press()
+        await pilot.pause()
+        modal._show_recipe_saved_confirmation(
+            {
+                "backend": "server",
+                "source_id": "recipe-server-77",
+                "name": "Server recipe",
+            }
+        )
+        await pilot.pause()
+
+        open_library = modal.query_one(
+            "#console-prompts-open-saved-recipe", Button
+        )
+        assert open_library.display is True
+        assert open_library.disabled is True
+        assert modal._saved_recipe_library_target is None
+        assert "local recipes" in str(open_library.tooltip)
+        assert app.results == []
+
+
+@pytest.mark.asyncio
+async def test_recipe_library_open_keeps_modal_when_navigation_declines() -> None:
+    backend = _PromptBackend()
+    app = _Harness(
+        backend,
+        improvement_kwargs={
+            "open_library_prompt": lambda _source, _identity: False,
+        },
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("recipe")
+        modal.query_one(
+            "#console-prompts-recipe-outcome-first", Button
+        ).press()
+        await pilot.pause()
+        modal._show_recipe_saved_confirmation(
+            {
+                "backend": "local",
+                "local_id": 77,
+                "name": "Local recipe",
+            }
+        )
+        await pilot.pause()
+
+        modal.query_one("#console-prompts-open-saved-recipe", Button).press()
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
 
 
 @pytest.mark.asyncio
@@ -1637,6 +2246,88 @@ async def test_system_analysis_opt_out_survives_recipe_path_replacement() -> Non
         assert driver.requests[-1].mode == "recipe"
         assert driver.requests[-1].system_prompt is None
         assert driver.requests[-1].system_fingerprint is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["auto", "review", "recipe"])
+@pytest.mark.parametrize("system_case", ["included", "excluded", "absent"])
+async def test_improvement_system_read_permission_is_request_only(
+    mode: str,
+    system_case: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(request_id="ignored", kind="no_change")
+    )
+    kwargs = driver.kwargs()
+    if system_case == "absent":
+        kwargs["improvement_context"] = SimpleNamespace(
+            **{
+                **vars(driver.context),
+                "current_system_prompt": "",
+                "current_system_fingerprint": None,
+            }
+        )
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        checkbox = app.screen.query_one("#console-prompts-include-system", Checkbox)
+        disclosure = app.screen.query_one(
+            "#console-prompts-analysis-context-disclosure", Static
+        )
+
+        assert str(checkbox.label) == (
+            "Let the improver read the current System prompt"
+        )
+        if system_case == "absent":
+            assert checkbox.disabled is True
+            assert checkbox.value is False
+            assert str(checkbox.tooltip) == (
+                "Unavailable — this session has no current System prompt."
+            )
+            assert "no current System prompt" in str(disclosure.renderable)
+            assert "only the unsent message" in str(disclosure.renderable)
+        else:
+            assert checkbox.disabled is False
+            checkbox.value = system_case == "included"
+            await pilot.pause()
+            assert str(disclosure.renderable) == (
+                "Used only to improve the draft. It does not change this session."
+            )
+
+        if mode == "auto":
+            app.screen.query_one("#console-prompts-auto-improve", Button).press()
+        elif mode == "review":
+            app.screen.query_one("#console-prompts-review-improve", Button).press()
+        else:
+            app.screen.query_one(
+                "#console-prompts-structured-recipe", Button
+            ).press()
+            await pilot.pause()
+            app.screen.query_one(
+                "#console-prompts-recipe-outcome-first", Button
+            ).press()
+            await pilot.pause()
+            recipe_checkbox = app.screen.query_one(
+                "#console-prompts-include-system", Checkbox
+            )
+            assert recipe_checkbox.value is (system_case == "included")
+            app.screen.query_one("#console-prompts-recipe-fill", Button).press()
+
+        await pilot.pause()
+        await pilot.pause()
+
+        request = driver.requests[-1]
+        assert request.mode == mode
+        assert request.system_prompt == (
+            "Be accurate." if system_case == "included" else None
+        )
+        assert request.system_fingerprint == (
+            "system-fingerprint" if system_case == "included" else None
+        )
+        assert driver.applies == []
 
 
 @pytest.mark.asyncio
@@ -1684,11 +2375,12 @@ async def test_recipe_editor_keeps_analysis_disclosure_bound_through_edits_and_f
             ).renderable
         )
         assert str(analysis_context.label) == (
-            "Include system prompt as analysis context"
+            "Let the improver read the current System prompt"
         )
         assert analysis_context.value is True
-        assert "Fill" in disclosure
-        assert "System apply" in disclosure
+        assert disclosure == (
+            "Used only to improve the draft. It does not change this session."
+        )
         assert modal.query_one("#prompt-editor-apply-system", Checkbox).value is False
 
         analysis_context.value = not include_system
@@ -1701,7 +2393,7 @@ async def test_recipe_editor_keeps_analysis_disclosure_bound_through_edits_and_f
         assert modal.state.dirty is True
 
         modal.query_one("#console-prompts-recipe-fill", Button).press()
-        await started.wait()
+        await wait_for_signal(started, what="the recipe-fill improvement starting")
         await pilot.pause()
 
         assert (
@@ -1844,7 +2536,9 @@ async def test_held_improve_activation_navigation_cancels_and_ignores_late_resol
         modal = app.screen
         improve = modal.query_one("#console-prompts-improve", Button)
         improve.press()
-        await started.wait()
+        await pilot.pause()
+        modal.query_one("#console-prompts-review-improve", Button).press()
+        await wait_for_signal(started, what="the held improvement activation starting")
         await asyncio.sleep(0.05)
 
         if navigation == "close":
@@ -1860,8 +2554,9 @@ async def test_held_improve_activation_navigation_cancels_and_ignores_late_resol
         await pilot.pause()
         await pilot.pause()
 
-        assert dismissed_while_held is True
-        assert modal.state.mode == "browse"
+        assert dismissed_while_held is (navigation == "close")
+        expected_mode = "improve" if navigation == "close" else "browse"
+        assert modal.state.mode == expected_mode
         assert activation_calls == 1
         assert driver.requests == []
 
@@ -1890,14 +2585,21 @@ async def test_held_improve_activation_disables_duplicate_resolution() -> None:
         modal = app.screen
         improve = modal.query_one("#console-prompts-improve", Button)
         improve.press()
-        await started.wait()
+        await pilot.pause()
+        auto = modal.query_one("#console-prompts-auto-improve", Button)
+        review = modal.query_one("#console-prompts-review-improve", Button)
+        structured = modal.query_one("#console-prompts-structured-recipe", Button)
+        auto.press()
+        await wait_for_signal(started, what="the held improvement activation starting")
         await asyncio.sleep(0.05)
 
-        disabled_while_held = improve.disabled
-        resolving_copy = str(
-            modal.query_one("#console-prompts-browse-status", Static).renderable
+        disabled_while_held = all(
+            button.disabled for button in (auto, review, structured)
         )
-        modal.post_message(ConsolePromptsBrowse.ImproveRequested())
+        resolving_copy = str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        )
+        review.press()
         await asyncio.sleep(0.05)
         calls_while_held = activation_calls
 
@@ -1910,6 +2612,42 @@ async def test_held_improve_activation_disables_duplicate_resolution() -> None:
         assert calls_while_held == 1
         assert activation_calls == 1
         assert modal.state.mode == "improve"
+
+
+@pytest.mark.asyncio
+async def test_stale_opening_context_does_not_offer_provider_recovery() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+
+    async def activate() -> Any:
+        raise ValueError("The Console System prompt changed.")
+
+    async def configure_provider() -> None:
+        raise AssertionError("stale context is not repaired in provider settings")
+
+    kwargs = driver.kwargs()
+    kwargs["activate_improvement_context"] = activate
+    app = _Harness(
+        backend,
+        improvement_kwargs=kwargs,
+        configure_provider=configure_provider,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-review-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        status = modal.query_one("#console-prompts-improvement-status", Static)
+        assert str(status.renderable) == "The Console System prompt changed."
+        assert list(modal.query("#console-prompts-configure-provider")) == []
+        assert app.focused is modal.query_one(
+            "#console-prompts-structured-recipe", Button
+        )
 
 
 @pytest.mark.asyncio
@@ -1936,7 +2674,9 @@ async def test_invalidated_activation_token_ignores_late_resolution() -> None:
         activation = asyncio.create_task(
             modal._run_improvement_activation(activation_id)
         )
-        await started.wait()
+        await wait_for_background_signal(
+            started, activation, what="the improvement activation"
+        )
 
         modal._active_activation_id = None
         release.set()
@@ -2033,7 +2773,7 @@ async def test_active_improvement_disables_duplicate_model_launches() -> None:
         auto = app.screen.query_one("#console-prompts-auto-improve", Button)
         review = app.screen.query_one("#console-prompts-review-improve", Button)
         auto.press()
-        await started.wait()
+        await wait_for_signal(started, what="the auto-improvement starting")
         await pilot.pause()
 
         assert auto.disabled is True
@@ -2043,10 +2783,295 @@ async def test_active_improvement_disables_duplicate_model_launches() -> None:
         assert improve_calls == ["prompt-improvement-1"]
 
         release.set()
-        await pilot.pause()
-        await pilot.pause()
+        for _ in range(20):
+            await pilot.pause()
+            if (
+                app.screen._active_activation_id is None
+                and app.screen._active_request_id is None
+            ):
+                break
         assert auto.disabled is False
         assert review.disabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["auto", "review"])
+@pytest.mark.parametrize("close_source", ["escape", "backdrop", "close", "back"])
+async def test_apply_transaction_blocks_every_close_path_until_commit_finishes(
+    mode: str,
+    close_source: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    driver.outcomes.append(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt=driver.preview.text.replace(
+                "Draft question", "Committed candidate"
+            ),
+        )
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    apply_calls = 0
+
+    async def apply(result: Any, snapshot: Any) -> Any:
+        nonlocal apply_calls
+        apply_calls += 1
+        started.set()
+        await release.wait()
+        return SimpleNamespace(kind="applied", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["apply_improvement_result"] = apply
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one(
+            "#console-prompts-auto-improve"
+            if mode == "auto"
+            else "#console-prompts-review-improve",
+            Button,
+        ).press()
+        await pilot.pause()
+        await pilot.pause()
+        if mode == "review":
+            modal.query_one("#console-prompts-review-apply", Button).press()
+        await wait_for_signal(started, what=f"the {mode} apply commit starting")
+        await pilot.pause()
+
+        assert modal._apply_in_progress is True
+        assert "Applying" in str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        )
+        assert getattr(app.focused, "id", None) == "console-prompts-improvement-status"
+        assert modal.query_one("#console-prompts-close", Button).disabled
+        assert modal.query_one("#console-prompts-back", Button).disabled
+        duplicate_apply = next(
+            (
+                button
+                for selector in (
+                    "#console-prompts-review-apply",
+                    "#console-prompts-auto-improve",
+                )
+                for button in modal.query(selector)
+            ),
+            None,
+        )
+        assert duplicate_apply is not None and duplicate_apply.disabled
+        duplicate_apply.press()
+        await pilot.pause()
+        assert apply_calls == 1
+
+        if close_source == "escape":
+            await pilot.press("escape")
+        elif close_source == "backdrop":
+            await pilot.click(offset=(0, 0))
+        elif close_source == "close":
+            modal.query_one("#console-prompts-close", Button).press()
+        else:
+            modal.query_one("#console-prompts-back", Button).press()
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert apply_calls == 1
+        assert app.results == []
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert apply_calls == 1
+        assert len(app.results) == 1
+        assert app.results[0].kind == "apply"
+
+
+@pytest.mark.asyncio
+async def test_stale_apply_completion_cannot_dismiss_a_new_top_screen() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt="Committed candidate",
+        )
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def apply(_result: Any, _snapshot: Any) -> Any:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+            await release.wait()
+        return SimpleNamespace(kind="applied", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["apply_improvement_result"] = apply
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await wait_for_signal(started, what="the stale apply commit starting")
+
+        modal.dismiss(None)
+        await pilot.pause()
+        overlay = _ApplyOverlay()
+        await app.push_screen(overlay)
+        await pilot.pause()
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is overlay
+        assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt="Committed candidate",
+        )
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def apply(_result: Any, _snapshot: Any) -> Any:
+        started.set()
+        await release.wait()
+        return SimpleNamespace(kind="applied", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["apply_improvement_result"] = apply
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await wait_for_signal(started, what="the nested apply commit starting")
+
+        overlay = _ApplyOverlay()
+        await app.push_screen(overlay)
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is overlay
+        overlay.dismiss(None)
+        await pilot.pause()
+        assert app.screen is modal
+        assert modal._apply_in_progress is False
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "Applied to the Console."
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("validation_result", ["success", "failure"])
+async def test_stale_review_validation_cannot_mutate_or_commit_after_remount(
+    validation_result: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    driver.outcomes.append(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt=driver.preview.text.replace(
+                "Draft question", "Reviewed candidate"
+            ),
+        )
+    )
+    validation_started = asyncio.Event()
+    validation_finished = asyncio.Event()
+    release_validation = asyncio.Event()
+    apply_calls = 0
+
+    async def validate(_snapshot: Any, _candidate: str) -> None:
+        validation_started.set()
+        try:
+            await release_validation.wait()
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+            await release_validation.wait()
+        validation_finished.set()
+        if validation_result == "failure":
+            raise ValueError("stale validation failure")
+
+    async def apply(_result: Any, _snapshot: Any) -> Any:
+        nonlocal apply_calls
+        apply_calls += 1
+        return SimpleNamespace(kind="applied", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["validate_improvement"] = validate
+    kwargs["apply_improvement_result"] = apply
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-review-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        modal.query_one("#console-prompts-review-apply", Button).press()
+        await wait_for_signal(
+            validation_started, what="the stale review validation starting"
+        )
+        old_generation = modal._safe_mount_generation
+
+        modal.dismiss(None)
+        await pilot.pause()
+        await app.push_screen(modal)
+        await pilot.pause()
+        assert modal._safe_mount_generation > old_generation
+        await modal.enter_mode("improve")
+        assert modal._claim_apply_transaction() == modal._safe_mount_generation
+        modal._set_improvement_status("New presentation transaction")
+
+        release_validation.set()
+        await wait_for_signal(
+            validation_finished, what="the stale review validation finishing"
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert apply_calls == 0
+        assert modal._apply_in_progress is True
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "New presentation transaction"
+        )
 
 
 @pytest.mark.asyncio
@@ -2191,7 +3216,7 @@ async def test_cancel_invalidates_request_and_ignores_late_completion() -> None:
         await pilot.pause()
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
-        await started.wait()
+        await wait_for_signal(started, what="the auto-improvement starting")
         app.screen.query_one("#console-prompts-improvement-cancel", Button).press()
         await pilot.pause()
         assert (
@@ -2239,7 +3264,7 @@ async def test_back_and_escape_cancel_active_improvement_before_navigation(
         await pilot.pause()
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
-        await started.wait()
+        await wait_for_signal(started, what="the auto-improvement starting")
 
         if navigation == "back":
             app.screen.query_one("#console-prompts-back", Button).press()
@@ -2384,12 +3409,16 @@ async def test_mapped_context_blocks_recipe_save_until_deleted(
         await pilot.pause()
 
         editor = modal.query_one(PromptBlockEditor)
-        save_recipe = modal.query_one("#prompt-editor-save-recipe", Button)
+        save_menu = modal.query_one("#prompt-editor-save-menu", Select)
         editor._sync_footer()
         modal._sync_editor_host_gates(editor)
         await modal._save_editor_state(editor.state, artifact_type="recipe")
 
-        assert save_recipe.disabled is True
+        assert "recipe" not in [
+            value
+            for _label, value in save_menu._options
+            if value is not Select.NULL
+        ]
         assert backend.save_calls == []
         assert notifications == [
             "Recipe save unavailable — delete the mapped Additional context block first."
@@ -2401,8 +3430,12 @@ async def test_mapped_context_blocks_recipe_save_until_deleted(
         ).press()
         await pilot.pause()
 
-        assert save_recipe.disabled is False
-        save_recipe.press()
+        assert "recipe" in [
+            value
+            for _label, value in save_menu._options
+            if value is not Select.NULL
+        ]
+        _choose_save_action(modal, "recipe")
         await pilot.pause()
         await pilot.pause()
 
@@ -2655,7 +3688,7 @@ async def test_recipe_manual_paths_work_without_provider_and_lane_defaults_are_s
         outcome = app.screen.query_one("#console-prompts-recipe-outcome-first", Button)
         blank = app.screen.query_one("#console-prompts-recipe-blank", Button)
         assert not outcome.disabled and not blank.disabled
-        assert app.screen.query_one("#console-prompts-recipe-fill", Button).disabled
+        assert not app.screen.query("#console-prompts-recipe-fill")
         outcome.press()
         await pilot.pause()
 

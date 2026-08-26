@@ -60,6 +60,9 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+from Tests.Agents.test_agent_service import FleetChat, verbatim
+from Tests.Agents.conftest import join_fleet_children
 from tldw_chatbook.Tools.file_operation_tools import GrepFiles
 
 
@@ -72,7 +75,7 @@ class _AllowGate:
     trip, so the provider is handed a gate that always allows.
     """
 
-    def check(self, tool):
+    def check(self, tool, run_id):
         return None
 
 
@@ -303,26 +306,35 @@ def test_spawned_subagent_cannot_read_parents_log_via_grep_files(tmp_path, monke
 
     secret = "PARENT_SECRET_API_KEY=sk-live-abc123"
     task = "search the sandbox for anything interesting"
-    script = [
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": (
-                            f"Noting {secret} before delegating.\n"
-                            + _fence(SPAWN_TOOL_NAME, {"task": task})
-                        )
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- one ordered queue is no longer deterministic. Addressed
+    # per agent instead; the replies themselves are unchanged.
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                f"Noting {secret} before delegating.\n"
+                                + _fence(SPAWN_TOOL_NAME, {"task": task})
+                            )
+                        }
                     }
-                }
+                ]
+            },
+            {"choices": [{"message": {"content": "done"}}]},  # parent's answer
+        ],
+        {
+            task: [
+                _svc_fence("grep_files", {"pattern": "PARENT_SECRET"}),  # child tries
+                {
+                    "choices": [{"message": {"content": "found nothing"}}]
+                },  # child's answer
             ]
         },
-        _svc_fence("grep_files", {"pattern": "PARENT_SECRET"}),  # child tries
-        {"choices": [{"message": {"content": "found nothing"}}]},  # child's answer
-        {"choices": [{"message": {"content": "done"}}]},  # parent's answer
-    ]
-
-    def chat(**kwargs):
-        return script.pop(0)
+        reply=verbatim,
+    )
 
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(
@@ -336,6 +348,7 @@ def test_spawned_subagent_cannot_read_parents_log_via_grep_files(tmp_path, monke
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
     # The child's own persisted tool_result for its grep_files call must

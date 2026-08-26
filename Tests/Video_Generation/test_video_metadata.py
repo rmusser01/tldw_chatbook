@@ -13,6 +13,7 @@ def _meta(**overrides):
         "name": "dusk-over-neon-tokyo",
         "prompt": "dusk over neon tokyo, cinematic",
         "backend": "minimax",
+        "container": "mp4",
         "negative_prompt": "blurry",
         "model": "MiniMax-H3",
         "seed": 42,
@@ -27,10 +28,16 @@ def _meta(**overrides):
     return VideoGenerationMetadata(**base)
 
 
-def test_round_trip_preserves_every_field():
-    meta = _meta(source_image_message_id="msg-123")
+@pytest.mark.parametrize("container", ["mp4", "webm"])
+def test_round_trip_preserves_every_field(container):
+    meta = _meta(container=container, source_image_message_id="msg-123")
     rebuilt = VideoGenerationMetadata.from_json(meta.to_json())
     assert rebuilt == meta
+
+
+@pytest.mark.parametrize("container", ["mp4", "webm"])
+def test_construction_accepts_supported_container(container):
+    assert _meta(container=container).container == container
 
 
 def test_payload_is_namespaced_under_top_key():
@@ -66,6 +73,39 @@ def test_construction_refuses_empty_name_and_backend():
         _meta(name="")
     with pytest.raises(ValueError, match="backend"):
         _meta(backend="  ")
+
+
+@pytest.mark.parametrize("container", ["", "mov", "MP4", ".webm", None])
+def test_construction_refuses_invalid_container(container):
+    with pytest.raises(ValueError, match="container"):
+        _meta(container=container)
+
+
+def test_historical_payload_without_container_defaults_to_mp4():
+    raw = '{"video_generation": {"name": "clip", "prompt": "p", "backend": "comfyui"}}'
+
+    rebuilt = VideoGenerationMetadata.from_json(raw)
+
+    assert rebuilt is not None
+    assert rebuilt.container == "mp4"
+
+
+@pytest.mark.parametrize("container", ["", "mov", "MP4", None, 7])
+def test_present_invalid_container_never_receives_historical_fallback(container):
+    import json
+
+    raw = json.dumps(
+        {
+            VIDEO_METADATA_TOP_KEY: {
+                "name": "clip",
+                "prompt": "p",
+                "backend": "comfyui",
+                "container": container,
+            }
+        }
+    )
+
+    assert VideoGenerationMetadata.from_json(raw) is None
 
 
 def test_numeric_coercion_on_resume():

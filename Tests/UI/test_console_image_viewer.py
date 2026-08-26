@@ -1,7 +1,6 @@
 """Full-size image viewer modal + clickable avatar box (task-1534)."""
 
 import pytest
-PILImage = pytest.importorskip("PIL.Image")
 from textual.app import App, ComposeResult
 
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
@@ -9,6 +8,8 @@ from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
     ClickableAvatarBox,
     ConsoleImageViewerModal,
 )
+
+PILImage = pytest.importorskip("PIL.Image")
 
 
 class _BoxApp(App):
@@ -63,13 +64,15 @@ async def test_viewer_modal_renders_image_and_escape_dismisses():
 
 @pytest.mark.asyncio
 async def test_viewer_modal_click_dismisses():
-    """Clicking anywhere in the open viewer dismisses it."""
+    """Clicking anywhere dismisses exactly once under full MRO dispatch."""
     image = PILImage.new("RGB", (32, 32), (200, 30, 30))
     app = _ViewerApp()
+    results = []
     async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleImageViewerModal(image, title="x"))
+        app.push_screen(ConsoleImageViewerModal(image, title="x"), results.append)
         await pilot.pause()
         assert isinstance(app.screen, ConsoleImageViewerModal)
         await pilot.click("#console-image-viewer-body")
         await pilot.pause()
         assert not isinstance(app.screen, ConsoleImageViewerModal)
+    assert results == [None]

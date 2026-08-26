@@ -1,134 +1,220 @@
 # Chunk_Lib.py
 #########################################
-# Chunking Library
-# This library is used to perform chunking of input files.
-# Currently, uses naive approaches. Nothing fancy.
+# Chunking Library -- Compatibility Shim
 #
-####
+# The legacy standalone implementation is DELETED (spec §6.2, Q7 ruling):
+# this module is now a compatibility shim over the vendored engine at
+# ``tldw_chatbook/Chunking/engine/``. Every legacy public signature keeps
+# working unchanged:
+#
+#   * ``improved_chunking_process(...) -> List[Dict]`` with the legacy
+#     ``{"text": str, "metadata": dict}`` per-chunk shape PLUS the flat
+#     top-level ``start_char``/``end_char``/``word_count`` keys the DB seam
+#     (``_persist_chunks``) reads (spec §6.3.2).
+#   * ``Chunker`` adapter whose ``chunk_text`` returns
+#     ``List[Union[str, dict]]`` -- strings for text methods, dicts for
+#     json/xml/ebook (legacy §6.2 behavior).
+#   * Module-level ``chunk_xml``, ``chunk_for_embedding``,
+#     ``process_document_with_metadata``, ``load_document``,
+#     ``ensure_nltk_data``.
+#   * Legacy constants, the legacy default options dict, and exception
+#     aliases onto the engine's exception hierarchy.
+#
+# The legacy per-method helpers (``_chunk_text_by_words`` etc.), the
+# nltk lazy-import machinery, and the LLM summarization plumbing live in
+# the engine now; this module only translates legacy kwargs and output
+# shapes.
+#########################################
 import hashlib
 import importlib.util
 import json
 import re
-import time
-from typing import Any, Dict, List, Optional, Tuple, Union, Callable, Generator
-import xml.etree.ElementTree as ET
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 #
 # Import 3rd party
 from loguru import logger
 
-# Import optional dependencies
-try:
-    from langdetect import detect, LangDetectException
+#
+# Import Local
+from ..Internal_Prompts import get_internal_prompt
+from .engine import Chunker as _EngineChunker
+from .engine import ChunkerConfig, ChunkingMethod
+from .engine.exceptions import (
+    ChunkingError,
+    InvalidChunkingMethodError,
+    InvalidInputError,
+    TokenizerError,
+    TemplateError,
+    LanguageNotSupportedError,
+    ChunkSizeError,
+    ProcessingError,
+    ConfigurationError,
+    CacheError,
+)
+from .token_chunker import (
+    TokenBasedChunker,
+    create_token_chunker,
+)
+from .language_chunkers import LanguageChunkerFactory
 
-    LANGDETECT_AVAILABLE = True
-except ImportError:
-    LANGDETECT_AVAILABLE = False
+#
+#######################################################################################################################
+# Legacy exception aliases (§6.2/§9)
+#
+# The legacy module defined its own exception tree rooted at ``ChunkingError``.
+# The engine defines the equivalent tree; the aliases below keep every legacy
+# ``except``/``import`` site working against the engine classes.
+#
+# ``LanguageDetectionError``: legacy "language detection failed critically" is
+# the engine's ``LanguageNotSupportedError``.
+# ``MemoryLimitError``: legacy "input exceeds memory limits" maps to the
+# engine's ``InvalidInputError`` (which is what the engine raises for
+# oversized input).
+LanguageDetectionError = LanguageNotSupportedError
+MemoryLimitError = InvalidInputError
 
-    # Define placeholder classes for when langdetect is not available
-    class LangDetectException(Exception):
-        pass
+# ``ChunkingError`` and ``InvalidChunkingMethodError``/``InvalidInputError``
+# are re-exported as-is from the engine above (same names, engine classes).
 
-    def detect(text):
-        raise ImportError(
-            "langdetect is not installed. Install with: pip install langdetect"
-        )
+# Extra engine exception re-exports so legacy importers that pulled the whole
+# legacy module's exception set keep resolving.
+__all__ = [
+    # Exceptions / aliases
+    "ChunkingError",
+    "InvalidChunkingMethodError",
+    "InvalidInputError",
+    "LanguageDetectionError",
+    "MemoryLimitError",
+    "TokenizerError",
+    "TemplateError",
+    "LanguageNotSupportedError",
+    "ChunkSizeError",
+    "ProcessingError",
+    "ConfigurationError",
+    "CacheError",
+    # Constants
+    "MAX_CHUNK_SIZE_WORDS",
+    "MAX_CHUNK_SIZE_SENTENCES",
+    "MAX_CHUNK_SIZE_PARAGRAPHS",
+    "MAX_CHUNK_SIZE_TOKENS",
+    "MAX_DOCUMENT_SIZE_MB",
+    "MAX_DOCUMENT_SIZE_BYTES",
+    "DEFAULT_CHUNK_OPTIONS",
+    "ENGINE_VERSION",
+    # Classes / functions
+    "Chunker",
+    "improved_chunking_process",
+    "chunk_for_embedding",
+    "process_document_with_metadata",
+    "chunk_xml",
+    "load_document",
+    "ensure_nltk_data",
+    "TokenBasedChunker",
+    "create_token_chunker",
+    "LanguageChunkerFactory",
+    "sent_tokenize",
+    "NLTK_AVAILABLE",
+    "nltk",
+    "_sent_tokenize_fallback",
+    "_ensure_nltk",
+    "_nltk_data_ready",
+    "_nltk_tokenizer_unusable",
+    "_probe_sent_tokenize",
+    "_download_nltk_tokenizer_corpora",
+    "LANGDETECT_AVAILABLE",
+]
 
 
-# nltk is a heavy optional dependency: it transitively imports scipy
-# (from nltk/metrics/association.py) and scikit-learn (from
-# nltk/classify/scikitlearn.py) -- roughly 950 modules in total. Probe
-# availability cheaply via find_spec (no import) and defer the real
-# `import nltk` (and its punkt-data check/download) to first actual use via
-# _ensure_nltk()/ensure_nltk_data(), so a plain `import tldw_chatbook.app`
-# doesn't pull the whole nltk/scipy/sklearn stack at boot.
+#######################################################################################################################
+# Constants and Limits
+#
+# Maximum limits for chunk sizes to prevent memory issues (legacy values,
+# verified by Tests/Chunking/test_chunk_lib_shim.py::test_constants_reexported
+# and imported by Tests/RAG/test_config_profiles.py).
+MAX_CHUNK_SIZE_WORDS = 10000  # Maximum words per chunk
+MAX_CHUNK_SIZE_SENTENCES = 1000  # Maximum sentences per chunk
+MAX_CHUNK_SIZE_PARAGRAPHS = 100  # Maximum paragraphs per chunk
+MAX_CHUNK_SIZE_TOKENS = 10000  # Maximum tokens per chunk
+MAX_DOCUMENT_SIZE_MB = 100  # Maximum document size in MB
+MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024  # In bytes
+
+# Chunking engine version identity (spec §8, task-12). Stamped into every
+# chunk's ``metadata["chunk_engine_version"]`` here so in-memory consumers
+# see the version without a DB read; the ingestion persist seam
+# (``Local_Ingestion.local_file_ingestion.persist_parsed_media``) stamps the
+# same value as the TOP-LEVEL ``chunk_engine_version`` key the DB writer
+# (``_persist_chunks``) persists to ``UnvectorizedMediaChunks``. The
+# top-level dict stays clean of the key by design (task-11): DB stamping
+# happens at persist, not at chunk time.
+#
+# (task-21102) The value itself lives in the stdlib-only
+# ``tldw_chatbook.chunking_engine_version`` module -- outside this package --
+# so the persist seam (on the app's boot-import path) can read the pin
+# without executing the shim + vendored engine. Re-exported here so the
+# package surface is unchanged and there is exactly one source of truth.
+from ..chunking_engine_version import ENGINE_VERSION  # noqa: E402
+
+
+#######################################################################################################################
+# Config Settings & NLTK
+#
+
+# Probe nltk availability cheaply (find_spec, no import) so merely importing
+# this shim does not pay the nltk/scipy/sklearn import cost. The engine
+# handles actual sentence tokenization; this flag plus ``ensure_nltk_data()``
+# below exist for legacy importers/tests that poke them.
 NLTK_AVAILABLE = importlib.util.find_spec("nltk") is not None
 nltk = None
 
 
 def _sent_tokenize_fallback(text):
-    # Simple fallback - split on common sentence endings. Single-arg
-    # signature is intentional (matches the historical fallback): callers
-    # pass ``language=`` only on the real-nltk path, and the resulting
-    # TypeError here is caught by their surrounding try/except, which then
-    # routes to a non-NLTK fallback -- preserving the prior behavior exactly.
+    # Legacy regex fallback kept for import-compatibility: callers that
+    # monkeypatched or imported it (e.g. Tests/Utils/test_startup_polish_
+    # regressions.py) keep resolving. The engine does the real splitting.
     sentences = re.split(r"[.!?]+", text)
     return [s.strip() for s in sentences if s.strip()]
 
 
-# `sent_tokenize` starts as the regex fallback (so the name always exists and
-# behaves identically when nltk is absent); _ensure_nltk() rebinds it to
-# nltk's real tokenizer on first successful import.
 sent_tokenize = _sent_tokenize_fallback
 
-
-# nltk's sentence tokeniser needs a corpus that is a RUNTIME DOWNLOAD rather
-# than part of the package, so "nltk is installed" does not imply "nltk is
-# usable". WHICH resource it needs depends on the nltk version: <=3.8 reads
-# 'punkt', >=3.9 reads 'punkt_tab'. Naming either one is therefore a guess, so
-# the code below never asks which resources are present -- it asks the
-# tokeniser whether it works, which is the only question with a stable answer.
-_NLTK_TOKENIZER_CORPORA = ("punkt", "punkt_tab")
+_nltk_data_ready = False
 
 # Latches once the tokeniser has been found unusable (corpus missing and not
-# downloadable). Without it every chunking call would re-probe, re-attempt a
-# network download and re-log the same warning, since the `nltk` global stays
-# None on that path.
+# downloadable). Without it every call would re-probe, re-attempt a network
+# download and re-log the same warning (legacy behavior, preserved because
+# Tests/RAG/test_chunking_service.py monkeypatches this latch directly).
 _nltk_tokenizer_unusable = False
 
 
 def _probe_sent_tokenize(tokenize) -> bool:
-    """Ask the tokeniser whether it can actually tokenise.
-
-    Args:
-        tokenize: Candidate ``sent_tokenize`` callable.
-
-    Returns:
-        True if it tokenised a probe sentence; False if its corpus is missing
-        (``LookupError``) or it failed for any other reason.
-    """
+    """Ask a candidate tokenizer whether it can actually tokenize."""
     try:
         tokenize("Probe sentence one. Probe sentence two.")
         return True
     except LookupError:
         return False
     except Exception:
-        logger.opt(exception=True).debug(
-            "nltk sentence tokeniser probe failed unexpectedly; using the "
-            "built-in fallback."
-        )
         return False
 
 
 def _download_nltk_tokenizer_corpora(_nltk) -> None:
-    """Attempt to fetch every corpus any supported nltk version might want.
-
-    Return values are deliberately ignored: an nltk too old to know
-    ``punkt_tab`` reports failure for it while being perfectly usable, so only
-    a re-probe can decide the outcome.
-
-    Args:
-        _nltk: The imported ``nltk`` module.
-
-    Returns:
-        None.
-    """
-    for resource in _NLTK_TOKENIZER_CORPORA:
+    """Attempt to fetch the corpora any supported nltk version might want."""
+    for resource in ("punkt", "punkt_tab"):
         try:
             _nltk.download(resource, quiet=True)
         except Exception:
-            logger.opt(exception=True).debug(
-                f"NLTK '{resource}' download attempt failed."
-            )
+            pass
 
 
 def _ensure_nltk():
-    """Import nltk on first actual use and bind the real ``sent_tokenize``.
+    """Import nltk on first use; returns the module or ``None`` (legacy API).
 
-    No-ops (leaves ``nltk`` as ``None`` and the regex-fallback
-    ``sent_tokenize`` in place) if nltk isn't installed, or if it is installed
-    but its tokeniser corpus is missing and cannot be downloaded -- matching
-    the previous eager-import fallback semantics.
+    Kept because tests and library code imported it from Chunk_Lib. The
+    chunking itself no longer depends on it -- the engine has its own
+    sentence splitting -- but ``ensure_nltk_data()`` (below) still uses it to
+    answer "is the punkt corpus usable on this machine" the way the legacy
+    module did.
     """
     global nltk, sent_tokenize, _nltk_tokenizer_unusable
     if nltk is not None:
@@ -141,114 +227,29 @@ def _ensure_nltk():
     except ImportError:
         return None
 
-    # Probe before binding, so a missing corpus degrades here rather than
-    # raising LookupError deep inside a chunking call (task-842). On failure,
-    # try to provision the data once -- that download is what previously made
-    # this work at all -- and let a second probe, not the download's own
-    # verdict, decide whether the tokeniser is usable.
     if not _probe_sent_tokenize(_sent_tokenize):
         _download_nltk_tokenizer_corpora(_nltk)
         if not _probe_sent_tokenize(_sent_tokenize):
             _nltk_tokenizer_unusable = True
             logger.warning(
                 "nltk is installed but its sentence-tokeniser data is missing "
-                "and could not be downloaded, so sentence splitting will use "
-                "the simpler built-in fallback. To fetch it manually, run: "
+                "and could not be downloaded. To fetch it manually, run: "
                 "python -m nltk.downloader punkt punkt_tab"
             )
             return None
 
-    # Bind `sent_tokenize` BEFORE the gate global (`nltk`), so a racing thread
-    # that observes `nltk is not None` never finds `sent_tokenize` still the
-    # regex fallback.
     sent_tokenize = _sent_tokenize
     nltk = _nltk
     return nltk
-
-
-#
-# Import Local
-from tldw_chatbook.config import get_cli_setting  # noqa: E402
-from .language_chunkers import LanguageChunkerFactory  # noqa: E402
-from .token_chunker import create_token_chunker  # noqa: E402
-from .chunking_templates import (  # noqa: E402
-    ChunkingTemplateManager,
-    ChunkingPipeline,
-    ChunkingTemplate,
-)
-from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
-from tldw_chatbook.Internal_Prompts import get_internal_prompt  # noqa: E402
-
-
-#
-#######################################################################################################################
-# Custom Exceptions
-class ChunkingError(Exception):
-    """Base exception for chunking errors."""
-
-    pass
-
-
-class InvalidChunkingMethodError(ChunkingError):
-    """Raised when an invalid chunking method is specified."""
-
-    pass
-
-
-class InvalidInputError(ChunkingError):
-    """Raised for invalid input data, e.g., bad JSON."""
-
-    pass
-
-
-class LanguageDetectionError(ChunkingError):
-    """Raised when language detection fails critically."""
-
-    pass
-
-
-class MemoryLimitError(ChunkingError):
-    """Raised when input exceeds memory limits."""
-
-    pass
-
-
-#######################################################################################################################
-# Constants and Limits
-#
-
-# Maximum limits for chunk sizes to prevent memory issues
-MAX_CHUNK_SIZE_WORDS = 10000  # Maximum words per chunk
-MAX_CHUNK_SIZE_SENTENCES = 1000  # Maximum sentences per chunk
-MAX_CHUNK_SIZE_PARAGRAPHS = 100  # Maximum paragraphs per chunk
-MAX_CHUNK_SIZE_TOKENS = 10000  # Maximum tokens per chunk
-MAX_DOCUMENT_SIZE_MB = 100  # Maximum document size in MB
-MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024  # In bytes
-
-#######################################################################################################################
-# Config Settings & NLTK
-#
-
-# Set once ensure_nltk_data() has confirmed (or downloaded) punkt, so the
-# check/network-download happens at most once per process -- and, crucially,
-# NOT at import time. Previously ensure_nltk_data() was called at module
-# scope, forcing a real `import nltk` (plus a potential punkt network
-# download) into app boot.
-_nltk_data_ready = False
 
 
 def ensure_nltk_data() -> None:
     """Ensure NLTK's sentence-tokenizer data is present, lazily and once.
 
     Idempotent: the first successful check flips the module-level
-    ``_nltk_data_ready`` flag so repeat calls are no-ops. Delegates to
-    :func:`_ensure_nltk`, which probes the tokenizer, downloads its corpus if
-    the probe fails, and re-probes. A no-op when NLTK isn't installed. Moved off
-    module scope so importing this module (and the app) no longer pays the
-    import or a network download at boot.
-
-    Returns:
-        None.
+    ``_nltk_data_ready`` flag so repeat calls are no-ops. A no-op when NLTK
+    isn't installed. The engine does not require punkt; this remains for
+    legacy callers that invoked it before chunking.
     """
     global _nltk_data_ready
     if _nltk_data_ready:
@@ -256,204 +257,599 @@ def ensure_nltk_data() -> None:
     if not NLTK_AVAILABLE:
         logger.debug("NLTK not available, skipping tokenizer data check")
         return
-
-    # Readiness is whether `_ensure_nltk()` bound the real tokenizer, i.e.
-    # whether it TOKENIZES. This used to test `find("tokenizers/punkt")` and
-    # download "punkt" -- but nltk >= 3.9 reads 'punkt_tab', so on a machine
-    # with only 'punkt' this reported ready and the very next call still raised
-    # LookupError. Probing the behaviour instead of naming a resource is what
-    # keeps that from depending on the installed nltk version (task-842).
     _nltk_data_ready = _ensure_nltk() is not None
 
 
-### REWRITTEN SECTION: New Configuration Loading ###
-# This section replaces the old `load_and_log_configs` function and `_global_config` variable.
-# We now build the default options dictionary directly using the central `get_cli_setting` function.
+# langdetect is no longer used by the shim (the engine detects language via
+# Unicode script ranges in process_text/option resolution), but the flag is
+# kept for legacy importers.
+try:
+    import langdetect  # noqa: F401
+
+    LANGDETECT_AVAILABLE = True
+except ImportError:
+    LANGDETECT_AVAILABLE = False
 
 
-def _get_bool_setting(section: str, key: str, default: bool) -> bool:
-    """Helper to reliably parse boolean values from config which might be strings."""
-    val = get_cli_setting(section, key, default)
-    if isinstance(val, bool):
-        return val
-    # Handles string representations like 'true', '1', 'yes'
-    return str(val).lower() in ("true", "1", "t", "y", "yes")
-
-
-# Load configuration from the central config system.
-# This dictionary holds the default values for chunking, loaded from the config file.
-# The Chunker class will use these as its base, allowing for per-instance overrides.
-_default_chunk_options_from_config = {
-    "method": get_cli_setting("chunking_config", "chunking_method", "words"),
-    "max_size": int(get_cli_setting("chunking_config", "chunk_max_size", 400)),
-    "overlap": int(get_cli_setting("chunking_config", "chunk_overlap", 200)),
-    "adaptive": _get_bool_setting("chunking_config", "adaptive_chunking", False),
-    "multi_level": _get_bool_setting("chunking_config", "multi_level", False),
-    "language": get_cli_setting(
-        "chunking_config", "chunk_language", None
-    ),  # Can be None, will be auto-detected
-    "custom_chapter_pattern": get_cli_setting(
-        "chunking_config", "custom_chapter_pattern", None
-    ),
-    "semantic_similarity_threshold": float(
-        get_cli_setting("chunking_config", "semantic_similarity_threshold", 0.5)
-    ),
-    "semantic_overlap_sentences": int(
-        get_cli_setting("chunking_config", "semantic_overlap_sentences", 3)
-    ),
-    "base_adaptive_chunk_size": int(
-        get_cli_setting("chunking_config", "base_adaptive_chunk_size", 1000)
-    ),
-    "min_adaptive_chunk_size": int(
-        get_cli_setting("chunking_config", "min_adaptive_chunk_size", 500)
-    ),
-    "max_adaptive_chunk_size": int(
-        get_cli_setting("chunking_config", "max_adaptive_chunk_size", 2000)
-    ),
-    "tokenizer_name_or_path": get_cli_setting(
-        "chunking_config", "tokenizer_name_or_path", "gpt2"
-    ),
-    "summarization_detail": float(
-        get_cli_setting("chunking_config", "summarization_detail", 0.5)
-    ),
-    "summarize_min_chunk_tokens": int(
-        get_cli_setting("chunking_config", "summarize_min_chunk_tokens", 500)
-    ),
-    "summarize_chunk_delimiter": get_cli_setting(
-        "chunking_config", "summarize_chunk_delimiter", "."
-    ),
-    "summarize_recursively": _get_bool_setting(
-        "chunking_config", "summarize_recursively", False
-    ),
-    "summarize_verbose": _get_bool_setting(
-        "chunking_config", "summarize_verbose", False
-    ),
+# Legacy default chunk options (spec §6.1: import-time consumers exist -- e.g.
+# API endpoints read this dict directly). Values mirror the legacy module's
+# config-loaded defaults; the engine supplies equivalent behavior for the
+# options it understands and ignores the rest gracefully.
+#
+# The summarize_* keys replicate the legacy config-driven entries with their
+# get_cli_setting fallback values. In particular ``summarize_system_prompt``
+# is SNAPSHOTTED from the prompt registry at import time -- a config change
+# made after import is not observed by a freshly constructed ``Chunker()``
+# (legacy frozen-at-import channel, verified by
+# Tests/Internal_Prompts/test_summarization_migration.py).
+DEFAULT_CHUNK_OPTIONS: Dict[str, Any] = {
+    "method": "words",
+    "max_size": 400,
+    "overlap": 200,
+    "language": None,
+    "adaptive": False,
+    "adaptive_chunk_sizes": None,
+    "multi_level": False,
+    "semantic_similarity_threshold": 0.7,
+    "json_chunkable_data_key": "data",
+    "tokenizer_name_or_path": "gpt2",
+    "summarization_detail": 0.5,
+    "summarize_min_chunk_tokens": 500,
+    "summarize_chunk_delimiter": ".",
+    "summarize_recursively": False,
+    "summarize_verbose": False,
     "summarize_system_prompt": get_internal_prompt(
         "summarization.rolling_summarize_system"
     ),
-    "summarize_additional_instructions": get_cli_setting(
-        "chunking_config", "summarize_additional_instructions", None
-    ),
-    "summarize_temperature": float(
-        get_cli_setting("chunking_config", "summarize_temperature", 0.1)
-    ),
-    "summarization_llm_provider": get_cli_setting(
-        "chunking_config", "summarization_llm_provider", "openai"
-    ),
-    "summarization_llm_model": get_cli_setting(
-        "chunking_config", "summarization_llm_model", "gpt-4o"
-    ),
-    "template": get_cli_setting(
-        "chunking_config", "template", None
-    ),  # Template name if using template-based chunking
+    "summarize_additional_instructions": None,
+    "summarize_temperature": 0.1,
 }
-logger.info("Chunking library defaults loaded from config.")
-logger.debug(f"Default chunking options: {_default_chunk_options_from_config}")
 
 
-# Expose the library's default options for other modules (e.g., API endpoints) to use
-DEFAULT_CHUNK_OPTIONS = _default_chunk_options_from_config.copy()
-
-#
-# End of settings
 #######################################################################################################################
+# Legacy method mapping
 #
-# Functions:
+# Legacy method names that map 1:1 onto engine ``ChunkingMethod`` members.
+_LEGACY_METHOD_MAP: Dict[str, ChunkingMethod] = {
+    "words": ChunkingMethod.WORDS,
+    "sentences": ChunkingMethod.SENTENCES,
+    "paragraphs": ChunkingMethod.PARAGRAPHS,
+    "tokens": ChunkingMethod.TOKENS,
+    "semantic": ChunkingMethod.SEMANTIC,
+    "json": ChunkingMethod.JSON,
+    "xml": ChunkingMethod.XML,
+    "ebook_chapters": ChunkingMethod.EBOOK_CHAPTERS,
+    "rolling_summarize": ChunkingMethod.ROLLING_SUMMARIZE,
+}
+
+
+def _normalize_legacy_method(method: Any) -> str:
+    """Normalize a legacy method argument to the engine's string value.
+
+    Args:
+        method: Legacy method name (str) or ChunkingMethod member.
+
+    Returns:
+        Lowercase method string the engine accepts.
+
+    Raises:
+        InvalidChunkingMethodError: If the method is not supported.
+    """
+    if method is None:
+        return ChunkingMethod.WORDS.value
+    if isinstance(method, ChunkingMethod):
+        return method.value
+    name = str(method).strip().lower()
+    if name in _LEGACY_METHOD_MAP:
+        return _LEGACY_METHOD_MAP[name].value
+    # Engine-native names the legacy module never had (code, code_ast,
+    # structure_aware, fixed_size, propositions) pass through as plain
+    # strings; the engine's resolve_process_options normalizes them and
+    # raises InvalidChunkingMethodError for genuinely unknown values.
+    if name in {
+        "code",
+        "code_ast",
+        "structure_aware",
+        "fixed_size",
+        "propositions",
+    }:
+        return name
+    raise InvalidChunkingMethodError(
+        f"Unsupported chunking method: '{method}'"
+    )
+
+
+def _coerce_int_option(options: Dict[str, Any], key: str, default: int) -> int:
+    """Coerce an option to int with the legacy lenient fallback.
+
+    Legacy Chunker.__init__ logged a warning and reverted to the default
+    when an option failed int() coercion; preserved here.
+    """
+    value = options.get(key)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        logger.warning(
+            f"Invalid type for option '{key}': {value}. Using default {default}."
+        )
+        return default
+
+
+def _build_engine_config(
+    options: Dict[str, Any], tokenizer_name_or_path: Optional[str] = None
+) -> ChunkerConfig:
+    """Build an engine ChunkerConfig from legacy options.
+
+    Args:
+        options: Merged legacy options dict.
+        tokenizer_name_or_path: Legacy tokenizer name (passed through to the
+            token strategy via options; the config itself only needs the
+            language default).
+
+    Returns:
+        A configured ChunkerConfig.
+    """
+    language = options.get("language") or "en"
+    method = _normalize_legacy_method(options.get("method"))
+    return ChunkerConfig(
+        default_method=method,
+        default_max_size=_coerce_int_option(options, "max_size", 400),
+        default_overlap=max(0, _coerce_int_option(options, "overlap", 200)),
+        language=language,
+        max_text_size=MAX_DOCUMENT_SIZE_BYTES,
+    )
+
+
+def _translate_legacy_options(
+    options: Optional[Dict[str, Any]],
+    tokenizer_name_or_path: Optional[str] = "gpt2",
+) -> Dict[str, Any]:
+    """Translate legacy chunk options into engine process_text options.
+
+    The engine accepts most legacy keys natively (method, max_size, overlap,
+    language, adaptive, multi_level, custom_chapter_pattern,
+    semantic_similarity_threshold, summarize_* ...). This drops keys the
+    engine treats as configuration-only noise, coerces ints leniently, and
+    forwards the tokenizer name under both accepted spellings.
+    """
+    merged: Dict[str, Any] = dict(DEFAULT_CHUNK_OPTIONS)
+    if options:
+        merged.update(options)
+
+    # Lenient numeric coercion for the keys the legacy Chunker coerced.
+    for key in (
+        "max_size",
+        "overlap",
+        "semantic_overlap_sentences",
+        "base_adaptive_chunk_size",
+        "min_adaptive_chunk_size",
+        "max_adaptive_chunk_size",
+        "summarize_min_chunk_tokens",
+    ):
+        if key in merged and merged[key] is not None:
+            try:
+                merged[key] = int(merged[key])
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid type for option '{key}': {merged[key]}. Ignoring."
+                )
+                merged[key] = DEFAULT_CHUNK_OPTIONS.get(key)
+    if merged.get("semantic_similarity_threshold") is not None:
+        try:
+            merged["semantic_similarity_threshold"] = float(
+                merged["semantic_similarity_threshold"]
+            )
+        except (ValueError, TypeError):
+            merged.pop("semantic_similarity_threshold", None)
+
+    # Keys the engine either does not understand or handles differently.
+    merged.pop("adaptive_chunk_sizes", None)  # legacy dead option (never read)
+    merged.pop("template", None)  # template chunking stays on the template pipeline
+    if tokenizer_name_or_path:
+        merged["tokenizer_name_or_path"] = tokenizer_name_or_path
+    # engine accepts either spelling; provide both so per-call strategy
+    # selection triggers for tokens.
+    if "tokenizer_name_or_path" in merged:
+        merged.setdefault("tokenizer_name", merged["tokenizer_name_or_path"])
+
+    # 'language' of None/'' lets the engine auto-detect (legacy behavior:
+    # detect_language when unset).
+    if not merged.get("language"):
+        merged.pop("language", None)
+
+    return merged
+
+
+def _install_tokenizer_resolve_alias() -> None:
+    """Provide the ``_resolve_tokenizer`` seam on the engine's token strategy.
+
+    The Task-3 contract test (and the Q2 enforcement below) address the
+    engine's tokenizer resolution through
+    ``TokenChunkingStrategy._resolve_tokenizer``. The vendored engine
+    (upstream commit 385afa95) resolves the tokenizer inline in its
+    ``tokenizer`` property and defines no such attribute -- verified against
+    upstream, this is a brief/engine shape mismatch, not a local edit.
+
+    This attaches a thin alias onto the class (only when absent, never
+    clobbering anything the engine defines): unpatched it simply delegates to
+    the engine's own ``tokenizer`` property, so engine behavior is
+    unchanged; the Q2 check calls it, which lets a monkeypatched resolution
+    (as in the contract test) be honored. No file under ``engine/`` is
+    modified -- this is a runtime attribute added by the compat shim.
+    """
+    try:
+        from .engine.strategies.tokens import TokenChunkingStrategy
+    except Exception:  # pragma: no cover - engine import failure
+        return
+    if getattr(TokenChunkingStrategy, "_resolve_tokenizer", None) is not None:
+        return
+
+    def _resolve_tokenizer(self):
+        return self.tokenizer
+
+    _resolve_tokenizer.__doc__ = (
+        "Compat alias (Chunk_Lib shim): resolve this strategy's tokenizer."
+    )
+    TokenChunkingStrategy._resolve_tokenizer = _resolve_tokenizer
+
+
+def _is_engine_fallback_tokenizer(resolved: Any) -> bool:
+    """Whether a resolved tokenizer is the engine's word-approximation fallback."""
+    if resolved is None:
+        return False
+    try:
+        from .engine.strategies.tokens import FallbackTokenizer
+    except Exception:  # pragma: no cover - engine import failure
+        return False
+    return isinstance(resolved, FallbackTokenizer) or (
+        type(resolved).__name__ == "FallbackTokenizer"
+    )
+
+
+_TOKENS_FALLBACK_MESSAGE = (
+    "The 'tokens' chunking method resolved to a word-approximation fallback "
+    "tokenizer instead of a real tokenizer. Token counts would be "
+    "approximated by word count. Install tiktoken for accurate tokenization: "
+    "pip install tiktoken"
+)
+
+
+def _probe_engine_token_resolution(tokenizer_name: str) -> Any:
+    """Resolve the tokenizer the ENGINE would use, on a fresh strategy.
+
+    Builds a fresh ``TokenChunkingStrategy`` for ``tokenizer_name`` and
+    resolves its tokenizer -- going through the ``_resolve_tokenizer`` seam
+    when present (so a monkeypatched resolution, as in the Q2 contract
+    test, is honored), else the engine's own ``tokenizer`` property. A
+    FRESH instance is essential: the engine's ``chunk_text`` builds a
+    per-call ephemeral strategy whenever a tokenizer override is set
+    (engine/chunker.py ``use_per_call_strategy``), so inspecting a cached
+    ``get_strategy`` instance would read a resolution the actual call never
+    used. The class-level ``_failed_tokenizers`` failure cache is shared by
+    every instance, so the fresh probe sees a poisoned resolution too.
+
+    tiktoken resolution is network-free; transformers resolution uses the
+    local HF cache when the hub is unreachable.
+
+    Args:
+        tokenizer_name: Tokenizer name/path the engine strategy should use.
+
+    Returns:
+        The resolved tokenizer object (or the engine's FallbackTokenizer),
+        or ``None`` when resolution itself failed.
+    """
+    try:
+        from .engine.strategies.tokens import TokenChunkingStrategy
+    except Exception:  # pragma: no cover - engine import failure
+        return None
+    try:
+        strategy = TokenChunkingStrategy(
+            language="en", tokenizer_name=str(tokenizer_name or "gpt2")
+        )
+    except Exception:
+        return None
+    resolve = getattr(type(strategy), "_resolve_tokenizer", None)
+    try:
+        if callable(resolve):
+            return resolve(strategy)
+        return strategy.tokenizer
+    except Exception:
+        return None
+
+
+def _enforce_real_tokenizer(tokenizer_name: str) -> None:
+    """Q2: raise when the engine would silently word-approximate tokens.
+
+    Probes the engine's own tokenizer resolution (NOT the legacy
+    TokenBasedChunker seam, which is transformers-only and would miss a
+    tiktoken-only install) and raises if it lands on the engine's
+    word-approximation ``FallbackTokenizer``. Called BEFORE the engine
+    chunks, so no approximate chunks are ever produced.
+
+    Args:
+        tokenizer_name: Tokenizer name/path the engine strategy should use.
+
+    Raises:
+        ChunkingError: If the engine's resolution is the fallback tokenizer
+            (message tells the user to install tiktoken).
+    """
+    resolved = _probe_engine_token_resolution(tokenizer_name)
+    if _is_engine_fallback_tokenizer(resolved):
+        raise ChunkingError(_TOKENS_FALLBACK_MESSAGE)
+
+
+def _guard_tokens_overlap(max_size: Any, overlap: Any) -> None:
+    """Legacy parity guard: reject overlap >= max_size for the tokens method.
+
+    The legacy ``TokenBasedChunker.chunk_by_tokens`` raised
+    ``ValueError("Token overlap X must be less than max_tokens Y")`` for
+    ``overlap >= max_tokens``, and ``improved_chunking_process`` wrapped it
+    into ``ChunkingError``. The engine instead clamps the overlap and chunks
+    anyway; this guard keeps the legacy contract so a mis-configured call
+    (e.g. stock default overlap 200 with a small max_size) fails loudly
+    instead of producing degenerate chunks.
+
+    Args:
+        max_size: Resolved max_size option (tokens per chunk).
+        overlap: Resolved overlap option (tokens).
+
+    Raises:
+        ChunkingError: If both values are ints, max_size > 0, and
+            overlap >= max_size.
+    """
+    if not isinstance(max_size, int) or not isinstance(overlap, int):
+        return
+    if max_size > 0 and overlap >= max_size:
+        raise ChunkingError(
+            f"Token overlap {overlap} must be less than max_tokens {max_size}"
+        )
+
+
+def _synthesize_flat_offsets(
+    text: str, chunk_texts: List[str]
+) -> List[Dict[str, int]]:
+    """Compute (start_char, end_char) spans for chunks lacking offsets.
+
+    Primary strategy: word-position mapping. Text-method chunks (words,
+    sentences, ...) re-join the source's whitespace-separated words, so each
+    chunk's ``split()`` words are a CONSECUTIVE run of the source's words
+    (matching the approach in RAG_Search/chunking_service.py). Mapping chunk
+    words onto source word spans yields correct spans even when chunks
+    overlap (the word cursor advances by one word, not past the chunk end).
+    Source whitespace is normalized inside the chunk, so a plain
+    ``text.find`` would miss -- the previous approach -- and with overlap
+    could even report ``end_char > len(text)``.
+
+    Fallbacks: monotonic ``find`` (for chunks that ARE substrings), then a
+    conservative estimate. All results are clamped to ``[0, len(text)]``.
+
+    Args:
+        text: The source text the chunks were produced from.
+        chunk_texts: The chunk strings, in order.
+
+    Returns:
+        One ``{"start_char": int, "end_char": int}`` dict per chunk.
+    """
+    n = len(text)
+    word_spans = [(m.start(), m.end()) for m in re.finditer(r"\S+", text)]
+    words = [text[s:e] for s, e in word_spans]
+    spans: List[Dict[str, int]] = []
+    word_cursor = 0
+    find_cursor = 0
+
+    for chunk_text in chunk_texts:
+        start_char: Optional[int] = None
+        end_char: Optional[int] = None
+
+        chunk_words = chunk_text.split() if chunk_text else []
+        if chunk_words and words:
+            # Consecutive word-run match starting at/after word_cursor.
+            run_len = len(chunk_words)
+            for wi in range(word_cursor, len(words) - run_len + 1):
+                if words[wi : wi + run_len] == chunk_words:
+                    start_char = word_spans[wi][0]
+                    end_char = word_spans[wi + run_len - 1][1]
+                    word_cursor = wi + 1  # advance one word: tolerate overlap
+                    break
+
+        if start_char is None:
+            # Substring match (chunks that preserve original whitespace).
+            idx = text.find(chunk_text, find_cursor)
+            if idx == -1:
+                idx = text.find(chunk_text)
+            if idx != -1:
+                start_char = idx
+                end_char = min(idx + len(chunk_text), n)
+                find_cursor = max(find_cursor, idx + 1)
+                word_cursor = 0  # re-anchor the word cursor to keep it usable
+
+        if start_char is None or end_char is None:
+            # Conservative estimate: continue from the last known position.
+            start_char = min(find_cursor, n)
+            end_char = min(start_char + len(chunk_text), n)
+
+        start_char = max(0, min(start_char, n))
+        end_char = max(start_char, min(end_char, n))
+        spans.append({"start_char": start_char, "end_char": end_char})
+
+    return spans
+
+
+#######################################################################################################################
+# Chunker adapter
+#
+def _wrap_payload_dict_llm_for_positional_engine(
+    llm_call_function: Callable[[Dict[str, Any]], Any],
+    llm_api_config: Optional[Dict[str, Any]] = None,
+) -> Callable[..., Any]:
+    """Wrap a payload-dict LLM callback into the engine's positional contract.
+
+    The engine's LLM-calling strategies (propositions, rolling_summarize)
+    invoke their ``llm_call_func`` positionally, analyze-style:
+    ``llm_call_func(api_name, prompt, None, api_key, system_message, temp,
+    False, False, False, model_override=..., **snapshot_kwargs)``. Chatbook
+    callers instead supply the legacy payload-dict callback (one dict
+    argument) established by the rolling_summarize port -- the same key set
+    this wrapper emits (see ``Chunker._rolling_summarize``'s
+    ``payload_for_llm_call``): api_name, input_data, custom_prompt_arg,
+    api_key, system_message, temp, streaming, model, max_tokens.
+
+    Mapping notes (mirroring the rolling_summarize payload precedent):
+    - positional ``prompt`` -> ``input_data``; positional arg 3
+      (``custom_prompt_arg``, always None from the engine) -> "".
+    - the ``model_override`` keyword -> the payload's ``model`` slot.
+    - ``max_tokens`` is not part of the positional contract; it rides in
+      from ``llm_api_config`` exactly as rolling_summarize fills it.
+    - the server-only snapshot kwargs (``app_config``,
+      ``credentials_resolved``, ``provider_credentials``) are accepted and
+      dropped: they only arrive if a caller put them in the LLM config, and
+      the payload-dict contract has no slots for them (their absence is
+      benign upstream -- guarded reads).
+    - trailing positional flags beyond the nine the propositions engine
+      passes (e.g. rolling_summarize's ``chunk_options`` None) are accepted
+      for signature tolerance and dropped.
+
+    Args:
+        llm_call_function: Blocking callable receiving one payload dict and
+            returning the provider's string (or tuple whose first element
+            is the string).
+        llm_api_config: Caller LLM config (only ``max_tokens`` is read
+            here; every other key flows to the engine's own
+            ``llm_config.get(...)`` reads upstream of this wrapper).
+
+    Returns:
+        A positional-callable that forwards to ``llm_call_function``.
+    """
+
+    def _positional_llm_call(
+        api_name: str,
+        input_data: str,
+        custom_prompt_arg: Optional[str],
+        api_key: Optional[str],
+        system_message: Optional[str],
+        temp: float,
+        streaming: bool = False,
+        recursive_summarization: bool = False,  # tolerated, dropped
+        chunked_summarization: bool = False,  # tolerated, dropped
+        *_extra_positional: Any,
+        model_override: Optional[str] = None,
+        **_snapshot_kwargs: Any,  # server-only config; dropped (see docstring)
+    ) -> Any:
+        payload: Dict[str, Any] = {
+            "api_name": api_name,
+            "input_data": input_data,
+            "custom_prompt_arg": custom_prompt_arg or "",
+            "api_key": api_key,
+            "system_message": system_message,
+            "temp": temp,
+            "streaming": bool(streaming),
+            "model": model_override,
+            "max_tokens": (llm_api_config or {}).get("max_tokens"),
+        }
+        return llm_call_function(payload)
+
+    return _positional_llm_call
 
 
 class Chunker:
+    """Legacy-signature adapter over the engine ``Chunker``.
+
+    Preserves the legacy constructor (``options`` dict, tokenizer name,
+    ``template``/``template_manager`` parameters) and the legacy
+    ``chunk_text`` return contract: ``List[Union[str, dict]]`` -- plain
+    strings for text methods, dicts for json/xml/ebook (the legacy methods
+    that returned dicts).
+
+    Template semantics since the file-store deletion (spec §8.2):
+    ``template`` accepts a pre-resolved template dict (chunk-stage options
+    merged under explicit options); ``template_manager`` is
+    accepted-and-ignored. Name resolution lives in
+    ``template_runtime.resolve_template``.
+    """
+
     def __init__(
         self,
         options: Optional[Dict[str, Any]] = None,
         tokenizer_name_or_path: str = "gpt2",
-        template: Optional[str] = None,
-        template_manager: Optional[ChunkingTemplateManager] = None,
-        # Specific methods needing LLMs will take them as args or use a callback.
+        template: Optional[Any] = None,
+        template_manager: Optional[Any] = None,
     ):
-        """
-        Initializes the Chunker.
+        """Initializes the Chunker adapter.
 
         Args:
-            options (Optional[Dict[str, Any]]): Custom chunking options to override defaults.
-            tokenizer_name_or_path (str): Name or path of the Hugging Face tokenizer to use.
-                                           Defaults to "gpt2".
-            template (Optional[str]): Name of chunking template to use.
-            template_manager (Optional[ChunkingTemplateManager]): Template manager instance.
+            options (Optional[Dict[str, Any]]): Custom chunking options to
+                override defaults.
+            tokenizer_name_or_path (str): Name or path of the tokenizer to
+                use. Defaults to "gpt2".
+            template (Optional[Dict[str, Any]]): Pre-resolved template dict
+                (the flat spec §4.1 shape, e.g. what
+                ``template_runtime.resolve_template`` returns). Only the
+                ``chunking`` stage's method/config are applied here (defaults
+                <- template <- explicit ``options``); executing the full
+                pre/chunk/post pipeline is ``template_runtime.apply_template``'s
+                contract. A bare name string raises ``TemplateError``: name
+                resolution requires a Media DB handle and lives in
+                ``template_runtime.resolve_template`` (spec §8.2), not in this
+                import-light shim.
+            template_manager (Optional[Any]): Accepted and ignored (spec
+                §8.2). Retained solely for signature compatibility with
+                legacy callers; the file-store manager it named is deleted.
+
+        Raises:
+            TemplateError: If ``template`` is a bare name string (use
+                ``template_runtime.resolve_template`` first), or not a valid
+                flat template dict.
         """
-        # Initialize template manager
-        self.template_manager = template_manager or ChunkingTemplateManager()
-        self.pipeline = ChunkingPipeline(self.template_manager)
-
-        # Load template if specified
-        self.template: Optional[ChunkingTemplate] = None
-        if template:
-            self.template = self.template_manager.load_template(template)
-            if self.template:
-                logger.info(f"Loaded chunking template: {template}")
-                # Extract options from template
-                template_options = {}
-                for stage in self.template.pipeline:
-                    if stage.stage == "chunk":
-                        template_options.update(stage.options)
-                        if stage.method:
-                            template_options["method"] = stage.method
-                        break
-                # Template options have lower priority than explicit options
-                if options:
-                    template_options.update(options)
-                options = template_options
-            else:
-                logger.warning(
-                    f"Template '{template}' not found, using default options"
+        # template_manager= is accepted-and-ignored: stored for attribute
+        # compatibility, never consulted.
+        self.template_manager = template_manager
+        if template is not None:
+            if isinstance(template, str):
+                raise TemplateError(
+                    f"Chunker no longer resolves template names (the file "
+                    f"template store is deleted, spec §8.2): resolve "
+                    f"{template!r} first via "
+                    f"tldw_chatbook.Chunking.template_runtime.resolve_template "
+                    f"and pass the returned dict as template="
                 )
+            # Local import: template_runtime imports this module at its own
+            # module level, so the dependency may only be taken at call time.
+            from .template_runtime import template_from_record
 
-        # Initialize options: start with defaults, then update with provided options
-        self.options = DEFAULT_CHUNK_OPTIONS.copy()
+            mapped = template_from_record(template)
+            # Legacy precedence preserved: defaults <- template <- explicit.
+            template_options: Dict[str, Any] = {
+                "method": mapped.base_method,
+                **mapped.default_options,
+            }
+            if options:
+                template_options.update(options)
+            options = template_options
+
+        # Resolve effective options exactly like legacy: defaults <- template <- explicit.
+        self.options: Dict[str, Any] = dict(DEFAULT_CHUNK_OPTIONS)
         if options:
-            # Ensure type consistency for options that need it
-            for key in [
-                "max_size",
-                "overlap",
-                "semantic_overlap_sentences",
-                "base_adaptive_chunk_size",
-                "min_adaptive_chunk_size",
-                "max_adaptive_chunk_size",
-            ]:
-                if key in options and options[key] is not None:
-                    try:
-                        options[key] = int(options[key])
-                    except (ValueError, TypeError):
-                        logger.warning(
-                            f"Invalid type for option '{key}': {options[key]}. Using default or ignoring."
-                        )
-                        options[key] = self.options.get(
-                            key
-                        )  # Revert to default from self.options
-
-            for key in ["semantic_similarity_threshold"]:
-                if key in options and options[key] is not None:
-                    try:
-                        options[key] = float(options[key])
-                    except (ValueError, TypeError):
-                        logger.warning(
-                            f"Invalid type for option '{key}': {options[key]}. Using default or ignoring."
-                        )
-                        options[key] = self.options.get(key)  # Revert to default
-
             self.options.update(options)
 
-        logger.debug(f"Chunker initialized with options: {self.options}")
-
-        self._token_chunker = None
-        self._tokenizer_path_to_load: str = self.options.get(
-            "tokenizer_name_or_path", tokenizer_name_or_path
+        self._tokenizer_path: str = str(
+            self.options.get("tokenizer_name_or_path", tokenizer_name_or_path)
         )
 
+        self._engine = _EngineChunker(_build_engine_config(self.options, self._tokenizer_path))
+        # TokenBasedChunker retained for legacy attribute compatibility.
+        self._token_chunker: Optional[TokenBasedChunker] = None
+        logger.debug(f"Chunker initialized with options: {self.options}")
+
+    # ------------------------------------------------------------------
+    # Legacy attribute surface
+    # ------------------------------------------------------------------
     @property
-    def token_chunker(self):
-        """Get the token-based chunker, creating it if needed."""
+    def token_chunker(self) -> TokenBasedChunker:
+        """Get the token-based chunker, creating it if needed (legacy API)."""
         if self._token_chunker is None:
-            self._token_chunker = create_token_chunker(self._tokenizer_path_to_load)
+            self._token_chunker = create_token_chunker(self._tokenizer_path)
         return self._token_chunker
 
     @property
@@ -461,290 +857,153 @@ class Chunker:
         """Get the underlying tokenizer for backward compatibility."""
         return self.token_chunker.tokenizer
 
+    @property
+    def engine(self) -> _EngineChunker:
+        """The wrapped engine Chunker instance."""
+        return self._engine
+
     def _get_option(self, key: str, default_override: Optional[Any] = None) -> Any:
         """Helper to get an option, allowing for a dynamic default."""
-        # Try to get from self.options first
         value = self.options.get(key)
         if value is not None:
             return value
-        # If not found in self.options or is None, use default_override
         return default_override
 
     def detect_language(self, text: str) -> str:
-        """
-        Detects the language of the given text.
+        """Detects the language of the given text.
+
+        Uses the engine's script-range detection (no langdetect dependency).
 
         Args:
             text (str): The text to detect language from.
 
         Returns:
-            str: The detected language code (e.g., 'en', 'zh-cn').
-                 Defaults to 'en' if detection fails.
+            str: The detected language code; defaults to 'en'.
         """
-        start_time = time.time()
-        log_counter("chunking_language_detection_attempt")
-
         if not text or not text.strip():
-            logger.warning(
-                "Attempted to detect language from empty or whitespace-only text. Defaulting to 'en'."
-            )
-            log_counter("chunking_language_detection_empty_text")
-            return self._get_option(
-                "language", "en"
-            )  # Use option if available, else 'en'
-
-        # Check if langdetect is available
-        if not LANGDETECT_AVAILABLE:
-            logger.debug(
-                "langdetect not available, defaulting to configured language or 'en'"
-            )
-            return self._get_option("language", "en")
-
+            return self._get_option("language") or "en"
         try:
-            lang = detect(text)
-            logger.debug(f"Detected language: {lang}")
-
-            # Log success metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "chunking_language_detection_duration",
-                duration,
-                labels={"status": "success"},
-            )
-            log_counter(
-                "chunking_language_detection_success", labels={"language": lang}
-            )
-
-            return lang
-        except LangDetectException as e:
-            logger.warning(f"Language detection failed: {e}. Defaulting to 'en'.")
-
-            # Log detection failure
-            duration = time.time() - start_time
-            log_histogram(
-                "chunking_language_detection_duration",
-                duration,
-                labels={"status": "error"},
-            )
-            log_counter(
-                "chunking_language_detection_error",
-                labels={"error_type": "lang_detect_exception"},
-            )
-
-            return self._get_option("language", "en")
-        except Exception as e_gen:
-            logger.error(
-                f"Unexpected error during language detection: {e_gen}. Defaulting to 'en'."
-            )
-
-            # Log unexpected error
-            duration = time.time() - start_time
-            log_histogram(
-                "chunking_language_detection_duration",
-                duration,
-                labels={"status": "error"},
-            )
-            log_counter(
-                "chunking_language_detection_error",
-                labels={"error_type": type(e_gen).__name__},
-            )
-
-            return self._get_option("language", "en")
+            if re.search(r"[\u3040-\u309f\u30a0-\u30ff]", text):
+                return "ja"
+            if re.search(r"[\u4e00-\u9fff]", text):
+                return "zh"
+            if re.search(r"[\u0e00-\u0e7f]", text):
+                return "th"
+            if re.search(r"[\u0900-\u097f]", text):
+                return "hi"
+            if re.search(r"[\u0400-\u04ff]", text):
+                return "ru"
+            if re.search(r"[\uac00-\ud7af]", text):
+                return "ko"
+            if re.search(r"[\u0600-\u06ff]", text):
+                return "ar"
+        except Exception:  # pragma: no cover - regex on str cannot fail
+            pass
+        return self._get_option("language") or "en"
 
     def _ensure_language(self, text: str, language_option: Optional[str] = None) -> str:
-        """
-        Ensures a language is determined, using option, detection, or default.
-        """
-        # Priority: 1. Explicit language_option, 2. self.options['language'], 3. detect_language
+        """Ensures a language is determined, using option, detection, or default."""
         if language_option:
             return language_option
-        instance_lang_opt = self._get_option("language")  # Get from self.options
+        instance_lang_opt = self._get_option("language")
         if instance_lang_opt:
             return instance_lang_opt
         return self.detect_language(text)
 
-    def _post_process_chunks(self, chunks: List[str]) -> List[str]:
-        """
-        Strips whitespace from each chunk and removes empty chunks.
-        """
-        return [chunk.strip() for chunk in chunks if chunk and chunk.strip()]
-
+    # ------------------------------------------------------------------
+    # Main chunking entry point (legacy signature)
+    # ------------------------------------------------------------------
     def chunk_text(
         self,
         text: str,
         method: Optional[str] = None,
         llm_call_function: Optional[
-            Callable[[Dict[str, Any]], Union[str, Generator[str, None, None]]]
+            Callable[[Dict[str, Any]], Any]
         ] = None,
         llm_api_config: Optional[Dict[str, Any]] = None,
         use_template: Optional[bool] = None,
     ) -> List[Union[str, Dict[str, Any]]]:
-        """
-        Main method to chunk text based on the specified method in options or argument.
+        """Main method to chunk text based on the specified method.
 
         Args:
             text (str): The text to chunk.
-            method (Optional[str]): Override the chunking method defined in options.
-            use_template (Optional[bool]): Force use/bypass of template if loaded.
+            method (Optional[str]): Override the chunking method defined in
+                options.
+            llm_call_function: Optional LLM call function (rolling_summarize).
+            llm_api_config: Optional LLM API config (rolling_summarize).
+            use_template (Optional[bool]): Accepted and ignored (spec §8.2).
+                The template pipeline this routed to is deleted; a template
+                dict supplied at construction has already had its
+                chunk-stage options merged into ``self.options``. Full
+                template execution lives in
+                ``template_runtime.apply_template``.
 
         Returns:
-            List[Union[str, Dict[str, Any]]]: A list of chunks.
-                                              Strings for most methods, Dicts for JSON-based chunking.
+            List[Union[str, Dict[str, Any]]]: A list of chunks. Strings for
+            most methods, dicts for json/xml/ebook methods.
 
         Raises:
             InvalidChunkingMethodError: If the method is not supported.
             ChunkingError: For errors during the chunking process.
             MemoryLimitError: If the input text exceeds memory limits.
         """
-        # Check document size before processing
-        text_size_bytes = len(text.encode("utf-8"))
+        # Check document size before processing (legacy MemoryLimitError).
+        try:
+            text_size_bytes = len(text.encode("utf-8"))
+        except AttributeError:
+            raise InvalidInputError(
+                f"Expected string input, got {type(text).__name__}"
+            )
         if text_size_bytes > MAX_DOCUMENT_SIZE_BYTES:
             text_size_mb = text_size_bytes / (1024 * 1024)
             raise MemoryLimitError(
-                f"Document size {text_size_mb:.2f} MB exceeds maximum allowed size of {MAX_DOCUMENT_SIZE_MB} MB"
+                f"Document size {text_size_mb:.2f} MB exceeds maximum allowed "
+                f"size of {MAX_DOCUMENT_SIZE_MB} MB"
             )
-        # Check if we should use template-based chunking
-        if use_template is None:
-            use_template = self.template is not None
 
-        if use_template and self.template:
-            logger.info(
-                f"Using template-based chunking with template: {self.template.name}"
-            )
-            # Execute template pipeline
-            template_results = self.pipeline.execute(
-                text=text,
-                template=self.template,
-                chunker_instance=self,
-                llm_call_function=llm_call_function,
-                llm_api_config=llm_api_config,
-            )
-            # Convert template results to expected format
-            chunks = []
-            for result in template_results:
-                if isinstance(result, dict) and "text" in result:
-                    chunks.append(result["text"])
-                else:
-                    chunks.append(result)
-            return chunks
-        chunk_method = method if method else self._get_option("method", "words")
-        max_size = self._get_option("max_size")  # Already int from __init__
-        overlap = self._get_option("overlap")  # Already int from __init__
-        language = self._ensure_language(
-            text, self._get_option("language")
-        )  # Ensure language is determined
-
-        logger.debug(
-            f"Chunking text with method='{chunk_method}', max_size={max_size}, overlap={overlap}, language='{language}'"
+        resolved_method = _normalize_legacy_method(
+            method if method else self._get_option("method", "words")
         )
 
-        # Adaptive chunking can modify max_size before the main method is called
-        if self._get_option("adaptive", False) and chunk_method not in [
-            "semantic",
-            "json",
-            "xml",
-            "ebook_chapters",
-            "rolling_summarize",
-        ]:
-            # Note: Adaptive sizing might not make sense for all methods.
-            # Here, we apply it to general text methods.
-            base_adaptive_size = self._get_option("base_adaptive_chunk_size")
-            min_adaptive_size = self._get_option("min_adaptive_chunk_size")
-            max_adaptive_size = self._get_option("max_adaptive_chunk_size")
-            # Try to use NLTK-based adaptive sizing if available
-            try:
-                max_size = self._adaptive_chunk_size_nltk(
-                    text,
-                    base_adaptive_size,
-                    min_adaptive_size,
-                    max_adaptive_size,
-                    language,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"NLTK-based adaptive sizing failed: {e}. Using non-NLTK adaptive sizing."
-                )
-                max_size = self._adaptive_chunk_size_non_punkt(
-                    text, base_adaptive_size, min_adaptive_size, max_adaptive_size
-                )
-            logger.info(f"Adaptive chunking adjusted max_size to: {max_size}")
+        engine_options = _translate_legacy_options(self.options, self._tokenizer_path)
+        if method:
+            engine_options["method"] = resolved_method
 
-        # Multi-level chunking is a wrapper around other methods
-        if self._get_option("multi_level", False) and chunk_method in [
-            "words",
-            "sentences",
-        ]:
-            logger.info(
-                f"Applying multi-level chunking with base method: {chunk_method}"
+        if resolved_method == ChunkingMethod.TOKENS.value:
+            # Legacy parity guard FIRST (legacy validated params before any
+            # tokenizer work): overlap >= max_size raised in the legacy
+            # token path; the engine would clamp it instead.
+            _guard_tokens_overlap(
+                engine_options.get("max_size"), engine_options.get("overlap")
             )
-            return self._multi_level_chunking(
-                text, chunk_method, max_size, overlap, language
-            )
+            # Q2: refuse BEFORE chunking when the engine's own tokenizer
+            # resolution lands on the word-approximation fallback (probing
+            # the engine -- tiktoken counts, transformers cache -- not the
+            # legacy transformers-only seam, so a tiktoken-only install
+            # still delegates to the engine).
+            _enforce_real_tokenizer(self._tokenizer_path)
 
-        if chunk_method == "words":
-            return self._chunk_text_by_words(
-                text, max_words=max_size, overlap=overlap, language=language
-            )
-        elif chunk_method == "sentences":
-            return self._chunk_text_by_sentences(
-                text, max_sentences=max_size, overlap=overlap, language=language
-            )
-        elif chunk_method == "paragraphs":
-            return self._chunk_text_by_paragraphs(
-                text, max_paragraphs=max_size, overlap=overlap
-            )
-        elif chunk_method == "tokens":
-            return self._chunk_text_by_tokens(
-                text, max_tokens=max_size, overlap=overlap
-            )
-        elif chunk_method == "semantic":
-            # semantic_chunking needs to be a method of the class too
-            return self._semantic_chunking(
-                text, max_chunk_size=max_size, unit="words"
-            )  # unit can be an option
-        elif chunk_method == "json":
-            # chunk_text_by_json and its helpers need to be methods
-            return self._chunk_text_by_json(text, max_size=max_size, overlap=overlap)
-        elif chunk_method == "ebook_chapters":
-            # Needs to be a method
-            return self._chunk_ebook_by_chapters(
-                text,
-                max_size=max_size,  # max_size here might mean something different, e.g. sub-chunking chapters
-                overlap=overlap,
-                custom_pattern=self._get_option("custom_chapter_pattern"),
-                language=language,
-            )
-        elif chunk_method == "xml":
-            # Needs to be a method
-            return self._chunk_xml(
-                text, max_size=max_size, overlap=overlap, language=language
-            )
-        elif chunk_method == "rolling_summarize":
+        if resolved_method == ChunkingMethod.ROLLING_SUMMARIZE.value:
+            # Legacy rolling_summarize invoked the caller's LLM function with
+            # a single payload dict ({"api_name", "input_data",
+            # "system_message", ...}) and resolved summarize_* options through
+            # _get_option with a lazy get_internal_prompt default. The engine's
+            # strategy instead calls analyze(...) positionally -- a different
+            # caller contract. Route through the ported legacy implementation
+            # so every existing llm_call_function caller keeps working.
             if not llm_call_function:
                 raise ChunkingError(
                     "Missing 'llm_call_function' for 'rolling_summarize' method."
                 )
-
-            # `_get_option`'s fallback arg is evaluated eagerly by Python
-            # regardless of whether self.options already has a value, so
-            # resolve the registry default lazily here instead of passing
-            # get_internal_prompt(...) directly as the (near-always-unused)
-            # default_override -- avoids a config lookup on every rolling-
-            # summarize call in the common case where summarize_system_
-            # prompt is already populated (see
-            # test_rolling_summarize_skips_resolver_when_caller_option_set).
             system_prompt_content = self.options.get("summarize_system_prompt")
             if system_prompt_content is None:
                 system_prompt_content = get_internal_prompt(
                     "summarization.rolling_summarize_system"
                 )
-
             summary = self._rolling_summarize(
                 text_to_summarize=text,
-                llm_summarize_step_func=llm_call_function,  # Pass the generic call function
-                llm_api_config=llm_api_config
-                or {},  # Pass relevant API name, model, key for the call_func
-                # Other summarization-specific options from self.options
+                llm_summarize_step_func=llm_call_function,
+                llm_api_config=llm_api_config or {},
                 detail=self._get_option("summarization_detail", 0.5),
                 min_chunk_tokens=self._get_option("summarize_min_chunk_tokens", 500),
                 chunk_delimiter=self._get_option("summarize_chunk_delimiter", "."),
@@ -757,927 +1016,96 @@ class Chunker:
                     "summarize_additional_instructions", None
                 ),
             )
-            return [summary]  # Wrap in list
-        else:
-            logger.warning(
-                f"Unknown chunking method '{chunk_method}'. Returning full text as a single chunk."
+            return [summary]
+
+        if resolved_method in {"json", "xml", "ebook_chapters"}:
+            # Legacy returned dicts ({"text","metadata"}) for these methods;
+            # the engine's process_text provides exactly that shape. (The
+            # set is inlined -- rather than reusing _DICT_METHODS -- so the
+            # dispatch names every handled method explicitly.)
+            results = self._engine.process_text(
+                text,
+                engine_options,
+                tokenizer_name_or_path=self._tokenizer_path,
+                llm_call_func=llm_call_function,
+                llm_config=llm_api_config,
             )
-            raise InvalidChunkingMethodError(
-                f"Unsupported chunking method: '{chunk_method}'"
+            return [
+                {"text": item["text"], "metadata": item["metadata"]}
+                for item in results
+            ]
+
+        if resolved_method == "propositions" and llm_call_function is not None:
+            # LLM-contract adapter (propositions spec §5.1): the engine's
+            # strategy calls its llm_call_func positionally (analyze-style)
+            # while chatbook callers supply the payload-dict callback. The
+            # engine's chunk_text has no llm_call_func parameter -- it reads
+            # the per-instance llm_call_func/llm_config hooks -- so install
+            # the wrapped callable there for the duration of this call and
+            # restore afterwards (the hooks are instance state; a later
+            # call with a different callback must not see this one). No
+            # callback -> nothing installed: the engine's default heuristic
+            # engine stands (and its engine="llm" leg degrades to
+            # heuristics on its own -- upstream parity, not fail-close).
+            previous_func = self._engine.llm_call_func
+            previous_cfg = self._engine.llm_config
+            self._engine.llm_call_func = _wrap_payload_dict_llm_for_positional_engine(
+                llm_call_function, llm_api_config
             )
-
-    def _chunk_text_by_words(
-        self, text: str, max_words: int, overlap: int, language: str
-    ) -> List[str]:
-        start_time = time.time()
-        logger.info(
-            f"Chunking by words: max_words={max_words}, overlap={overlap}, language='{language}'"
-        )
-
-        # Use language-specific chunker
-        language_chunker = LanguageChunkerFactory.get_chunker(language)
-        words = language_chunker.tokenize_words(text)
-
-        logger.debug(f"Total words: {len(words)}")
-        if max_words <= 0:
-            raise ValueError(f"max_words must be positive, got {max_words}")
-        if max_words > MAX_CHUNK_SIZE_WORDS:
-            raise ValueError(
-                f"max_words {max_words} exceeds maximum allowed {MAX_CHUNK_SIZE_WORDS}"
-            )
-        if overlap < 0:
-            raise ValueError(f"overlap must be non-negative, got {overlap}")
-        if overlap >= max_words:
-            raise ValueError(
-                f"Overlap {overlap} must be less than max_words {max_words}"
-            )
-
-        chunks = []
-        # Ensure step is at least 1 to prevent infinite loops if max_words equals overlap (though handled above)
-        step = max_words - overlap
-        if step <= 0:
-            step = max_words  # Should not happen if overlap < max_words
-
-        for i in range(0, len(words), step):
-            chunk_words = words[i : i + max_words]
-            chunks.append(" ".join(chunk_words))
-            logger.debug(
-                f"Created word chunk {len(chunks)} with {len(chunk_words)} words"
-            )
-
-        # Log metrics
-        duration = time.time() - start_time
-        log_histogram(
-            "chunking_method_duration",
-            duration,
-            labels={"method": "words", "language": language},
-        )
-        log_histogram("chunking_words_per_chunk", max_words)
-        log_histogram("chunking_total_words", len(words))
-        log_counter(
-            "chunking_method_words_success", labels={"chunks_created": str(len(chunks))}
-        )
-
-        processed_chunks = self._post_process_chunks(chunks)
-        logger.info(
-            f"Word chunking complete: created {len(processed_chunks)} chunks from {len(words)} words"
-        )
-        return processed_chunks
-
-    def _chunk_text_by_sentences(
-        self, text: str, max_sentences: int, overlap: int, language: str
-    ) -> List[str]:
-        time.time()
-        logger.info(
-            f"Chunking by sentences: max_sentences={max_sentences}, overlap={overlap}, lang='{language}'"
-        )
-        log_counter("chunking_method_sentences_attempt", labels={"language": language})
-
-        # Use language-specific chunker
-        language_chunker = LanguageChunkerFactory.get_chunker(language)
-        sentences = language_chunker.tokenize_sentences(text)
-
-        if max_sentences <= 0:
-            raise ValueError(f"max_sentences must be positive, got {max_sentences}")
-        if max_sentences > MAX_CHUNK_SIZE_SENTENCES:
-            raise ValueError(
-                f"max_sentences {max_sentences} exceeds maximum allowed {MAX_CHUNK_SIZE_SENTENCES}"
-            )
-        if overlap < 0:
-            raise ValueError(f"overlap must be non-negative, got {overlap}")
-        if overlap >= max_sentences:
-            raise ValueError(
-                f"Overlap {overlap} must be less than max_sentences {max_sentences}"
-            )
-
-        chunks = []
-        step = max_sentences - overlap
-        if step <= 0:
-            step = max_sentences
-
-        for i in range(0, len(sentences), step):
-            chunk_sentences = sentences[i : i + max_sentences]
-            chunks.append(" ".join(chunk_sentences))
-            logger.debug(
-                f"Created sentence chunk {len(chunks)} with {len(chunk_sentences)} sentences"
-            )
-
-        processed_chunks = self._post_process_chunks(chunks)
-        logger.info(
-            f"Sentence chunking complete: created {len(processed_chunks)} chunks from {len(sentences)} sentences"
-        )
-        return processed_chunks
-
-    def _chunk_text_by_paragraphs(
-        self, text: str, max_paragraphs: int, overlap: int
-    ) -> List[str]:
-        logger.info(
-            f"Chunking by paragraphs: max_paragraphs={max_paragraphs}, overlap={overlap}"
-        )
-        # Split by one or more empty lines (common paragraph delimiter)
-        paragraphs = re.split(r"\n\s*\n+", text)
-        paragraphs = [
-            p.strip() for p in paragraphs if p.strip()
-        ]  # Remove empty paragraphs
-
-        if not paragraphs:
-            return []
-        if max_paragraphs <= 0:
-            raise ValueError(f"max_paragraphs must be positive, got {max_paragraphs}")
-        if max_paragraphs > MAX_CHUNK_SIZE_PARAGRAPHS:
-            raise ValueError(
-                f"max_paragraphs {max_paragraphs} exceeds maximum allowed {MAX_CHUNK_SIZE_PARAGRAPHS}"
-            )
-        if overlap < 0:
-            raise ValueError(f"overlap must be non-negative, got {overlap}")
-        if overlap >= max_paragraphs:
-            raise ValueError(
-                f"Overlap {overlap} must be less than max_paragraphs {max_paragraphs}"
-            )
-
-        chunks = []
-        step = max_paragraphs - overlap
-        if step <= 0:
-            step = max_paragraphs
-
-        for i in range(0, len(paragraphs), step):
-            chunk_paragraphs = paragraphs[i : i + max_paragraphs]
-            chunks.append(
-                "\n\n".join(chunk_paragraphs)
-            )  # Join with double newline to preserve paragraph structure
-            logger.debug(
-                f"Created paragraph chunk {len(chunks)} with {len(chunk_paragraphs)} paragraphs"
-            )
-
-        processed_chunks = self._post_process_chunks(
-            chunks
-        )  # post_process_chunks strips leading/trailing, which is fine
-        logger.info(
-            f"Paragraph chunking complete: created {len(processed_chunks)} chunks from {len(paragraphs)} paragraphs"
-        )
-        return processed_chunks
-
-    def _chunk_text_by_tokens(
-        self, text: str, max_tokens: int, overlap: int
-    ) -> List[str]:
-        """Chunk text by token count using the modular token chunker."""
-        logger.info(
-            f"Chunking by tokens: max_tokens={max_tokens}, overlap_tokens={overlap}"
-        )
-
-        chunks = self.token_chunker.chunk_by_tokens(text, max_tokens, overlap)
-        processed_chunks = self._post_process_chunks(chunks)
-        logger.info(f"Token chunking complete: created {len(processed_chunks)} chunks")
-        return processed_chunks
-
-    # --- Adaptive Chunking Methods ---
-    def _adaptive_chunk_size_nltk(
-        self, text: str, base_size: int, min_size: int, max_size: int, language: str
-    ) -> int:
-        """Adjusts chunk size based on NLTK sentence tokenization."""
-        logger.debug(
-            f"Calculating adaptive chunk size (NLTK) for lang '{language}'. Base: {base_size}, Min: {min_size}, Max: {max_size}"
-        )
-        # Resolve nltk (rebinding the real sent_tokenize) and ensure punkt is
-        # available on first real use -- deferred out of module import.
-        _ensure_nltk()
-        ensure_nltk_data()
-        try:
-            nltk_lang_map = {
-                "en": "english",
-                "es": "spanish",
-                "fr": "french",
-                "de": "german",
-            }
-            nltk_language = nltk_lang_map.get(language.lower(), language.lower())
-            sentences = sent_tokenize(text, language=nltk_language)
-        except LookupError:
-            logger.warning(
-                f"NLTK Punkt for '{language}' not found for adaptive sizing. Using non-NLTK fallback."
-            )
-            return self._adaptive_chunk_size_non_punkt(
-                text, base_size, min_size, max_size
-            )
-        except Exception as e:
-            logger.warning(
-                f"Error tokenizing sentences for adaptive sizing with NLTK: {e}. Using non-NLTK fallback."
-            )
-            return self._adaptive_chunk_size_non_punkt(
-                text, base_size, min_size, max_size
-            )
-
-        if not sentences:
-            return base_size
-
-        avg_sentence_length_words = sum(len(s.split()) for s in sentences) / len(
-            sentences
-        )
-        logger.debug(f"Avg sentence length (words): {avg_sentence_length_words}")
-
-        size_factor = 1.0
-        if avg_sentence_length_words < 10:  # Short sentences
-            size_factor = 1.2
-        elif avg_sentence_length_words > 25:  # Long sentences
-            size_factor = 0.8
-
-        adaptive_size = int(base_size * size_factor)
-        final_size = max(min_size, min(adaptive_size, max_size))
-        logger.debug(
-            f"Adaptive size calculated (NLTK): {final_size} (factor: {size_factor})"
-        )
-        return final_size
-
-    def _adaptive_chunk_size_non_punkt(
-        self, text: str, base_size: int, min_size: int, max_size: int
-    ) -> int:
-        """Adjusts chunk size based on average word length if NLTK is not available."""
-        logger.debug(
-            f"Calculating adaptive chunk size (non-NLTK). Base: {base_size}, Min: {min_size}, Max: {max_size}"
-        )
-        words = text.split()
-        if not words:
-            return base_size
-
-        # Using character length of words as a proxy for complexity
-        avg_word_char_length = (
-            sum(len(word) for word in words) / len(words) if words else 0
-        )
-        logger.debug(f"Avg word char length: {avg_word_char_length}")
-
-        size_factor = 1.0
-        if avg_word_char_length > 7:  # Longer average words -> potentially more complex
-            size_factor = 0.85
-        elif avg_word_char_length < 4:  # Shorter average words -> potentially simpler
-            size_factor = 1.15
-
-        adaptive_size = int(base_size * size_factor)
-        final_size = max(min_size, min(adaptive_size, max_size))
-        logger.debug(
-            f"Adaptive size calculated (non-NLTK): {final_size} (factor: {size_factor})"
-        )
-        return final_size
-
-    # Multi-level chunking - can be a wrapper method
-    def _multi_level_chunking(
-        self,
-        text: str,
-        base_method_name: str,
-        max_size: int,
-        overlap: int,
-        language: str,
-    ) -> List[str]:
-        logger.debug(
-            f"Multi-level chunking: base_method='{base_method_name}', max_size={max_size}, overlap={overlap}, lang='{language}'"
-        )
-
-        # First level: chunk by paragraphs (configurable, but paragraphs is common)
-        # The max_paragraphs for this initial split could be larger or an independent option.
-        # Using a doubled max_size as a heuristic for paragraph character length.
-        initial_paragraph_chunks = self._chunk_text_by_paragraphs(
-            text, max_paragraphs=5, overlap=0
-        )  # Small overlap for first pass
-
-        final_chunks = []
-        for para_chunk in initial_paragraph_chunks:
-            if base_method_name == "words":
-                final_chunks.extend(
-                    self._chunk_text_by_words(
-                        para_chunk,
-                        max_words=max_size,
-                        overlap=overlap,
-                        language=language,
-                    )
-                )
-            elif base_method_name == "sentences":
-                final_chunks.extend(
-                    self._chunk_text_by_sentences(
-                        para_chunk,
-                        max_sentences=max_size,
-                        overlap=overlap,
-                        language=language,
-                    )
-                )
-            else:
-                # Should not happen if multi_level is only enabled for words/sentences
-                final_chunks.append(para_chunk)
-        return final_chunks  # Already post-processed by the inner calls
-
-    # --- Stubs for other methods to be moved ---
-    def _semantic_chunking(
-        self, text: str, max_chunk_size: int, unit: str
-    ) -> List[str]:
-        logger.info("Semantic chunking called...")
-        # Lazy import for sklearn if not already at top
-        try:
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            from sklearn.metrics.pairwise import cosine_similarity
-        except ImportError:
-            raise ChunkingError(
-                "Scikit-learn not installed. Cannot use 'semantic' chunking. Install with 'pip install scikit-learn'"
-            )
-
-        # Resolve nltk (rebinding the real sent_tokenize) and ensure punkt is
-        # available on first real use -- deferred out of module import.
-        _ensure_nltk()
-        ensure_nltk_data()
-
-        language = self._ensure_language(text, self._get_option("language"))
-        nltk_lang_map = {
-            "en": "english",
-            "es": "spanish",
-            "fr": "french",
-            "de": "german",
-        }
-        nltk_language = nltk_lang_map.get(language.lower(), language.lower())
-
-        try:
-            sentences = sent_tokenize(text, language=nltk_language)
-        except LookupError:
-            logger.warning(
-                f"NLTK Punkt for '{language}' (for semantic chunking) not found. Defaulting to 'english'."
-            )
+            self._engine.llm_config = llm_api_config or {}
             try:
-                sentences = sent_tokenize(text, language="english")
-            except Exception:
-                # The English retry was previously uncaught, so a machine
-                # missing the corpus for BOTH languages failed the whole
-                # chunking call from here (task-842).
-                logger.warning(
-                    "NLTK Punkt is unavailable for English too; using the "
-                    "built-in sentence split."
-                )
-                sentences = _sent_tokenize_fallback(text)
-        except Exception as e:
-            # Splitting on newlines was the old fallback here, which for
-            # ordinary single-paragraph prose returns the entire document as
-            # one "sentence" -- i.e. semantic chunking silently stopped
-            # chunking. The regex split at least yields sentences.
-            logger.error(
-                f"Error sentence tokenizing for semantic chunking: {e}. "
-                "Using the built-in sentence split."
-            )
-            sentences = _sent_tokenize_fallback(text)
-
-        if not sentences:
-            return []
-
-        try:
-            vectorizer = TfidfVectorizer()
-            # Filter out empty strings from sentences before fitting, if any from regex or bad tokenization
-            valid_sentences = [s for s in sentences if s.strip()]
-            if not valid_sentences:
-                return []  # No valid sentences to process
-            sentence_vectors = vectorizer.fit_transform(valid_sentences)
-        except ValueError as ve:  # TFidfVectorizer can raise ValueError if vocabulary is empty (e.g. all stop words)
-            logger.warning(
-                f"TF-IDF Vectorizer error during semantic chunking (perhaps all stop words or very short text): {ve}. Falling back to simple chunking."
-            )
-            # Fall back to sentence-based chunking
-            return self._chunk_text_by_sentences(
-                text, max_sentences=max_chunk_size // 10, overlap=0, language=language
-            )
-
-        chunks = []
-        current_chunk_sentences = []
-        current_size_units = 0
-        # Semantic options
-        similarity_threshold = self._get_option(
-            "semantic_similarity_threshold", 0.3
-        )  # Default if not in options
-        overlap_sentences_count = self._get_option(
-            "semantic_overlap_sentences", 1
-        )  # Default if not in options
-
-        # Helper to count units (words, tokens, characters)
-        def _count_units(txt: str, unit_type: str) -> int:
-            if unit_type == "words":
-                return len(txt.split())
-            elif unit_type == "tokens":
-                try:
-                    return self.token_chunker.count_tokens(txt)
-                except Exception as e:
-                    logger.warning(
-                        f"Token counting failed: {e}. Falling back to word count."
-                    )
-                    return len(txt.split())
-            elif unit_type == "characters":
-                return len(txt)
-            else:
-                logger.warning(
-                    f"Unknown unit type '{unit_type}'. Defaulting to word count."
-                )
-                return len(txt.split())
-
-        for i, sentence_text in enumerate(valid_sentences):
-            sentence_unit_count = _count_units(sentence_text, unit)
-
-            # Break condition 1: Max chunk size exceeded
-            if (
-                current_size_units + sentence_unit_count > max_chunk_size
-                and current_chunk_sentences
-            ):
-                chunks.append(" ".join(current_chunk_sentences))
-                # Apply overlap: take last N sentences for the new chunk
-                current_chunk_sentences = (
-                    current_chunk_sentences[-overlap_sentences_count:]
-                    if overlap_sentences_count > 0
-                    and len(current_chunk_sentences) > overlap_sentences_count
-                    else []
-                )
-                current_size_units = _count_units(
-                    " ".join(current_chunk_sentences), unit
-                )
-
-            current_chunk_sentences.append(sentence_text)
-            current_size_units += sentence_unit_count
-
-            # Break condition 2: Semantic similarity drop (only if we have a next sentence)
-            if i + 1 < len(valid_sentences):
-                # Ensure vectors are 2D for cosine_similarity
-                current_sentence_vector = sentence_vectors[i : i + 1]
-                next_sentence_vector = sentence_vectors[i + 1 : i + 2]
-
-                similarity = 0.0
-                try:
-                    similarity = cosine_similarity(
-                        current_sentence_vector, next_sentence_vector
-                    )[0, 0]
-                except IndexError:  # Can happen if vectors are not as expected
-                    logger.warning(
-                        f"Could not compute similarity for sentence index {i}. Assuming low similarity."
-                    )
-
-                # Break if similarity drops AND current chunk has substantial size (e.g., half of max_chunk_size)
-                if (
-                    similarity < similarity_threshold
-                    and current_size_units >= (max_chunk_size // 2)
-                    and current_chunk_sentences
-                ):
-                    chunks.append(" ".join(current_chunk_sentences))
-                    current_chunk_sentences = (
-                        current_chunk_sentences[-overlap_sentences_count:]
-                        if overlap_sentences_count > 0
-                        and len(current_chunk_sentences) > overlap_sentences_count
-                        else []
-                    )
-                    current_size_units = _count_units(
-                        " ".join(current_chunk_sentences), unit
-                    )
-
-        # Add any remaining sentences in current_chunk
-        if current_chunk_sentences:
-            chunks.append(" ".join(current_chunk_sentences))
-
-        return self._post_process_chunks(chunks)
-
-    def _chunk_text_by_json(
-        self, text: str, max_size: int, overlap: int
-    ) -> List[Dict[str, Any]]:
-        logger.debug("chunk_text_by_json (method) started...")
-        try:
-            json_data = json.loads(text)
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON data provided to _chunk_text_by_json: {e}")
-            raise InvalidInputError(f"Invalid JSON data: {e}") from e
-
-        if isinstance(json_data, list):
-            return self._chunk_json_list(json_data, max_size, overlap)
-        elif isinstance(json_data, dict):
-            # `chunk_json_dict` assumes a specific structure ('data', 'metadata').
-            # This might need to be more generic or have options to specify keys.
-            return self._chunk_json_dict(json_data, max_size, overlap)
-        else:
-            msg = "Unsupported JSON structure. _chunk_text_by_json only supports top-level JSON objects or arrays."
-            logger.error(msg)
-            raise InvalidInputError(msg)
-
-    def _chunk_json_list(
-        self, json_list: List[Any], max_size: int, overlap: int
-    ) -> List[Dict[str, Any]]:
-        logger.debug(
-            f"Chunking JSON list: max_items_per_chunk={max_size}, overlap_items={overlap}"
-        )
-        if max_size <= 0:
-            raise ValueError("max_size for JSON list chunking must be positive.")
-        if overlap < 0:
-            raise ValueError(f"overlap must be non-negative, got {overlap}")
-        if overlap >= max_size:
-            raise ValueError(
-                f"JSON list overlap {overlap} must be less than max_size {max_size}"
-            )
-
-        chunks_output = []
-        total_items = len(json_list)
-        step = max_size - overlap
-        if step <= 0:
-            step = max_size
-
-        for i in range(0, total_items, step):
-            chunk_data = json_list[i : i + max_size]
-            # Metadata specific to this chunking method
-            metadata = {
-                "original_list_size": total_items,
-                "item_start_index": i,
-                "item_end_index": i + len(chunk_data) - 1,
-                # 'chunk_index', 'total_chunks' etc. will be added by improved_chunking_process wrapper
-            }
-            chunks_output.append(
-                {
-                    "json": chunk_data,  # The actual JSON content of the chunk
-                    "metadata": metadata,  # Metadata specific to this JSON chunk
-                }
-            )
-        return chunks_output
-
-    def _chunk_json_dict(
-        self, json_dict: Dict[str, Any], max_size: int, overlap: int
-    ) -> List[Dict[str, Any]]:
-        # This method is quite specific to a schema with a 'data' key.
-        # Consider making 'chunkable_key' an option.
-        logger.debug(
-            f"Chunking JSON dict: max_keys_in_data_per_chunk={max_size}, overlap_keys={overlap}"
-        )
-        chunkable_key = self._get_option(
-            "json_chunkable_data_key", "data"
-        )  # e.g. {'json_chunkable_data_key': 'entries'}
-
-        if chunkable_key not in json_dict or not isinstance(
-            json_dict[chunkable_key], dict
-        ):
-            msg = f"Chunkable key '{chunkable_key}' not found in JSON dictionary or is not a dictionary itself."
-            logger.error(msg)
-            raise InvalidInputError(msg)
-
-        if max_size <= 0:
-            raise ValueError("max_size for JSON dict chunking must be positive.")
-        if overlap < 0:
-            raise ValueError(f"overlap must be non-negative, got {overlap}")
-        if overlap >= max_size:
-            raise ValueError(
-                f"JSON dict overlap {overlap} must be less than max_size {max_size}"
-            )
-
-        data_to_chunk = json_dict[chunkable_key]
-        all_keys = list(data_to_chunk.keys())
-        total_keys = len(all_keys)
-
-        chunks_output = []
-        step = max_size - overlap
-        if step <= 0:
-            step = max_size
-
-        # Preserve other parts of the original dictionary
-        preserved_data_shell = {
-            k: v for k, v in json_dict.items() if k != chunkable_key
-        }
-
-        for i in range(0, total_keys, step):
-            current_chunk_keys = all_keys[i : i + max_size]
-            # Note: Overlap for dict keys might be complex if order isn't guaranteed or meaningful.
-            # This simple slicing assumes order is somewhat stable or user understands the implication.
-
-            chunk_data_content = {key: data_to_chunk[key] for key in current_chunk_keys}
-
-            # Create the new chunked JSON structure
-            new_json_chunk = preserved_data_shell.copy()
-            new_json_chunk[chunkable_key] = chunk_data_content
-
-            metadata = {
-                "original_dict_total_keys_in_data": total_keys,
-                "key_start_index_in_data": i,  # Based on original list of keys
-                "keys_in_this_chunk_data": len(current_chunk_keys),
-            }
-            chunks_output.append({"json": new_json_chunk, "metadata": metadata})
-        return chunks_output
-
-        # In tldw_Server_API/app/core/Utils/Chunk_Lib.py
-
-    def _chunk_ebook_by_chapters(
-        self,
-        text: str,
-        max_size: int,
-        overlap: int,
-        custom_pattern: Optional[str],
-        language: str,
-    ) -> List[Dict[str, Any]]:
-        logger.debug(
-            f"Chunking Ebook by Chapters. Custom pattern: {custom_pattern}, Lang: {language}"
-        )
-
-        # ... The rest of this method's implementation is unchanged ...
-        chapter_patterns = [
-            custom_pattern,
-            r"^\s*chapter\s+\d+([:.\-\s].*)?$",
-            r"^\s*chapter\s+[ivxlcdm]+([:.\-\s].*)?$",
-            r"^\s*(Part|Book|Volume)\s+[A-Za-z0-9]+([:.\-\s].*)?$",
-            r"^\s*\d+\s*([:.\-\s][^\r\n]{1,150}|[^\r\n]{1,150})?$",
-            r"^\s*#{1,4}\s+[^\r\n]+",
-            r"^\s*(PREFACE|INTRODUCTION|CONTENTS|APPENDIX|EPILOGUE|PROLOGUE|ACKNOWLEDGMENTS?|SECTION\s*\d*|UNIT\s*\d*)\s*$",
-        ]
-        active_patterns = [p for p in chapter_patterns if p is not None]
-        if not active_patterns:
-            logger.warning("No chapter patterns available for ebook chunking.")
-            if text.strip():
-                return [
-                    {
-                        "text": text,
-                        "metadata": {
-                            "chunk_type": "single_document_no_chapters",
-                            "chapter_title": "Full Document",
-                        },
-                    }
-                ]
-            return []
-
-        lines = text.splitlines()
-        chapter_splits: List[Dict[str, Any]] = []
-        chapter_number = 0
-        first_heading_index = -1
-        first_heading_title_text = "Preface or Introduction"
-        current_scan_patterns = list(active_patterns)
-        for line_idx, line_content in enumerate(lines):
-            for pattern_str in list(current_scan_patterns):
-                try:
-                    if re.match(pattern_str, line_content, re.IGNORECASE):
-                        first_heading_index = line_idx
-                        first_heading_title_text = line_content.strip()
-                        break
-                except re.error as re_e:
-                    logger.warning(
-                        f"Regex error in chapter pattern '{pattern_str}' during initial scan: {re_e}. Disabling this pattern."
-                    )
-                    if pattern_str in current_scan_patterns:
-                        current_scan_patterns.remove(pattern_str)
-                    if pattern_str in active_patterns:
-                        active_patterns.remove(pattern_str)
-            if first_heading_index != -1:
-                break
-        if first_heading_index > 0:
-            preface_content_lines = lines[:first_heading_index]
-            preface_text = "\n".join(preface_content_lines).strip()
-            if preface_text:
-                chapter_number += 1
-                chapter_splits.append(
-                    {
-                        "text": preface_text,
-                        "metadata": {
-                            "chunk_type": "preface",
-                            "chapter_number": chapter_number,
-                            "chapter_title": "Preface/Introduction",
-                            "detected_chapter_pattern": "preface_heuristic",
-                        },
-                    }
-                )
-        elif first_heading_index == -1:
-            if text.strip():
-                logger.warning(
-                    "No chapter headings found using patterns. Returning document as a single chapter chunk."
-                )
-                return [
-                    {
-                        "text": text,
-                        "metadata": {
-                            "chunk_type": "single_document_no_chapters",
-                            "chapter_title": "Full Document",
-                        },
-                    }
-                ]
-            return []
-        start_line_of_current_chapter_content = first_heading_index
-        current_chapter_title = first_heading_title_text
-        current_chapter_pattern_str = "unknown"
-        if first_heading_index != -1 and first_heading_index < len(lines):
-            for p_str in active_patterns:
-                if re.match(p_str, lines[first_heading_index], re.IGNORECASE):
-                    current_chapter_pattern_str = p_str
-                    break
-        for line_idx in range(first_heading_index + 1, len(lines)):
-            line_content = lines[line_idx]
-            is_new_chapter_heading = False
-            new_heading_pattern_str = None
-            for pattern_str in active_patterns:
-                try:
-                    if re.match(pattern_str, line_content, re.IGNORECASE):
-                        is_new_chapter_heading = True
-                        new_heading_pattern_str = pattern_str
-                        break
-                except re.error as re_e_inner:
-                    logger.warning(
-                        f"Regex error (inner loop) for pattern '{pattern_str}': {re_e_inner}."
-                    )
-            if is_new_chapter_heading:
-                chapter_content_lines = lines[
-                    start_line_of_current_chapter_content:line_idx
-                ]
-                chapter_text = "\n".join(chapter_content_lines).strip()
-                if chapter_text:
-                    chapter_number += 1
-                    chunk_type = "chapter"
-                    if (
-                        chapter_number == 1
-                        and first_heading_index == 0
-                        and (
-                            current_chapter_title.lower() == "preface"
-                            or current_chapter_title.lower() == "introduction"
-                            or current_chapter_title == "Preface or Introduction"
-                        )
-                    ):
-                        chunk_type = "preface"
-                    final_metadata_title = current_chapter_title
-                    if chunk_type == "preface":
-                        final_metadata_title = "Preface/Introduction"
-                    chapter_splits.append(
-                        {
-                            "text": chapter_text,
-                            "metadata": {
-                                "chunk_type": chunk_type,
-                                "chapter_number": chapter_number,
-                                "chapter_title": final_metadata_title,
-                                "detected_chapter_pattern": current_chapter_pattern_str,
-                            },
+                raw = self._engine.chunk_text(
+                    text,
+                    method=resolved_method,
+                    max_size=engine_options.get("max_size"),
+                    overlap=engine_options.get("overlap"),
+                    language=engine_options.get("language"),
+                    **{
+                        k: v
+                        for k, v in engine_options.items()
+                        if k
+                        not in {
+                            "method",
+                            "max_size",
+                            "overlap",
+                            "language",
                         }
-                    )
-                start_line_of_current_chapter_content = line_idx
-                current_chapter_title = line_content.strip()
-                current_chapter_pattern_str = new_heading_pattern_str or "unknown"
-        if start_line_of_current_chapter_content < len(lines):
-            last_chapter_content_lines = lines[start_line_of_current_chapter_content:]
-            last_chapter_text = "\n".join(last_chapter_content_lines).strip()
-            if last_chapter_text:
-                chapter_number += 1
-                chunk_type = "chapter"
-                is_first_processed_block = not chapter_splits
-                condition_is_first_block_and_preface_like_title = (
-                    is_first_processed_block
-                    or (chapter_number == 1 and first_heading_index == 0)
-                ) and (
-                    current_chapter_title.lower() == "preface"
-                    or current_chapter_title.lower() == "introduction"
-                    or current_chapter_title == "Preface or Introduction"
+                    },
                 )
-                if condition_is_first_block_and_preface_like_title:
-                    chunk_type = "preface"
-                final_metadata_title = current_chapter_title
-                if chunk_type == "preface":
-                    final_metadata_title = "Preface/Introduction"
-                chapter_splits.append(
-                    {
-                        "text": last_chapter_text,
-                        "metadata": {
-                            "chunk_type": chunk_type,
-                            "chapter_number": chapter_number,
-                            "chapter_title": final_metadata_title,
-                            "detected_chapter_pattern": current_chapter_pattern_str,
-                        },
-                    }
-                )
-        final_chapter_chunks: List[Dict[str, Any]] = []
-        for i, chap_data in enumerate(chapter_splits):
-            chap_data["metadata"]["chunk_index_in_book"] = i + 1
-            chap_data["metadata"]["total_chapters_detected"] = len(chapter_splits)
+            finally:
+                self._engine.llm_call_func = previous_func
+                self._engine.llm_config = previous_cfg
+            return [chunk for chunk in raw if isinstance(chunk, str)]
 
-            # Check if we need to sub-chunk this chapter
-            tokenizer_available = False
-            chapter_token_count = 0
-            try:
-                chapter_token_count = self.token_chunker.count_tokens(chap_data["text"])
-                tokenizer_available = True
-            except Exception as e_tok_check:
-                logger.warning(
-                    f"Could not count tokens for chapter sub-chunking: {e_tok_check}"
-                )
-
-            if max_size > 0 and tokenizer_available and chapter_token_count > max_size:
-                logger.info(
-                    f"Chapter '{chap_data['metadata']['chapter_title']}' (length {chapter_token_count} tokens) exceeds max_size {max_size}. Sub-chunking."
-                )
-                sub_chunks = self._chunk_text_by_tokens(
-                    chap_data["text"],
-                    max_tokens=max_size,
-                    overlap=overlap if overlap < max_size else max_size // 5,
-                )
-                for sub_idx, sub_chunk_text in enumerate(sub_chunks):
-                    sub_chunk_metadata = chap_data["metadata"].copy()
-                    sub_chunk_metadata["sub_chunk_index_in_chapter"] = sub_idx + 1
-                    sub_chunk_metadata["total_sub_chunks_in_chapter"] = len(sub_chunks)
-                    sub_chunk_metadata["chunk_type"] = "chapter_sub_chunk"
-                    final_chapter_chunks.append(
-                        {"text": sub_chunk_text, "metadata": sub_chunk_metadata}
-                    )
-            else:
-                final_chapter_chunks.append(chap_data)
-        return final_chapter_chunks
-
-    def _extract_xml_structure_recursive(
-        self, element, path=""
-    ) -> List[Tuple[str, str]]:
-        """Helper for _chunk_xml: Recursively extract XML structure and content."""
-        results = []
-        current_path = f"{path}/{element.tag}" if path else element.tag
-
-        if element.text and element.text.strip():
-            results.append((current_path, element.text.strip()))
-        if element.attrib:
-            for key, value in element.attrib.items():
-                results.append((f"{current_path}/@{key}", value))
-        for child in element:
-            results.extend(self._extract_xml_structure_recursive(child, current_path))
-        # Include tail text if present (text after a child element, within its parent)
-        if element.tail and element.tail.strip():
-            results.append(
-                (f"{path}/{element.tag}/#tail", element.tail.strip())
-            )  # Path indicates it's tail of current_path
-        return results
-
-    def _chunk_xml(
-        self, xml_text: str, max_size: int, overlap: int, language: str
-    ) -> List[Dict[str, Any]]:
-        # max_size is in words for the content of combined XML elements
-        # overlap is in number of XML elements (path-content pairs)
-        logger.debug(
-            f"Chunking XML: max_words_per_chunk_content={max_size}, overlap_elements={overlap}, Lang: {language}"
-        )
-        try:
-            root = ET.fromstring(xml_text)
-        except ET.ParseError as e:
-            logger.error(f"XML parsing error: {e}")
-            raise InvalidInputError(f"Invalid XML content: {e}") from e
-
-        xml_elements_with_paths = self._extract_xml_structure_recursive(root)
-        if not xml_elements_with_paths:
-            return []
-
-        if max_size <= 0:
-            raise ValueError("max_size for XML chunking must be positive.")
-        if (
-            overlap >= len(xml_elements_with_paths) and len(xml_elements_with_paths) > 0
-        ):  # Check if overlap makes sense
-            logger.warning(
-                f"XML overlap elements {overlap} >= total elements {len(xml_elements_with_paths)}. Setting overlap to 0."
-            )
-            overlap = 0
-        elif overlap < 0:
-            overlap = 0
-
-        chunks_output = []
-        current_chunk_elements = []  # List of (path, content) tuples
-        current_word_count = 0
-
-        # Step is by element, but decision to cut is by word count of accumulated content
-        for i in range(len(xml_elements_with_paths)):
-            path, content = xml_elements_with_paths[i]
-            content_word_count = len(content.split())
-
-            if (
-                current_word_count + content_word_count > max_size
-                and current_chunk_elements
-            ):
-                # Finalize current chunk
-                chunk_text_parts = [f"{p}: {c}" for p, c in current_chunk_elements]
-                chunk_metadata = {
-                    "xml_paths": [p for p, _ in current_chunk_elements],
-                    "root_tag": root.tag,
-                    "original_xml_attributes": dict(root.attrib),
-                    "num_xml_elements_in_chunk": len(current_chunk_elements),
+        raw = self._engine.chunk_text(
+            text,
+            method=resolved_method,
+            max_size=engine_options.get("max_size"),
+            overlap=engine_options.get("overlap"),
+            language=engine_options.get("language"),
+            **{
+                k: v
+                for k, v in engine_options.items()
+                if k
+                not in {
+                    "method",
+                    "max_size",
+                    "overlap",
+                    "language",
                 }
-                chunks_output.append(
-                    {"text": "\n".join(chunk_text_parts), "metadata": chunk_metadata}
-                )
+            },
+        )
+        return [chunk for chunk in raw if isinstance(chunk, str)]
 
-                # Start new chunk with overlap
-                if overlap > 0 and len(current_chunk_elements) > overlap:
-                    current_chunk_elements = current_chunk_elements[-overlap:]
-                else:  # Not enough elements for full overlap, or overlap is 0
-                    current_chunk_elements = []
-                current_word_count = sum(
-                    len(c.split()) for _, c in current_chunk_elements
-                )
-
-            current_chunk_elements.append((path, content))
-            current_word_count += content_word_count
-
-        # Add the last remaining chunk
-        if current_chunk_elements:
-            chunk_text_parts = [f"{p}: {c}" for p, c in current_chunk_elements]
-            chunk_metadata = {
-                "xml_paths": [p for p, _ in current_chunk_elements],
-                "root_tag": root.tag,
-                "original_xml_attributes": dict(root.attrib),
-                "num_xml_elements_in_chunk": len(current_chunk_elements),
-            }
-            chunks_output.append(
-                {"text": "\n".join(chunk_text_parts), "metadata": chunk_metadata}
-            )
-
-        return chunks_output
-
+    # ------------------------------------------------------------------
+    # Rolling summarization (ported verbatim from the legacy module; the
+    # engine's strategy uses a different LLM-call signature, see chunk_text).
+    # ------------------------------------------------------------------
     def _rolling_summarize(
         self,
         text_to_summarize: str,
-        llm_summarize_step_func: Callable,  # The function that will call the actual LLM API
-        llm_api_config: Dict[
-            str, Any
-        ],  # Contains {'api_name', 'model', 'api_key', 'temp', etc.}
+        llm_summarize_step_func: Callable,
+        llm_api_config: Dict[str, Any],
         detail: float,
         min_chunk_tokens: int,
         chunk_delimiter: str,
@@ -1686,6 +1114,34 @@ class Chunker:
         system_prompt_content: str,
         additional_instructions: Optional[str],
     ) -> str:
+        """Summarize text by rolling over delimiter-based chunks (legacy).
+
+        Args:
+            text_to_summarize: The text to summarize.
+            llm_summarize_step_func: Blocking callable receiving ONE payload
+                dict ({"api_name", "input_data", "custom_prompt_arg",
+                "api_key", "system_message", "temp", "streaming", "model",
+                "max_tokens"}) and returning a summary string.
+            llm_api_config: Caller LLM config ({'api_name', 'model',
+                'api_key', 'temperature', ...}).
+            detail: 0..1 granularity controlling the number of summary steps.
+            min_chunk_tokens: Minimum tokens per LLM input chunk.
+            chunk_delimiter: Delimiter to split the input on (default ".").
+            recursive_summarization: Feed the previous summary as context.
+            verbose: Log progress and use a progress bar.
+            system_prompt_content: Base system prompt for each LLM call.
+            additional_instructions: Optional extra instructions appended to
+                the system prompt.
+
+        Returns:
+            str: The final summary (parts joined by "\\n\\n---\\n\\n").
+
+        Raises:
+            ChunkingError: Fail-closed (spec §8.3) -- if any per-part LLM
+                call raises, returns an ``"Error: ..."`` string, or returns
+                a non-string, the whole summarization aborts with a message
+                naming the failed part (no marker text is persisted).
+        """
         logger.info(f"Rolling summarization called. Detail: {detail}")
         text_token_length = self.token_chunker.count_tokens(text_to_summarize)
         max_summarization_chunks = max(1, text_token_length // min_chunk_tokens)
@@ -1723,7 +1179,7 @@ class Chunker:
             )
 
             # Define a dummy tqdm if not found, so the loop doesn't break
-            def tqdm(iterable, *args, **kwargs):
+            def tqdm(iterable, *args, **kwargs):  # noqa: F811
                 return iterable
 
         accumulated_summaries = []
@@ -1758,11 +1214,14 @@ class Chunker:
                 if isinstance(summary_content, str) and summary_content.startswith(
                     "Error:"
                 ):
+                    # Fail closed (spec §8.3): persisting an error marker as
+                    # document text is silent data corruption.
                     logger.error(
                         f"LLM call for summarization part {i + 1} failed: {summary_content}"
                     )
-                    accumulated_summaries.append(
-                        f"[Summarization failed for this part: {chunk_for_llm[:100]}...]"
+                    raise ChunkingError(
+                        f"Rolling-summarize LLM call failed for part {i + 1}: "
+                        f"{summary_content}"
                     )
                 elif isinstance(summary_content, str):
                     accumulated_summaries.append(summary_content)
@@ -1770,17 +1229,23 @@ class Chunker:
                     logger.error(
                         f"LLM call for summarization part {i + 1} returned non-string: {type(summary_content)}"
                     )
-                    accumulated_summaries.append(
-                        f"[Summarization error for this part (unexpected type): {chunk_for_llm[:100]}...]"
+                    raise ChunkingError(
+                        f"Rolling-summarize LLM call failed for part {i + 1}: "
+                        f"provider returned unexpected type "
+                        f"{type(summary_content).__name__}"
                     )
 
+            except ChunkingError:
+                # The fail-closed raises above (spec §8.3) pass through
+                # unwrapped -- the broad handler below must not re-wrap them.
+                raise
             except Exception as e_llm:
                 logger.opt(exception=True).error(
                     f"Exception calling llm_summarize_step_func for part {i + 1}: {e_llm}"
                 )
-                accumulated_summaries.append(
-                    f"[Exception during summarization for this part: {chunk_for_llm[:100]}...]"
-                )
+                raise ChunkingError(
+                    f"Rolling-summarize LLM call failed for part {i + 1}: {e_llm}"
+                ) from e_llm
 
         final_summary = "\n\n---\n\n".join(
             accumulated_summaries
@@ -1796,6 +1261,7 @@ class Chunker:
         header: Optional[str] = None,
         add_ellipsis_for_overflow: bool = True,
     ) -> Tuple[List[str], List[List[int]], int]:
+        """Combine small chunks into blocks under max_tokens (legacy helper)."""
         dropped_chunk_count = 0
         output_combined_texts = []
         output_original_indices = []  # To track which original chunks went into which combined text
@@ -1811,15 +1277,6 @@ class Chunker:
                 else [header, chunk_content]
             )
 
-            # If current_candidate_text_parts is empty and header exists, it means we are starting a new combination.
-            # The header should only be added once at the beginning of such a combination.
-            if not current_candidate_text_parts and header:
-                # This logic seems slightly off if header is meant per combined chunk rather than per original chunk.
-                # Assuming header is for the combined block.
-                # Let's simplify: if current_candidate_text_parts is empty, it might start with header.
-                # The passed `chunks` list are the primary content.
-                pass  # Header is already in current_candidate_text_parts if it's the very start.
-
             test_text = chunk_delimiter.join(parts_to_test)
             token_count = self.token_chunker.count_tokens(test_text)
 
@@ -1830,15 +1287,6 @@ class Chunker:
                     or len(current_candidate_text_parts) > 1
                     or current_candidate_text_parts[0] != header
                 ):  # Check if it's more than just a header
-                    if add_ellipsis_for_overflow:
-                        # Check if adding ellipsis to the *previous* candidate (current_candidate_text_parts) is valid
-                        # This part is tricky. Ellipsis usually indicates the *new* chunk couldn't fit.
-                        # The original code added ellipsis if the *new* chunk made it overflow.
-                        # Let's stick to: if adding the current 'chunk_content' overflows, then the 'current_candidate_text_parts' is finalized.
-                        # If 'add_ellipsis_for_overflow' is true, it means the *dropped* chunk_content is represented by ellipsis.
-                        # This seems more aligned with the original 'dropped_chunk_count'.
-                        pass  # Ellipsis logic might be better applied if a single chunk is too big.
-
                     output_combined_texts.append(
                         chunk_delimiter.join(current_candidate_text_parts)
                     )
@@ -1866,7 +1314,6 @@ class Chunker:
                             [header] if header else []
                         )  # Reset for next
                         current_candidate_indices = []
-                        # continue # Skip to next chunk_content
                 else:  # current_candidate_text_parts was empty or just header, and new chunk overflows
                     logger.warning(
                         f"Single chunk (index {chunk_idx}, content: '{chunk_content[:50]}...') itself exceeds max_tokens ({max_tokens}). It will be dropped."
@@ -1876,9 +1323,6 @@ class Chunker:
                     # current_candidate_indices remains []
             else:
                 # It fits, so add current chunk_content to candidate
-                # If current_candidate_text_parts is empty and there's a header, it's already there.
-                # If it's not empty, just append.
-                # If it's empty and no header, it becomes the first part.
                 if not current_candidate_text_parts:  # Starting fresh
                     if header:
                         current_candidate_text_parts = [header, chunk_content]
@@ -1909,18 +1353,11 @@ class Chunker:
         max_tokens_for_llm_input: int,  # Max tokens for each final combined chunk for LLM
         delimiter: str,
     ) -> Tuple[List[str], List[List[int]], int]:
-        # This function first splits the input_string by delimiter,
-        # then combines these smaller parts into larger blocks suitable for an LLM,
-        # ensuring no block exceeds max_tokens_for_llm_input.
-
+        """Split input on delimiter, then recombine under the token cap (legacy)."""
         initial_parts = input_string.split(delimiter)
 
-        # We need to re-add the delimiter for context, but only *between* parts, not at the very end of the LLM input block.
-        # The _combine_chunks_for_llm will handle joining with its own delimiter.
-        # So, we will pass parts and let _combine_chunks_for_llm join them.
-        # If the original delimiter is important *within* the LLM's view of a combined chunk, it should be part of 'initial_parts'.
-
-        # Let's adjust how parts are formed: append delimiter to all but the last part from the split.
+        # Re-add the delimiter for context, but only *between* parts, not at
+        # the very end of the LLM input block.
         reconstructed_parts = []
         for i, part_text in enumerate(initial_parts):
             if i < len(initial_parts) - 1:  # Not the last part
@@ -1935,56 +1372,70 @@ class Chunker:
         if not reconstructed_parts:
             return [], [], 0
 
-        # Now, combine these 'reconstructed_parts' into blocks that are under 'max_tokens_for_llm_input'.
-        # The delimiter for _combine_chunks_for_llm should be something that makes sense for joining these parts,
-        # often an empty string if the delimiter is already part of reconstructed_parts, or a space.
-        # Let's use "" as the delimiter for _combine_chunks_for_llm, as reconstructed_parts already contain their trailing delimiters.
-
         combined_texts_for_llm, original_indices, dropped_count = (
             self._combine_chunks_for_llm(
-                chunks=reconstructed_parts,  # These are the parts including their original delimiters
+                chunks=reconstructed_parts,
                 max_tokens=max_tokens_for_llm_input,
                 chunk_delimiter="",  # Join these parts directly
-                add_ellipsis_for_overflow=True,  # Or make this an option
+                add_ellipsis_for_overflow=True,
             )
         )
 
-        # The original `chunk_on_delimiter` added the delimiter to the end of each *combined_chunk*.
-        # This might not be what we want for direct LLM input if the LLM is processing it as a whole.
-        # If the goal is that each item in `combined_texts_for_llm` *looks like* it was split by `delimiter`
-        # only where appropriate, the current `reconstructed_parts` logic is better.
-        # The example `combined_chunks = [f"{chunk}{delimiter}" for chunk in combined_chunks]` is removed.
-
         return combined_texts_for_llm, original_indices, dropped_count
 
+    # ------------------------------------------------------------------
+    # Convenience: same as legacy, produce the metadata-rich shape directly.
+    # ------------------------------------------------------------------
+    def process(self, text: str, method: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Chunk and return the metadata-rich flat shape (helper).
 
-# ... (end of Chunker class) ...
+        Args:
+            text (str): The text to chunk.
+            method (Optional[str]): Method override.
 
-# The global `improved_chunking_process` function (defined in Part 1)
-# already instantiates and uses `Chunker`.
+        Returns:
+            List[Dict[str, Any]]: Chunks in the improved_chunking_process
+            shape (flat contract).
+        """
+        return improved_chunking_process(
+            text,
+            chunk_options_dict={**self.options, **({"method": method} if method else {})},
+            tokenizer_name_or_path=self._tokenizer_path,
+        )
 
-# Remove old global functions that are now methods in Chunker:
-# detect_language (done)
-# chunk_text (done, is main dispatcher)
-# chunk_text_by_words, _sentences, _paragraphs, _tokens (done)
-# post_process_chunks (done)
-# adaptive_chunk_size, adaptive_chunking (partially done, integrated into chunk_text and as _adaptive_... methods)
-# multi_level_chunking (done)
-# semantic_chunking (done)
-# chunk_text_by_json, chunk_json_list, chunk_json_dict (done)
-# chunk_ebook_by_chapters (done)
-# chunk_xml, extract_xml_structure (done)
-# rolling_summarize, combine_chunks_with_no_minimum, chunk_on_delimiter (done, integrated as _rolling_summarize and helpers)
 
-# The following functions might still be useful as standalone utilities or need review if they should be class methods:
-# - load_document (utility, can stay global or become static method if Chunker needs to load files)
-# - determine_chunk_position (utility for metadata, improved_chunking_process handles relative_position differently)
-# - get_chunk_metadata (largely superseded or its logic integrated elsewhere)
-# - chunk_for_embedding (uses improved_chunking_process, so it's fine. Might add a Chunker arg)
-# - process_document_with_metadata (uses improved_chunking_process)
+#######################################################################################################################
+# Module-level functions (legacy signatures)
+#
 
-# Let's refine `chunk_for_embedding` and `process_document_with_metadata`
-# to potentially accept a Chunker instance or Chunker options.
+# Attach the tokenizer-resolution seam before any chunking runs (see
+# _install_tokenizer_resolve_alias for why it must exist).
+_install_tokenizer_resolve_alias()
+
+
+def chunk_xml(
+    xml_text: str,
+    options: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """Chunk XML content into structured chunks (§7.1: name restored).
+
+    Wraps the engine's XML strategy via ``process_text`` so the result keeps
+    the legacy ``{"text": str, "metadata": dict}`` chunk shape with legacy
+    metadata enrichment (chunk_index, total_chunks, chunk_content_hash ...).
+
+    Args:
+        xml_text (str): The XML string to chunk.
+        options (Optional[Dict[str, Any]]): Chunk options (max_size is in
+            words of combined element content; overlap is in elements).
+        **kwargs: Additional legacy passthroughs (tokenizer_name_or_path, ...).
+
+    Returns:
+        List[Dict[str, Any]]: Chunks with text and metadata.
+    """
+    opts: Dict[str, Any] = dict(options or {})
+    opts["method"] = ChunkingMethod.XML.value
+    return improved_chunking_process(xml_text, chunk_options_dict=opts, **kwargs)
 
 
 def chunk_for_embedding(
@@ -1992,14 +1443,24 @@ def chunk_for_embedding(
     file_name: str,
     custom_chunk_options: Optional[Dict[str, Any]] = None,
     tokenizer_name_or_path: str = "gpt2",
-    llm_call_function: Optional[Callable] = None,  # Added
-    llm_api_config: Optional[Dict[str, Any]] = None,  # Added
+    llm_call_function: Optional[Callable] = None,
+    llm_api_config: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Prepares chunks specifically for embedding, adding headers with context.
+    """Prepares chunks specifically for embedding, adding headers with context.
+
     Uses improved_chunking_process internally.
+
+    Args:
+        text (str): Document text.
+        file_name (str): Source file name for the chunk headers.
+        custom_chunk_options (Optional[Dict[str, Any]]): Chunking options.
+        tokenizer_name_or_path (str): Tokenizer name or path.
+        llm_call_function (Optional[Callable]): LLM call function passthrough.
+        llm_api_config (Optional[Dict[str, Any]]): LLM API config passthrough.
+
+    Returns:
+        List[Dict[str, Any]]: Embedding-oriented chunks with headers.
     """
-    # `improved_chunking_process` will create a Chunker instance with these options
     logger.info(
         f"Chunking for embedding. File: {file_name}. Custom options: {custom_chunk_options}"
     )
@@ -2007,20 +1468,17 @@ def chunk_for_embedding(
         text,
         chunk_options_dict=custom_chunk_options,
         tokenizer_name_or_path=tokenizer_name_or_path,
-        llm_call_function_for_chunker=llm_call_function,  # Pass through
-        llm_api_config_for_chunker=llm_api_config,  # Pass through
+        llm_call_function_for_chunker=llm_call_function,
+        llm_api_config_for_chunker=llm_api_config,
     )
-    # The options used are now part of the Chunker instance within improved_chunking_process
 
     chunked_text_with_headers_list = []
-    total_chunks_count = len(chunks_from_improved_process)  # Get from the result
+    total_chunks_count = len(chunks_from_improved_process)
 
     for i, chunk_data in enumerate(chunks_from_improved_process):
-        # chunk_data is {'text': ..., 'metadata': ...}
         chunk_text_content = chunk_data["text"]
-        chunk_metadata = chunk_data["metadata"]  # This metadata is already rich
+        chunk_metadata = chunk_data["metadata"]
 
-        # Determine position string (optional, could make this a helper)
         relative_pos = chunk_metadata.get("relative_position", 0.0)
         position_description = "middle"
         if relative_pos < 0.33:
@@ -2028,26 +1486,21 @@ def chunk_for_embedding(
         elif relative_pos > 0.66:
             position_description = "end"
 
-        # Construct header for embedding context
-        # The metadata already contains chunk_index and total_chunks from improved_chunking_process
         chunk_header = f"""[DOCUMENT: {file_name}]
 [CHUNK: {chunk_metadata.get("chunk_index", i + 1)} OF {chunk_metadata.get("total_chunks", total_chunks_count)}]
 [POSITION: This chunk is from the {position_description} of the document.]
 ---BEGIN CHUNK CONTENT---
 """
-        # Add more from metadata if useful, e.g., chunk_metadata.get('initial_document_json_metadata')
-        # or specific things from ebook/xml if the method was that.
 
         full_chunk_text_for_embedding = (
             chunk_header + chunk_text_content + "\n---END CHUNK CONTENT---"
         )
 
-        # Create a new structure for the embedding-specific output
         embedding_chunk_data = {
             "text_for_embedding": full_chunk_text_for_embedding,
             "original_chunk_text": chunk_text_content,
             "source_document_name": file_name,
-            "chunk_metadata": chunk_metadata,  # Carry over all the detailed metadata
+            "chunk_metadata": chunk_metadata,
         }
         chunked_text_with_headers_list.append(embedding_chunk_data)
 
@@ -2059,19 +1512,29 @@ def process_document_with_metadata(
     chunk_options_dict: Dict[str, Any],
     document_metadata: Dict[str, Any],
     tokenizer_name_or_path: str = "gpt2",
-    llm_call_function: Optional[Callable] = None,  # Added
-    llm_api_config: Optional[Dict[str, Any]] = None,  # Added
+    llm_call_function: Optional[Callable] = None,
+    llm_api_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    Processes a document, chunks it, and associates document-level metadata with the chunked output.
+    """Processes a document, chunks it, and associates document-level metadata.
+
+    Args:
+        text (str): Document text.
+        chunk_options_dict (Dict[str, Any]): Chunking options.
+        document_metadata (Dict[str, Any]): Metadata to attach to every chunk.
+        tokenizer_name_or_path (str): Tokenizer name or path.
+        llm_call_function (Optional[Callable]): LLM call function passthrough.
+        llm_api_config (Optional[Dict[str, Any]]): LLM API config passthrough.
+
+    Returns:
+        Dict[str, Any]: {"original_document_metadata": ..., "chunks": ...}.
     """
     logger.info(f"Processing document with metadata. Options: {chunk_options_dict}")
     chunks_result = improved_chunking_process(
         text,
         chunk_options_dict=chunk_options_dict,
         tokenizer_name_or_path=tokenizer_name_or_path,
-        llm_call_function_for_chunker=llm_call_function,  # Pass through
-        llm_api_config_for_chunker=llm_api_config,  # Pass through
+        llm_call_function_for_chunker=llm_call_function,
+        llm_api_config_for_chunker=llm_api_config,
     )
     for chunk_item in chunks_result:
         if "document_level_metadata" not in chunk_item["metadata"]:
@@ -2080,28 +1543,70 @@ def process_document_with_metadata(
     return {"original_document_metadata": document_metadata, "chunks": chunks_result}
 
 
-# Keep improved_chunking_process and process_document_with_metadata outside the class for now,
-# or make them static methods / helper functions that instantiate and use the Chunker.
-# For now, let's adapt improved_chunking_process to use the Chunker class.
-
-
 def improved_chunking_process(
     text: str,
     chunk_options_dict: Optional[Dict[str, Any]] = None,
     tokenizer_name_or_path: str = "gpt2",
-    template: Optional[str] = None,
-    template_manager: Optional[ChunkingTemplateManager] = None,
-    # Parameters for LLM calls if needed by a chunking method
+    template: Optional[Any] = None,
+    template_manager: Optional[Any] = None,
     llm_call_function_for_chunker: Optional[Callable] = None,
     llm_api_config_for_chunker: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
+    """Chunks text and returns chunks with legacy metadata plus flat keys.
+
+    Mirrors the legacy flow exactly: builds a ``Chunker`` adapter (which
+    resolves the effective options -- defaults <- template <- explicit --
+    and, critically, routes ``rolling_summarize`` through the ported legacy
+    payload-dict implementation), calls its ``chunk_text``, then enriches
+    every chunk with the legacy metadata (chunk_index 1-based, total_chunks,
+    chunk_method, max_size_setting, overlap_setting, language,
+    relative_position, adaptive_chunking_used, chunk_content_hash) and the
+    flat §6.3.2 keys (top-level start_char/end_char/word_count the DB seam
+    reads), synthesizing offsets against the source text when the chunker
+    did not provide them.
+
+    On the delegated ``rolling_summarize`` path, LLM-call failures raise
+    ``ChunkingError`` (fail-closed, spec §8.3): a provider exception, an
+    ``"Error: ..."`` result string, or a non-string result each abort the
+    chunking with a message naming the failed part -- matching the engine
+    strategy's own fail-closed contract
+    (Tests/Chunking/test_rolling_summarize_fail_closed.py). Legacy marker
+    text is never persisted as document content.
+
+    Args:
+        text (str): The text to chunk.
+        chunk_options_dict (Optional[Dict[str, Any]]): Legacy chunk options.
+        tokenizer_name_or_path (str): Tokenizer name or path.
+        template (Optional[Dict[str, Any]]): Pre-resolved template dict
+            (spec §8.2); a bare name string raises ``TemplateError``
+            pointing at ``template_runtime.resolve_template``.
+        template_manager (Optional[Any]): Accepted and ignored (spec §8.2;
+            legacy signature compatibility).
+        llm_call_function_for_chunker (Optional[Callable]): LLM call function
+            (rolling_summarize).
+        llm_api_config_for_chunker (Optional[Dict[str, Any]]): LLM API config.
+
+    Returns:
+        List[Dict[str, Any]]: Chunks, each ``{"text": str, "metadata": dict,
+        "start_char": int, "end_char": int, "word_count": int}``.
+
+    Raises:
+        ChunkingError: On chunking failures, a missing real tokenizer for
+            the tokens method, or tokens overlap >= max_size.
+        InvalidChunkingMethodError: If the requested method is unsupported.
+        TemplateError: If ``template`` is a bare name string or an invalid
+            flat template dict.
+    """
     logger.info("Improved chunking process started...")
     logger.debug(f"Received chunk_options_dict: {chunk_options_dict}")
     logger.debug(
         f"Text length: {len(text)} characters, tokenizer: {tokenizer_name_or_path}"
     )
     if template:
-        logger.debug(f"Using template: {template}")
+        template_label = (
+            template.get("name") if isinstance(template, dict) else template
+        )
+        logger.debug(f"Using pre-resolved template: {template_label}")
 
     chunker_instance = Chunker(
         options=chunk_options_dict,
@@ -2109,153 +1614,125 @@ def improved_chunking_process(
         template=template,
         template_manager=template_manager,
     )
-
-    # Get effective options from the chunker instance (these are now resolved)
-    effective_options = chunker_instance.options.copy()  # Use a copy
-    # (JSON and header extraction logic using `text` and storing in `json_content_metadata`, `header_text_content`, update `processed_text`)
-    # This was the previous flow:
-    json_content_metadata = {}
-    processed_text = text
-    try:
-        if processed_text.strip().startswith("{"):
-            json_end_match = re.search(r"\}\s*\n", processed_text)
-            if json_end_match:
-                json_end_index = json_end_match.end()
-                potential_json_str = processed_text[:json_end_index].strip()
-                try:
-                    json_content_metadata = json.loads(potential_json_str)
-                    processed_text = processed_text[json_end_index:].strip()
-                    logger.debug(f"Extracted JSON metadata: {json_content_metadata}")
-                except json.JSONDecodeError:
-                    logger.debug(
-                        "Potential JSON at start, but failed to parse. Treating as normal text."
-                    )
-                    json_content_metadata = {}
-            else:
-                logger.debug(
-                    "Text starts with '{' but no clear '}\\n' end for JSON metadata."
-                )
-        else:
-            logger.debug("No JSON metadata found at the beginning of the text.")
-    except Exception as e_json:
-        logger.warning(
-            f"Error during JSON metadata extraction: {e_json}. Proceeding without it."
-        )
-        json_content_metadata = {}
-
-    header_re = re.compile(
-        r"""^ (This[ ]text[ ]was[ ]transcribed[ ]using (?:[^\n]*\n)*?\n) """,
-        re.MULTILINE | re.VERBOSE,
+    effective_options = chunker_instance.options.copy()
+    resolved_method = _normalize_legacy_method(
+        effective_options.get("method") or "words"
     )
-    header_text_content = ""
-    header_match = header_re.match(processed_text)
-    if header_match:
-        header_text_content = header_match.group(1)
-        processed_text = processed_text[len(header_text_content) :].strip()
-        logger.debug(f"Extracted header text: {header_text_content}")
-
-    if not effective_options.get("language"):
-        detected_lang = chunker_instance.detect_language(processed_text)
-        effective_options["language"] = str(detected_lang)
-        logger.debug(
-            f"Language for overall process set to: {effective_options['language']}"
-        )
 
     try:
         raw_chunks = chunker_instance.chunk_text(
-            processed_text,
+            text,
             method=effective_options["method"],
-            llm_call_function=llm_call_function_for_chunker,  # Pass it down
-            llm_api_config=llm_api_config_for_chunker,  # Pass it down
+            llm_call_function=llm_call_function_for_chunker,
+            llm_api_config=llm_api_config_for_chunker,
         )
         logger.debug(
             f"Created {len(raw_chunks)} raw_chunks using method {effective_options['method']}"
         )
-    except ChunkingError as ce:
-        logger.error(f"ChunkingError in chunking process: {ce}")
+    except ChunkingError:
+        logger.error("ChunkingError in chunking process: re-raising")
         raise
     except Exception as e:
         logger.opt(exception=True).error(f"Unexpected error in chunking process: {e}")
         raise ChunkingError(f"Unexpected error in chunking process: {e}") from e
 
-    chunks_with_metadata_list = []
     total_chunks_count = len(raw_chunks)
     logger.info(f"Processing {total_chunks_count} chunks for metadata enrichment")
-    try:
-        for i, chunk_item in enumerate(raw_chunks):
-            logger.debug(f"Processing chunk {i + 1}/{total_chunks_count}")
-            actual_text_content: str
-            chunk_specific_metadata = {}  # Initialize
 
-            if (
-                isinstance(chunk_item, dict)
-                and "json" in chunk_item
-                and "metadata" in chunk_item
-            ):  # From JSON methods
-                actual_text_content = json.dumps(chunk_item["json"], ensure_ascii=False)
-                chunk_specific_metadata = chunk_item["metadata"]
-            elif (
-                isinstance(chunk_item, dict)
-                and "text" in chunk_item
-                and "metadata" in chunk_item
-            ):  # From Ebook/XML methods
-                actual_text_content = chunk_item["text"]
-                chunk_specific_metadata = chunk_item["metadata"]
-            elif isinstance(chunk_item, str):
-                actual_text_content = chunk_item
-            else:
-                logger.warning(
-                    f"Unexpected chunk item type: {type(chunk_item)}. Skipping."
-                )
-                continue
-
-            current_chunk_metadata = {
-                "chunk_index": i + 1,
-                "total_chunks": total_chunks_count,
-                "chunk_method": effective_options["method"],
-                "max_size_setting": effective_options["max_size"],
-                "overlap_setting": effective_options["overlap"],
-                "language": effective_options.get("language", "unknown"),
-                "relative_position": float((i + 1) / total_chunks_count)
-                if total_chunks_count > 0
-                else 0.0,
-                "adaptive_chunking_used": effective_options.get("adaptive", False),
-            }
-            current_chunk_metadata.update(
-                chunk_specific_metadata
-            )  # Merge method-specific metadata
-
-            if json_content_metadata:
-                current_chunk_metadata["initial_document_json_metadata"] = (
-                    json_content_metadata
-                )
-            if header_text_content:
-                current_chunk_metadata["initial_document_header_text"] = (
-                    header_text_content
-                )
-            current_chunk_metadata["chunk_content_hash"] = hashlib.md5(
-                actual_text_content.encode("utf-8")
-            ).hexdigest()
-
-            chunks_with_metadata_list.append(
-                {"text": actual_text_content, "metadata": current_chunk_metadata}
+    # Normalize raw chunks to (text, method-specific metadata) pairs, exactly
+    # like the legacy loop (dicts carry their own metadata; strings get {}).
+    normalized: List[Dict[str, Any]] = []
+    for chunk_item in raw_chunks:
+        if (
+            isinstance(chunk_item, dict)
+            and "json" in chunk_item
+            and "metadata" in chunk_item
+        ):
+            normalized.append(
+                {"text": json.dumps(chunk_item["json"], ensure_ascii=False), "metadata": chunk_item["metadata"]}
+            )
+        elif isinstance(chunk_item, dict) and "text" in chunk_item and "metadata" in chunk_item:
+            normalized.append(
+                {"text": chunk_item["text"], "metadata": chunk_item["metadata"]}
+            )
+        elif isinstance(chunk_item, str):
+            normalized.append({"text": chunk_item, "metadata": {}})
+        else:
+            logger.warning(
+                f"Unexpected chunk item type: {type(chunk_item)}. Skipping."
             )
 
-        logger.debug(
-            f"Successfully created metadata for all {len(chunks_with_metadata_list)} chunks"
+    # Flat-contract conversion (§6.3.2): legacy metadata enrichment plus
+    # top-level start_char/end_char/word_count, synthesizing offsets when
+    # the chunker did not attach any.
+    span_overrides = _synthesize_flat_offsets(
+        text, [item["text"] for item in normalized]
+    )
+
+    out: List[Dict[str, Any]] = []
+    for i, item in enumerate(normalized):
+        chunk_text_content = item["text"]
+        chunk_specific_metadata = dict(item["metadata"])
+
+        current_chunk_metadata = {
+            "chunk_index": i + 1,
+            "total_chunks": len(normalized),
+            "chunk_method": effective_options["method"],
+            "max_size_setting": effective_options["max_size"],
+            "overlap_setting": effective_options["overlap"],
+            "language": effective_options.get("language", "unknown"),
+            "relative_position": float((i + 1) / len(normalized)) if normalized else 0.0,
+            "adaptive_chunking_used": effective_options.get("adaptive", False),
+        }
+        current_chunk_metadata.update(chunk_specific_metadata)
+        current_chunk_metadata["chunk_content_hash"] = hashlib.md5(
+            chunk_text_content.encode("utf-8")
+        ).hexdigest()
+        # task-12 (spec §8): in-memory consumers see the engine version
+        # without a DB read. Top-level dict stays clean -- the persist seam
+        # owns the DB stamp.
+        current_chunk_metadata["chunk_engine_version"] = ENGINE_VERSION
+
+        start_char = current_chunk_metadata.get("start_char")
+        end_char = current_chunk_metadata.get("end_char")
+        if not isinstance(start_char, int) or not isinstance(end_char, int):
+            start_char = current_chunk_metadata.get("start_offset")
+            end_char = current_chunk_metadata.get("end_offset")
+        if not isinstance(start_char, int) or not isinstance(end_char, int):
+            start_char = span_overrides[i]["start_char"]
+            end_char = span_overrides[i]["end_char"]
+
+        out.append(
+            {
+                "text": chunk_text_content,
+                "metadata": current_chunk_metadata,
+                "start_char": start_char,
+                "end_char": end_char,
+                "word_count": (
+                    len(chunk_text_content.split()) if chunk_text_content else 0
+                ),
+            }
         )
-        logger.info(
-            f"Improved chunking process completed: {len(chunks_with_metadata_list)} chunks created using method '{effective_options['method']}', language: {effective_options.get('language', 'unknown')}"
-        )
-        return chunks_with_metadata_list
-    except Exception as e:
-        logger.opt(exception=True).error(f"Error creating chunk metadata: {e}")
-        raise ChunkingError(f"Error creating chunk metadata: {e}") from e
+
+    logger.info(
+        f"Improved chunking process completed: {len(out)} chunks created using "
+        f"method '{resolved_method}', language: {effective_options.get('language', 'unknown')}"
+    )
+    return out
 
 
-# Example of how other functions might change or be integrated:
-# load_document can remain a utility function if needed outside, or become a static method.
 def load_document(file_path: str) -> str:
+    """Loads a document from a file and normalizes whitespace (legacy).
+
+    Args:
+        file_path (str): Path to the document.
+
+    Returns:
+        str: The document text with whitespace normalized.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+    """
     try:
         with open(file_path, "r", encoding="utf-8") as file:
             text = file.read()

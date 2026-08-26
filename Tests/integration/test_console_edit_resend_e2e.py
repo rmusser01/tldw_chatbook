@@ -26,6 +26,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_destination_shells import _build_test_app
+from Tests.console_provider_doubles import provider_resolution
 
 
 class _SequencedGateway:
@@ -42,17 +43,7 @@ class _SequencedGateway:
         self._calls = 0
 
     async def resolve_for_send(self, selection):
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": True,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "visible_copy": "",
-            },
-        )()
+        return provider_resolution(base_url="http://127.0.0.1:9099")
 
     async def stream_chat(self, resolution, messages, **kwargs):
         text = self._replies[self._calls]
@@ -202,6 +193,10 @@ async def test_console_edit_and_resend_full_lifecycle_persist_resume_swipe():
         resumed_store.set_active_leaf(
             resumed_session.id, resumed_store._leaf_under(resumed_new_user.id)
         )
+        stale_reply_persisted_id = resumed_store.get_message(
+            resumed_store.active_leaf(resumed_session.id)
+        ).persisted_message_id
+        assert stale_reply_persisted_id is not None
 
         # ---- Step 5: in-place "Save" (NOT resend) still edits in place ----
         resumed_edited_user_id = resumed_new_user.id
@@ -217,6 +212,7 @@ async def test_console_edit_and_resend_full_lifecycle_persist_resume_swipe():
         assert [
             m.content
             for m in resumed_store.messages_for_session(resumed_session.id)
-        ] == ["typo fix", "edited-reply"]
+        ] == ["typo fix"]
+        assert db.get_message_by_id(stale_reply_persisted_id) is None
     finally:
         db.close_connection()

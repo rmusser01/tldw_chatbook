@@ -2,6 +2,10 @@
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_dictionaries import (
@@ -13,7 +17,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_dictionaries impor
 pytestmark = pytest.mark.asyncio
 
 
-class _Host(App):
+class _Host(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield PersonasCharacterDictionariesWidget()
 

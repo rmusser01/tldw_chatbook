@@ -4,6 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
@@ -19,7 +23,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
 pytestmark = pytest.mark.asyncio
 
 
-class PreviewApp(App):
+class PreviewApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.replies: list[str] = []

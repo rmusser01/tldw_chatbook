@@ -20,10 +20,11 @@ you touch them; some are read-only and point you elsewhere.
   Settings is the last of thirteen destinations: the first ten get
   **Ctrl+1 … Ctrl+0**, and the remaining three get function keys — the nav
   bar labels say so ("F7 Lab", "F8 Logs", "F9 Settings").
-- **Click "F9 Settings" in the nav bar.** On a narrow window the bar becomes
-  a pager: a "More ›" button appears at the right edge (widening to
-  "F7 Lab · F8 Logs · F9 Settings · More ›" when there is room) and pages the
-  strip; when everything fits, no button shows.
+- **Click "F9 Settings" in the nav bar.** On a narrow window a "More ▾"
+  button appears at the right edge and opens a menu listing every
+  destination — pick "F9 Settings" there; when everything fits, no button
+  shows. Once Settings opens, the strip scrolls so the highlighted
+  "F9 Settings" tab stays visible (task-4024).
 - **Ctrl+P** → "Tab Navigation: Switch to Settings", or "Settings &
   Preferences: Open Settings Tab". Typing **stats** also surfaces the Settings
   entry, because "stats" is one of this screen's legacy route names — but the
@@ -102,12 +103,13 @@ unless you run Manual sync from Overview yourself.
 | Interface | **Appearance** | Theme, density, and visual defaults shared with the app shell. | Draft — save with s |
 | Interface | **Theme** | Full theme editor, custom colors, presets, and live preview. | Managed in editor |
 | Interface | **Splash Screen** | Startup splash card selection, defaults, and preview gallery. | Auto-saved |
-| Interface | **Console Behavior** | Composer, large paste handling, and chat-flow defaults. | Draft — save with s |
+| Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
 | Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Applies immediately |
 | Data & Privacy | **Privacy & Security** (view) | Secrets, encryption, redaction, and local privacy boundaries. | Read-only here |
 | Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only here |
 | Troubleshooting | **About** (view) | Version, license, and project links. | Read-only here |
+| Troubleshooting | **Agents** | Named sub-agent definitions the Console supervisor can spawn. | Applies immediately |
 | Expert | **Internal Prompts** | The system prompts the app uses internally (RAG, web search, agents, summarization, more). | Per-item Save/Reset |
 | Expert | **Advanced Config** | Raw TOML view and expert configuration editing. | Validate, then Save |
 | Domain Defaults | **RAG** → [own page](settings/rag.md) | Source search, retrieval, citations, snippets, and Console evidence defaults. | Draft — save with s |
@@ -145,6 +147,110 @@ before saving; the result ends "status=ready" or "status=blocked", and the probe
 reports "reachable", "reachable (N models)", or a named failure ("timeout",
 "connection refused", "HTTP \<status\>"). A successful **Save** deliberately
 clears the previous verdict — run **Test Provider** again afterwards.
+
+#### QwenCloud
+
+Choose **QwenCloud** to reveal its provider-scoped **API mode** field. The two
+saved values are exactly `responses` and `chat_completions`; **Responses** is
+the default when the setting is absent. The embedded model and endpoint are
+`qwen3.8-max` and
+`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`. Set
+`DASHSCOPE_API_KEY`, or save a local key in this page. If your account provides
+a workspace-specific regional compatible-mode endpoint, replace the shared
+international (Singapore) base with that regional base. A compatible custom
+HTTP(S) base is also allowed; QwenCloud never borrows another provider's URL
+or credential.
+
+The mode changes only QwenCloud's external wire protocol:
+
+| Mode | Behavior and parameter limits |
+|---|---|
+| **Responses** (`responses`, default) | Re-sends canonical history on every turn; it does not send `previous_response_id` or conversation IDs and does not rely on provider-managed session state. It requests `store=false` where the compatible endpoint honors it, without making a claim about provider operational retention or caching. Supported generation fields are temperature, top-p, maximum output, and reasoning effort `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Maximum output must be at least 16. Seed, penalties, response format, stop, `n`, log probabilities, verbosity, and reasoning summary are intentionally omitted. |
+| **Chat Completions** (`chat_completions`) | Sends `preserve_thinking=false` because Chatbook does not store private `reasoning_content` for exact replay. It supports temperature, top-p/top-k, maximum completion tokens, seed, presence penalty, stop, text/JSON-object response format, `n`, log probabilities, and reasoning effort. Tool requests require `n=1`; min-p, frequency penalty, logit bias, user identifiers, reasoning summary, verbosity, Anthropic thinking fields, and prompt-caching fields are intentionally omitted. |
+
+These lists are fail-closed: generic settings outside the selected mode's
+allowlist are not forwarded. A model can still reject a supported mode or
+parameter; Chatbook does not infer compatibility from its name.
+
+For existing function tools in either mode, `tool_choice` may be unset,
+`auto`, or `none`. Chatbook rejects `required`, a forced function/name, and
+object-shaped choices before network I/O even if an upstream API supports
+additional choices.
+
+Existing Chatbook function tools use the ordinary Console agent runtime in
+both modes, including structured continuation. QwenCloud-hosted built-in tool
+types (such as hosted search or code execution) are excluded. **Discover
+models** and startup refresh use the same disk TTL cache, configured fallback,
+50-model selector cap, and full searchable catalog as other cloud providers;
+an empty or failed refresh does not erase the configured/cached fallback.
+
+Usage is still counted when the API returns it. If Chatbook has no verified
+price for the selected QwenCloud model, the Console says **pricing unknown**;
+it does not invent a dollar amount or treat unknown pricing as free.
+
+Recovery is fail-closed:
+
+- If **API mode** is invalid, sending and saving stay blocked. Open the field,
+  choose **Responses** or **Chat Completions**, then save.
+- If `api_settings.qwencloud` is not a TOML table, this page reports that the
+  provider settings are invalid and cannot repair the table in place. Open
+  **Advanced Config**, replace the malformed value with an
+  `[api_settings.qwencloud]` table, set a valid `api_mode`, then **Validate Raw
+  TOML**, **Save Raw TOML**, and **Reload Config** under Diagnostics.
+
+#### Moonshot Kimi and Z.ai GLM
+
+Choose **Moonshot** or **ZAI** without changing their saved provider identity.
+They use Chat Completions only, so neither provider shows an **API mode**
+selector.
+
+| Provider | Fresh default | Credential | General endpoint | Reasoning effort values |
+|---|---|---|---|---|
+| Moonshot / Kimi | `kimi-k3` | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | exactly `low`, `medium`, `high`, or `max` — accepted for the whole Kimi series (`kimi-k3-turbo`, `kimi-k2.6`, `kimi-latest`, …), not just the default; the Settings selector offers this curated list for every Kimi-series id |
+| Z.ai / GLM | `glm-5.2` | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4` | exactly `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — accepted for GLM 5.2 and newer family releases; the Settings selector offers this curated list for every such release |
+
+Moonshot can instead use the China base `https://api.moonshot.cn/v1` or a
+validated custom compatible base. Z.ai's coding-only
+`https://api.z.ai/api/coding/paas/v4` endpoint is not the general Chat default;
+save the general endpoint or an intentional custom compatible gateway here.
+Explicit historical IDs such as `moonshot-v1-128k` and `glm-4.5` remain
+selected and editable. Settings does not guess their capabilities: its help
+asks you to verify reasoning support instead of silently replacing the model.
+
+The provider/model profile owns the visible reasoning selector. Versioned
+Kimi models (K3, K2.x) do not receive legacy sampler fields — the API
+rejects non-default values for them; their requests use the documented
+common output/stop/format/function-tool subset. `kimi-latest` and the
+historical Moonshot families retain their curated sampler surface. GLM 5.2
+and newer accept their documented sampler and reasoning fields. For function tools, Moonshot accepts an unset choice,
+`auto`, `none`, `required`, or an exact configured function selection; Z.ai
+accepts only an unset choice or `auto`. Unsupported choices and values block
+before network I/O.
+
+Preserved Thinking is always on for the versioned Kimi reasoning family
+(K3, K2.x — every member returns private reasoning; `kimi-latest` does not
+and is excluded). Required Kimi reasoning and active or
+restored GLM function-tool reasoning are kept in bounded assistant-owned
+private continuation checkpoints. They are excluded from visible transcripts,
+logs, summaries, ordinary text/Markdown exports, and usage records, but their
+tokens still consume the shared context budget. Private-aware JSON/Chatbook
+exports show a warning. Ordinary GLM chat clears prior thinking; no separate
+Z.ai thinking selector is exposed.
+
+**Discover models** uses authenticated `GET {base}/models` for Moonshot and a
+best-effort request for Z.ai. Both reuse the exact normalized base and current
+credential that chat would use. Failures keep configured/cached IDs, never
+block an otherwise ready Z.ai chat, and never infer reasoning/tool support from
+a discovered name. The selector stays capped at 50 while the model picker can
+search the full cached list; the disk cache contains IDs and timestamps only.
+Usage is recorded when returned. **Pricing unknown** means Chatbook has no
+verified rate for that model, not that the call is free.
+
+If Test Provider reports invalid settings, keep exactly one canonical
+`[api_settings.moonshot]` or `[api_settings.zai]` table, remove normalized
+duplicates, enter a nonblank model and an absolute HTTP(S) base without
+credentials in the URL, then correct timeout/retry/streaming types in
+**Advanced Config**. Test the draft again before saving.
 
 ### Core — Speech & TTS
 
@@ -187,14 +293,19 @@ otherwise, task-2708).
 editing and deeper visual preview." **Global visual defaults** holds **Theme**,
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
 and scrolling** holds **Animations** and **Smooth scrolling**, each a button
-whose label is its state (Enabled / Disabled); **Preview and boundary**
+whose label is its state (Enabled / Disabled). **Library Media layout**
+remembers whether the Library and Items panes are open, uses fixed 28/40-column
+targets by default, and can opt into bounded custom widths (Library 24–48,
+Items 32–72); **Reset layout** restores both panes open and fixed defaults.
+Narrow-terminal responsive collapses are temporary and are never saved.
+**Preview and boundary**
 summarises what a save will touch. **Preview** applies runtime-safe values for
 this session only and persists nothing ("Appearance preview applied for this
 session only.") — it is the only way to see *this pane's* theme selection
 without restarting.
-Four of the six fields are less useful than they look (see
-[Quirks](#quirks--troubleshooting)); **Theme** and **Density** are the two that
-matter.
+Some launch-only fields are less immediate than they look (see
+[Quirks](#quirks--troubleshooting)); Media layout changes refresh mounted
+Library readers after a successful save.
 
 ### Interface — Theme
 
@@ -220,14 +331,25 @@ replays it, **Set as default** points the startup card at it. Everything here
 takes effect **at the next launch**; the gallery preview is the only in-session
 feedback.
 
+**Skip on keypress** does what it says as of TASK-21591: with it on (the
+default), any key pressed while the splash is up dismisses it and boot
+continues immediately. That key is consumed by the splash and does nothing
+else — pressing `F9` mid-splash skips to the app's normal startup screen
+rather than jumping to Settings, and `ctrl+q` mid-splash dismisses the splash,
+so quitting takes a second press. Turn the setting off and the splash always
+runs its full **Duration (s)**, with keys routed exactly as before. Before the
+fix the setting was inert: the splash was never focused, so it never saw a key.
+
 ### Interface — Console Behavior
 
 Drafted, with one exception.
 
 | Group | What's in it |
 |---|---|
+| **Rail presentation** | **Stack collapsed rail labels** is off by default, so the collapsed handles read **Context ▸** and **Inspector** horizontally. Turn it on to use narrower three-column handles with the letters stacked upright. Save the category, then return to Console to see the new style; no restart is required. |
+| **Status row placement** | An **Above composer**/**Below composer** toggle, above by default: where the Console status-chip row (Provider, Model, Tools, …) sits relative to the composer input. Writes immediately — no save, no draft — and takes effect when you return to Console. |
 | **Composer paste handling** | An Enabled/Disabled toggle plus **Threshold (chars)** (1–100000): "Collapse large pasted chunks only when they exceed the threshold." Normal typing stays literal and the message actually sent is unchanged. |
-| **Chat images** | One Enabled/Disabled toggle, off by default: "Render images linked in assistant replies (remote fetch)." and "Off by default: fetching a model-suggested link reveals your IP address to that host." **This is the one control on the page that writes immediately** — pressing it takes effect at once ("Linked images in replies will now render."), with no save and no draft. |
+| **Chat images** | One Enabled/Disabled toggle, off by default: "Render images linked in assistant replies (remote fetch)." and "Off by default: fetching a model-suggested link reveals your IP address to that host." Like Status row placement, **this control writes immediately** — pressing it takes effect at once ("Linked images in replies will now render."), with no save and no draft. |
 | **Parallel agent runs** | **Max parallel agent runs**, read live, so it applies to the running app once saved. |
 | **Agent tool-result display cap** | **Display cap (chars)** (20–2000): how much of a tool result Console shows *you*, which is not what the model saw. Open a run's "View full log" to read past it. |
 | **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. |
@@ -237,6 +359,10 @@ Two honest limits: fallbacks reach **new or default sessions**, not a
 conversation already open; and "Workbench (advanced)" under **Scope** is
 silently downgraded — "Workbench scope is not available in this build; using
 Transcript scope."
+
+**Save (s)** and **Revert (r)** apply to every unsaved Console Behavior edit
+together, including Rail presentation. A failed save keeps the draft and leaves
+the active Console rail style unchanged.
 
 ### Data & Privacy — Storage
 
@@ -259,21 +385,39 @@ reconnected." Two things to internalise:
 ### Data & Privacy — Workspaces
 
 No draft — every action applies as you make it, and each is reversible
-("unarchive, rename again, or set active"). Type a name and press **Create**;
-**Show archived** widens the list; click a workspace to open its card.
+("unarchive, rename again, or set active"). **Create workspace…** opens the
+same creation dialog Console and Library use (see
+[Console sessions, tabs & workspaces](console/sessions-tabs-workspaces.md#workspaces)
+for the full walkthrough): a name prefilled "Workspace N", an optional list
+of folders to bind (validated as each is added; **Browse…** opens a directory
+picker), and a "Switch to this workspace" checkbox, checked by default —
+here, unlike the old inline row, checking it activates the workspace
+immediately on Create. Escape cancels the dialog with nothing created.
+**Show archived** widens the list; each row shows the workspace's name and
+its bound-folder count ("N folders"); click a row to open its card. A
+folder you add that contains a `.SKILLS/` project skills folder is
+annotated "— contains N project skill(s)" in the list, and creation is
+followed by a chained import prompt for it — see
+[Project skills](library/skills.md#project-skills-skills).
+
+Folders are optional. Every Console Chat already has an independent private
+temporary scratch space; a named Workspace with no folders remains fully usable
+in scratch-only mode. Bind a folder only to let local file tools reach that
+external directory. `[console] workspace_root` is retained for compatibility
+outside this Console authority path and never grants a Console Chat access.
 
 | Control | What it does |
 |---|---|
 | **Rename** | Renames the selected workspace (the box above it is pre-filled). |
-| **Set active** | Makes it the active workspace; replaced by "This workspace is active." when it already is. |
+| **Set active** | Makes it the active workspace; replaced by "This workspace is active." when it already is. Console doesn't switch immediately, but picks up the change and switches its own session to match the next time you visit it. |
 | **Archive** | Confirms first: "Archive \<name\>? Its conversations stay saved and remain visible in Library; the workspace disappears from the switcher and the Console browser." |
 | **Unarchive** | Returns an archived workspace to the list. It does *not* activate it. |
 | **Add folder** / **Remove** | Bind a folder for agent file tools (new bindings are read-only), or unbind it. |
 | **Allow write** / **Read-only** | Flips a bound folder's access; the button is labelled with the state you would move to. |
 
-The built-in **Default** workspace has no controls at all: "The built-in Default
-workspace keeps its identity and stays tool-less; create a workspace to bind
-folders."
+The built-in **Default** workspace has no controls at all: "Chats in the
+built-in Default workspace use private scratch. Create a named Workspace only
+to bind external folders."
 
 ### Data & Privacy — Privacy & Security
 
@@ -303,6 +447,44 @@ project links (GitHub, documentation, issues). Read-only. Clicking a link
 opens it in your system browser and confirms with a notification; nothing on
 this page writes config.
 
+### Troubleshooting — Agents
+
+Named sub-agent definitions the Console supervisor can spawn (Ctrl+2 ▸ ask it
+to delegate). A definition is a reusable persona: a name, a one-line
+description the supervisor reads when deciding who to delegate to, and
+instructions — plus optional narrowing of tools and model. It opens with a
+one-line scope note: "Named sub-agents the Console supervisor can spawn.
+Changes apply immediately (stored in agent_runs.db, not config.toml) and take
+effect on the next reply."
+
+| Field | What it does |
+|---|---|
+| **Name** | A lowercase slug (letters, digits, hyphens; starts with a letter; max 64 chars). `general` and `subagent` are reserved and rejected. |
+| **Description** | One line the supervisor reads when choosing a definition (max 200 chars). |
+| **Instructions (appended to the sub-agent prompt)** | **Your text is added to, not swapped for, the built-in sub-agent prompt** — the child still starts from the same base identity every sub-agent gets, with your instructions appended after it. |
+| **Model override** | Empty inherits the parent's model. A non-empty value replaces the model on the **same provider/endpoint** the parent used — it does not switch providers, and nothing here validates the string against that provider's model list. |
+| **Tools (comma-separated; empty = inherit all; names only narrow, never grant)** | Empty means the sub-agent inherits every tool the parent could use. A non-empty list can only remove names from that inherited set — an intersection, never a union — so listing a tool the parent doesn't have access to has no effect. The always-available runtime control tools (`spawn_subagent`, `find_tools`, and similar) aren't ordinary catalog tools and are silently dropped from whatever you type here. If every name you list turns out unavailable (typo'd, or simply not one the parent has), the narrowing can reach zero — the child spawns with no tools at all rather than falling back to the inherited set. |
+| **Enabled** | Off keeps the definition saved but out of the supervisor's roster and the spawn schema. |
+
+Buttons: **New** (clears the form for a fresh definition), **Save** (create or
+update, depending on whether a definition is selected in the list), **Delete**
+(soft-deletes the selected one — re-creating or re-enabling it here restores
+it). A status line under the buttons reports the outcome, including any
+validation error verbatim.
+
+**This is not a draft category.** Unlike the six "Draft — save with s"
+categories, Agents writes straight to the database on every Save or Delete —
+there is no **s**/**r** cycle and nothing to revert. Definitions are read once
+per conversation turn, so an edit takes effect on the **next** reply, never
+the one already streaming.
+
+Past around 20 **enabled** definitions the status line adds a warning —
+"N enabled definitions — every one rides the spawn schema each turn; consider
+disabling some." — because every enabled definition's name and description
+ride the model's context on every turn; it's advisory, not a hard limit.
+Needs a saved (non-temporary) profile database — an in-memory or unsaved
+session shows a notice instead of the panel.
+
 ### Expert — Internal Prompts
 
 The system prompts the app uses internally. Filter with "Search prompts…", then
@@ -324,7 +506,7 @@ state: "Last validated: not validated" / "current text" / "stale after edits".
 | Button | What it does |
 |---|---|
 | **Validate Raw TOML** | Checks the editor text. |
-| **Load Backup** | Loads the backup copy into the editor **without saving it** — a preview you still have to validate. |
+| **Load Backup** | Loads the backup copy into the editor **without saving it** — a preview you still have to validate. Reading the backup happens in the background, and if you carry on typing while it loads, your edits win: the result line reads "not applied — the editor changed while the backup was loading; unsaved edits were kept". Press **Load Backup** again once you have finished typing. |
 | **Save Raw TOML** | Blocked until the text you are looking at is the exact text that last validated. Writes atomically, keeping a `.bak` backup of the previous file, then reloads. |
 
 ### Domain Defaults — Image Gen
@@ -384,11 +566,14 @@ a note on what would have to exist before Settings could own a default.
    saved paths." Move the file yourself, then restart: until you do, the app
    keeps using the old one, which is what **Active files (resolved this
    session)** is showing you.
-5. **Create a workspace and give an agent a folder.** Open **Workspaces**, type
-   a name, press **Create**. Select the new workspace, press **Set active**,
-   then under **Folders (agent file-tool access)** enter a folder path and press
-   **Add folder** — it is bound read-only. Press **Allow write** on that row if
-   the agent needs to write. Every step applies immediately; nothing to save.
+5. **Create a workspace and optionally give an agent a folder.** Open **Workspaces** and
+   press **Create workspace…**. In the dialog, keep the prefilled name (or
+   type your own). Press **Create** immediately for a scratch-only Workspace,
+   or enter a folder path and press **Add folder** first — it is validated and
+   bound read-only. Leave "Switch to this workspace" checked to activate the
+   new Workspace in the same step. If you added a folder and the agent needs
+   to write there, open the Workspace card and press **Allow write** on that
+   folder's row. Every step applies immediately; nothing to save.
 6. **Repair a configuration you broke.** Open **Diagnostics** and press
    **Validate Config** — the error names the problem, with secrets redacted. Fix
    it in the guided pages if you can. If not, open **Advanced Config**, press
@@ -478,7 +663,9 @@ not open an editor.
   only prints the file's location.
 - **A Console setting didn't take.** Global fallbacks reach *new or default*
   sessions; a conversation already open keeps what it resolved, and a session or
-  provider+model setting outranks them.
+  provider+model setting outranks them. Rail presentation is different: after a
+  successful Save, return to a freshly opened Console screen to see it; no app
+  restart is required.
 - **Save Raw TOML is greyed out.** You edited the text after validating it.
   Press **Validate Raw TOML** again — until you do, the status line says "Last
   validated: stale after edits".
@@ -500,4 +687,64 @@ not open an editor.
 scope-banner note refreshed against dev @ 7f23e0263 — 2026-08-07 (voice
 profiles slice 4: added pointer-note copy verbatim from
 `speech_tts_settings_panel.py`; not re-driven live, the rest of this page's
-content unchanged from the prior stamp).*
+content unchanged from the prior stamp). Troubleshooting — Agents section
+added against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live —
+created, selected, edited, and disabled a real definition in a scratch
+profile, fixing a rendering defect on the Name/Description/Model
+override/Tools fields found along the way; the rest of this page's content
+unchanged from the prior stamp).*
+*Verified against dev @ 642567627 — 2026-08-10 (task-4024: driven live at
+80 and 120 cols — opening Settings from the nav bar's "More ▾" overflow
+menu now leaves the strip scrolled so "F9 Settings" is visible and
+highlighted, and it stays that way; the rest of this page's content
+unchanged from the prior stamp).*
+*Console Behavior — Status row placement added against TASK-17652 —
+2026-08-17 (mounted-settings test drives the toggle both ways and reads
+the live config; headless Console probes verified both placements render;
+the rest of this page's content unchanged from the prior stamp).*
+*Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
+(task-18704: Data & Privacy ▸ Workspaces' inline "type a name, press
+Create" row is retired — **Create workspace…** now opens the same shared
+creation dialog Console and Library use, with a prefilled name, optional
+validated folder bindings, and a "Switch to this workspace" checkbox that
+here defaults to activating the workspace on Create, unlike the old
+inline flow; the walkthrough's step 5 updated to match; the rest of this
+page's content unchanged from the prior stamp).*
+*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
+(task-18705: a bound folder containing `.SKILLS/` now annotates its row
+"— contains N project skill(s)" in the creation dialog, followed by a
+chained import prompt after Create; the rest of this page's content
+unchanged from the prior stamp).*
+*Verified against feat/task-18310-activation-seam @ c9892736f — 2026-08-20
+(task-18310: **Set active**'s row gained a one-sentence note that Console
+doesn't switch immediately but reconciles its own session against the
+registry the next time you visit it; the rest of this page's content
+unchanged from the prior stamp).*
+*Providers & Models — Moonshot Kimi / Z.ai GLM rows updated against
+TASK-19170 — 2026-08-20 (the reasoning-effort selector and the Preserved
+Thinking note now follow the family predicates: any Kimi-series id gets the
+curated `low/medium/high/max` list and any GLM ≥ 5.2 release the full GLM
+list, verified by mounted-settings tests driving `kimi-k2.6` and `glm-5.3`;
+preserved thinking is documented for the versioned Kimi family per wire
+probes, with `kimi-latest` excluded; the rest of this page's content
+unchanged from the prior stamp).*
+*Advanced Config — Load Backup's row updated against TASK-19559 —
+2026-08-22 (the backup read is a background thread worker whose completion
+callback used to overwrite the editor unconditionally; it now compares the
+editor text against what it saw at dispatch and refuses to clobber typing
+that arrived in between, reporting "not applied … unsaved edits were kept".
+Verified by a mounted-settings test that holds the off-loop read open,
+types into the live `TextArea`, and asserts the keystroke survives — the
+same test reds with the exact clobbering diff when the check is removed;
+the rest of this page's content unchanged from the prior stamp).*
+*Interface — Splash Screen's row updated against TASK-21591 — 2026-08-25
+(**Skip on keypress** shipped default-true and could not fire: `SplashScreen`
+is a `Container`, Textual routes a key to the focused widget and bubbles it
+upward, and nothing focused the splash. It now takes focus when the skip is
+enabled, and consumes the dismissing key so a navigation key pressed during
+startup cannot also act on the app being booted. Verified in a real terminal,
+not only under Pilot: against a 25 s splash, Space 23 ms after the first
+painted frame dismissed it and boot completed; `F9` at the same moment
+dismissed it and left the app on Home, not Settings; and with the setting off
+the same key left the splash up for its full 20 s. The rest of this page's
+content unchanged from the prior stamp.)*

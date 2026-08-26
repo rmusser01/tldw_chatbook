@@ -25,6 +25,7 @@
 import json
 import time
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import List, Any, Optional, Tuple, Dict, Union
 from urllib.parse import urlparse
 
@@ -46,6 +47,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatConfigurationError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
+from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
 from tldw_chatbook.config import (
     get_cli_setting,
     get_runtime_config_snapshot,
@@ -53,6 +55,19 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.LLM_Calls.moonshot import (
+    chat_with_moonshot as _strict_chat_with_moonshot,
+)
+from tldw_chatbook.LLM_Calls.zai import chat_with_zai as _strict_chat_with_zai
+from tldw_chatbook.model_capabilities import (
+    anthropic_model_rejects_disabled_thinking,
+    anthropic_model_rejects_fixed_thinking_budget,
+    anthropic_model_rejects_sampling_params,
+    anthropic_model_thinks_by_default,
+    openai_model_rejects_sampling_params,
+    openai_model_requires_max_completion_tokens,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -189,11 +204,12 @@ _ANTHROPIC_THINKING_BUDGETS_BY_EFFORT = {
     "xhigh": 16384,
     "max": 32768,
 }
+# Models that merely *prefer* adaptive thinking. Models that outright REJECT a
+# fixed thinking budget are not listed here -- that is a provider request
+# capability and comes from
+# `model_capabilities.anthropic_model_rejects_fixed_thinking_budget`, so a new
+# release in those families never needs a marker added by hand (TASK-18414).
 _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS = (
-    "opus-4-8",
-    "opus-4.8",
-    "opus-4-7",
-    "opus-4.7",
     "sonnet-4-6",
     "sonnet-4.6",
 )
@@ -229,33 +245,6 @@ def _openai_use_responses_api(
         normalized_reasoning_effort is not None
         and (normalized_reasoning_effort != "none" or not is_gpt_5_6_model)
     ) or (_is_present_setting(reasoning_summary) or _is_present_setting(verbosity))
-
-
-_OPENAI_REASONING_MODEL_FAMILIES = ("o1", "o3", "o4", "gpt-5")
-
-
-def _is_openai_reasoning_model(model: object) -> bool:
-    """Return True for OpenAI reasoning-family models (o-series, gpt-5).
-
-    These models reject classic sampling parameters (``temperature``,
-    ``top_p``) with HTTP 400 on both the Chat Completions and Responses
-    APIs, so the handler must not inject its config-backed defaults for
-    them (task-404). Family names match exactly or at a ``-``/``.``
-    boundary so e.g. ``o365-copilot`` or ``olmo-7b`` never match.
-
-    Args:
-        model: Model identifier as passed to the OpenAI handler.
-
-    Returns:
-        True when the model belongs to a reasoning family.
-    """
-    normalized = str(model or "").strip().lower()
-    return any(
-        normalized == family
-        or normalized.startswith(family + "-")
-        or normalized.startswith(family + ".")
-        for family in _OPENAI_REASONING_MODEL_FAMILIES
-    )
 
 
 def _extract_openai_responses_text(response_data: Dict[str, Any]) -> str:
@@ -359,6 +348,14 @@ def _responses_stream_to_chat_sse(response, *, model: str):
 
 
 def _anthropic_uses_adaptive_thinking(model: object) -> bool:
+    """Return whether ``model`` must be driven with adaptive thinking.
+
+    True either because the provider rejects a fixed thinking budget outright
+    (the capability predicate) or because the model merely prefers adaptive
+    thinking (the marker list).
+    """
+    if anthropic_model_rejects_fixed_thinking_budget(model):
+        return True
     model_name = str(model or "").lower()
     return any(
         marker in model_name for marker in _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS
@@ -366,7 +363,16 @@ def _anthropic_uses_adaptive_thinking(model: object) -> bool:
 
 
 def _anthropic_is_sonnet_5(model: object) -> bool:
-    """Return whether model is the documented unprefixed Claude Sonnet 5 family."""
+    """Return whether model is the documented unprefixed Claude Sonnet 5 family.
+
+    This selects Sonnet 5's *effort shape* (bare ``output_config.effort`` with
+    no ``thinking`` key). It is deliberately not the answer to "does this model
+    reject sampling parameters / a fixed thinking budget" -- those are
+    capability predicates in ``model_capabilities`` (TASK-18414) -- nor to
+    "how must thinking OFF be expressed", which is the
+    ``anthropic_model_thinks_by_default`` / ``anthropic_model_rejects_disabled_
+    thinking`` predicate pair (TASK-18800).
+    """
     model_name = str(model or "").lower()
     return model_name == "claude-sonnet-5" or model_name.startswith("claude-sonnet-5-")
 
@@ -380,17 +386,28 @@ def _anthropic_thinking_config(
 ) -> tuple[dict[str, object] | None, dict[str, object] | None, int]:
     """Map Anthropic thinking settings to thinking and output configuration."""
     effort = str(thinking_effort or "").strip().lower()
-    is_sonnet_5 = _anthropic_is_sonnet_5(model)
     if effort == "off":
-        if is_sonnet_5:
-            if thinking_budget_tokens is not None:
-                logger.warning(
-                    "Anthropic: ignoring fixed thinking budget for Claude Sonnet 5 model %s",
-                    model,
-                )
-            return {"type": "disabled"}, None, max_tokens
+        if thinking_budget_tokens is not None:
+            logger.warning(
+                "Anthropic: ignoring fixed thinking budget for model %s with thinking off",
+                model,
+            )
+        # How OFF must be expressed is a per-family capability (TASK-18800):
+        # families that think by default need an explicit disabled config,
+        # EXCEPT the always-on families, which 400-reject it -- there omission
+        # is the only valid payload and thinking still runs (surfaced to the
+        # user by the Console settings warning in console_session_settings).
+        if anthropic_model_thinks_by_default(model):
+            if not anthropic_model_rejects_disabled_thinking(model):
+                return {"type": "disabled"}, None, max_tokens
+            logger.warning(
+                "Anthropic: thinking cannot be turned off on always-on model %s; "
+                "omitting the thinking parameter (adaptive thinking still runs)",
+                model,
+            )
         return None, None, max_tokens
     budget = _safe_cast(thinking_budget_tokens, int)
+    is_sonnet_5 = _anthropic_is_sonnet_5(model)
     if is_sonnet_5:
         if thinking_budget_tokens is not None:
             logger.warning(
@@ -456,9 +473,12 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
     }
     try:
         logger.debug("OpenAI Embeddings: Posting request to embeddings API")
-        response = requests.post(
-            "https://api.openai.com/v1/embeddings", headers=headers, json=request_data
-        )
+        with create_default_session() as session:
+            response = session.post(
+                "https://api.openai.com/v1/embeddings",
+                headers=headers,
+                json=request_data,
+            )
         logger.debug(f"Full API response data: {response}")
         if response.status_code == 200:
             response_data = response.json()
@@ -650,9 +670,15 @@ def chat_with_openai(
         payload["stream_options"] = {"include_usage": True}
     # Add optional parameters if they have a value. Reasoning-family models
     # (and therefore every Responses-API request, which this handler only
-    # builds for reasoning params) reject temperature/top_p with HTTP 400,
-    # so the config-backed defaults must not be injected there (task-404).
-    omit_sampling_params = use_responses_api or _is_openai_reasoning_model(final_model)
+    # builds for reasoning params) reject non-default temperature/top_p with
+    # HTTP 400 (value-level: the default is accepted, so omitting is always
+    # safe), so the config-backed defaults must not be injected there
+    # (task-404). The per-model fact is a `model_capabilities` predicate, not
+    # a hand-maintained name list, so a new release in a covered family never
+    # needs a marker added here (TASK-18803).
+    omit_sampling_params = use_responses_api or openai_model_rejects_sampling_params(
+        final_model
+    )
     if omit_sampling_params:
         if temp is not None or maxp is not None:
             logger.warning(
@@ -666,7 +692,14 @@ def chat_with_openai(
             payload["top_p"] = final_top_p  # OpenAI uses top_p
     if final_max_tokens is not None and use_responses_api:
         payload["max_output_tokens"] = final_max_tokens
-    elif final_max_tokens is not None and is_gpt_5_6_model:
+    elif final_max_tokens is not None and openai_model_requires_max_completion_tokens(
+        final_model
+    ):
+        # Modern chat-completions surface: `max_tokens` is HTTP 400
+        # `unsupported_parameter` for these families (probe-verified with the
+        # exact built gpt-5 payload, TASK-18803) -- gpt-5/o-series with no
+        # reasoning effort configured used to fall through to `max_tokens`
+        # here because only gpt-5.6 was special-cased.
         payload["max_completion_tokens"] = final_max_tokens
     elif final_max_tokens is not None:
         payload["max_tokens"] = final_max_tokens
@@ -757,7 +790,7 @@ def chat_with_openai(
             logger.debug("OpenAI: Posting request (streaming)")
 
             def stream_generator():
-                session_context = requests.Session()
+                session_context = create_default_session()
                 session = session_context.__enter__()
                 response = None
                 try:
@@ -844,7 +877,7 @@ def chat_with_openai(
                 allowed_methods=["POST"],  # Changed from method_whitelist
             )
             adapter = HTTPAdapter(max_retries=retry_strategy)
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 session.mount("http://", adapter)  # Though OpenAI is https
                 response = session.post(
@@ -1256,6 +1289,8 @@ def chat_with_anthropic(
     )
 
     anthropic_messages = []
+    from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
     for msg in input_data:
         role = msg.get("role")
         content = msg.get("content")
@@ -1282,6 +1317,24 @@ def chat_with_anthropic(
                 last["content"].append(block)
             else:
                 anthropic_messages.append({"role": "user", "content": [block]})
+            continue
+        if role == "user" and msg.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions":
+            text_block = {"type": "text", "text": str(content or "")}
+            last = anthropic_messages[-1] if anthropic_messages else None
+            if (
+                last is not None
+                and last.get("role") == "user"
+                and isinstance(last.get("content"), list)
+                and any(
+                    isinstance(block, dict) and block.get("type") == "tool_result"
+                    for block in last["content"]
+                )
+            ):
+                last["content"].append(text_block)
+            else:
+                anthropic_messages.append(
+                    {"role": "user", "content": [text_block]}
+                )
             continue
         if role == "assistant" and msg.get("tool_calls"):
             # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks
@@ -1386,7 +1439,9 @@ def chat_with_anthropic(
         "anthropic-version": anthropic_config.get("api_version", "2023-06-01"),
         "Content-Type": "application/json",
     }
-    caching_active = _anthropic_supports_caching(current_model) and _anthropic_caching_enabled()
+    caching_active = (
+        _anthropic_supports_caching(current_model) and _anthropic_caching_enabled()
+    )
     data = {
         "model": current_model,
         "max_tokens": current_max_tokens,  # Changed from max_tokens_to_sample to the parameter
@@ -1408,7 +1463,14 @@ def chat_with_anthropic(
             ]
         else:
             data["system"] = system_prompt  # unchanged for non-caching models
-    if thinking_config is None and not _anthropic_is_sonnet_5(current_model):
+    # Sampling parameters are suppressed for two independent reasons: the model
+    # rejects them outright (a provider capability -- 400 on Fable 5, Mythos 5,
+    # Opus 5, Opus 4.8, Opus 4.7 and Sonnet 5), or thinking is enabled for this
+    # request. The capability check must not be conditioned on the thinking
+    # config: Opus 4.8/4.7 produce no thinking config when no effort is
+    # configured, which used to reopen this branch (TASK-18414 AC #5).
+    model_rejects_sampling = anthropic_model_rejects_sampling_params(current_model)
+    if not model_rejects_sampling and thinking_config is None:
         if temp is not None:
             data["temperature"] = current_temp
             if current_top_p is not None:
@@ -1422,10 +1484,11 @@ def chat_with_anthropic(
         if current_top_k is not None:
             data["top_k"] = current_top_k
     elif any(value is not None for value in (temp, current_top_p, current_top_k)):
-        if _anthropic_is_sonnet_5(current_model):
+        if model_rejects_sampling:
             logger.warning(
-                "Anthropic: omitting temperature/top_p/top_k because Claude Sonnet 5 "
-                "requires default sampling."
+                "Anthropic: omitting temperature/top_p/top_k because model %s "
+                "rejects sampling parameters.",
+                current_model,
             )
         else:
             logger.warning(
@@ -1506,7 +1569,7 @@ def chat_with_anthropic(
             allowed_methods=["POST"],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
-        with requests.Session() as session:
+        with create_default_session() as session:
             session.mount("https://", adapter)
             response = session.post(
                 api_url,
@@ -1514,6 +1577,15 @@ def chat_with_anthropic(
                 json=data,
                 stream=current_streaming,
                 timeout=180,
+                # task-19557: the API key travels in the custom `x-api-key`
+                # header. `requests` strips `Authorization` across a
+                # redirect host change but NOT custom headers, so a 3xx
+                # from this endpoint would re-send the key wherever
+                # `Location` points. Refuse to follow rather than silently
+                # forward credentials -- see the explicit 3xx check below.
+                # Mirrors the `x-goog-api-key` fix in the Google branch
+                # (task-686/chat_with_google).
+                allow_redirects=False,
             )
             if (
                 response.status_code == 400
@@ -1538,6 +1610,28 @@ def chat_with_anthropic(
                     json=_without_cache_control(data),
                     stream=current_streaming,
                     timeout=180,
+                    allow_redirects=False,
+                )
+            if 300 <= response.status_code < 400:
+                # No new logging call here, deliberately: this file's
+                # diagnostic call sites participate in the pinned
+                # cross-file inventory that
+                # test_summarization_diagnostic_privacy.py's
+                # "manifest_boundary" enforces (task-3796/TASK-492). The
+                # raised exception's message is the caller-visible signal;
+                # it deliberately omits the redirect target -- a 3xx
+                # `Location` is server/attacker-controlled data, same
+                # reasoning as the Google branch above never echoing it in
+                # the raised message (only its own already-reviewed log
+                # line does).
+                response.close()
+                raise ChatProviderError(
+                    provider="anthropic",
+                    message=(
+                        "Anthropic endpoint redirected unexpectedly -- refusing to "
+                        "follow with credentials."
+                    ),
+                    status_code=response.status_code,
                 )
             response.raise_for_status()
 
@@ -1934,12 +2028,77 @@ def chat_with_anthropic(
         ) from e
 
 
+_COHERE_SUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    {
+        "type",
+        "properties",
+        "description",
+        "required",
+        "enum",
+        "items",
+        "anyOf",
+        "additionalProperties",
+    }
+)
+
+
+def _cohere_schema_projection(schema: dict) -> dict:
+    """Copy only Cohere strict-tools' supported schema keywords."""
+    raw_type = schema.get("type")
+    type_union = raw_type if isinstance(raw_type, list) else None
+    existing_any_of = schema.get("anyOf")
+    projected: dict = {}
+    for key, value in schema.items():
+        if key not in _COHERE_SUPPORTED_SCHEMA_KEYWORDS:
+            continue
+        if type_union is not None and key in {"type", "anyOf"}:
+            continue
+        if key == "properties" and isinstance(value, dict):
+            projected[key] = {
+                name: _cohere_schema_projection(property_schema)
+                if isinstance(property_schema, dict)
+                else deepcopy(property_schema)
+                for name, property_schema in value.items()
+            }
+        elif isinstance(value, dict):
+            projected[key] = _cohere_schema_projection(value)
+        elif isinstance(value, list) and key in {"anyOf", "items"}:
+            projected[key] = [
+                _cohere_schema_projection(item)
+                if isinstance(item, dict)
+                else deepcopy(item)
+                for item in value
+            ]
+        else:
+            projected[key] = deepcopy(value)
+
+    if type_union is not None:
+        type_branches = [{"type": deepcopy(item)} for item in type_union]
+        if isinstance(existing_any_of, list):
+            any_of_branches = [
+                _cohere_schema_projection(item)
+                if isinstance(item, dict)
+                else deepcopy(item)
+                for item in existing_any_of
+            ]
+            projected["anyOf"] = [
+                {**type_branch, "anyOf": [deepcopy(any_of_branch)]}
+                for any_of_branch in any_of_branches
+                for type_branch in type_branches
+            ]
+        else:
+            projected["anyOf"] = type_branches
+    return projected
+
+
 def _cohere_tools_payload(tools: list) -> list:
-    """Normalize OpenAI-format ``tools`` entries for Cohere v2 -- v2 IS
-    OpenAI-shaped end-to-end, so this is passthrough with a light validity
-    filter: entries missing ``function.name`` are dropped with a warning
-    instead of being forwarded into a 400 (mirrors `_google_tools_payload`'s
-    blank-name guard, task-267 Task 2).
+    """Normalize OpenAI-format tools for Cohere v2's schema subset.
+
+    Cohere v2 keeps the OpenAI-shaped outer tool envelope, while strict-tools
+    accepts only a subset of JSON Schema. Each parameter schema is therefore
+    projected into a fresh transport disclosure; exact raw tool validation
+    remains authoritative. Entries missing ``function.name`` are dropped
+    locally instead of being forwarded into a 400.
 
     Args:
         tools: The ``tools`` list as received (OpenAI shaped).
@@ -1969,14 +2128,13 @@ def _cohere_tools_payload(tools: list) -> list:
                     "function": {
                         "name": name,
                         "description": str(function.get("description") or ""),
-                        "parameters": parameters,
+                        "parameters": _cohere_schema_projection(parameters),
                     },
                 }
             )
         else:
-            # v2's native tools shape IS the OpenAI shape -- anything that
-            # isn't a valid function entry is junk and would 400 the request
-            # (Qodo #690-6).
+            # Cohere v2's outer tools shape is OpenAI-like; anything outside
+            # that function envelope is junk and would 400 the request.
             logger.warning(
                 "Cohere: dropping tools entry that is not a valid function tool."
             )
@@ -2315,7 +2473,7 @@ def chat_with_cohere(
     logger.debug(f"Cohere request host: {safe_llm_url_host(COHERE_CHAT_URL)}")
 
     # --- Retry Mechanism ---
-    session = requests.Session()
+    session = create_default_session()
     retry_count = int(cohere_config.get("api_retries", 3))
     retry_delay = float(
         cohere_config.get("api_retry_delay", 1.0)
@@ -2926,7 +3084,7 @@ def chat_with_deepseek(
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, use "DeepSeek" in logs) ...
-            with requests.Session() as session:
+            with create_default_session() as session:
                 response = session.post(
                     api_url, headers=headers, json=data, stream=True, timeout=180
                 )
@@ -2976,7 +3134,7 @@ def chat_with_deepseek(
                     allowed_methods=["POST"],
                 )
             )
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 response = session.post(
                     api_url, headers=headers, json=data, timeout=120
@@ -3086,7 +3244,7 @@ def _google_tools_payload(tools: list) -> list:
                 {
                     "name": name,
                     "description": str(function.get("description") or ""),
-                    "parameters": parameters,
+                    "parametersJsonSchema": deepcopy(parameters),
                 }
             )
         else:
@@ -3192,6 +3350,8 @@ def chat_with_google(
     )
 
     gemini_contents = []
+    from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
     tool_call_names: Dict[str, str] = {}
     last_function_call_names: List[str] = []
     consecutive_tool_results = 0
@@ -3239,6 +3399,13 @@ def chat_with_google(
                 gemini_contents.append({"role": "user", "parts": [part]})
             continue
         consecutive_tool_results = 0
+        if role == "user" and msg.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions":
+            # Consume the internal marker here and keep repository context in
+            # its own user turn after any preceding function-response turn.
+            gemini_contents.append(
+                {"role": "user", "parts": [{"text": str(content or "")}]}
+            )
+            continue
         if role == "assistant" and msg.get("tool_calls"):
             parts = []
             if isinstance(content, str) and content.strip():
@@ -3385,7 +3552,7 @@ def chat_with_google(
                 allowed_methods=["POST"],
             )
         )
-        with requests.Session() as session:
+        with create_default_session() as session:
             session.mount("https://", adapter)
             response = session.post(
                 api_url,
@@ -3818,7 +3985,7 @@ def chat_with_google(
             ) from e
     finally:
         # If streaming, the response object is closed inside stream_generator's finally.
-        # If not streaming, the response object is implicitly closed by the `with requests.Session() as session:` block ending.
+        # If not streaming, the response object is implicitly closed by the `with create_default_session() as session:` block ending.
         # However, if `session.post` was called outside `with` or `response` was from `session.post(stream=True)`
         # and an error occurred *before* entering `stream_generator`, it might need closing here.
         # The `nonlocal response` and assignment `response = session.post(...)` helps manage this.
@@ -3968,7 +4135,7 @@ def chat_with_groq(
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, ensure "Groq" in logs) ...
-            with requests.Session() as session:
+            with create_default_session() as session:
                 response = session.post(
                     api_url, headers=headers, json=data, stream=True, timeout=180
                 )
@@ -4026,7 +4193,7 @@ def chat_with_groq(
                     allowed_methods=["POST"],
                 )
             )
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 response = session.post(
                     api_url, headers=headers, json=data, timeout=120
@@ -4348,10 +4515,14 @@ def chat_with_huggingface(
         )
     else:
         logger.debug(
-            f"HuggingFace Final Payload (excluding messages, tools): {{ {', '.join(f'{k}: {v}' for k, v in payload.items() if k not in ['messages', 'tools'])} }}"
+            "HuggingFace Final Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(payload)}"
         )
     if "tools" in payload and not is_sensitive_llm_request():
-        logger.debug(f"HuggingFace Tools: {payload['tools']}")
+        tools_summary = safe_llm_request_payload_summary(
+            {"tools": payload["tools"]}, content_keys=()
+        )
+        logger.debug(f"HuggingFace Tools: {tools_summary}")
     redacted_headers = {
         key: "<redacted>" if key.lower() == "authorization" else value
         for key, value in headers.items()
@@ -4455,7 +4626,7 @@ def chat_with_huggingface(
                     # or method_whitelist for older versions.
                 )
             )
-            session = requests.Session()
+            session = create_default_session()
             session.mount("https://", adapter)
             session.mount("http://", adapter)
 
@@ -4739,7 +4910,7 @@ def chat_with_mistral(
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, use "Mistral" in logs) ...
-            with requests.Session() as session:
+            with create_default_session() as session:
                 response = session.post(
                     api_url, headers=headers, json=data, stream=True, timeout=180
                 )
@@ -4783,7 +4954,7 @@ def chat_with_mistral(
                     allowed_methods=["POST"],
                 )
             )
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 response = session.post(
                     api_url, headers=headers, json=data, timeout=120
@@ -4992,7 +5163,7 @@ def chat_with_openrouter(
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, ensure "OpenRouter" in logs) ...
-            with requests.Session() as session:
+            with create_default_session() as session:
                 response = session.post(
                     api_url, headers=headers, json=data, stream=True, timeout=180
                 )
@@ -5037,7 +5208,7 @@ def chat_with_openrouter(
                     allowed_methods=["POST"],
                 )
             )
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 response = session.post(
                     api_url, headers=headers, json=data, timeout=120
@@ -5117,768 +5288,153 @@ def chat_with_openrouter(
 
 
 def chat_with_moonshot(
-    input_data: List[Dict[str, Any]],  # Mapped from 'messages_payload'
-    model: Optional[str] = None,  # Mapped from 'model'
-    api_key: Optional[str] = None,  # Mapped from 'api_key'
-    system_message: Optional[str] = None,  # Mapped from 'system_message'
-    temp: Optional[float] = None,  # Mapped from 'temp' (temperature)
-    maxp: Optional[float] = None,  # Mapped from 'maxp' (top_p)
-    streaming: Optional[bool] = False,  # Mapped from 'streaming'
-    # Moonshot/OpenAI compatible parameters
+    input_data: List[Dict[str, Any]],
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    system_message: Optional[str] = None,
+    temp: Optional[float] = None,
+    maxp: Optional[float] = None,
+    streaming: Optional[bool] = False,
     frequency_penalty: Optional[float] = None,
     max_tokens: Optional[int] = None,
-    n: Optional[int] = None,  # Number of completions
+    n: Optional[int] = None,
     presence_penalty: Optional[float] = None,
-    response_format: Optional[Dict[str, str]] = None,  # e.g., {"type": "json_object"}
+    response_format: Optional[Dict[str, str]] = None,
     seed: Optional[int] = None,
     stop: Optional[Union[str, List[str]]] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    user: Optional[str] = None,  # User identifier
-    custom_prompt_arg: Optional[str] = None,  # Legacy
+    user: Optional[str] = None,
+    custom_prompt_arg: Optional[str] = None,
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    provider_continuations: Tuple[ProviderContinuationCheckpoint, ...] = (),
+    request_timeout: Optional[float] = None,
+    request_retries: Optional[int] = None,
+    request_retry_delay: Optional[float] = None,
 ):
-    """
-    Sends a chat completion request to the Moonshot AI API.
-
-    Moonshot AI provides an OpenAI-compatible API endpoint, supporting models:
-    - kimi-latest: Latest Kimi model
-    - kimi-thinking-preview: Kimi model with thinking capabilities
-    - kimi-k2-0711-preview: Kimi K2 preview model
-    - moonshot-v1-auto: Automatic model selection
-    - moonshot-v1-8k: 8K context window
-    - moonshot-v1-32k: 32K context window
-    - moonshot-v1-128k: 128K context window
-    - moonshot-v1-8k-vision-preview: 8K context with vision support
-    - moonshot-v1-32k-vision-preview: 32K context with vision support
-    - moonshot-v1-128k-vision-preview: 128K context with vision support
-
-    Args:
-        input_data: List of message objects (OpenAI format).
-        model: ID of the model to use (moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k).
-        api_key: Moonshot API key.
-        system_message: Optional system message to prepend.
-        temp: Sampling temperature (0-1).
-        maxp: Top-p (nucleus) sampling parameter.
-        streaming: Whether to stream the response.
-        frequency_penalty: Penalizes new tokens based on their existing frequency.
-        max_tokens: Maximum number of tokens to generate.
-        n: How many chat completion choices to generate (Note: n>1 only works with temp>0.3).
-        presence_penalty: Penalizes new tokens based on whether they appear in the text so far.
-        response_format: An object specifying the format that the model must output.
-        seed: If specified, the system will make a best effort to sample deterministically.
-        stop: Up to 4 sequences where the API will stop generating further tokens.
-        tools: A list of tools the model may call.
-        tool_choice: Controls which (if any) function is called by the model (Note: "required" not supported).
-        user: A unique identifier representing your end-user.
-        custom_prompt_arg: Legacy, largely ignored.
-    """
-    loaded_config_data = load_settings()
-    moonshot_config = loaded_config_data.get("moonshot_api", {})
-
-    final_api_key = api_key or moonshot_config.get("api_key")
-    if not final_api_key:
-        logger.error("Moonshot: API key is missing.")
-        raise ChatConfigurationError(
-            provider="moonshot", message="Moonshot API Key is required but not found."
-        )
-
-    logger.debug("Moonshot: API key provided.")
-
-    # Resolve parameters: User-provided > Function arg default > Config default > Hardcoded default
-    final_model = (
-        model if model is not None else moonshot_config.get("model", "moonshot-v1-8k")
-    )
-    final_temp = (
-        temp if temp is not None else float(moonshot_config.get("temperature", 0.7))
-    )
-    final_top_p = (
-        maxp if maxp is not None else float(moonshot_config.get("top_p", 0.95))
-    )
-
-    # Validate temperature for n>1 as per Moonshot documentation
-    final_n = n if n is not None else 1
-    if final_n > 1 and final_temp < 0.3:
-        logger.warning(
-            f"Moonshot: n={final_n} requested but temperature={final_temp} < 0.3. Setting n=1."
-        )
-        final_n = 1
-
-    final_streaming_cfg = moonshot_config.get("streaming", False)
-    final_streaming = (
-        streaming
-        if streaming is not None
-        else (
-            str(final_streaming_cfg).lower() == "true"
-            if isinstance(final_streaming_cfg, str)
-            else bool(final_streaming_cfg)
-        )
-    )
-
-    final_max_tokens = (
-        max_tokens
-        if max_tokens is not None
-        else _safe_cast(moonshot_config.get("max_tokens"), int)
-    )
-
-    if custom_prompt_arg:
-        logger.warning(
-            "Moonshot: 'custom_prompt_arg' was provided but is generally ignored if 'input_data' and 'system_message' are used correctly."
-        )
-
-    # Construct messages for Moonshot API (OpenAI format)
-    api_messages = []
-    has_system_message_in_input = any(msg.get("role") == "system" for msg in input_data)
-    if system_message and not has_system_message_in_input:
-        api_messages.append({"role": "system", "content": system_message})
-
-    # Process messages to ensure proper format
-    is_vision_model = "vision" in final_model.lower()
-
-    for msg in input_data:
-        role = msg.get("role")
-        content = msg.get("content")
-
-        # Handle different content formats
-        if isinstance(content, list):
-            if is_vision_model:
-                # For vision models, convert to Moonshot's expected format
-                moonshot_content = []
-                for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") == "text":
-                            moonshot_content.append(
-                                {"type": "text", "text": part.get("text", "")}
-                            )
-                        elif part.get("type") == "image_url":
-                            image_url_obj = part.get("image_url", {})
-                            url_str = image_url_obj.get("url", "")
-                            # Parse data URL for vision models
-                            parsed_image = _parse_data_url_for_multimodal(url_str)
-                            if parsed_image:
-                                mime_type, b64_data = parsed_image
-                                moonshot_content.append(
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {
-                                            "url": url_str  # Keep original data URL
-                                        },
-                                    }
-                                )
-                            else:
-                                # Regular URL
-                                moonshot_content.append(
-                                    {"type": "image_url", "image_url": {"url": url_str}}
-                                )
-                    elif isinstance(part, str):
-                        moonshot_content.append({"type": "text", "text": part})
-
-                # For vision models, keep structured content
-                api_messages.append({"role": role, "content": moonshot_content})
-            else:
-                # For non-vision models, extract only text
-                text_parts = []
-                has_images = False
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                    elif isinstance(part, dict) and part.get("type") == "image_url":
-                        has_images = True
-                    elif isinstance(part, str):
-                        text_parts.append(part)
-
-                if has_images:
-                    logger.warning(
-                        f"Moonshot: Non-vision model {final_model} cannot process images. Extracting text only."
-                    )
-
-                content_str = " ".join(text_parts).strip()
-                api_messages.append({"role": role, "content": content_str})
-        else:
-            # Simple string content
-            if content is None:
-                content = ""
-            elif not isinstance(content, str):
-                content = str(content)
-
-            api_messages.append({"role": role, "content": content})
-
-    payload = {
-        "model": final_model,
-        "messages": api_messages,
-        "stream": final_streaming,
-    }
-
-    # Add optional parameters if they have a value
-    if final_temp is not None:
-        payload["temperature"] = final_temp
-    if final_top_p is not None:
-        payload["top_p"] = final_top_p
-    if final_max_tokens is not None:
-        payload["max_tokens"] = final_max_tokens
-    if frequency_penalty is not None:
-        payload["frequency_penalty"] = frequency_penalty
-    if final_n is not None and final_n > 1:
-        payload["n"] = final_n
-    if presence_penalty is not None:
-        payload["presence_penalty"] = presence_penalty
-    if response_format is not None:
-        payload["response_format"] = response_format
-    if seed is not None:
-        payload["seed"] = seed
-    if stop is not None:
-        payload["stop"] = stop
-    if tools is not None:
-        payload["tools"] = tools
-
-    # Handle tool_choice - Moonshot doesn't support "required"
-    if payload.get("tools") and tool_choice is not None:
-        if tool_choice == "required":
-            logger.warning(
-                "Moonshot: tool_choice='required' is not supported. Using 'auto' instead."
-            )
-            payload["tool_choice"] = "auto"
-        else:
-            payload["tool_choice"] = tool_choice
-    elif tool_choice == "none":  # Allow "none" even if no tools are present
-        payload["tool_choice"] = "none"
-
-    if user is not None:
-        payload["user"] = user
-
-    headers = {
-        "Authorization": f"Bearer {final_api_key}",
-        "Content-Type": "application/json",
-    }
-    if not is_sensitive_llm_request():
-        # task-2116: see the OpenAI branch above for why this is gated.
-        # task-2117 Qodo round: allowlisted summary, see the Anthropic
-        # branch above for why a denylist isn't safe here.
-        logger.debug(
-            "Moonshot Request Payload (safe fields only): "
-            f"{safe_llm_request_payload_summary(payload)}"
-        )
-
-    # Determine API endpoint based on config (default to international)
-    if api_base_url:
-        effective_api_base_url = api_base_url
-    else:
-        effective_api_base_url = moonshot_config.get(
-            "api_base_url"
-        ) or builtin_provider_endpoint("moonshot", moonshot_config)
-
-    api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
-
-    start_time = time.time()
-    log_counter(
-        "moonshot_api_request",
-        labels={"model": final_model, "streaming": str(final_streaming)},
-    )
-
+    """Compatibility wrapper for the strict first-class Moonshot adapter."""
+    started_at = time.time()
+    labels = {"model": model or "configured", "streaming": str(bool(streaming))}
+    log_counter("moonshot_api_request", labels=labels)
     try:
-        if final_streaming:
-            logger.debug("Moonshot: Posting request (streaming)")
-            with requests.Session() as session:
-                response = session.post(
-                    api_url, headers=headers, json=payload, stream=True, timeout=180
-                )
-                response.raise_for_status()
-
-                def stream_generator():
-                    try:
-                        for line in response.iter_lines(decode_unicode=True):
-                            if line and line.strip():
-                                # Pass through Moonshot's SSE lines directly (OpenAI compatible)
-                                yield line if line.endswith("\n") else line + "\n"
-                    except requests.exceptions.ChunkedEncodingError as e_chunk:
-                        logger.opt(exception=True).error(
-                            f"Moonshot: ChunkedEncodingError during stream: {e_chunk}"
-                        )
-                        error_content = json.dumps(
-                            {
-                                "error": {
-                                    "message": f"Stream connection error: {str(e_chunk)}",
-                                    "type": "moonshot_stream_error",
-                                }
-                            }
-                        )
-                        yield f"data: {error_content}\n\n"
-                    except Exception as e_stream:
-                        logger.opt(exception=True).error(
-                            f"Moonshot: Error during stream iteration: {e_stream}"
-                        )
-                        error_content = json.dumps(
-                            {
-                                "error": {
-                                    "message": f"Stream iteration error: {str(e_stream)}",
-                                    "type": "moonshot_stream_error",
-                                }
-                            }
-                        )
-                        yield f"data: {error_content}\n\n"
-                    finally:
-                        yield "data: [DONE]\n\n"
-                        if response:
-                            response.close()
-
-                return stream_generator()
-
-        else:  # Non-streaming
-            logger.debug("Moonshot: Posting request (non-streaming)")
-            retry_count = int(moonshot_config.get("api_retries", 3))
-            retry_delay = float(moonshot_config.get("api_retry_delay", 1.0))
-
-            retry_strategy = Retry(
-                total=llm_retry_count(retry_count),
-                backoff_factor=retry_delay,
-                status_forcelist=[429, 500, 502, 503, 504],
-                allowed_methods=["POST"],
-            )
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-            with requests.Session() as session:
-                session.mount("https://", adapter)
-                session.mount("http://", adapter)
-                response = session.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=float(moonshot_config.get("api_timeout", 90.0)),
-                )
-
-            logger.debug(f"Moonshot: Full API response status: {response.status_code}")
-            response.raise_for_status()
-            response_data = response.json()
-
-            # Log success metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "moonshot_api_response_time",
-                duration,
-                labels={
-                    "model": final_model,
-                    "streaming": "false",
-                    "status_code": str(response.status_code),
-                },
-            )
-            log_counter(
-                "moonshot_api_success",
-                labels={"model": final_model, "streaming": "false"},
-            )
-
-            # Log token usage if available
-            usage = response_data.get("usage", {})
-            if usage:
-                log_histogram(
-                    "moonshot_api_prompt_tokens",
-                    usage.get("prompt_tokens", 0),
-                    labels={"model": final_model},
-                )
-                log_histogram(
-                    "moonshot_api_completion_tokens",
-                    usage.get("completion_tokens", 0),
-                    labels={"model": final_model},
-                )
-                log_histogram(
-                    "moonshot_api_total_tokens",
-                    usage.get("total_tokens", 0),
-                    labels={"model": final_model},
-                )
-
-            logger.debug("Moonshot: Non-streaming request successful.")
-            return response_data
-
-    except requests.exceptions.HTTPError as e:
-        status_code = e.response.status_code if e.response is not None else 0
-
-        # Log error metrics
-        duration = time.time() - start_time
+        result = _strict_chat_with_moonshot(
+            input_data=input_data,
+            model=model,
+            api_key=api_key,
+            system_message=system_message,
+            temp=temp,
+            maxp=maxp,
+            streaming=streaming,
+            frequency_penalty=frequency_penalty,
+            max_tokens=max_tokens,
+            n=n,
+            presence_penalty=presence_penalty,
+            response_format=response_format,
+            seed=seed,
+            stop=stop,
+            tools=tools,
+            tool_choice=tool_choice,
+            user=user,
+            custom_prompt_arg=custom_prompt_arg,
+            api_base_url=api_base_url,
+            reasoning_effort=reasoning_effort,
+            provider_continuations=provider_continuations,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+            request_retry_delay=request_retry_delay,
+        )
+    except Exception as exc:
         log_counter(
             "moonshot_api_error",
-            labels={
-                "model": final_model,
-                "error_type": "http_error",
-                "status_code": str(status_code),
-            },
+            labels={**labels, "error_type": type(exc).__name__},
         )
         log_histogram(
             "moonshot_api_error_response_time",
-            duration,
-            labels={"model": final_model, "status_code": str(status_code)},
+            time.time() - started_at,
+            labels=labels,
         )
-
-        if e.response is not None:
-            error_detail = str(safe_llm_error_detail(e.response.text))
-            logger.error(
-                "Moonshot request failed; "
-                f"status={e.response.status_code}; detail={error_detail}"
-            )
-        else:
-            logger.error(
-                "Moonshot HTTPError with no response object; "
-                f"error_type={safe_llm_exception_message(e)}"
-            )
         raise
-    except requests.exceptions.RequestException as e:
-        # Log network error metrics
-        duration = time.time() - start_time
-        log_counter(
-            "moonshot_api_error",
-            labels={"model": final_model, "error_type": "network_error"},
-        )
-        log_histogram(
-            "moonshot_api_error_response_time",
-            duration,
-            labels={"model": final_model, "error_type": "network"},
-        )
-        error_detail = safe_llm_exception_message(e)
-        if is_sensitive_llm_request():
-            logger.error(f"Moonshot RequestException: {error_detail}")
-        else:
-            logger.opt(exception=True).error(
-                f"Moonshot RequestException: {error_detail}"
-            )
-        raise
-    except Exception as e:
-        # Log unexpected error metrics
-        duration = time.time() - start_time
-        log_counter(
-            "moonshot_api_error",
-            labels={"model": final_model, "error_type": "unexpected"},
-        )
-        error_detail = safe_llm_exception_message(e)
-        error_copy = f"Moonshot: Unexpected error: {error_detail}"
-        if is_sensitive_llm_request():
-            logger.error(error_copy)
-        else:
-            logger.opt(exception=True).error(error_copy)
-        raise ChatProviderError(
-            provider="moonshot", message=f"Unexpected error: {error_detail}"
-        )
+    log_counter("moonshot_api_success", labels=labels)
+    log_histogram(
+        "moonshot_api_response_time",
+        time.time() - started_at,
+        labels=labels,
+    )
+    return result
 
 
 def chat_with_zai(
-    input_data: List[Dict[str, Any]],  # Mapped from 'messages_payload'
-    model: Optional[str] = None,  # Mapped from 'model'
-    api_key: Optional[str] = None,  # Mapped from 'api_key'
-    system_message: Optional[str] = None,  # Mapped from 'system_message'
-    temp: Optional[float] = None,  # Mapped from 'temp' (temperature)
-    maxp: Optional[float] = None,  # Mapped from 'maxp' (top_p)
-    streaming: Optional[bool] = False,  # Mapped from 'streaming'
-    # Z.AI specific parameters
+    input_data: List[Dict[str, Any]],
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    system_message: Optional[str] = None,
+    temp: Optional[float] = None,
+    maxp: Optional[float] = None,
+    streaming: Optional[bool] = False,
     max_tokens: Optional[int] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
     do_sample: Optional[bool] = None,
     request_id: Optional[str] = None,
-    custom_prompt_arg: Optional[str] = None,  # Legacy
+    custom_prompt_arg: Optional[str] = None,
     api_base_url: Optional[str] = None,
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    stop: Optional[Union[str, List[str]]] = None,
+    response_format: Optional[Dict[str, Any]] = None,
+    user: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    provider_continuations: Tuple[ProviderContinuationCheckpoint, ...] = (),
+    request_timeout: Optional[float] = None,
+    request_retries: Optional[int] = None,
+    request_retry_delay: Optional[float] = None,
 ):
-    """
-    Sends a chat completion request to the Z.AI API.
-
-    Z.AI provides GLM model access through an OpenAI-compatible API endpoint, supporting models:
-    - glm-4.5: Standard GLM-4.5 model
-    - glm-4.5-air: GLM-4.5 optimized for speed
-    - glm-4.5-x: GLM-4.5 extended capabilities
-    - glm-4.5-airx: GLM-4.5 air with extended features
-    - glm-4.5-flash: Fast inference GLM-4.5 model
-    - glm-4-32b-0414-128k: GLM-4 32B with 128K context
-
-    Args:
-        input_data: List of message objects (OpenAI format).
-        model: ID of the model to use (e.g., glm-4.5-flash).
-        api_key: Z.AI API key.
-        system_message: Optional system message to prepend.
-        temp: Sampling temperature (0-1).
-        maxp: Top-p (nucleus) sampling parameter.
-        streaming: Whether to stream the response.
-        max_tokens: Maximum number of tokens to generate.
-        tools: A list of tools the model may call.
-        do_sample: Whether to use sampling (temperature/top_p).
-        request_id: Optional request ID for tracking.
-        custom_prompt_arg: Legacy, largely ignored.
-    """
-    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
-    zai_config = cli_api_settings.get("zai", {})
-
-    final_api_key = api_key or zai_config.get("api_key")
-    if not final_api_key:
-        logger.error("Z.AI: API key is missing.")
-        raise ChatConfigurationError(
-            provider="zai", message="Z.AI API Key is required but not found."
-        )
-
-    logger.debug("Z.AI: API key provided.")
-
-    # Resolve parameters
-    current_model = model or zai_config.get("model", "glm-4.5-flash")
-    current_temp = (
-        temp if temp is not None else float(zai_config.get("temperature", 0.7))
-    )
-    current_top_p = maxp if maxp is not None else float(zai_config.get("top_p", 0.95))
-    current_streaming_cfg = zai_config.get("streaming", False)
-    current_streaming = (
-        streaming
-        if streaming is not None
-        else (
-            str(current_streaming_cfg).lower() == "true"
-            if isinstance(current_streaming_cfg, str)
-            else bool(current_streaming_cfg)
-        )
-    )
-    current_max_tokens = (
-        max_tokens
-        if max_tokens is not None
-        else _safe_cast(zai_config.get("max_tokens"), int, 4096)
-    )
-
-    # Log request metrics
-    log_counter(
-        "zai_api_request",
-        labels={"model": current_model, "streaming": str(current_streaming)},
-    )
-
-    # Build messages array
-    api_messages = []
-    if system_message:
-        api_messages.append({"role": "system", "content": system_message})
-    api_messages.extend(input_data)
-
-    # Build request payload
-    payload = {
-        "model": current_model,
-        "messages": api_messages,
-        "stream": current_streaming,
-    }
-
-    # Add optional parameters
-    if current_temp is not None:
-        payload["temperature"] = current_temp
-    if current_top_p is not None:
-        payload["top_p"] = current_top_p
-    if current_max_tokens is not None:
-        payload["max_tokens"] = current_max_tokens
-    if do_sample is not None:
-        payload["do_sample"] = do_sample
-    if tools is not None:
-        payload["tools"] = tools
-    if request_id is not None:
-        payload["request_id"] = request_id
-
-    headers = {
-        "Authorization": f"Bearer {final_api_key}",
-        "Content-Type": "application/json",
-    }
-
-    effective_api_base_url = (
-        api_base_url
-        or zai_config.get("api_base_url")
-        or builtin_provider_endpoint("zai", zai_config)
-    )
-    api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
-
-    if not is_sensitive_llm_request():
-        # task-2116: see the OpenAI branch above for why this is gated.
-        # task-2117 Qodo round: allowlisted summary, see the Anthropic
-        # branch above for why a denylist isn't safe here.
-        logger.debug(
-            "Z.AI Request Payload (safe fields only): "
-            f"{safe_llm_request_payload_summary(payload)}"
-        )
-
-    start_time = time.time()
-
+    """Compatibility wrapper for the strict first-class Z.ai adapter."""
+    started_at = time.time()
+    labels = {"model": model or "configured", "streaming": str(bool(streaming))}
+    log_counter("zai_api_request", labels=labels)
     try:
-        if current_streaming:
-            logger.debug("Z.AI: Posting request (streaming)")
-            with requests.Session() as session:
-                response = session.post(
-                    api_url, headers=headers, json=payload, stream=True, timeout=180
-                )
-                response.raise_for_status()
-
-                # Log streaming success metrics
-                duration = time.time() - start_time
-                log_histogram(
-                    "zai_api_response_time",
-                    duration,
-                    labels={
-                        "model": current_model,
-                        "streaming": "true",
-                        "status_code": str(response.status_code),
-                    },
-                )
-                log_counter(
-                    "zai_api_success",
-                    labels={"model": current_model, "streaming": "true"},
-                )
-
-                def stream_generator():
-                    try:
-                        for line in response.iter_lines(decode_unicode=True):
-                            if line and line.strip():
-                                # Z.AI provides OpenAI-compatible SSE
-                                yield line if line.endswith("\n") else line + "\n"
-                    except requests.exceptions.ChunkedEncodingError as e:
-                        logger.opt(exception=True).error(
-                            f"Z.AI: ChunkedEncodingError: {e}"
-                        )
-                        yield f"data: {json.dumps({'error': {'message': f'Stream error: {str(e)}', 'type': 'zai_stream_error'}})}\n\n"
-                    except Exception as e:
-                        logger.opt(exception=True).error(
-                            f"Z.AI: Stream iteration error: {e}"
-                        )
-                        yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'zai_stream_error'}})}\n\n"
-                    finally:
-                        yield "data: [DONE]\n\n"
-                        if response:
-                            response.close()
-
-                return stream_generator()
-
-        else:  # Non-streaming
-            logger.debug("Z.AI: Posting request (non-streaming)")
-            retry_count = int(zai_config.get("api_retries", 3))
-            retry_delay = float(zai_config.get("api_retry_delay", 1.0))
-
-            retry_strategy = Retry(
-                total=llm_retry_count(retry_count),
-                backoff_factor=retry_delay,
-                status_forcelist=[429, 500, 502, 503, 504],
-                allowed_methods=["POST"],
-            )
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-            with requests.Session() as session:
-                session.mount("https://", adapter)
-                response = session.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=float(zai_config.get("api_timeout", 90.0)),
-                )
-
-            response.raise_for_status()
-            result = response.json()
-
-            # Log non-streaming success metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "zai_api_response_time",
-                duration,
-                labels={
-                    "model": current_model,
-                    "streaming": "false",
-                    "status_code": str(response.status_code),
-                },
-            )
-            log_counter(
-                "zai_api_success", labels={"model": current_model, "streaming": "false"}
-            )
-
-            # Log token usage if available
-            usage = result.get("usage", {})
-            if usage:
-                log_histogram(
-                    "zai_api_prompt_tokens",
-                    usage.get("prompt_tokens", 0),
-                    labels={"model": current_model},
-                )
-                log_histogram(
-                    "zai_api_completion_tokens",
-                    usage.get("completion_tokens", 0),
-                    labels={"model": current_model},
-                )
-                log_histogram(
-                    "zai_api_total_tokens",
-                    usage.get("total_tokens", 0),
-                    labels={"model": current_model},
-                )
-
-            logger.debug("Z.AI: Non-streaming request successful.")
-            return result
-
-    except requests.exceptions.HTTPError as e:
-        status_code = e.response.status_code if e.response is not None else 500
-        raw_error_text = (
-            e.response.text if e.response is not None else safe_llm_exception_message(e)
+        result = _strict_chat_with_zai(
+            input_data=input_data,
+            model=model,
+            api_key=api_key,
+            system_message=system_message,
+            temp=temp,
+            maxp=maxp,
+            streaming=streaming,
+            max_tokens=max_tokens,
+            tools=tools,
+            do_sample=do_sample,
+            request_id=request_id,
+            custom_prompt_arg=custom_prompt_arg,
+            api_base_url=api_base_url,
+            tool_choice=tool_choice,
+            stop=stop,
+            response_format=response_format,
+            user=user,
+            reasoning_effort=reasoning_effort,
+            provider_continuations=provider_continuations,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+            request_retry_delay=request_retry_delay,
         )
-        error_text = str(safe_llm_error_detail(raw_error_text))
-
-        # Log HTTP error metrics
-        duration = time.time() - start_time
+    except Exception as exc:
         log_counter(
             "zai_api_error",
-            labels={
-                "model": current_model,
-                "error_type": "http_error",
-                "status_code": str(status_code),
-            },
+            labels={**labels, "error_type": type(exc).__name__},
         )
         log_histogram(
             "zai_api_error_response_time",
-            duration,
-            labels={"model": current_model, "status_code": str(status_code)},
+            time.time() - started_at,
+            labels=labels,
         )
-
-        logger.error(
-            f"Z.AI request failed; status={status_code}; detail={error_text[:500]}"
-        )
-
-        if status_code == 401:
-            raise ChatAuthenticationError(
-                provider="zai", message=f"Auth failed. Detail: {error_text[:200]}"
-            )
-        elif status_code == 429:
-            raise ChatRateLimitError(
-                provider="zai", message=f"Rate limit. Detail: {error_text[:200]}"
-            )
-        elif 400 <= status_code < 500:
-            raise ChatBadRequestError(
-                provider="zai",
-                message=f"Bad request ({status_code}). Detail: {error_text[:200]}",
-            )
-        else:
-            raise ChatProviderError(
-                provider="zai",
-                message=f"API error ({status_code}). Detail: {error_text[:200]}",
-                status_code=status_code,
-            )
-
-    except requests.exceptions.RequestException as e:
-        # Log network error metrics
-        duration = time.time() - start_time
-        log_counter(
-            "zai_api_error",
-            labels={"model": current_model, "error_type": "network_error"},
-        )
-        log_histogram(
-            "zai_api_error_response_time",
-            duration,
-            labels={"model": current_model, "error_type": "network"},
-        )
-        error_detail = safe_llm_exception_message(e)
-        if is_sensitive_llm_request():
-            logger.error(f"Z.AI RequestException: {error_detail}")
-        else:
-            logger.opt(exception=True).error(f"Z.AI RequestException: {error_detail}")
-        raise ChatProviderError(
-            provider="zai", message=f"Network error: {error_detail}"
-        )
-
-    except Exception as e:
-        # Log unexpected error metrics
-        duration = time.time() - start_time
-        log_counter(
-            "zai_api_error", labels={"model": current_model, "error_type": "unexpected"}
-        )
-        error_detail = safe_llm_exception_message(e)
-        error_copy = f"Z.AI: Unexpected error: {error_detail}"
-        if is_sensitive_llm_request():
-            logger.error(error_copy)
-        else:
-            logger.opt(exception=True).error(error_copy)
-        raise ChatProviderError(
-            provider="zai", message=f"Unexpected error: {error_detail}"
-        )
+        raise
+    log_counter("zai_api_success", labels=labels)
+    log_histogram(
+        "zai_api_response_time",
+        time.time() - started_at,
+        labels=labels,
+    )
+    return result
 
 
 #

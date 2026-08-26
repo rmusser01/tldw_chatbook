@@ -134,9 +134,7 @@ async def test_the_rail_scales_with_the_terminal_instead_of_staying_fixed():
         assert LAB_RAIL_MIN_WIDTH <= width <= LAB_RAIL_MAX_WIDTH, (
             f"rail width {width} out of bounds at {columns} columns"
         )
-    assert widths[80] < widths[200], (
-        f"rail did not scale with the terminal: {widths}"
-    )
+    assert widths[80] < widths[200], f"rail did not scale with the terminal: {widths}"
 
 
 @pytest.mark.asyncio
@@ -144,20 +142,20 @@ async def test_no_rail_label_is_truncated_at_the_narrowest_supported_terminal():
     """The rail's minimum width must actually fit the longest label.
 
     Textual drops the whole overflowing word rather than clipping mid-word,
-    so truncation is silent and total: at `min-width: 20` the 15-character
-    "Download Models" rendered as "Download", with no ellipsis to hint that
-    anything was lost.
+    so truncation is silent and total. The exact surviving longest label is
+    "Speech Recognition".
 
     `content_region.width` is NOT a usable oracle here -- it reported 16 for
     a 15-character label that did not render. `render_line(0).text` is the
     composited output and does show the loss, so assert against that.
     """
-    longest = "Download Models"
+    longest = "Speech Recognition"
     app = _WorkbenchHarness(
         LabRailLayout(collapsed=frozenset({LAB_RAIL_INSPECTOR})),
         row_labels=("Llama.cpp", longest, "Ollama"),
     )
     async with app.run_test(size=(80, 24)) as pilot:
+        app.query_one("#lab-workbench").add_class("lab-mode-stts")
         await pilot.pause()
         rendered = {
             str(row.label): row.render_line(0).text
@@ -193,7 +191,7 @@ async def test_the_selected_rail_row_gets_no_horizontal_border_and_stays_one_row
         assert "is-active" in active.classes
 
         border = active.styles.border
-        assert not any(
-            edge[0] for edge in (border.top, border.bottom)
-        ), "selected rail row has a horizontal border; it will displace its neighbours"
+        assert not any(edge[0] for edge in (border.top, border.bottom)), (
+            "selected rail row has a horizontal border; it will displace its neighbours"
+        )
         assert {row.region.height for row in rows} == {1}

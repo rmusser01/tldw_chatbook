@@ -156,6 +156,82 @@ def test_local_store_rejects_whitespace_embedding_profile_id(tmp_path):
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
+@pytest.mark.parametrize("profile_id", ("__local__", " __local__ "))
+def test_local_store_rejects_reserved_workspace_profile_id_before_persistence(
+    tmp_path,
+    profile_id,
+):
+    path = tmp_path / "local_mcp_store.json"
+    store = LocalMCPStore(path)
+    legitimate = store.save_profile(
+        LocalExternalMCPProfile(profile_id="docs", command="python")
+    )
+    persisted_before_rejection = path.read_bytes()
+
+    with pytest.raises(ValueError, match="reserved"):
+        store.save_profile(
+            LocalExternalMCPProfile(profile_id=profile_id, command="python")
+        )
+
+    assert path.read_bytes() == persisted_before_rejection
+    assert store.list_profiles() == [legitimate]
+
+
+def test_local_store_reserved_workspace_profile_rule_is_case_sensitive(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    docs = store.save_profile(
+        LocalExternalMCPProfile(profile_id="docs", command="python")
+    )
+    case_distinct = store.save_profile(
+        LocalExternalMCPProfile(profile_id="__LOCAL__", command="python")
+    )
+
+    assert store.list_profiles() == [docs, case_distinct]
+
+
+def test_local_store_ignores_persisted_reserved_profile_and_associated_state(
+    tmp_path,
+):
+    path = tmp_path / "local_mcp_store.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {"profile_id": "__local__", "command": "spoof-server"},
+                    {"profile_id": "docs", "command": "docs-server"},
+                ],
+                "discovery_snapshots": {
+                    "__local__": {"tools": [{"name": "fs_write"}]},
+                    "docs": {"tools": [{"name": "search_docs"}]},
+                },
+                "profile_runtime_state": {
+                    "__local__": {"ok": True, "last_action": "start"},
+                    "docs": {"ok": True, "last_action": "discover"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = LocalMCPStore(path)
+
+    state = store.load()
+    catalog = store.get_external_catalog()
+    bundle = store.get_catalog_bundle()
+
+    assert [profile.profile_id for profile in state.profiles] == ["docs"]
+    assert state.discovery_snapshots == {"docs": {"tools": [{"name": "search_docs"}]}}
+    assert state.profile_runtime_state == {
+        "docs": {"ok": True, "last_action": "discover"}
+    }
+    assert [(profile.profile_id, snapshot) for profile, snapshot in catalog] == [
+        ("docs", {"tools": [{"name": "search_docs"}]})
+    ]
+    assert [profile["profile_id"] for profile in bundle["profiles"]] == ["docs"]
+    assert set(bundle["discovery_snapshots"]) == {"docs"}
+    assert set(bundle["profile_runtime_state"]) == {"docs"}
+
+
 def test_local_store_rejects_blank_governance_rule_writes_before_persistence(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
 

@@ -11,6 +11,7 @@ def test_master_shell_destination_order_matches_spec():
         "Home",
         "Console",
         "Library",
+        "Research",
         "Artifacts",
         "Roleplay",
         "Watchlists",
@@ -76,7 +77,8 @@ def test_legacy_routes_resolve_to_master_destinations():
         "prompts": ("library", "prompts"),
         "skills": ("library", "skills"),
         "writing": ("library", "writing"),
-        "research": ("library", "research"),
+        "research_workspace": ("research", "research_workspace"),
+        "research": ("research", "research"),
         "chatbooks": ("artifacts", "chatbooks"),
         "ccp": ("personas", "personas"),
         "conversation": ("library", "conversation"),
@@ -100,6 +102,28 @@ def test_legacy_routes_resolve_to_master_destinations():
     for route, expected in expectations.items():
         resolved = resolve_shell_route(route)
         assert (resolved.destination_id, resolved.canonical_route) == expected
+
+
+def test_research_destination_owns_workspace_and_preserves_runs_route():
+    """The new shell command opens Workspace while direct Runs links stay real."""
+    from tldw_chatbook.UI.Navigation.screen_registry import registered_screen_routes
+
+    destination = get_shell_destination("research")
+    assert destination.primary_route == "research_workspace"
+    assert destination.related_routes == ("research",)
+
+    workspace_route = next(
+        route
+        for route in registered_screen_routes()
+        if route.screen_name == "research_workspace"
+    )
+    assert (
+        workspace_route.module_path,
+        workspace_route.class_name,
+    ) == (
+        "tldw_chatbook.UI.Screens.research_workspace_screen",
+        "ResearchWorkspaceScreen",
+    )
 
 
 def test_ccp_legacy_routes_resolve_to_personas_destination():
@@ -161,6 +185,8 @@ def test_every_shell_destination_id_resolves_to_its_primary_screen():
     app = _build_test_app()
 
     for destination in SHELL_DESTINATION_ORDER:
+        if destination.destination_id == "research":
+            continue
         by_id = app._resolve_screen_navigation_target(destination.destination_id)
         by_primary = app._resolve_screen_navigation_target(destination.primary_route)
         assert by_id[2] is not None, destination.destination_id
@@ -189,6 +215,8 @@ def test_every_shell_destination_has_readable_purpose_and_mounted_route():
     for destination in SHELL_DESTINATION_ORDER:
         assert destination.purpose
         assert destination.tooltip
+        if destination.destination_id == "research":
+            continue
         _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
             destination.primary_route
         )

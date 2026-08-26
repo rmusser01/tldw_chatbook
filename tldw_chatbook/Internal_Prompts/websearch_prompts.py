@@ -71,7 +71,7 @@ register(
 
                 Instructions:
                 1. You MUST only answer TRUE or False while providing your reasoning for your answer.
-                2. A result is relevant if the result most likely contains comprehensive and relevant information to answer the user's question.
+                2. A result is relevant if it provides USEFUL information about the subject of the user's question, even if it only partially addresses the question. Answer False only when the result is essentially unrelated to the question's subject.
                 3. Provide a brief reason for selection.
 
                 You MUST respond using EXACTLY this format and nothing else:

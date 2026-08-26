@@ -305,15 +305,9 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
         await pilot.pause()
         session = console._console_hands_free
         assert session.controller.state == "countdown"
-        # Task-5 final review I1: `ModeChanged("countdown")` seeds `session.
-        # countdown_remaining` synchronously with `on_voice_final()` --
-        # BEFORE the first real `CountdownTick` (only delivered by the
-        # NEXT `tick()` call) ever writes it. Asserted directly on the
-        # session field, not the rendered text, since the 0.1s tick timer
-        # could plausibly have already advanced the visible value by the
-        # time a poll observes it -- this pins the SEED itself,
-        # deterministically, not "eventually shows some countdown text".
-        assert session.countdown_remaining == 0.3
+        # The mode change seeds the configured delay, then the real 0.1 s
+        # timer may decrement it before this posted event has settled.
+        assert 0 < session.countdown_remaining <= 0.3
 
         deadline = time.monotonic() + 4
         painted = False
@@ -1635,17 +1629,13 @@ async def _wait_for(condition, pilot, *, timeout: float = _ASYNC_SETTLE_TIMEOUT)
     raise AssertionError(f"condition never became true: {condition!r}")
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
-async def test_two_consecutive_empty_limits_really_reopen_then_really_exit(
+async def test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press(
     monkeypatch,
 ):
-    """End-to-end pin for B2: a wall-clock/buffer-limit ending with NOTHING
-    dictated must reopen the REAL microphone (not just the FSM's belief) --
-    and a SECOND consecutive empty ending must actually exit the loop.
-    Asserts on the dictation SERVICE's own `start_calls`, never the FSM's
-    `capture_open` property, since that is exactly what B1's probe showed
-    can lie.
-    """
+    """A bounded ending inserts normally and requires an explicit resume."""
     service = FakeDictationService()
     _patch_availability(monkeypatch)
     _install_streaming_session(monkeypatch, service)
@@ -1664,31 +1654,36 @@ async def test_two_consecutive_empty_limits_really_reopen_then_really_exit(
         assert console._console_hands_free is not None
         assert service.start_calls == 1
 
-        # First empty-limit ending: nothing was dictated (no `emit_final`
-        # call). Must reopen for one more turn.
-        console._dictation._handle_console_dictation_limit()
-        await _wait_for(lambda: service.start_calls == 2, pilot)
-        await _wait_for_mic_label(composer, pilot, "Dictating")
-        assert console._console_hands_free is not None
-        assert console._console_hands_free.controller.state == "listening"
-
-        # Second CONSECUTIVE empty-limit ending: must exit the loop, not
-        # reopen a third time.
+        service.emit_final("retained bounded text")
+        await pilot.pause()
         console._dictation._handle_console_dictation_limit()
         await _wait_for(lambda: console._console_hands_free is None, pilot)
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+
         await pilot.pause(0.2)
-        assert service.start_calls == 2  # no third reopen
+        assert composer.draft_text() == "retained bounded text"
+        assert service.start_calls == 1
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        assert service.start_calls == 2
+        service.emit_partial("resumed physically")
+        await _wait_for(
+            lambda: console._console_dictation_partial == "resumed physically",
+            pilot,
+        )
+        service.emit_final("resumed physically")
+        await _wait_for(lambda: console._console_dictation_partial == "", pilot)
+        await pilot.pause()
+        await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
 @pytest.mark.asyncio
-async def test_empty_limit_with_segments_reopen_pending_reply_still_speaks(
+async def test_hands_free_limit_never_auto_sends_the_retained_text(
     monkeypatch,
 ):
-    """A limit-triggered ending WITH segments pending must still drive a
-    real send (the `RequestStopAndSend`-equivalent path) once the capture
-    has actually finished stopping -- deferring `on_capture_ended` to
-    after `idle` must not break the had-segments branch."""
+    """Limit recovery follows ordinary insertion, never the send path."""
     service = FakeDictationService()
     _patch_availability(monkeypatch)
     _install_streaming_session(monkeypatch, service)
@@ -1711,24 +1706,23 @@ async def test_empty_limit_with_segments_reopen_pending_reply_still_speaks(
         await pilot.pause()
 
         service.emit_final("dictated before the limit hit")
-        await pilot.pause()
-        # A real countdown may or may not have expired yet; force the
-        # limit path directly, matching what the 60s wall timer would do
-        # with a segment already finalized (state may be `listening` if
-        # the countdown drained, or `countdown` -- `_handle_console_
-        # dictation_limit` only cares that dictation is still `recording`).
+        await _wait_for(
+            lambda: (
+                console._console_hands_free is not None
+                and console._console_hands_free.controller.state == "countdown"
+            ),
+            pilot,
+        )
         console._dictation._handle_console_dictation_limit()
 
-        await _wait_for(lambda: bool(gateway.sent_messages), pilot)
-        sent_user_turns = [
-            m["content"]
-            for turn in gateway.sent_messages
-            for m in turn
-            if m.get("role") == "user"
-        ]
-        assert any("dictated before the limit hit" in t for t in sent_user_turns)
-        await _wait_for(lambda: bool(tts.calls), pilot)
-        assert any("Limit triggered reply" in text for text, _q in tts.calls)
+        await _wait_for(lambda: console._console_hands_free is None, pilot)
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+        await pilot.pause(0.3)
+
+        assert composer.draft_text() == "dictated before the limit hit"
+        assert gateway.sent_messages == []
+        assert not any("Limit triggered reply" in text for text, _q in tts.calls)
+        assert service.start_calls == 1
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+import threading
+import time
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 from textual import on, work
@@ -11,17 +17,50 @@ from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Static
-from textual.worker import Worker
+from textual.worker import Worker, get_current_worker
 
+from ...Local_Ingestion.parakeet_v2_artifact import parakeet_reference
 from ...Model_Artifacts.remote_huggingface import (
     RemoteGGUFCandidate,
     ResolvedRemoteCatalog,
 )
+from ...Model_Artifacts.machine_memory import (
+    MachineMemorySnapshot,
+    ProbeReason,
+    SystemMemoryState,
+)
 from ...Model_Artifacts.service import ArtifactRef, ModelArtifactService
+from ...STT.parakeet_sources import (
+    ManagedCopyConsent,
+    ManagedCopyPlan,
+    ParakeetSourceError,
+    ParakeetSourceErrorCode,
+    ParakeetSourceKey,
+    PreparedExternalSelection,
+)
+from ...STT.parakeet_external import (
+    ExternalParakeetVerificationError,
+    format_external_parakeet_recovery,
+)
+from ...Third_Party.textual_fspicker import SelectDirectory
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.ModelArtifacts import (
     InstallProgressed,
     InstallStatusChanged,
+    ManagedGGUFRuntimeChoiceModal,
     ModelInstallModal,
+)
+from ..Navigation.audio_cpp_model_handoff import (
+    AudioCppModelInstallOperation,
+    AudioCppModelInstallOwner,
+    AudioCppModelLibraryRequest,
+    AudioCppModelLibraryResult,
+)
+from ..Navigation.pending_handoff_store import (
+    HandoffChannel,
+    HandoffClaim,
+    HandoffValueError,
+    PendingHandoffStore,
 )
 from ..Lab_Modules.lab_server_status import (
     LAB_SERVER_SOURCES,
@@ -37,7 +76,9 @@ from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabInspectorRow, LabScreen, LabStatusChip
 from .model_browser_state import install_failure_message
 from .model_curated_view import CuratedView
+from .model_external_view import ExternalModelView
 from .model_installed_view import InstalledView
+from .model_memory_presenter import build_machine_memory_presentation
 from .model_remote_view import RemoteView
 
 if TYPE_CHECKING:
@@ -48,6 +89,24 @@ if TYPE_CHECKING:
         PreflightReport,
     )
     from tldw_chatbook.Model_Artifacts.curated_registry import CuratedRegistry
+
+
+class _AudioCppConsentDeclined(Exception):
+    """Internal terminal value for a reviewed install the user declined."""
+
+
+def _insufficient_space_recovery(report: object) -> str | None:
+    """Return byte-exact bounded recovery for one ungrantable real plan."""
+
+    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
+
+    if type(report) is not PreflightReport or report.sufficient_space:
+        return None
+    return (
+        f"Insufficient space — {report.required_bytes:,} bytes required; "
+        f"{report.free_bytes:,} bytes free. Free space, then select Retry install."
+    )
+
 
 #: (section title, ((view key, label), ...)) in rail order. The view keys are
 #: exactly LLMManagementWindow.view_mapping's keys.
@@ -69,8 +128,8 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("curated", "Curated"),
             ("installed", "Installed"),
+            ("external", "External"),
             ("remote", "Remote"),
-            ("download-models", "Download Models"),
         ),
     ),
 )
@@ -81,21 +140,48 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 #: press-triggered read would report "stopped".
 LAB_SERVER_POLL_SECONDS = 2.0
 
+_REMOTE_INSTALL_TERMINAL_FINISH = "finish"
+_REMOTE_INSTALL_TERMINAL_CANCEL = "cancel"
+_REMOTE_INSTALL_TERMINAL_ACTIONS = frozenset(
+    {_REMOTE_INSTALL_TERMINAL_FINISH, _REMOTE_INSTALL_TERMINAL_CANCEL}
+)
+
 #: Back-compat alias for the (app attribute, display name) server-process
 #: table; ``LAB_SERVER_SOURCES`` in ``lab_server_status`` is the canonical
 #: copy and carries the same six providers.
 _SERVER_PROCESS_ATTRS = LAB_SERVER_SOURCES
 
 
-def _probe_local_server(host: str = "127.0.0.1", port: int = 11434) -> bool:
-    """Cheap TCP probe for an externally-started Ollama server."""
-    import socket
+async def _probe_local_server(host: str = "127.0.0.1", port: int = 11434) -> bool:
+    """Cheap TCP probe for an externally-started Ollama server.
 
+    task-15473: this used to be a blocking `socket.create_connection(...,
+    timeout=0.25)`, called directly from the Models screen's periodic
+    status timer -- instant on ECONNREFUSED, but a genuinely blackholed
+    port (firewalled/container setups) froze the WHOLE event loop for up
+    to the full 250ms, once per tick, since a synchronous socket call on
+    the loop thread blocks every other task in the process, not just this
+    one. `asyncio.open_connection` under the same 0.25s `wait_for` cap
+    keeps the exact semantics (up = connectable, down = refused or
+    timeout, same interval) but the wait yields the loop instead of
+    freezing it -- verified live (mutation-tested against the old
+    blocking implementation): a concurrent heartbeat task ticks dozens
+    of times during the wait against a real unresponsive address, versus
+    zero for the old blocking call in the same window (see
+    ``Tests/UI/test_llm_screen_ollama_probe_nonblocking.py``).
+    """
     try:
-        with socket.create_connection((host, port), timeout=0.25):
-            return True
-    except OSError:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=0.25
+        )
+    except (OSError, asyncio.TimeoutError):
         return False
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except OSError:
+        pass
+    return True
 
 
 class LLMScreen(LabScreen):
@@ -106,11 +192,22 @@ class LLMScreen(LabScreen):
     and re-synced on every ``refresh_lab_status()`` pass.
     """
 
-    def __init__(self, app_instance: "TldwCli", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        app_instance: "TldwCli",
+        *,
+        machine_memory_wall_clock: Callable[[], datetime] | None = None,
+        machine_memory_monotonic_clock: Callable[[], float] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Create the Models screen.
 
         Args:
             app_instance: The running application.
+            machine_memory_wall_clock: Injectable local wall clock for the fixed
+                accepted-observation label.
+            machine_memory_monotonic_clock: Injectable monotonic clock retained
+                with accepted machine facts.
             kwargs: Forwarded to ``LabScreen``.
         """
         super().__init__(app_instance, "llm", **kwargs)
@@ -126,6 +223,16 @@ class LLMScreen(LabScreen):
         self._model_install_active = False
         self._model_install_phase: str | None = None
         self._model_install_succeeded: bool | None = None
+        self._local_gguf_import_active = False
+        self._external_selection_generation = 0
+        self._external_selection_token: tuple[int, int] | None = None
+        self._external_scope_id: str | None = None
+        self._external_scope_ids: dict[tuple[int, int], str] = {}
+        self._external_commit_tokens: set[tuple[int, int]] = set()
+        self._external_selection_worker: Worker | None = None
+        self._external_operation_status = ""
+        self._external_operation_error = False
+        self._external_operation_active = False
         #: Which flow currently owns the fields below -- ``"curated"`` or
         #: ``"remote"``, or ``None`` when idle. TASK-1914: curated and
         #: remote installs share this screen's one set of retained state
@@ -180,6 +287,14 @@ class LLMScreen(LabScreen):
         #: anyway, while doubling every field below for no operational
         #: benefit.
         self._model_install_worker: Worker | None = None
+        self._audio_cpp_model_install_operation: (
+            AudioCppModelInstallOperation | None
+        ) = None
+        self._audio_cpp_operation_expects_return = False
+        self._audio_cpp_consent_future: asyncio.Future[bool] | None = None
+        self._audio_cpp_consent_modal: ModelInstallModal | None = None
+        self._audio_cpp_reclaim_worker: Worker | None = None
+        self._audio_cpp_presentation_worker: Worker | None = None
         #: The reference, service, and (curated-only) registry/source map
         #: the currently running (or about-to-run) curated install needs
         #: -- captured once from the posted ``CuratedView.InstallRequested``
@@ -205,10 +320,98 @@ class LLMScreen(LabScreen):
         self._model_install_catalog: "ResolvedRemoteCatalog | None" = None
         self._model_install_candidate: "RemoteGGUFCandidate | None" = None
         self._model_install_credential_resolver: "CredentialResolver | None" = None
+        #: Terminal Remote presentation retained only when the current view is
+        #: inside LabScreen's teardown/remount gap. The acquisition fields
+        #: above may then be cleared immediately without losing the selected
+        #: repository or its outcome before a fresh RemoteView can consume it.
+        self._remote_install_terminal_catalog: "ResolvedRemoteCatalog | None" = None
+        self._remote_install_terminal_candidate: "RemoteGGUFCandidate | None" = None
+        self._remote_install_terminal_action: str | None = None
+        self._remote_install_terminal_message: str | None = None
+        #: Last verified Remote root and its frozen discovery context. Unlike
+        #: the narrow terminal-presentation bridge above, this remains after
+        #: delivery so a later screen recompose preserves the adoption CTA.
+        self._remote_install_completed_catalog: "ResolvedRemoteCatalog | None" = None
+        self._remote_install_completed_candidate: "RemoteGGUFCandidate | None" = None
+        self._remote_install_completed_reference: ArtifactRef | None = None
+        self._remote_install_completed_message: str | None = None
+        #: Exact runtime adoption intent retained by the screen while the
+        #: current LLMManagementWindow validates a freshly-downloaded root.
+        #: LabScreen recomposition replaces that window, so window-local
+        #: ownership alone would strand the handoff with the detached worker.
+        self._remote_runtime_handoff: tuple[str, ArtifactRef] | None = None
+        self._machine_memory_snapshot: MachineMemorySnapshot | None = None
+        self._machine_memory_observed_label: str | None = None
+        self._machine_memory_observed_monotonic: float | None = None
+        self._machine_memory_generation = 0
+        self._machine_memory_worker: Worker | None = None
+        self._machine_memory_active = False
+        self._machine_memory_failure: ProbeReason | None = None
+        self._machine_memory_wall_clock = machine_memory_wall_clock or datetime.now
+        self._machine_memory_monotonic_clock = (
+            machine_memory_monotonic_clock or time.monotonic
+        )
+        self._machine_memory_probe_factory: (
+            Callable[[], MachineMemorySnapshot] | None
+        ) = None
+        self._audio_cpp_model_request_claim: (
+            HandoffClaim[AudioCppModelLibraryRequest] | None
+        ) = None
         #: Server rows snapshotted for the duration of one
         #: ``refresh_lab_status`` pass; None outside one. See
         #: :meth:`_current_server_rows`.
         self._server_rows_snapshot: tuple[LabServerRow, ...] | None = None
+
+    def on_mount(self) -> None:
+        """Claim an optional Settings-owned audio.cpp Model Library request."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return
+        claim = cast(PendingHandoffStore, store).claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+        if claim is not None and type(claim.value) is AudioCppModelLibraryRequest:
+            self._audio_cpp_model_request_claim = claim
+        elif self._audio_cpp_install_owner().active_count:
+            self._audio_cpp_reclaim_worker = self._reclaim_audio_cpp_request()
+
+    @work(group="audio_cpp_request_reclaim", exit_on_error=False)
+    async def _reclaim_audio_cpp_request(self) -> None:
+        """Retry one request claim after the prior app-owned operation settles."""
+
+        await self._audio_cpp_install_owner().wait_until_idle()
+        if not self.is_attached or self._audio_cpp_model_request_claim is not None:
+            return
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return
+        claim = cast(PendingHandoffStore, store).claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+        if claim is None or type(claim.value) is not AudioCppModelLibraryRequest:
+            return
+        self._audio_cpp_model_request_claim = claim
+        await self._present_audio_cpp_request(claim)
+
+    async def _present_audio_cpp_request(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryRequest],
+    ) -> None:
+        """Load and activate the exact audio.cpp return presentation."""
+
+        for _ in range(200):
+            if not self.is_attached or self._audio_cpp_model_request_claim is not claim:
+                return
+            view = self._curated_view()
+            window = self.llm_window
+            if view is not None and window is not None:
+                view.set_consumer_filter("audio_cpp", allow_installed_return=True)
+                view.ensure_loaded()
+                window.active_view = "curated"
+                return
+            await asyncio.sleep(0.01)
+        logger.warning("Audio.cpp Model Library presentation timed out")
 
     def _current_server_rows(self) -> tuple[LabServerRow, ...]:
         """Return server liveness, shared across one refresh pass.
@@ -317,6 +520,8 @@ class LLMScreen(LabScreen):
             self._model_install_phase = None
             self._model_install_last_progress = None
         self.refresh_lab_status()
+        if event.active and getattr(self, "_model_install_kind", None) == "remote":
+            self._sync_remote_install_context_status()
 
     def _curated_view(self) -> "CuratedView | None":
         """Return the mounted ``CuratedView``, or None if it cannot be found.
@@ -350,6 +555,16 @@ class LLMScreen(LabScreen):
         except NoMatches:
             return None
 
+    def _external_view(self) -> "ExternalModelView | None":
+        """Return the current deferred external-source edit view."""
+
+        if self.llm_window is None:
+            return None
+        try:
+            return self.llm_window.query_one(ExternalModelView)
+        except NoMatches:
+            return None
+
     def _remote_view(self) -> "RemoteView | None":
         """Return the mounted ``RemoteView``, or None if it cannot be found.
 
@@ -365,6 +580,121 @@ class LLMScreen(LabScreen):
             return self.llm_window.query_one(RemoteView)
         except NoMatches:
             return None
+
+    def _request_remote_machine_memory(self, *, force: bool) -> None:
+        """Start or hydrate the one process-session machine observation."""
+        if self._machine_memory_active and not force:
+            self._hydrate_remote_machine_memory()
+            return
+        if not force and (
+            self._machine_memory_snapshot is not None
+            or self._machine_memory_generation > 0
+        ):
+            self._hydrate_remote_machine_memory()
+            return
+        self._machine_memory_generation += 1
+        generation = self._machine_memory_generation
+        self._machine_memory_active = True
+        self._machine_memory_failure = None
+        self._hydrate_remote_machine_memory()
+        self._machine_memory_worker = self._run_machine_memory_probe(generation)
+
+    @work(
+        thread=True,
+        group="remote_machine_memory",
+        exclusive=True,
+        exit_on_error=False,
+        description="Observe local model memory capacity",
+    )
+    def _run_machine_memory_probe(self, generation: int) -> None:
+        """Observe bounded local memory off-loop and return only safe facts."""
+        factory = self._machine_memory_probe_factory
+        if factory is None:
+            from ...Model_Artifacts.machine_memory_probe import observe_machine_memory
+
+            factory = observe_machine_memory
+        try:
+            result = factory()
+        except Exception:
+            result = None
+        self.app.call_from_thread(
+            self._apply_machine_memory_result,
+            generation,
+            result,
+        )
+
+    def _apply_machine_memory_result(
+        self,
+        generation: int,
+        result: MachineMemorySnapshot | None,
+    ) -> None:
+        """Apply only the current probe, retaining valid RAM across failures."""
+        if generation != self._machine_memory_generation:
+            return
+        self._machine_memory_active = False
+        self._machine_memory_worker = None
+        accepted = (
+            type(result) is MachineMemorySnapshot
+            and result.system_state
+            in {SystemMemoryState.OBSERVED, SystemMemoryState.PARTIAL}
+            and result.total_bytes is not None
+        )
+        current_is_valid = (
+            type(self._machine_memory_snapshot) is MachineMemorySnapshot
+            and self._machine_memory_snapshot.system_state
+            in {SystemMemoryState.OBSERVED, SystemMemoryState.PARTIAL}
+            and self._machine_memory_snapshot.total_bytes is not None
+        )
+        if accepted:
+            self._machine_memory_snapshot = result
+            self._machine_memory_observed_label = (
+                self._machine_memory_wall_clock().strftime("%H:%M")
+            )
+            self._machine_memory_observed_monotonic = (
+                self._machine_memory_monotonic_clock()
+            )
+            self._machine_memory_failure = None
+        elif current_is_valid:
+            self._machine_memory_failure = (
+                result.system_reason
+                if type(result) is MachineMemorySnapshot
+                and result.system_reason is not None
+                else ProbeReason.INVALID_MEMORY_VALUE
+            )
+        else:
+            self._machine_memory_snapshot = (
+                result if type(result) is MachineMemorySnapshot else None
+            )
+            self._machine_memory_failure = (
+                result.system_reason
+                if type(result) is MachineMemorySnapshot
+                and result.system_reason is not None
+                else ProbeReason.INVALID_MEMORY_VALUE
+            )
+        self._hydrate_remote_machine_memory()
+
+    def _hydrate_remote_machine_memory(self) -> bool:
+        """Publish retained machine facts into the currently mounted RemoteView."""
+        view = self._remote_view()
+        if view is None:
+            return False
+        presentation_snapshot = (
+            self._machine_memory_snapshot
+            if not self._machine_memory_active
+            or (
+                self._machine_memory_snapshot is not None
+                and self._machine_memory_snapshot.total_bytes is not None
+            )
+            else None
+        )
+        presentation = build_machine_memory_presentation(
+            presentation_snapshot,
+            active=self._machine_memory_active,
+            observed_at_label=self._machine_memory_observed_label,
+            failure=self._machine_memory_failure,
+        )
+        view.apply_machine_memory_state(presentation, self._machine_memory_snapshot)
+        return True
 
     def _active_install_view(self) -> "CuratedView | RemoteView | None":
         """Return the view rendering the currently in-flight install, if any.
@@ -390,7 +720,7 @@ class LLMScreen(LabScreen):
         return None
 
     def _install_in_progress(self) -> bool:
-        """Return whether a curated or remote install is in ANY phase.
+        """Return whether any managed-model acquisition owns the host.
 
         TASK-1914 fix round 2: the concurrency guard in ``_curated_
         install_requested``/``_remote_install_requested`` used to check
@@ -419,7 +749,886 @@ class LLMScreen(LabScreen):
         Returns:
             Whether an install (either kind) is currently in progress.
         """
-        return self._model_install_kind is not None
+        return self._model_install_kind is not None or getattr(
+            self, "_local_gguf_import_active", False
+        )
+
+    def _can_start_local_gguf_import(self) -> bool:
+        """Return whether Installed may reserve the shared host lane."""
+        return not self._install_in_progress()
+
+    def _set_local_gguf_import_active(self, active: bool) -> None:
+        """Retain Installed ownership across picker, consent, and worker phases."""
+        self._local_gguf_import_active = active
+
+    # -- External Parakeet roots: screen-owned picker and workers -------
+
+    @staticmethod
+    def _external_key_for_reference(
+        reference: ArtifactRef,
+    ) -> ParakeetSourceKey | None:
+        """Resolve only an exact catalog-known Parakeet root reference."""
+
+        for key in ParakeetSourceKey:
+            if reference == parakeet_reference(key.model_id, key.precision):
+                return key
+        return None
+
+    def _next_external_token(self) -> tuple[int, int]:
+        """Fence every picker and worker callback to this screen generation."""
+
+        prior = self._external_selection_token
+        if prior is not None and prior not in self._external_commit_tokens:
+            self._release_external_scope(prior)
+        worker = self._external_selection_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        self._external_selection_generation += 1
+        token = (self._external_selection_generation, id(self))
+        self._external_selection_token = token
+        self._external_scope_id = f"llm-external-{token[1]}-{token[0]}"
+        self._external_scope_ids[token] = self._external_scope_id
+        self._external_selection_worker = None
+        return token
+
+    def _release_external_scope(self, token: tuple[int, int]) -> None:
+        """Release one path-free verifier owner exactly once."""
+
+        scope_id = self._external_scope_ids.pop(token, None)
+        if scope_id is None:
+            return
+        if self._external_scope_id == scope_id:
+            self._external_scope_id = None
+        service = getattr(self.app, "_parakeet_source_service", None)
+        if service is not None:
+            service.release_scope(scope_id)
+
+    def _owns_external_token(self, token: tuple[int, int]) -> bool:
+        """Return whether a completion still belongs to this mounted screen."""
+
+        return (
+            token == self._external_selection_token
+            and token[1] == id(self)
+            and self.is_mounted
+        )
+
+    def _set_external_status(
+        self,
+        text: str,
+        *,
+        error: bool = False,
+        active: bool | None = None,
+    ) -> None:
+        """Retain path-safe operation copy across deferred-view recomposition."""
+
+        self._external_operation_status = text
+        self._external_operation_error = error
+        if active is not None:
+            self._external_operation_active = active
+        view = self._external_view()
+        if view is not None:
+            view.apply_operation_status(
+                text,
+                error=error,
+                active=self._external_operation_active,
+            )
+
+    def _hydrate_external_status(self) -> None:
+        """Apply screen-retained state to the current deferred view."""
+
+        view = self._external_view()
+        if view is not None and self._external_operation_status:
+            view.apply_operation_status(
+                self._external_operation_status,
+                error=self._external_operation_error,
+                active=self._external_operation_active,
+            )
+
+    def _reload_external_view(self) -> None:
+        view = self._external_view()
+        if view is not None:
+            view.reload()
+
+    @on(CuratedView.UseFromDiskRequested)
+    def _use_from_disk_requested(
+        self,
+        event: CuratedView.UseFromDiskRequested,
+    ) -> None:
+        event.stop()
+        self._begin_external_selection(event.reference)
+
+    def _begin_external_selection(
+        self,
+        reference: ArtifactRef,
+        *,
+        start_directory: Path | None = None,
+    ) -> None:
+        """Open the real directory picker for one exact catalog root."""
+
+        key = self._external_key_for_reference(reference)
+        if key is None:
+            self.notify(
+                "This model does not support direct directory selection.",
+                severity="error",
+            )
+            return
+        token = self._next_external_token()
+        picker = SelectDirectory(
+            str(start_directory or Path.home()),
+            title=f"Choose {key.model_id} {key.precision.upper()} directory",
+        )
+        self.app.push_screen(
+            picker,
+            lambda selected: self._external_directory_selected(
+                token,
+                key,
+                selected,
+            ),
+        )
+
+    def _external_directory_selected(
+        self,
+        token: tuple[int, int],
+        key: ParakeetSourceKey,
+        selected: Path | None,
+    ) -> None:
+        """Start verification only for the current non-cancelled picker."""
+
+        if not self._owns_external_token(token):
+            return
+        if selected is None:
+            self._release_external_scope(token)
+            return
+        window = self.llm_window
+        if window is None or not window.is_mounted:
+            self._release_external_scope(token)
+            return
+        window.active_view = "external"
+        self._set_external_status("Verifying model files…", active=True)
+        self._external_selection_worker = self._verify_external_source(
+            token,
+            key,
+            Path(selected),
+            "commit",
+        )
+
+    @on(ExternalModelView.ChangeRequested)
+    def _change_external_source(
+        self,
+        event: ExternalModelView.ChangeRequested,
+    ) -> None:
+        event.stop()
+        record = self.app._ensure_parakeet_source_service().records().get(event.key)
+        self._begin_external_selection(
+            parakeet_reference(event.key.model_id, event.key.precision),
+            start_directory=record.directory if record is not None else None,
+        )
+
+    @on(ExternalModelView.StopRequested)
+    def _stop_external_source(
+        self,
+        event: ExternalModelView.StopRequested,
+    ) -> None:
+        event.stop()
+        if self._external_operation_active:
+            self._cancel_external_operation()
+            return
+        token = self._next_external_token()
+        self._set_external_status("Removing external source…", active=False)
+        self._external_selection_worker = self._run_external_stop(token, event.key)
+
+    @on(ExternalModelView.CancelRequested)
+    def _cancel_first_external_operation(
+        self,
+        event: ExternalModelView.CancelRequested,
+    ) -> None:
+        event.stop()
+        if self._external_operation_active:
+            self._cancel_external_operation()
+
+    def _cancel_external_operation(self) -> None:
+        """Cancel the current worker and restore the prior configured state."""
+
+        token = self._next_external_token()
+        self._release_external_scope(token)
+        message = "Operation cancelled. The prior source is unchanged."
+        self._set_external_status(message, active=False)
+        self.notify(message, severity="information")
+
+    @work(
+        thread=True,
+        group="llm_external_stop",
+        exclusive=True,
+        exit_on_error=False,
+        description="Stop using external Parakeet source",
+    )
+    def _run_external_stop(
+        self,
+        token: tuple[int, int],
+        key: ParakeetSourceKey,
+    ) -> None:
+        """Persist external-source removal outside the Textual event loop."""
+
+        worker = get_current_worker()
+        if worker.is_cancelled or not self._owns_external_token(token):
+            return
+        try:
+            self.app._ensure_parakeet_source_service().stop_using_external(
+                key,
+                cancelled=lambda: (
+                    worker.is_cancelled or not self._owns_external_token(token)
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet source removal failed; error_type={}",
+                type(exc).__name__,
+            )
+            error = "The external source could not be removed. Try again."
+        else:
+            error = None
+        self.app.call_from_thread(self._apply_external_stop_result, token, error)
+
+    def _apply_external_stop_result(
+        self,
+        token: tuple[int, int],
+        error: str | None,
+    ) -> None:
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        self._release_external_scope(token)
+        if error is not None:
+            self._set_external_status(error, error=True, active=False)
+            self.notify(error, severity="error")
+            return
+        self._set_external_status("External source removed.", active=False)
+        self._reload_external_view()
+        self.notify("External source removed.", severity="information")
+
+    @on(ExternalModelView.CopyRequested)
+    def _copy_external_source(
+        self,
+        event: ExternalModelView.CopyRequested,
+    ) -> None:
+        event.stop()
+        service = self.app._ensure_parakeet_source_service()
+        record = service.records().get(event.key)
+        if record is None or record.directory is None:
+            self._set_external_status(
+                "No external directory is configured for this model.",
+                error=True,
+            )
+            return
+        token = self._next_external_token()
+        self._set_external_status(
+            "Verifying model files before copy…",
+            active=True,
+        )
+        self._external_selection_worker = self._verify_external_source(
+            token,
+            event.key,
+            record.directory,
+            "copy",
+        )
+
+    @work(
+        thread=True,
+        group="llm_external_verify",
+        exclusive=True,
+        exit_on_error=False,
+        description="Verify external Parakeet source",
+    )
+    def _verify_external_source(
+        self,
+        token: tuple[int, int],
+        key: ParakeetSourceKey,
+        directory: Path,
+        action: str,
+    ) -> None:
+        """Hash the selected root outside the Textual event loop."""
+
+        worker = get_current_worker()
+
+        def progress(done: int, total: int) -> None:
+            self.app.call_from_thread(
+                self._apply_external_hash_progress,
+                token,
+                done,
+                total,
+            )
+
+        try:
+            prepared = self.app._ensure_parakeet_source_service().prepare_external(
+                key,
+                directory,
+                owner=("scope", f"llm-external-{token[1]}-{token[0]}"),
+                cancelled=lambda: worker.is_cancelled,
+                progress=progress,
+            )
+        except ExternalParakeetVerificationError as exc:
+            message, is_error = format_external_parakeet_recovery(exc.code)
+            if is_error:
+                logger.warning(
+                    "External Parakeet verification rejected the selected source; "
+                    "error_type={}",
+                    type(exc).__name__,
+                )
+            self.app.call_from_thread(
+                self._apply_external_verification_result,
+                token,
+                action,
+                None,
+                message,
+                is_error,
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet verification failed unexpectedly; error_type={}",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(
+                self._apply_external_verification_result,
+                token,
+                action,
+                None,
+                "The selected model could not be verified. Choose the directory again.",
+                True,
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_external_verification_result,
+            token,
+            action,
+            prepared,
+            None,
+        )
+
+    def _apply_external_hash_progress(
+        self,
+        token: tuple[int, int],
+        done: int,
+        total: int,
+    ) -> None:
+        if self._owns_external_token(token):
+            self._set_external_status(
+                f"Verifying model files · {done:,} / {total:,} bytes"
+            )
+
+    def _apply_external_verification_result(
+        self,
+        token: tuple[int, int],
+        action: str,
+        prepared: PreparedExternalSelection | None,
+        error: str | None,
+        error_is_failure: bool = True,
+    ) -> None:
+        """Commit, request VAD consent, or plan an optional managed copy."""
+
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        if error is not None or prepared is None:
+            self._release_external_scope(token)
+            message = error or "The selected model could not be verified."
+            self._set_external_status(
+                message,
+                error=error_is_failure,
+                active=False,
+            )
+            self.notify(
+                message,
+                severity="error" if error_is_failure else "information",
+            )
+            return
+        if action == "copy":
+            self._review_external_copy(token, prepared)
+            return
+        self._commit_external_or_request_vad(token, prepared)
+
+    def _commit_external_or_request_vad(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        self._set_external_status("Saving external source…", active=False)
+        self._external_commit_tokens.add(token)
+        self._external_selection_worker = self._run_external_commit(token, prepared)
+
+    @work(
+        thread=True,
+        group="llm_external_commit",
+        exclusive=True,
+        exit_on_error=False,
+        description="Save external Parakeet source",
+    )
+    def _run_external_commit(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        """Persist one verified source and probe runtime readiness off-loop."""
+
+        worker = get_current_worker()
+        if worker.is_cancelled or not self._owns_external_token(token):
+            self.app.call_from_thread(
+                self._apply_external_commit_result,
+                token,
+                prepared,
+                "cancelled",
+                False,
+            )
+            return
+        try:
+            self.app._ensure_parakeet_source_service().commit_external(
+                prepared,
+                cancelled=lambda: (
+                    worker.is_cancelled or not self._owns_external_token(token)
+                ),
+            )
+        except ParakeetSourceError as exc:
+            if exc.code is ParakeetSourceErrorCode.VAD_UNAVAILABLE:
+                outcome = "vad"
+            else:
+                outcome = "error"
+            runtime_ready = False
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet source save failed; error_type={}",
+                type(exc).__name__,
+            )
+            outcome = "error"
+            runtime_ready = False
+        else:
+            from tldw_chatbook.Utils.optional_deps import (
+                parakeet_onnx_deps_installed,
+            )
+
+            outcome = "saved"
+            runtime_ready = parakeet_onnx_deps_installed()
+        self.app.call_from_thread(
+            self._apply_external_commit_result,
+            token,
+            prepared,
+            outcome,
+            runtime_ready,
+        )
+
+    def _apply_external_commit_result(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        outcome: str,
+        runtime_ready: bool,
+    ) -> None:
+        self._external_commit_tokens.discard(token)
+        if not self._owns_external_token(token):
+            self._release_external_scope(token)
+            return
+        self._external_selection_worker = None
+        if outcome == "vad":
+            self._set_external_status(
+                "Checking the managed VAD dependency…",
+                active=False,
+            )
+            self._external_selection_worker = self._run_external_vad_preflight(
+                token,
+                prepared,
+            )
+            return
+        self._release_external_scope(token)
+        if outcome == "cancelled":
+            return
+        if outcome == "error":
+            self._external_commit_failed()
+            return
+        self._finish_external_commit(runtime_ready=runtime_ready)
+
+    def _external_commit_failed(self) -> None:
+        message = (
+            "The external source could not be saved. The prior source is unchanged."
+        )
+        self._set_external_status(message, error=True, active=False)
+        self.notify(message, severity="error")
+
+    def _finish_external_commit(self, *, runtime_ready: bool) -> None:
+        message = "External source ready." if runtime_ready else "Runtime required"
+        self._set_external_status(message, active=False)
+        self._reload_external_view()
+        self.notify(message, severity="information")
+
+    @work(
+        thread=True,
+        group="llm_external_vad_preflight",
+        exclusive=True,
+        exit_on_error=False,
+        description="Check managed VAD dependency",
+    )
+    def _run_external_vad_preflight(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        """Build the VAD-only acquisition plan outside the event loop."""
+
+        from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+            run_parakeet_vad_preflight,
+        )
+
+        try:
+            report = asyncio.run(run_parakeet_vad_preflight())
+        except Exception as exc:
+            logger.warning(
+                "Managed VAD preflight failed; error_type={}",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(
+                self._apply_external_vad_preflight_result,
+                token,
+                prepared,
+                None,
+                "The managed VAD dependency could not be prepared.",
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_external_vad_preflight_result,
+            token,
+            prepared,
+            report,
+            None,
+        )
+
+    def _apply_external_vad_preflight_result(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        report: "PreflightReport | None",
+        error: str | None,
+    ) -> None:
+        """Show consent only for an exact VAD-only report."""
+
+        from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+            parakeet_vad_descriptor,
+            parakeet_vad_reference,
+        )
+
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        vad_reference = parakeet_vad_reference()
+        vad_source_url = parakeet_vad_descriptor().source_url
+        if (
+            error is not None
+            or report is None
+            or report.root != vad_reference
+            or not report.entries
+            or any(
+                entry.ref != vad_reference or entry.source_url != vad_source_url
+                for entry in report.entries
+            )
+        ):
+            self._release_external_scope(token)
+            message = error or "The managed VAD plan changed. Choose the model again."
+            self._set_external_status(message, error=True, active=False)
+            self.notify(message, severity="error")
+            return
+        self.app.push_screen(
+            ModelInstallModal(report, model_label="Silero VAD dependency"),
+            lambda confirmed: self._confirm_external_vad(
+                bool(confirmed),
+                token,
+                prepared,
+                report,
+            ),
+        )
+
+    def _confirm_external_vad(
+        self,
+        confirmed: bool,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        report: "PreflightReport",
+    ) -> None:
+        if not self._owns_external_token(token):
+            return
+        if not confirmed:
+            self._release_external_scope(token)
+            self._set_external_status(
+                "VAD install cancelled. The prior source is unchanged.",
+                active=False,
+            )
+            return
+        self._set_external_status(
+            "Installing the managed VAD dependency…",
+            active=True,
+        )
+        self._external_selection_worker = self._run_external_vad_provision(
+            token,
+            prepared,
+            report,
+        )
+
+    @work(
+        group="llm_external_vad_install",
+        exclusive=True,
+        exit_on_error=False,
+        description="Install managed VAD dependency",
+    )
+    async def _run_external_vad_provision(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        report: "PreflightReport",
+    ) -> None:
+        """Provision only the consented VAD dependency."""
+
+        from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+            run_parakeet_vad_provision,
+        )
+
+        def progress(event: "AcquisitionProgress") -> None:
+            self._apply_external_vad_progress(
+                token,
+                event.bytes_done,
+                event.bytes_total,
+            )
+
+        try:
+            await run_parakeet_vad_provision(report, progress=progress)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Managed VAD installation failed; error_type={}",
+                type(exc).__name__,
+            )
+            self._apply_external_vad_provision_result(
+                token,
+                prepared,
+                "The managed VAD dependency could not be installed.",
+            )
+            return
+        self._apply_external_vad_provision_result(
+            token,
+            prepared,
+            None,
+        )
+
+    def _apply_external_vad_progress(
+        self,
+        token: tuple[int, int],
+        done: int,
+        total: int,
+    ) -> None:
+        if self._owns_external_token(token):
+            self._set_external_status(
+                f"Installing managed VAD dependency · {done:,} / {total:,} bytes"
+            )
+
+    def _apply_external_vad_provision_result(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        error: str | None,
+    ) -> None:
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        if error is not None:
+            self._release_external_scope(token)
+            self._set_external_status(error, error=True, active=False)
+            self.notify(error, severity="error")
+            return
+        self._commit_external_or_request_vad(token, prepared)
+
+    def _review_external_copy(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        self._set_external_status("Planning managed copy…", active=True)
+        self._external_selection_worker = self._run_external_copy_plan(token, prepared)
+
+    @work(
+        thread=True,
+        group="llm_external_copy_plan",
+        exclusive=True,
+        exit_on_error=False,
+        description="Plan external Parakeet managed copy",
+    )
+    def _run_external_copy_plan(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+    ) -> None:
+        """Plan managed-store space outside the Textual event loop."""
+
+        worker = get_current_worker()
+        if worker.is_cancelled:
+            return
+        try:
+            plan = self.app._ensure_parakeet_source_service().plan_managed_copy(
+                prepared.verified
+            )
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet copy planning failed; error_type={}",
+                type(exc).__name__,
+            )
+            plan = None
+            error = (
+                "The managed copy could not be planned. "
+                "The external source is unchanged."
+            )
+        else:
+            error = None
+        self.app.call_from_thread(
+            self._apply_external_copy_plan,
+            token,
+            prepared,
+            plan,
+            error,
+        )
+
+    def _apply_external_copy_plan(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        plan: ManagedCopyPlan | None,
+        error: str | None,
+    ) -> None:
+        """Apply only the current screen-owned copy plan."""
+
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        if error is not None or plan is None:
+            self._set_external_status(
+                error or "The managed copy could not be planned.",
+                error=True,
+                active=False,
+            )
+            self._release_external_scope(token)
+            return
+        if plan.already_installed:
+            self._set_external_status(
+                "This model is already in the managed store.",
+                active=False,
+            )
+            self.notify(
+                "This model is already in the managed store.",
+                severity="information",
+            )
+            self._release_external_scope(token)
+            return
+        try:
+            consent = plan.grant()
+        except ParakeetSourceError:
+            self._set_external_status(
+                "Not enough managed-store space is available for this copy.",
+                error=True,
+                active=False,
+            )
+            self._release_external_scope(token)
+            return
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Copy into managed store?",
+                message=(
+                    f"Copy {plan.additional_bytes / 1024:.1f} KiB into Chatbook's "
+                    "managed store? The external source remains active."
+                ),
+                confirm_label="Copy",
+                cancel_label="Cancel",
+            ),
+            lambda confirmed: self._confirm_external_copy(
+                bool(confirmed),
+                token,
+                prepared,
+                consent,
+            ),
+        )
+        self._external_operation_active = False
+
+    def _confirm_external_copy(
+        self,
+        confirmed: bool,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        consent: ManagedCopyConsent,
+    ) -> None:
+        if not self._owns_external_token(token):
+            return
+        if not confirmed:
+            self._release_external_scope(token)
+            self._set_external_status(
+                "Managed copy cancelled. External source unchanged.",
+                active=False,
+            )
+            return
+        self._set_external_status(
+            "Copying model into the managed store…",
+            active=True,
+        )
+        self._external_selection_worker = self._run_external_copy(
+            token,
+            prepared,
+            consent,
+        )
+
+    @work(
+        thread=True,
+        group="llm_external_copy",
+        exclusive=True,
+        exit_on_error=False,
+        description="Copy external Parakeet source",
+    )
+    def _run_external_copy(
+        self,
+        token: tuple[int, int],
+        prepared: PreparedExternalSelection,
+        consent: ManagedCopyConsent,
+    ) -> None:
+        worker = get_current_worker()
+        if worker.is_cancelled or not self._owns_external_token(token):
+            return
+        try:
+            self.app._ensure_parakeet_source_service().copy_into_managed(
+                prepared.verified,
+                consent,
+                cancelled=lambda: worker.is_cancelled,
+            )
+        except Exception as exc:
+            logger.warning(
+                "External Parakeet managed copy failed; error_type={}",
+                type(exc).__name__,
+            )
+            error = "Managed copy failed. The external source is unchanged."
+        else:
+            error = None
+        self.app.call_from_thread(
+            self._apply_external_copy_result,
+            token,
+            error,
+        )
+
+    def _apply_external_copy_result(
+        self,
+        token: tuple[int, int],
+        error: str | None,
+    ) -> None:
+        if not self._owns_external_token(token):
+            return
+        self._external_selection_worker = None
+        self._release_external_scope(token)
+        if error is not None:
+            self._set_external_status(error, error=True, active=False)
+            self.notify(error, severity="error")
+            return
+        message = "Model copied into the managed store. Activate it when ready."
+        self._set_external_status(message, active=False)
+        self.notify(message, severity="information")
 
     # -- Curated model install: this screen owns preflight/provision -----
     #
@@ -483,6 +1692,7 @@ class LLMScreen(LabScreen):
             return
         if (
             not isinstance(event.reference, ArtifactRef)
+            or type(event.already_installed) is not bool
             or event.service is None
             or event.registry is None
             or event.sources is None
@@ -502,6 +1712,28 @@ class LLMScreen(LabScreen):
         self._model_install_service = event.service
         self._model_install_registry = event.registry
         self._model_install_sources = event.sources
+        if event.already_installed:
+            try:
+                descriptor = event.registry.descriptor(event.reference)
+            except (KeyError, TypeError, ValueError):
+                descriptor = None
+            if descriptor is None or descriptor.consumer != "audio_cpp":
+                self.notify(
+                    "Could not use the installed package: invalid request.",
+                    severity="error",
+                )
+                self._clear_curated_install_state()
+                return
+            self._deliver_curated(InstallStatusChanged(event.reference, active=True))
+            self._start_audio_cpp_installed_return()
+            return
+        try:
+            descriptor = event.registry.descriptor(event.reference)
+        except (KeyError, TypeError, ValueError):
+            descriptor = None
+        if descriptor is not None and descriptor.consumer == "audio_cpp":
+            self._start_audio_cpp_preflight()
+            return
         self._model_install_worker = self._run_curated_preflight()
 
     async def _preflight_curated(self, reference: ArtifactRef):
@@ -554,11 +1786,9 @@ class LLMScreen(LabScreen):
             )
         except Exception as exc:
             artifact_id = getattr(reference, "artifact_id", "unknown")
-            logger.opt(exception=True).error(
-                "Curated model preflight failed for {}@{}/{}",
-                artifact_id,
-                getattr(reference, "revision", "unknown"),
-                getattr(reference, "variant", "unknown"),
+            logger.error(
+                "Curated model preflight failed; error_type={}",
+                type(exc).__name__,
             )
             self.app.call_from_thread(
                 self._apply_curated_preflight_result,
@@ -586,10 +1816,15 @@ class LLMScreen(LabScreen):
         self._model_install_worker = None
         if error is not None or report is None:
             self.notify(error or "Model preflight failed.", severity="error")
+            self._clear_curated_install_state(error or "Model preflight failed.")
+            return
+        registry = self._model_install_registry
+        if registry is None:
+            self.notify("Model preflight state is unavailable.", severity="error")
             self._clear_curated_install_state()
             return
         self._model_install_pending_report = report
-        descriptor = self._model_install_registry.descriptor(report.root)
+        descriptor = registry.descriptor(report.root)
         self.app.push_screen(
             ModelInstallModal(report, model_label=descriptor.model_id),
             self._confirm_curated_install,
@@ -598,14 +1833,19 @@ class LLMScreen(LabScreen):
     def _confirm_curated_install(self, confirmed: bool) -> None:
         """Start provisioning only after explicit consent."""
         if not confirmed:
-            self._clear_curated_install_state()
+            report = self._model_install_pending_report
+            self._clear_curated_install_state(_insufficient_space_recovery(report))
             return
         reference = self._model_install_reference
         if reference is not None:
             self._deliver_curated(InstallStatusChanged(reference, active=True))
         self._model_install_worker = self._run_curated_provision()
 
-    async def _provision_curated(self, report: "PreflightReport"):
+    async def _provision_curated(
+        self,
+        report: "PreflightReport",
+        cancel_event: threading.Event | None = None,
+    ):
         """Provision the consented report on the worker's event loop.
 
         Args:
@@ -620,15 +1860,331 @@ class LLMScreen(LabScreen):
         acquisition = ArtifactAcquisitionService(self._model_install_service)
 
         def deliver(progress: "AcquisitionProgress") -> None:
-            self._deliver_curated(InstallProgressed(progress))
+            if cancel_event is not None and cancel_event.is_set():
+                raise asyncio.CancelledError
+            message = InstallProgressed(progress)
+            if cancel_event is None:
+                self._deliver_curated(message)
+            else:
 
-        return await acquisition.provision(
+                def deliver_current() -> None:
+                    operation = self._audio_cpp_model_install_operation
+                    if (
+                        operation is not None
+                        and operation.cancel_event is cancel_event
+                        and not cancel_event.is_set()
+                        and self.is_attached
+                    ):
+                        self._deliver_curated(message)
+
+                self.app.call_from_thread(deliver_current)
+
+        kwargs: dict[str, object] = {
+            "sources": self._model_install_sources,
+            "progress": deliver,
+        }
+        registry = self._model_install_registry
+        if registry is None:
+            raise RuntimeError("curated model registry is unavailable")
+        descriptor = registry.descriptor(report.root)
+        if descriptor.consumer == "audio_cpp":
+            kwargs["activate"] = False
+        if cancel_event is not None and cancel_event.is_set():
+            raise asyncio.CancelledError
+        provisioned = await acquisition.provision(
             report.root,
             report.grant(),
-            self._model_install_registry,
-            sources=self._model_install_sources,
-            progress=deliver,
+            registry,
+            **kwargs,
         )
+        if cancel_event is not None and cancel_event.is_set():
+            raise asyncio.CancelledError
+        return provisioned
+
+    def _audio_cpp_installed_result(
+        self,
+        reference: ArtifactRef,
+    ) -> AudioCppModelLibraryResult | None:
+        """Lease and verify one exact installed root, then detach its return."""
+
+        service = self._model_install_service
+        if service is None:
+            raise RuntimeError("model artifact service is unavailable")
+        with service.acquire_installed_root(reference) as leased:
+            paths = dict(leased.handle.paths)
+            canonical_root = paths[reference]
+            claim = self._audio_cpp_model_request_claim
+            if claim is None:
+                return None
+            request = claim.value
+            return AudioCppModelLibraryResult(
+                token=request.token,
+                draft_revision=request.draft_revision,
+                artifact_id=reference.artifact_id,
+                revision=reference.revision,
+                variant=reference.variant,
+                canonical_root=str(canonical_root),
+            )
+
+    def _audio_cpp_install_owner(self) -> AudioCppModelInstallOwner:
+        """Return the app-owned durable audio.cpp operation owner."""
+
+        owner = getattr(self.app_instance, "audio_cpp_model_install_owner", None)
+        if type(owner) is not AudioCppModelInstallOwner:
+            raise RuntimeError("audio.cpp install owner is unavailable")
+        return owner
+
+    def _start_audio_cpp_operation(
+        self,
+        *,
+        installed: bool,
+        include_preflight: bool = False,
+    ) -> None:
+        """Start one durable audio.cpp generation across requested phases."""
+
+        owner = self._audio_cpp_install_owner()
+        reference = self._model_install_reference
+        report = self._model_install_pending_report
+        operation: AudioCppModelInstallOperation | None = None
+
+        async def runner(
+            cancel_event: threading.Event,
+        ) -> AudioCppModelLibraryResult | None:
+            if installed:
+                if reference is None:
+                    raise RuntimeError("installed audio.cpp package is unavailable")
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError
+                result = await asyncio.to_thread(
+                    self._audio_cpp_installed_result, reference
+                )
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError
+                return result
+            active_report = report
+            if include_preflight:
+                if reference is None:
+                    raise RuntimeError("audio.cpp install request is unavailable")
+                active_report = await asyncio.to_thread(
+                    lambda: asyncio.run(self._preflight_curated(reference))
+                )
+                if cancel_event.is_set() or not self.is_attached:
+                    raise asyncio.CancelledError
+                assert operation is not None
+                confirmed = await self._await_audio_cpp_consent(
+                    operation,
+                    active_report,
+                    cancel_event,
+                )
+                if not confirmed:
+                    raise _AudioCppConsentDeclined
+                if cancel_event.is_set() or not self.is_attached:
+                    raise asyncio.CancelledError
+                self._deliver_curated(InstallStatusChanged(reference, active=True))
+            if active_report is None:
+                raise RuntimeError("audio.cpp install plan is unavailable")
+            provisioned = await asyncio.to_thread(
+                lambda: asyncio.run(
+                    self._provision_curated(active_report, cancel_event)
+                )
+            )
+            return await asyncio.to_thread(
+                self._audio_cpp_installed_result, provisioned
+            )
+
+        def settled(
+            result: AudioCppModelLibraryResult | None,
+            error: BaseException | None,
+            cancelled: bool,
+        ) -> None:
+            assert operation is not None
+            self._audio_cpp_operation_settled(
+                operation,
+                result,
+                error,
+                cancelled,
+            )
+
+        operation = owner.start(runner, settled)
+        self._audio_cpp_operation_expects_return = (
+            self._audio_cpp_model_request_claim is not None
+        )
+        self._audio_cpp_model_install_operation = operation
+        self._model_install_worker = self._wait_audio_cpp_operation(operation)
+
+    def _start_audio_cpp_installed_return(self) -> None:
+        """Start a durable exact installed-root verification and return."""
+
+        self._start_audio_cpp_operation(installed=True)
+
+    def _start_audio_cpp_preflight(self) -> None:
+        """Start one generation spanning preflight, consent, and provision."""
+
+        self._start_audio_cpp_operation(installed=False, include_preflight=True)
+
+    async def _await_audio_cpp_consent(
+        self,
+        operation: AudioCppModelInstallOperation,
+        report: "PreflightReport",
+        cancel_event: threading.Event,
+    ) -> bool:
+        """Present and await consent only for the current mounted generation."""
+
+        if (
+            cancel_event.is_set()
+            or not self.is_attached
+            or self._audio_cpp_model_install_operation is not operation
+        ):
+            raise asyncio.CancelledError
+        registry = self._model_install_registry
+        if registry is None:
+            raise RuntimeError("audio.cpp preflight state is unavailable")
+        descriptor = registry.descriptor(report.root)
+        self._model_install_pending_report = report
+        future = asyncio.get_running_loop().create_future()
+        self._audio_cpp_consent_future = future
+        modal = ModelInstallModal(
+            report,
+            model_label=descriptor.model_id,
+            selected_file_details=self._audio_cpp_selected_file_details(report),
+        )
+        self._audio_cpp_consent_modal = modal
+        self.app.push_screen(
+            modal,
+            lambda confirmed: self._resolve_audio_cpp_consent(
+                operation,
+                confirmed,
+            ),
+        )
+        while not future.done():
+            if (
+                cancel_event.is_set()
+                or not self.is_attached
+                or self._audio_cpp_model_install_operation is not operation
+            ):
+                raise asyncio.CancelledError
+            await asyncio.sleep(0.01)
+        if (
+            cancel_event.is_set()
+            or not self.is_attached
+            or self._audio_cpp_model_install_operation is not operation
+        ):
+            raise asyncio.CancelledError
+        return future.result()
+
+    def _audio_cpp_selected_file_details(
+        self,
+        report: "PreflightReport",
+    ) -> tuple[tuple[str, int, str, str], ...]:
+        """Return exact immutable file facts for the reviewed closure."""
+
+        registry = self._model_install_registry
+        sources = self._model_install_sources
+        if registry is None or sources is None:
+            raise RuntimeError("audio.cpp source review state is unavailable")
+        references = tuple(entry.ref for entry in report.entries) or (report.root,)
+        return tuple(
+            (artifact_file.path, artifact_file.size_bytes, artifact_file.sha256, source)
+            for reference in references
+            for artifact_file in registry.descriptor(reference).files
+            for source in (sources[reference][artifact_file.path],)
+        )
+
+    def _resolve_audio_cpp_consent(
+        self,
+        operation: AudioCppModelInstallOperation,
+        confirmed: bool,
+    ) -> None:
+        """Resolve consent only for the still-current audio.cpp generation."""
+
+        future = self._audio_cpp_consent_future
+        if (
+            self._audio_cpp_model_install_operation is not operation
+            or future is None
+            or future.done()
+        ):
+            return
+        self._audio_cpp_consent_modal = None
+        future.set_result(bool(confirmed))
+
+    @work(group="llm_curated_install", exit_on_error=False)
+    async def _wait_audio_cpp_operation(
+        self,
+        operation: AudioCppModelInstallOperation,
+    ) -> None:
+        """Tie Textual cancellation to the durable owner, then join it."""
+
+        owner = self._audio_cpp_install_owner()
+        try:
+            await owner.wait(operation)
+        except asyncio.CancelledError:
+            owner.request_cancel(operation)
+            while not operation.task.done():
+                try:
+                    await owner.wait(operation)
+                except asyncio.CancelledError:
+                    continue
+            raise
+
+    def _audio_cpp_operation_settled(
+        self,
+        operation: AudioCppModelInstallOperation,
+        result: AudioCppModelLibraryResult | None,
+        error: BaseException | None,
+        cancelled: bool,
+    ) -> None:
+        """Apply one owner-settled outcome without exposing private details."""
+
+        if self._audio_cpp_model_install_operation is not operation:
+            return
+        self._audio_cpp_model_install_operation = None
+        self._audio_cpp_consent_future = None
+        self._audio_cpp_consent_modal = None
+        expects_return = self._audio_cpp_operation_expects_return
+        self._audio_cpp_operation_expects_return = False
+        if cancelled or not self.is_attached:
+            self._settle_detached_audio_cpp_operation()
+            return
+        if isinstance(error, _AudioCppConsentDeclined):
+            self._model_install_worker = None
+            self._clear_curated_install_state(
+                _insufficient_space_recovery(self._model_install_pending_report)
+            )
+            return
+        if error is not None:
+            reference = self._model_install_reference
+            artifact_id = (
+                reference.artifact_id if reference is not None else "audio.cpp model"
+            )
+            logger.error(
+                "Audio.cpp model installation failed; error_type={}",
+                type(error).__name__,
+            )
+            self._apply_audio_cpp_provision_result(
+                None,
+                install_failure_message(error, model_label=artifact_id),
+            )
+            return
+        if not expects_return:
+            self._apply_audio_cpp_standalone_result()
+            return
+        self._apply_audio_cpp_provision_result(result, None)
+
+    def _settle_detached_audio_cpp_operation(self) -> None:
+        """Release request/state after actual work settles, without late UI."""
+
+        claim = self._audio_cpp_model_request_claim
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if claim is not None and type(store) is PendingHandoffStore:
+            cast(PendingHandoffStore, store).release(claim)
+        self._audio_cpp_model_request_claim = None
+        self._model_install_worker = None
+        self._model_install_reference = None
+        self._model_install_service = None
+        self._model_install_registry = None
+        self._model_install_sources = None
+        self._model_install_pending_report = None
+        self._model_install_kind = None
 
     @work(thread=True, group="llm_curated_install", exit_on_error=False)
     def _run_curated_provision(self) -> None:
@@ -641,54 +2197,219 @@ class LLMScreen(LabScreen):
         unhandled exception that skips
         ``_apply_curated_provision_result`` and strands install state.
         """
+        app = self.app
         report = self._model_install_pending_report
         if report is None:
-            self.app.call_from_thread(
+            app.call_from_thread(
                 self._apply_curated_provision_result,
                 "No install plan is available; review the model again.",
             )
             return
         try:
-            asyncio.run(self._provision_curated(report))  # policy-exception: worker-thread loop
-        except Exception as exc:
+            reference = asyncio.run(
+                self._provision_curated(report)
+            )  # policy-exception: worker-thread loop
+        except (Exception, asyncio.CancelledError) as exc:
             root = getattr(report, "root", None)
             artifact_id = getattr(root, "artifact_id", "unknown")
-            logger.opt(exception=True).error(
-                "Curated model installation failed for {}@{}/{}",
-                artifact_id,
-                getattr(root, "revision", "unknown"),
-                getattr(root, "variant", "unknown"),
+            logger.error(
+                "Curated model installation failed; error_type={}",
+                type(exc).__name__,
             )
-            self.app.call_from_thread(
-                self._apply_curated_provision_result,
-                install_failure_message(exc, model_label=artifact_id),
+            error = (
+                "Model installation was cancelled."
+                if isinstance(exc, asyncio.CancelledError)
+                else install_failure_message(exc, model_label=artifact_id)
             )
+            app.call_from_thread(self._apply_curated_provision_result, error)
             return
-        self.app.call_from_thread(self._apply_curated_provision_result, None)
+        key = self._external_key_for_reference(reference)
+        if key is None:
+            app.call_from_thread(self._apply_curated_provision_result, None)
+            return
+        try:
+            app._ensure_parakeet_source_service().prefer_managed(key)
+        except Exception as exc:
+            logger.warning(
+                "Activated Parakeet source preference update failed; error_type={}",
+                type(exc).__name__,
+            )
+            error = (
+                "Model installed, but the managed source preference could not be saved."
+            )
+        else:
+            error = None
+        app.call_from_thread(
+            self._apply_curated_preference_result,
+            reference,
+            error,
+        )
 
     def _apply_curated_provision_result(self, error: str | None) -> None:
         """Finish an installation: notify, mirror lifecycle, and reset state."""
-        reference = self._model_install_reference
         self._model_install_worker = None
         self._model_install_pending_report = None
+        self._finish_curated_provision(error, succeeded=error is None)
+
+    def _apply_audio_cpp_provision_result(
+        self,
+        result: AudioCppModelLibraryResult | None,
+        error: str | None,
+    ) -> None:
+        """Stage one exact installed result and settle its request once."""
+
+        self._model_install_worker = None
+        self._model_install_pending_report = None
+        claim = self._audio_cpp_model_request_claim
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        returned_for_review = False
+        installed_but_return_failed = False
+        if error is None and result is None:
+            error = "Model installed, but it could not be returned for review."
+        if error is None and result is not None and claim is not None:
+            request = claim.value
+            reference = self._model_install_reference
+            if (
+                result.token != request.token
+                or result.draft_revision != request.draft_revision
+                or reference is None
+                or result.artifact_id != reference.artifact_id
+                or result.revision != reference.revision
+                or result.variant != reference.variant
+            ):
+                installed_but_return_failed = True
+                error = (
+                    "Installed, but the Settings return expired. Reopen Guided "
+                    "Settings and choose this package again."
+                )
+        if error is None and result is not None and claim is not None:
+            staged = False
+            try:
+                if type(store) is not PendingHandoffStore:
+                    raise HandoffValueError("handoff store is unavailable")
+                handoffs = cast(PendingHandoffStore, store)
+                handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT, result)
+                staged = True
+                if not handoffs.acknowledge(claim):
+                    raise HandoffValueError("handoff request is no longer current")
+            except (HandoffValueError, RuntimeError):
+                if staged:
+                    handoffs.clear_pending(
+                        HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+                    )
+                installed_but_return_failed = True
+                error = (
+                    "Installed, but the Settings return expired. Reopen Guided "
+                    "Settings and choose this package again."
+                )
+            else:
+                self._audio_cpp_model_request_claim = None
+                returned_for_review = True
+                view = self._curated_view()
+                if view is not None:
+                    view.set_consumer_filter(
+                        "audio_cpp",
+                        allow_installed_return=False,
+                    )
+        if error is not None and not self.is_attached and claim is not None:
+            if type(store) is PendingHandoffStore:
+                cast(PendingHandoffStore, store).release(claim)
+            self._audio_cpp_model_request_claim = None
+        self._finish_curated_provision(
+            error,
+            succeeded=error is None or installed_but_return_failed,
+            success_message=(
+                "Installed — ready for review" if returned_for_review else "Installed"
+            ),
+        )
+
+    def _apply_audio_cpp_standalone_result(self) -> None:
+        """Finish a claim-less audio.cpp install without claiming a return."""
+
+        self._model_install_worker = None
+        self._model_install_pending_report = None
+        self._finish_curated_provision(
+            None,
+            succeeded=True,
+            success_message="Installed",
+        )
+
+    def _apply_curated_preference_result(
+        self,
+        reference: ArtifactRef,
+        error: str | None,
+    ) -> None:
+        if (
+            not self.is_attached
+            or self._model_install_kind != "curated"
+            or self._model_install_reference != reference
+        ):
+            return
+        self._model_install_worker = None
+        self._finish_curated_provision(error, succeeded=True)
+
+    def _finish_curated_provision(
+        self,
+        error: str | None,
+        *,
+        succeeded: bool,
+        success_message: str = "Model installed and activated.",
+    ) -> None:
+        """Deliver one terminal curated lifecycle result and clear state."""
+
+        reference = self._model_install_reference
         if error is not None:
             self.notify(error, severity="error")
         else:
-            self.notify("Model installed and activated.", severity="information")
+            self.notify(success_message, severity="information")
         if reference is not None:
             self._deliver_curated(
-                InstallStatusChanged(reference, active=False, succeeded=error is None)
+                InstallStatusChanged(reference, active=False, succeeded=succeeded)
             )
         self._model_install_reference = None
         self._model_install_service = None
         self._model_install_registry = None
         self._model_install_sources = None
+        self._model_install_pending_report = None
         self._model_install_kind = None
         view = self._curated_view()
         if view is not None:
-            view.finish_install()
+            view.finish_install(error)
 
-    def _clear_curated_install_state(self) -> None:
+    def on_unmount(self) -> None:
+        """Cancel screen-owned work and release live verifier ownership."""
+
+        operation = self._audio_cpp_model_install_operation
+        if operation is not None:
+            self._audio_cpp_install_owner().request_cancel(operation)
+        modal = self._audio_cpp_consent_modal
+        self._audio_cpp_consent_modal = None
+        if modal is not None and modal.is_attached:
+            modal.dismiss(False)
+        reclaim_worker = self._audio_cpp_reclaim_worker
+        if reclaim_worker is not None and not reclaim_worker.is_finished:
+            reclaim_worker.cancel()
+        presentation_worker = self._audio_cpp_presentation_worker
+        if presentation_worker is not None and not presentation_worker.is_finished:
+            presentation_worker.cancel()
+        worker = self._external_selection_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        token = self._external_selection_token
+        if token is not None and token not in self._external_commit_tokens:
+            self._release_external_scope(token)
+        self._external_selection_token = None
+        claim = self._audio_cpp_model_request_claim
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if (
+            claim is not None
+            and not self._install_in_progress()
+            and type(store) is PendingHandoffStore
+        ):
+            cast(PendingHandoffStore, store).release(claim)
+            self._audio_cpp_model_request_claim = None
+
+    def _clear_curated_install_state(self, message: str | None = None) -> None:
         """Reset this screen's own bookkeeping after a request that never
         started provisioning (a preflight failure or an explicit decline
         at the consent modal) -- neither ever posted
@@ -705,9 +2426,14 @@ class LLMScreen(LabScreen):
         self._model_install_kind = None
         view = self._curated_view()
         if view is not None:
-            view.cancel_pending_install()
+            if message is None:
+                view.cancel_pending_install()
+            else:
+                view.cancel_pending_install(message)
 
-    def _deliver_curated(self, message: InstallProgressed | InstallStatusChanged) -> None:
+    def _deliver_curated(
+        self, message: InstallProgressed | InstallStatusChanged
+    ) -> None:
         """Post one install-lifecycle message so it bubbles through ``LLMManagementWindow``.
 
         Despite the name (kept for the existing call sites and tests that
@@ -777,6 +2503,101 @@ class LLMScreen(LabScreen):
     # steps below are duplicated, exactly as the curated block duplicates
     # LibraryScreen's own Parakeet v2 shape.
 
+    @on(RemoteView.MachineMemoryRequested)
+    def _remote_machine_memory_requested(
+        self,
+        event: RemoteView.MachineMemoryRequested,
+    ) -> None:
+        """Delegate the presentation-only intent to screen-owned acquisition."""
+        event.stop()
+        self._request_remote_machine_memory(force=event.force)
+
+    @on(RemoteView.OpenInstalledRequested)
+    def _remote_open_installed_requested(
+        self, event: RemoteView.OpenInstalledRequested
+    ) -> None:
+        """Open the exact verified row without activating or starting it."""
+        event.stop()
+        if self.llm_window is None or type(event.reference) is not ArtifactRef:
+            return
+        installed = self._installed_view()
+        self.llm_window.active_view = "installed"
+        if installed is not None:
+            self.call_after_refresh(installed.reveal_reference, event.reference)
+
+    @on(RemoteView.ConfigureRuntimeRequested)
+    def _remote_configure_runtime_requested(
+        self, event: RemoteView.ConfigureRuntimeRequested
+    ) -> None:
+        """Present compatible runtime destinations for one verified root."""
+        event.stop()
+        if type(event.reference) is not ArtifactRef:
+            return
+        self.app.push_screen(
+            ManagedGGUFRuntimeChoiceModal(),
+            partial(self._remote_runtime_selected, event.reference),
+        )
+
+    def _remote_runtime_selected(
+        self,
+        reference: ArtifactRef,
+        provider: str | None,
+    ) -> None:
+        """Apply one explicit runtime choice without activating or starting it."""
+        if provider not in {"llamacpp", "llamafile"} or self.llm_window is None:
+            return
+        self._remote_runtime_handoff = (provider, reference)
+        if not self.llm_window.configure_managed_gguf(provider, reference):
+            self._remote_runtime_handoff = None
+            self.notify(
+                "Stop the active Llama.cpp or Llamafile server, then configure "
+                "this managed model again.",
+                severity="warning",
+            )
+
+    def _replay_remote_runtime_handoff(self) -> None:
+        """Resume an exact runtime handoff in the current management window."""
+        if self.llm_window is None or self._remote_runtime_handoff is None:
+            return
+        provider, reference = self._remote_runtime_handoff
+        if not self.llm_window.configure_managed_gguf(provider, reference):
+            self._remote_runtime_handoff = None
+            self.notify(
+                "Stop the active Llama.cpp or Llamafile server, then configure "
+                "this managed model again.",
+                severity="warning",
+            )
+
+    @on(LLMManagementWindow.ManagedGGUFHandoffResolved)
+    def _managed_gguf_handoff_resolved(
+        self,
+        event: LLMManagementWindow.ManagedGGUFHandoffResolved,
+    ) -> None:
+        """Clear only the exact screen-owned handoff a window resolved."""
+        event.stop()
+        pending = getattr(self, "_remote_runtime_handoff", None)
+        if pending != (event.provider, event.reference):
+            return
+        self._remote_runtime_handoff = None
+        if event.succeeded:
+            return
+        if event.reason == "inventory-error":
+            message = (
+                "Managed models could not be loaded. Refresh Installed models, "
+                "then try again."
+            )
+        elif event.reason == "server-active":
+            message = (
+                "Stop the active Llama.cpp or Llamafile server, then configure "
+                "this managed model again."
+            )
+        else:
+            message = (
+                "That managed model is no longer available. Refresh Installed "
+                "models, then try again."
+            )
+        self.notify(message, severity="warning")
+
     @on(RemoteView.InstallRequested)
     def _remote_install_requested(self, event: RemoteView.InstallRequested) -> None:
         """Resolve an install plan for a reviewed remote candidate, off the Textual event loop.
@@ -820,6 +2641,8 @@ class LLMScreen(LabScreen):
             )
             self._clear_remote_install_state()
             return
+        self._clear_remote_terminal_presentation()
+        self._clear_remote_completed_presentation()
         self._model_install_kind = "remote"
         self._model_install_reference = event.catalog.artifact.reference
         self._model_install_service = event.service
@@ -877,13 +2700,9 @@ class LLMScreen(LabScreen):
             from tldw_chatbook.Model_Artifacts.acquisition import TransferError
 
             artifact = getattr(catalog, "artifact", None)
-            reference = getattr(artifact, "reference", None)
-            artifact_id = getattr(reference, "artifact_id", "unknown")
             model_label = getattr(artifact, "model_id", "unknown")
             logger.error(
-                "Remote model preflight failed for managed artifact {}; "
-                "error_type={}, retryable={}",
-                artifact_id,
+                "Remote model preflight failed; error_type={}, retryable={}",
                 type(exc).__name__,
                 isinstance(exc, TransferError) and getattr(exc, "retryable", False),
             )
@@ -906,8 +2725,8 @@ class LLMScreen(LabScreen):
         # _model_install_kind, not on _model_install_worker (TASK-1914 fix
         # round 2).
         self._model_install_worker = None
-        catalog = self._model_install_catalog
-        candidate = self._model_install_candidate
+        catalog = getattr(self, "_model_install_catalog", None)
+        candidate = getattr(self, "_model_install_candidate", None)
         if (
             error is not None
             or report is None
@@ -919,6 +2738,7 @@ class LLMScreen(LabScreen):
             self._clear_remote_install_state(message)
             return
         self._model_install_pending_report = report
+        self._sync_remote_install_context_status()
         acknowledgment = (
             "No license was declared. I reviewed the source and want to continue."
             if catalog.artifact.license_id == "NOASSERTION"
@@ -1016,18 +2836,16 @@ class LLMScreen(LabScreen):
             )
             return
         try:
-            asyncio.run(self._provision_remote(report, catalog))  # policy-exception: worker-thread loop
+            asyncio.run(
+                self._provision_remote(report, catalog)
+            )  # policy-exception: worker-thread loop
         except Exception as exc:
             from tldw_chatbook.Model_Artifacts.acquisition import TransferError
 
             artifact = getattr(catalog, "artifact", None)
-            root = getattr(report, "root", None)
-            artifact_id = getattr(root, "artifact_id", "unknown")
             model_label = getattr(artifact, "model_id", "unknown")
             logger.error(
-                "Remote model installation failed for managed artifact {}; "
-                "error_type={}, retryable={}",
-                artifact_id,
+                "Remote model installation failed; error_type={}, retryable={}",
                 type(exc).__name__,
                 isinstance(exc, TransferError) and getattr(exc, "retryable", False),
             )
@@ -1052,19 +2870,29 @@ class LLMScreen(LabScreen):
                 "not been verified."
             )
             self.notify(message, severity="information")
+            if (
+                isinstance(reference, ArtifactRef)
+                and isinstance(self._model_install_catalog, ResolvedRemoteCatalog)
+                and isinstance(self._model_install_candidate, RemoteGGUFCandidate)
+            ):
+                self._remote_install_completed_catalog = self._model_install_catalog
+                self._remote_install_completed_candidate = self._model_install_candidate
+                self._remote_install_completed_reference = reference
+                self._remote_install_completed_message = message
         if reference is not None:
             self._deliver_curated(
                 InstallStatusChanged(reference, active=False, succeeded=error is None)
             )
+        self._deliver_or_retain_remote_terminal_presentation(
+            _REMOTE_INSTALL_TERMINAL_FINISH,
+            message,
+        )
         self._model_install_reference = None
         self._model_install_service = None
         self._model_install_catalog = None
         self._model_install_candidate = None
         self._model_install_credential_resolver = None
         self._model_install_kind = None
-        view = self._remote_view()
-        if view is not None:
-            view.finish_install(message)
 
     def _clear_remote_install_state(self, message: str | None = None) -> None:
         """Reset this screen's own bookkeeping after a request that never
@@ -1080,6 +2908,10 @@ class LLMScreen(LabScreen):
                 sanitized preflight failure); ``None`` for an explicit
                 decline, which restores the view's default status.
         """
+        self._deliver_or_retain_remote_terminal_presentation(
+            _REMOTE_INSTALL_TERMINAL_CANCEL,
+            message,
+        )
         self._model_install_reference = None
         self._model_install_service = None
         self._model_install_catalog = None
@@ -1087,9 +2919,155 @@ class LLMScreen(LabScreen):
         self._model_install_credential_resolver = None
         self._model_install_pending_report = None
         self._model_install_kind = None
+
+    def _clear_remote_terminal_presentation(self) -> None:
+        """Discard a terminal Remote presentation after a mounted view consumes it."""
+        self._remote_install_terminal_catalog = None
+        self._remote_install_terminal_candidate = None
+        self._remote_install_terminal_action = None
+        self._remote_install_terminal_message = None
+
+    def _clear_remote_completed_presentation(self) -> None:
+        """Discard the last success when a new Remote journey supersedes it."""
+        self._remote_install_completed_catalog = None
+        self._remote_install_completed_candidate = None
+        self._remote_install_completed_reference = None
+        self._remote_install_completed_message = None
+
+    @on(RemoteView.DiscoveryStarted)
+    def _remote_discovery_started(self, event: RemoteView.DiscoveryStarted) -> None:
+        """Make a submitted discovery the new Remote lifecycle authority."""
+        event.stop()
+        self._clear_remote_completed_presentation()
+
+    def _deliver_or_retain_remote_terminal_presentation(
+        self,
+        action: str,
+        message: str | None,
+    ) -> None:
+        """Show a Remote outcome now, or retain it across the remount gap.
+
+        Args:
+            action: ``"finish"`` for provisioning outcomes or ``"cancel"``
+                for preflight/consent termination.
+            message: Sanitized outcome copy, or ``None`` for a decline.
+        """
+        catalog = self._model_install_catalog
+        candidate = self._model_install_candidate
         view = self._remote_view()
-        if view is not None:
+        if view is not None and view.is_mounted:
+            if isinstance(catalog, ResolvedRemoteCatalog) and isinstance(
+                candidate, RemoteGGUFCandidate
+            ):
+                view.restore_install_context(catalog, candidate)
+            if action == _REMOTE_INSTALL_TERMINAL_FINISH:
+                completed = getattr(self, "_remote_install_completed_reference", None)
+                if isinstance(completed, ArtifactRef):
+                    view.finish_install(message, completed_reference=completed)
+                else:
+                    view.finish_install(message)
+            else:
+                view.cancel_pending_install(message)
+            self._clear_remote_terminal_presentation()
+            return
+        if isinstance(catalog, ResolvedRemoteCatalog) and isinstance(
+            candidate, RemoteGGUFCandidate
+        ):
+            self._remote_install_terminal_catalog = catalog
+            self._remote_install_terminal_candidate = candidate
+            self._remote_install_terminal_action = action
+            self._remote_install_terminal_message = message
+
+    def _hydrate_remote_terminal_presentation(self) -> bool:
+        """Deliver one retained Remote outcome to the fresh mounted view."""
+        catalog = getattr(self, "_remote_install_terminal_catalog", None)
+        candidate = getattr(self, "_remote_install_terminal_candidate", None)
+        action = getattr(self, "_remote_install_terminal_action", None)
+        if (
+            not isinstance(catalog, ResolvedRemoteCatalog)
+            or not isinstance(candidate, RemoteGGUFCandidate)
+            or action not in _REMOTE_INSTALL_TERMINAL_ACTIONS
+        ):
+            return False
+        view = self._remote_view()
+        if view is None or not view.is_mounted:
+            return False
+        if not view.restore_install_context(catalog, candidate):
+            return False
+        message = getattr(self, "_remote_install_terminal_message", None)
+        if action == _REMOTE_INSTALL_TERMINAL_FINISH:
+            completed = getattr(self, "_remote_install_completed_reference", None)
+            if isinstance(completed, ArtifactRef):
+                view.finish_install(message, completed_reference=completed)
+            else:
+                view.finish_install(message)
+        else:
             view.cancel_pending_install(message)
+        self._clear_remote_terminal_presentation()
+        return True
+
+    def _hydrate_remote_completed_presentation(self) -> bool:
+        """Restore the durable verified completion into a fresh Remote view."""
+        catalog = getattr(self, "_remote_install_completed_catalog", None)
+        candidate = getattr(self, "_remote_install_completed_candidate", None)
+        reference = getattr(self, "_remote_install_completed_reference", None)
+        if (
+            not isinstance(catalog, ResolvedRemoteCatalog)
+            or not isinstance(candidate, RemoteGGUFCandidate)
+            or not isinstance(reference, ArtifactRef)
+        ):
+            return False
+        view = self._remote_view()
+        if view is None or not view.is_mounted:
+            return False
+        if not view.restore_install_context(catalog, candidate):
+            return False
+        view.finish_install(
+            getattr(self, "_remote_install_completed_message", None),
+            completed_reference=reference,
+        )
+        return True
+
+    def _model_install_presentation_pending(self) -> bool:
+        """Return whether a remounted install view needs host hydration."""
+        return (
+            self._model_install_active
+            or (
+                self._model_install_kind == "remote"
+                and self._model_install_catalog is not None
+                and self._model_install_candidate is not None
+            )
+            or getattr(self, "_remote_install_terminal_action", None) is not None
+            or getattr(self, "_remote_install_completed_reference", None) is not None
+        )
+
+    def _remote_install_context_status(self) -> str:
+        """Return truthful lifecycle copy for a reconstructed Remote detail."""
+        if self._model_install_active or (
+            self._model_install_pending_report is not None
+            and self._model_install_worker is not None
+        ):
+            return "Installing the selected GGUF variant…"
+        if self._model_install_pending_report is not None:
+            return "Awaiting review; no download has started."
+        return "Preparing the managed install plan…"
+
+    def _sync_remote_install_context_status(self) -> bool:
+        """Apply the current host lifecycle copy to the mounted Remote detail."""
+        catalog = self._model_install_catalog
+        candidate = self._model_install_candidate
+        if not isinstance(catalog, ResolvedRemoteCatalog) or not isinstance(
+            candidate, RemoteGGUFCandidate
+        ):
+            return False
+        view = self._remote_view()
+        if view is None or not view.is_mounted:
+            return False
+        return view.restore_install_context(
+            catalog,
+            candidate,
+            status_message=self._remote_install_context_status(),
+        )
 
     def compose_lab_rail(self) -> ComposeResult:
         """Yield the two rail sections and their nine provider rows."""
@@ -1135,7 +3113,12 @@ class LLMScreen(LabScreen):
             The ``LLMManagementWindow``, mounted after first paint because
             composing its nine views costs 488-787 ms.
         """
-        self.llm_window = LLMManagementWindow(self.app_instance, classes="window")
+        self.llm_window = LLMManagementWindow(
+            self.app_instance,
+            can_start_import=self._can_start_local_gguf_import,
+            on_import_lane_changed=self._set_local_gguf_import_active,
+            classes="window",
+        )
         self.llm_window.styles.height = "1fr"
         return self.llm_window
 
@@ -1172,7 +3155,7 @@ class LLMScreen(LabScreen):
         # freshly (re)mounted LLMManagementWindow's own children a chance
         # to finish composing before _hydrate_model_install_progress
         # queries for them.
-        if self._model_install_active:
+        if self._model_install_presentation_pending():
             self.call_after_refresh(self._hydrate_model_install_progress)
 
     @on(LLMManagementWindow.DeferredViewsMounted)
@@ -1187,11 +3170,22 @@ class LLMScreen(LabScreen):
         ordered second chance. `_hydrate_model_install_progress` is
         idempotent and internally guarded, so running both is safe.
         """
-        if self._model_install_active:
+        claim = self._audio_cpp_model_request_claim
+        if claim is not None:
+            self._audio_cpp_presentation_worker = self.run_worker(
+                self._present_audio_cpp_request(claim),
+                group="audio_cpp_request_presentation",
+                exclusive=True,
+                exit_on_error=False,
+            )
+        if self._model_install_presentation_pending():
             self._hydrate_model_install_progress()
+        self._hydrate_external_status()
+        self._hydrate_remote_machine_memory()
+        self._replay_remote_runtime_handoff()
 
     def _hydrate_model_install_progress(self) -> None:
-        """Re-apply the last known install progress after a recompose.
+        """Re-apply selected-model context and progress after a recompose.
 
         Covers both flows (TASK-1914): whichever view owns the in-flight
         install (``_active_install_view()``, keyed by
@@ -1229,11 +3223,23 @@ class LLMScreen(LabScreen):
         every (re)mount, rather than by trying to identify and replay
         whichever specific message the gap happened to swallow.
         """
+        if not self._hydrate_remote_terminal_presentation():
+            self._hydrate_remote_completed_presentation()
+        view = self._active_install_view()
+        if (
+            isinstance(view, RemoteView)
+            and self._model_install_catalog is not None
+            and self._model_install_candidate is not None
+        ):
+            view.restore_install_context(
+                self._model_install_catalog,
+                self._model_install_candidate,
+                status_message=self._remote_install_context_status(),
+            )
         if not self._model_install_active:
             return
         if self._model_install_last_progress is None:
             return
-        view = self._active_install_view()
         if view is not None:
             view.apply_progress(self._model_install_last_progress)
         installed = self._installed_view()
@@ -1247,7 +3253,9 @@ class LLMScreen(LabScreen):
             active_view: The window's current view key.
         """
         for row in self.query(f".{LAB_RAIL_ROW_CLASS}").results(Button):
-            row.set_class(getattr(row, "lab_view_key", None) == active_view, "is-active")
+            row.set_class(
+                getattr(row, "lab_view_key", None) == active_view, "is-active"
+            )
 
     @on(Button.Pressed, f".{LAB_RAIL_ROW_CLASS}")
     def _handle_rail_press(self, event: Button.Pressed) -> None:

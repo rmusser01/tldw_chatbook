@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
@@ -15,6 +19,25 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 
 
 SCHEMA_NAME = "rag_char_chat_schema"
+HISTORICAL_NOTES_COLUMNS = {
+    "id",
+    "title",
+    "content",
+    "created_at",
+    "last_modified",
+    "deleted",
+    "client_id",
+    "version",
+    "file_path_on_disk",
+    "relative_file_path_on_disk",
+    "sync_root_folder",
+    "last_synced_disk_file_hash",
+    "last_synced_disk_file_mtime",
+    "is_externally_synced",
+    "sync_strategy",
+    "sync_excluded",
+    "file_extension",
+}
 SERVER_AUTHORITY = f"server-user-v1:{'a' * 64}"
 
 
@@ -98,24 +121,31 @@ def _identity_only_v28_database(
     path: Path,
     rows: tuple[tuple[str, object], ...],
 ) -> None:
+    db = CharactersRAGDB(path, client_id="identity-fixture")
+    db.close_connection()
     with sqlite3.connect(path) as connection:
         connection.executescript(
-            f"""
-            CREATE TABLE db_schema_version(
-                schema_name TEXT PRIMARY KEY NOT NULL,
-                version INTEGER NOT NULL
-            );
-            INSERT INTO db_schema_version VALUES ('{SCHEMA_NAME}', {CharactersRAGDB._CURRENT_SCHEMA_VERSION});
+            """
+            PRAGMA foreign_keys = OFF;
+            DROP TABLE rag_identity_context;
             CREATE TABLE rag_identity_context(
                 context_name TEXT,
-                local_authority_id
+                profile_id TEXT,
+                local_authority_id,
+                fingerprint_key_id TEXT,
+                created_at TEXT
             );
             """
         )
         connection.executemany(
             """
-            INSERT INTO rag_identity_context(context_name, local_authority_id)
-            VALUES (?, ?)
+            INSERT INTO rag_identity_context(
+                context_name,
+                profile_id,
+                local_authority_id,
+                fingerprint_key_id,
+                created_at
+            ) VALUES (?, 'fixture-profile', ?, 'fixture-key', CURRENT_TIMESTAMP)
             """,
             rows,
         )
@@ -224,6 +254,12 @@ def test_local_authority_accessor_fails_closed_for_unavailable_or_ambiguous_stat
     _identity_only_v28_database(path, rows)
     db = CharactersRAGDB(path, client_id="authority-test")
 
+    with db.transaction() as cursor:
+        notes_columns = {
+            row["name"] for row in cursor.execute("PRAGMA table_info(notes)")
+        }
+    assert notes_columns == HISTORICAL_NOTES_COLUMNS
+
     with pytest.raises(
         CharactersRAGDBError,
         match=r"^Local authority identity is unavailable or invalid\.$",
@@ -240,7 +276,9 @@ def test_v27_migration_adds_only_nullable_authority_and_backfills_proven_local_r
     path = tmp_path / "v27-to-v28.sqlite"
     before_columns, expected_authority = _seed_v27_database(path, monkeypatch)
 
-    db = CharactersRAGDB(path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        path, client_id="migration-test"
+    )
     connection = db.get_connection()
 
     # task-1780 bumped the schema past v28, and cost ticker PR1 (v29->v30)
@@ -304,20 +342,25 @@ def test_v27_migration_rolls_back_column_backfill_and_version_on_late_failure(
             raising=False,
         )
         with pytest.raises(Exception, match="forced character authority failure"):
-            CharactersRAGDB(path, client_id="migration-test")
+            open_current_chachanotes_from_legacy(
+                path, client_id="migration-test"
+            )
 
     with sqlite3.connect(path) as connection:
         assert _version(connection) == 27
         assert _conversation_columns(connection) == before_columns
 
-    migrated = CharactersRAGDB(path, client_id="migration-test")
-    row = migrated.get_connection().execute(
-        """
+    migrated = open_current_chachanotes_from_legacy(
+        path, client_id="migration-test"
+    )
+    with migrated.transaction() as cursor:
+        row = cursor.execute(
+            """
         SELECT assistant_authority_id
         FROM conversations
         WHERE id = 'local-proven'
-        """
-    ).fetchone()
+            """
+        ).fetchone()
     assert row["assistant_authority_id"] == expected_authority
 
 
@@ -412,9 +455,9 @@ def test_local_character_create_read_and_list_infer_same_database_authority(
     assert row["character_id"] == 1
     assert row["assistant_id"] == "1"
     assert row["assistant_authority_id"] == authority_id
-    listed = {
-        item["id"]: item for item in db.list_all_active_conversations()
-    }[conversation_id]
+    listed = {item["id"]: item for item in db.list_all_active_conversations()}[
+        conversation_id
+    ]
     assert listed["assistant_authority_id"] == authority_id
     searched = db.search_conversations_page("Local Character")[0][0]
     assert searched["assistant_authority_id"] == authority_id

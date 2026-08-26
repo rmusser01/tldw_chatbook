@@ -10,6 +10,10 @@ from unittest.mock import patch
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
@@ -29,7 +33,7 @@ def _fake_cli_setting(section, key=None, default=None):
     return default
 
 
-class BackdropHarness(App):
+class BackdropHarness(ConsolidatedCSSApp):
     def __init__(self, *, reduced_motion: bool):
         super().__init__()
         self._reduced_motion = reduced_motion
@@ -40,7 +44,7 @@ class BackdropHarness(App):
         )
 
 
-class ModalHarness(App):
+class ModalHarness(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleSetupCardState, *, reduced_motion: bool):
         super().__init__()
         self._state = state
@@ -55,7 +59,7 @@ class ModalHarness(App):
         modal.sync_card_state(self._state)
 
 
-class SplashHarness(App):
+class SplashHarness(ConsolidatedCSSApp):
     def __init__(self, **splash_kwargs):
         super().__init__()
         self._splash_kwargs = splash_kwargs

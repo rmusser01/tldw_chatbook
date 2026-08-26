@@ -6,6 +6,10 @@ import random
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
@@ -36,6 +40,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleConversationBrowserInputRow,
@@ -44,7 +49,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 
 
-class _HeaderApp(App):
+class _HeaderApp(ConsolidatedCSSApp):
     def compose(self):
         yield DestinationRailSectionHeader(
             "Details",
@@ -120,7 +125,7 @@ def _workspace_state() -> ConsoleWorkspaceContextState:
         workspace_label="Workspace: Default",
         authority_label="Authority: local registry ready",
         sync_label="Sync: not configured",
-        runtime_label="Runtime: none, file tools disabled",
+        runtime_label="Local file tools: Private scratch",
         conversation_rows=(),
         conversation_empty_copy="No conversations yet.",
         conversation_browser=build_console_conversation_browser_state(
@@ -134,7 +139,7 @@ def _workspace_state() -> ConsoleWorkspaceContextState:
     )
 
 
-class _DetailsApp(App):
+class _DetailsApp(ConsolidatedCSSApp):
     def compose(self):
         yield ConsoleWorkspaceDetailsTray(_workspace_state(), id="details-tray")
 
@@ -154,7 +159,7 @@ async def test_details_tray_renders_status_and_handoff_rows():
         assert not list(app.query("#console-workspace-acp-handoff-audit"))
 
 
-class _ContextTrayApp(App):
+class _ContextTrayApp(ConsolidatedCSSApp):
     def compose(self):
         yield ConsoleWorkspaceContextTray(
             _workspace_state(),
@@ -188,7 +193,7 @@ def _card_state() -> ConsoleSetupCardState:
     )
 
 
-class _SetupPanelApp(App):
+class _SetupPanelApp(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleSetupCardState) -> None:
         super().__init__()
         self._state = state
@@ -229,7 +234,7 @@ async def test_empty_panel_has_no_legacy_shim_widgets():
         assert list(app.query("#console-empty-body"))
 
 
-class _SetupModalApp(App):
+class _SetupModalApp(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleSetupCardState) -> None:
         super().__init__()
         self._state = state
@@ -384,7 +389,7 @@ def _snow_glyph_count(text: str) -> int:
     return sum(text.count(glyph) for glyph in _SNOW_GLYPHS)
 
 
-class _SnowBackdropApp(App):
+class _SnowBackdropApp(ConsolidatedCSSApp):
     def __init__(self, rng: random.Random) -> None:
         super().__init__()
         self._rng = rng
@@ -490,7 +495,7 @@ async def test_setup_backdrop_resume_before_mount_starts_timer_running():
     backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
     backdrop.resume_snow()
 
-    class _ResumeBeforeMountApp(App):
+    class _ResumeBeforeMountApp(ConsolidatedCSSApp):
         def compose(self):
             yield backdrop
 
@@ -505,7 +510,7 @@ async def test_setup_backdrop_resume_before_mount_starts_timer_running():
 async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
     backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
 
-    class _NoResumeApp(App):
+    class _NoResumeApp(ConsolidatedCSSApp):
         def compose(self):
             yield backdrop
 
@@ -521,6 +526,7 @@ async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
 # ---------------------------------------------------------------------------
 
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (  # noqa: E402
+    SEARCH_DEBOUNCE_SECONDS,
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
@@ -545,7 +551,7 @@ def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     )
 
 
-class _SwitcherApp(App):
+class _SwitcherApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.result = "unset"
@@ -567,10 +573,41 @@ async def test_switcher_lists_recent_first_and_filters_on_typing():
         assert "Groq testing" in str(first.label)
         await pilot.click("#console-switcher-query")
         await pilot.press(*"refactor")
-        await pilot.pause()
+        # Debounced (task-15476): the result list only re-renders once the
+        # filter settles, not on every keystroke.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         first = app.screen.query_one("#console-switcher-result-0", Button)
         assert "API refactor plan" in str(first.label)
         assert not list(app.screen.query("#console-switcher-result-1"))
+
+
+@pytest.mark.asyncio
+async def test_switcher_title_cannot_add_a_forged_result_line() -> None:
+    raw_title = "Chat with Nyx\n\tAdmin\x00[/bold]"
+    row = ConsoleConversationBrowserInputRow(
+        row_key="native-unsafe",
+        conversation_id=None,
+        native_session_id="session-unsafe",
+        title=raw_title,
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
+        updated_sort="2026-07-04T10:00:00+00:00",
+    )
+
+    class _UnsafeSwitcherApp(App):
+        async def on_mount(self) -> None:
+            await self.push_screen(ConsoleSessionSwitcherModal(rows=(row,)))
+
+    app = _UnsafeSwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        result = app.screen.query_one("#console-switcher-result-0", Button)
+        rendered = str(result.label)
+        assert rendered.count("\n") == 1  # only the intentional subtitle line
+        assert "\t" not in rendered
+        assert "Chat with Nyx Admin?[/bold]" in rendered
+        assert app.screen._entries[0].title == raw_title
 
 
 @pytest.mark.asyncio
@@ -579,7 +616,9 @@ async def test_switcher_enter_activates_first_result():
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.click("#console-switcher-query")
         await pilot.press(*"tides")
-        await pilot.pause()
+        # Debounced (task-15476): let the filter settle before Enter, or it
+        # would activate the still-unfiltered first result instead.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         await pilot.press("enter")
         await pilot.pause()
         assert isinstance(app.result, ConsoleSwitcherChoice)
@@ -618,7 +657,7 @@ def _two_native_switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...
     )
 
 
-class _TwoNativeSwitcherApp(App):
+class _TwoNativeSwitcherApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.result = "unset"
@@ -653,7 +692,9 @@ async def test_switcher_escape_dismisses_none_and_empty_query_shows_no_matches()
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.click("#console-switcher-query")
         await pilot.press(*"zzzz")
-        await pilot.pause()
+        # Debounced (task-15476): the empty state only appears once the
+        # filter settles.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         assert list(app.screen.query("#console-switcher-empty"))
         await pilot.press("escape")
         await pilot.pause()
@@ -672,7 +713,9 @@ async def test_switcher_rapid_refresh_does_not_duplicate_ids():
         query_input = app.screen.query_one("#console-switcher-query", Input)
         query_input.value = "r"
         query_input.value = "refactor"
-        await pilot.pause()
+        # Debounced (task-15476): the second Input.Changed re-arms the timer
+        # and cancels the first, so only "refactor" is ever applied.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         first = app.screen.query_one("#console-switcher-result-0", Button)
         assert "API refactor plan" in str(first.label)
         assert not list(app.screen.query("#console-switcher-result-1"))
@@ -681,7 +724,7 @@ async def test_switcher_rapid_refresh_does_not_duplicate_ids():
 _POPOVER_PROVIDERS = {"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-4o"]}
 
 
-class _PopoverApp(App):
+class _PopoverApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.result = "unset"
@@ -702,9 +745,13 @@ class _PopoverApp(App):
 async def test_popover_apply_returns_replaced_settings():
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
-        model_select = app.screen.query_one("#console-popover-model")
-        model_select.value = "model-b"
-        await pilot.click("#console-popover-streaming")
+        await pilot.click("#model-search-picker-input")
+        await pilot.press(*"model-b", "enter")
+        await pilot.pause()
+        streaming = app.screen.query_one("#console-popover-streaming", Button)
+        streaming.scroll_visible(animate=False, force=True)
+        await pilot.pause()
+        assert await pilot.click("#console-popover-streaming") is True
         await pilot.pause()
         await pilot.click("#console-popover-apply")
         await pilot.pause()
@@ -809,7 +856,7 @@ def _popover_search_entries():
     )
 
 
-class _PopoverSearchApp(App):
+class _PopoverSearchApp(ConsolidatedCSSApp):
     """Popover host app exposing the catalog scope the search picker reads."""
 
     def __init__(self):
@@ -850,9 +897,35 @@ async def test_popover_model_search_inserts_transient_option():
         results.post_message(OptionList.OptionSelected(results, option, 0))
         await pilot.pause()
         model_select = app.screen.query_one("#console-popover-model", Select)
+        picker = app.screen.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        )
         option_values = [value for _, value in model_select._options]
+        assert picker.display is True
+        assert model_select.display is False
         assert "anthropic/claude-x" in option_values
         assert model_select.value == "anthropic/claude-x"
+
+
+@pytest.mark.asyncio
+async def test_popover_search_control_fits_compact_terminal_geometry():
+    """The shared picker stays operable at the popover's minimum width."""
+    from textual.widgets import Input, OptionList
+
+    app = _PopoverSearchApp()
+    async with app.run_test(size=(60, 24)) as pilot:
+        search_input = app.screen.query_one("#model-search-picker-input", Input)
+        search_input.focus()
+        await pilot.pause()
+        results = app.screen.query_one("#model-search-picker-results", OptionList)
+        popover = app.screen.query_one("#console-model-popover")
+
+        assert results.display is True
+        for widget in (popover, search_input, results):
+            assert widget.region.x >= 0
+            assert widget.region.y >= 0
+            assert widget.region.right <= app.size.width
+            assert widget.region.bottom <= app.size.height
 
 
 @pytest.mark.asyncio
@@ -884,6 +957,27 @@ async def test_popover_changing_provider_still_resets_the_model():
         model_select = app.screen.query_one("#console-popover-model", Select)
         # The stale llama.cpp model must not linger under the new provider.
         assert model_select.value != "model-a"
+        picker = app.screen.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        )
+        assert picker.value is None
+
+
+@pytest.mark.asyncio
+async def test_popover_custom_model_uses_shared_picker_escape_hatch():
+    from textual.widgets import Input
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#model-search-picker-custom")
+        custom_input = app.screen.query_one("#model-search-picker-input", Input)
+        custom_input.value = "private/model-id"
+        await pilot.pause()
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+    assert app.result is not None
+    assert app.result.model == "private/model-id"
 
 
 @pytest.mark.asyncio
@@ -893,7 +987,7 @@ async def test_popover_provider_options_use_display_names():
     from textual.widgets import Select
 
     app = _PopoverApp()
-    async with app.run_test(size=(90, 30)) as pilot:
+    async with app.run_test(size=(90, 30)):
         provider_select = app.screen.query_one("#console-popover-provider", Select)
         labels = {label: value for label, value in provider_select._options}
         assert "llama.cpp" in labels
@@ -908,7 +1002,7 @@ async def test_popover_labels_temperature_input():
     from textual.widgets import Static
 
     app = _PopoverApp()
-    async with app.run_test(size=(90, 30)) as pilot:
+    async with app.run_test(size=(90, 30)):
         texts = [
             str(getattr(w.renderable, "plain", w.renderable))
             for w in app.screen.query(Static)
@@ -922,7 +1016,7 @@ async def test_switcher_result_shows_saved_chat_vocabulary_not_in_progress():
     renders in the switcher as 'saved chat' (the rail's vocabulary), never
     the raw 'in-progress', with a recency label derived from updated_sort."""
 
-    class _App(App):
+    class _App(ConsolidatedCSSApp):
         async def on_mount(self) -> None:
             row = ConsoleConversationBrowserInputRow(
                 row_key="conv-9",
@@ -964,7 +1058,7 @@ def _overflow_conversation_browser():
     return build_console_conversation_browser_state(rows=rows, active_workspace_id="ws-a")
 
 
-class _OverflowTrayApp(App):
+class _OverflowTrayApp(ConsolidatedCSSApp):
     def compose(self):
         import dataclasses
 

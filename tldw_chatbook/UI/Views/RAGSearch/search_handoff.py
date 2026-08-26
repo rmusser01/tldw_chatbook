@@ -13,6 +13,16 @@ from ....Chat.citation_evidence_models import (
     EvidenceReference,
 )
 from ....Chat.chat_handoff_models import ChatHandoffPayload
+# The score-kind vocabulary is imported from `library_rag_score_kinds`, NOT
+# from `library_rag_state`: that module imports `library_rag_answer_service`,
+# which imports this one, so a direct import would close an import cycle.
+from ....Library.library_rag_score_kinds import (
+    HYBRID_FUSION_METADATA_KEY,
+    SCORE_KIND_METADATA_KEY,
+    coerce_optional_float,
+    library_rag_result_score_kind,
+    library_rag_similarity_input,
+)
 from ....Utils.input_validation import sanitize_string, validate_text_input
 
 
@@ -160,14 +170,74 @@ def _library_rag_title(result: Any) -> str:
     )
 
 
+def _library_rag_score_kind(result: Any) -> tuple[str, float | None]:
+    """Resolve one result's `(score_kind, vector_score)` (RAG-port P0/Task 6).
+
+    Delegates to the single shared rule in `library_rag_score_kinds` -- the
+    same one `LibraryRagResultRow.from_result` uses -- so a row's on-screen
+    band and the score staged into a grounded answer can never disagree
+    about what its number means.
+
+    Args:
+        result: A Library Search/RAG result mapping or object.
+
+    Returns:
+        The canonical score kind, plus the preserved vector-leg similarity
+        for `hybrid_fusion` rows.
+    """
+    candidates: list[Any] = [_result_provenance(result)]
+    metadata = _result_value(result, "metadata")
+    if isinstance(metadata, Mapping):
+        candidates.append(metadata)
+    if isinstance(result, Mapping):
+        candidates.append(result)
+    else:
+        # Attribute-shaped results: mirror the mapping case for just the two
+        # keys this rule reads off the top level.
+        candidates.append(
+            {
+                key: getattr(result, key)
+                for key in (SCORE_KIND_METADATA_KEY, HYBRID_FUSION_METADATA_KEY)
+                if getattr(result, key, None) is not None
+            }
+        )
+    return library_rag_result_score_kind(*candidates)
+
+
 def _library_rag_score(result: Any) -> float | None:
-    value = _result_or_provenance_value(result, "score")
-    if value in (None, ""):
+    """Return the result's honest cosine similarity, or `None`.
+
+    `EvidenceReference.score` is declared as a retrieval score on the unit
+    interval and is adapted downstream as a `ZERO_TO_ONE` similarity
+    (`Chat/citation_trace_adapters.py`), so only a real similarity may
+    occupy it (RAG-port P0/Task 6):
+
+    * a `hybrid_fusion` row contributes its preserved VECTOR LEG, never the
+      fused RRF number -- a rank blend maxing out at `1/(rrf_k + 1)`
+      (~0.17 at the shipped `rrf_k=5`, ~0.016 at the previous 60), which
+      would read as a weak-to-near-zero similarity it never was;
+    * an FTS-leg-only hybrid row and a reranked row contribute nothing --
+      no similarity exists, and a reranker score that happens to land
+      inside [0, 1] would otherwise pass the unit-interval check silently.
+
+    The original number is never lost: it stays on the row itself and, for
+    hybrid rows, in the reference's `hybrid_fusion` metadata block.
+
+    Args:
+        result: A Library Search/RAG result mapping or object.
+
+    Returns:
+        A finite similarity in [0, 1], or `None`.
+    """
+    score_kind, vector_score = _library_rag_score_kind(result)
+    similarity = library_rag_similarity_input(
+        coerce_optional_float(_result_or_provenance_value(result, "score")),
+        score_kind=score_kind,
+        vector_score=vector_score,
+    )
+    if similarity is None:
         return None
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return None
+    score = float(similarity)
     if not math.isfinite(score) or score < 0 or score > 1:
         return None
     return score
@@ -359,11 +429,17 @@ def build_library_rag_evidence_bundle(
             source_authority=source_authority,
             result_id=result_id,
         )
+        score_kind = _library_rag_score_kind(result)[0]
         metadata = {
             **_result_provenance(result),
             "result_id": result_id,
             "chunk_id": chunk_id,
             "citations": _library_rag_citation_labels(result),
+            # (RAG-port P0/Task 6) What `score` below is -- and, when it is
+            # absent, why. A consumer computing weakness/coverage copy over
+            # these references must filter on this: a fused RRF rank blend
+            # or a reranker logit is not a weak similarity.
+            SCORE_KIND_METADATA_KEY: score_kind,
             "runtime_backend": runtime_backend,
             "source_authority": source_authority,
             "source_selector_state": source_authority,
@@ -467,6 +543,10 @@ def build_library_rag_console_live_work_payload(
         ),
         "citations": _library_rag_citation_labels(result),
         "score": _library_rag_score(result),
+        # (RAG-port P0/Task 6) `score` is a cosine similarity or nothing --
+        # this says which retrieval produced it, so a consumer can tell a
+        # similarity from a fused rank score or a reranker logit.
+        SCORE_KIND_METADATA_KEY: _library_rag_score_kind(result)[0],
         "runtime_backend": runtime_backend,
         "source_authority": source_authority,
         "source_selector_state": source_authority,

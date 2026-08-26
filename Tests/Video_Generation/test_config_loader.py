@@ -35,6 +35,49 @@ def test_defaults_when_unconfigured(monkeypatch):
     assert cfg.confirm_cost_estimate is c.DEFAULT_CONFIRM_COST_ESTIMATE
 
 
+def test_malformed_scalar_video_generation_section_uses_defaults(monkeypatch):
+    """A malformed top-level section must not crash config construction."""
+    from tldw_chatbook.Video_Generation import config as c
+
+    cfg = _load_config_with_section(monkeypatch, "not-a-table")
+
+    assert cfg.default_backend == c.DEFAULT_BACKEND
+    assert cfg.enabled_backends == []
+    assert cfg.key_sources == {
+        "minimax": "missing",
+        "comfyui": "missing",
+        "stable_diffusion_cpp": "missing",
+    }
+
+
+@pytest.mark.parametrize("backend", ("minimax", "comfyui", "stable_diffusion_cpp"))
+def test_malformed_scalar_backend_section_uses_defaults(monkeypatch, backend):
+    """A malformed backend subsection must not crash config construction."""
+    from tldw_chatbook.Video_Generation import config as c
+
+    cfg = _load_config_with_section(monkeypatch, {backend: 1})
+
+    assert cfg.default_backend == c.DEFAULT_BACKEND
+    assert cfg.enabled_backends == []
+    assert cfg.comfyui_default_workflow == c.DEFAULT_COMFYUI_WORKFLOW
+    assert cfg.key_sources["minimax"] == "missing"
+
+
+def test_comfyui_default_workflow_is_base_h3(monkeypatch):
+    cfg = _load_config_with_section(monkeypatch, {})
+
+    assert cfg.comfyui_default_workflow == "minimax_h3_t2v.json"
+
+
+def test_comfyui_explicit_spectrum_workflow_wins(monkeypatch):
+    cfg = _load_config_with_section(
+        monkeypatch,
+        {"comfyui": {"default_workflow": "minimax_h3_t2v_spectrum.json"}},
+    )
+
+    assert cfg.comfyui_default_workflow == "minimax_h3_t2v_spectrum.json"
+
+
 def test_nested_toml_flattens_to_flat_fields(monkeypatch):
     fake = {
         "default_backend": "minimax",

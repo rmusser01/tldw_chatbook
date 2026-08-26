@@ -14,7 +14,6 @@ from textual.widgets import (
     Input,
     Static,
     ListView,
-    Tree,
 )
 from textual.widget import Widget
 from textual.reactive import reactive
@@ -50,26 +49,18 @@ class StructuredLearningWidget(Widget):
         height: 100%;
         width: 100%;
     }
-    
+
     .structured-learning-container {
         padding: 1;
         height: 100%;
     }
-    
-    .topic-tree {
-        height: 1fr;
-        width: 50%;
-        border: round $surface;
-        margin-right: 1;
-    }
-    
-    .topic-content {
-        height: 1fr;
-        width: 50%;
+
+    .structured-learning-empty-state {
         border: round $surface;
         padding: 1;
+        color: $text-muted;
     }
-    
+
     .section-title {
         text-style: bold;
         margin-bottom: 1;
@@ -81,27 +72,32 @@ class StructuredLearningWidget(Widget):
         with ScrollableContainer(classes="structured-learning-container"):
             yield Label("📚 Structured Learning", classes="section-title")
 
-            with Horizontal():
-                # Topic tree on the left
-                with Vertical(classes="topic-tree-container"):
-                    yield Label("Learning Topics:", classes="subsection-title")
-                    yield Tree("Learning Paths", id="topic-tree", classes="topic-tree")
-
-                # Content display on the right
-                with Vertical(classes="topic-content-container"):
-                    yield Label("Topic Content:", classes="subsection-title")
-                    yield TextArea(
-                        "Select a topic from the tree to view content...",
-                        id="topic-content",
-                        classes="topic-content",
-                        disabled=True,
-                    )
-
-            # Add new topic section
-            yield Label("Add New Topic:", classes="subsection-title")
-            with Horizontal(classes="form-row"):
-                yield Input(placeholder="Topic title...", id="new-topic-title")
-                yield Button("Add Topic", id="add-topic-btn", variant="primary")
+            # task-16195 removed the dead "Add New Topic" row (Input
+            # #new-topic-title + Button #add-topic-btn) here; its only
+            # handler lived in the legacy Event_Handlers/Study_Events table,
+            # which nothing dispatched since the Study rebuild, and no code
+            # in the app reads the topics table back.
+            #
+            # task-16845: the residual chrome left behind -- a #topic-tree
+            # that could only ever show its static "Learning Paths" root
+            # (nothing populates it, and no Tree.NodeSelected handler exists
+            # anywhere since task-16196 deleted the legacy module that held
+            # one) next to a disabled #topic-content TextArea whose
+            # placeholder promised "Select a topic from the tree to view
+            # content..." -- read as broken rather than intentionally empty.
+            # ChaChaNotes_DB's create_learning_path/create_topic are
+            # write-only (no list/get method exists for learning_paths or
+            # topics anywhere), so a real browsing UI would be a feature
+            # build, not a wiring fix (same call task-16195 made for the
+            # add-topic write path). Replaced with an honest notice instead
+            # of building that feature or leaving the misleading chrome.
+            yield Static(
+                "Structured Learning does not have a browsing UI yet in "
+                "this build. There is currently no way to list or view "
+                "learning paths and topics from this screen.",
+                id="structured-learning-empty-state",
+                classes="structured-learning-empty-state",
+            )
 
 
 class AnkiFlashcardsWidget(Widget):
@@ -391,34 +387,23 @@ class QuizzesWidget(Widget):
 
 
 class MindmapsWidget(Widget):
-    """Widget for creating and viewing mindmaps"""
+    """Placeholder pane: mindmaps have no working editor in this build."""
 
     DEFAULT_CSS = """
     MindmapsWidget {
         height: 100%;
         width: 100%;
     }
-    
+
     .mindmaps-container {
         padding: 1;
         height: 100%;
     }
-    
-    .mindmap-tree {
-        height: 1fr;
-        width: 70%;
+
+    .mindmaps-empty-state {
         border: round $surface;
-        margin-right: 1;
-    }
-    
-    .mindmap-controls {
-        width: 30%;
         padding: 1;
-    }
-    
-    .form-row {
-        height: 3;
-        margin-bottom: 1;
+        color: $text-muted;
     }
     """
 
@@ -427,60 +412,48 @@ class MindmapsWidget(Widget):
         with ScrollableContainer(classes="mindmaps-container"):
             yield Label("🧠 Mindmaps", classes="section-title")
 
-            with Horizontal():
-                # Mindmap display
-                yield Tree("Root Topic", id="mindmap-tree", classes="mindmap-tree")
-
-                # Controls
-                with Vertical(classes="mindmap-controls"):
-                    yield Label("Add Node:", classes="subsection-title")
-                    yield Input(placeholder="Node text...", id="node-text")
-                    yield Button("Add Child", id="add-child-btn", variant="primary")
-                    yield Button("Add Sibling", id="add-sibling-btn", variant="default")
-
-                    yield Label("Actions:", classes="subsection-title")
-                    yield Button("Delete Node", id="delete-node-btn", variant="error")
-                    yield Button("Edit Node", id="edit-node-btn", variant="default")
-
-                    yield Label("Import/Export:", classes="subsection-title")
-                    yield Button("Import from Notes", id="import-notes-btn")
-                    yield Button("Export to Markdown", id="export-md-btn")
-                    yield Button(
-                        "Generate from LLM",
-                        id="generate-mindmap-btn",
-                        variant="success",
-                    )
+            # task-16845 removed #add-child-btn; task-19041 removed the rest
+            # of the pane's chrome for the same reasons: every remaining
+            # button (#add-sibling-btn, #delete-node-btn, #edit-node-btn,
+            # #import-notes-btn, #export-md-btn, #generate-mindmap-btn) had
+            # no dispatcher anywhere (StudyWindow.on_button_pressed
+            # early-returned, so each press was a silent no-op),
+            # ChaChaNotes_DB's create_mindmap/add_mindmap_node are
+            # write-only (no read/list method exists anywhere), and the
+            # #mindmap-tree was a static "Root Topic" skeleton with no
+            # population code -- nothing added, edited, imported, or
+            # generated could ever be displayed or exported. #node-text fed
+            # only the dead add buttons and went with them. Replaced with an
+            # honest notice. (The orphaned mindmap SUBSYSTEM -- Tools/
+            # Mind_Map, MindmapViewer -- is task-19042's scope; this pane
+            # never composed it.)
+            yield Static(
+                "Mindmaps do not have a working editor yet in this build. "
+                "There is currently no way to create, edit, or export a "
+                "mindmap from this screen.",
+                id="mindmaps-empty-state",
+                classes="mindmaps-empty-state",
+            )
 
 
 class CourseCreationWidget(Widget):
-    """Widget for creating and managing courses"""
+    """Placeholder pane: course creation is not available in this build."""
 
     DEFAULT_CSS = """
     CourseCreationWidget {
         height: 100%;
         width: 100%;
     }
-    
+
     .course-creation-container {
         padding: 1;
         height: 100%;
     }
-    
-    .course-form {
+
+    .course-creation-empty-state {
         border: round $surface;
         padding: 1;
-        margin-bottom: 1;
-    }
-    
-    .module-list {
-        height: 15;
-        border: round $surface;
-        margin-bottom: 1;
-    }
-    
-    .form-row {
-        height: 3;
-        margin-bottom: 1;
+        color: $text-muted;
     }
     """
 
@@ -489,85 +462,44 @@ class CourseCreationWidget(Widget):
         with ScrollableContainer(classes="course-creation-container"):
             yield Label("📖 Course Creation", classes="section-title")
 
-            # Course details form
-            with Vertical(classes="course-form"):
-                yield Label("Course Details:", classes="subsection-title")
-
-                yield Label("Course Title:")
-                yield Input(placeholder="Enter course title...", id="course-title")
-
-                yield Label("Description:")
-                yield TextArea(
-                    "Enter course description...",
-                    id="course-description",
-                    classes="course-description",
-                )
-
-                with Horizontal(classes="form-row"):
-                    yield Label("Level:", classes="form-label")
-                    yield Select(
-                        options=[
-                            ("beginner", "Beginner"),
-                            ("intermediate", "Intermediate"),
-                            ("advanced", "Advanced"),
-                        ],
-                        id="course-level",
-                    )
-
-                yield Label("Prerequisites:")
-                yield Input(
-                    placeholder="Enter prerequisites...", id="course-prerequisites"
-                )
-
-                yield Button("Create Course", id="create-course-btn", variant="primary")
-
-            # Module management
-            yield Label("Course Modules:", classes="subsection-title")
-            yield ListView(id="module-list", classes="module-list")
-
-            with Horizontal(classes="form-row"):
-                yield Input(placeholder="Module name...", id="module-name")
-                yield Button("Add Module", id="add-module-btn")
-
-            # Export options
-            yield Label("Export Options:", classes="subsection-title")
-            with Horizontal(classes="form-row"):
-                yield Button("Export to PDF", id="export-pdf-btn")
-                yield Button("Export to Markdown", id="export-md-btn")
-                yield Button("Export to SCORM", id="export-scorm-btn")
+            # task-16845 removed the "Course Details" form and
+            # #create-course-btn (no `course`/`courses` table exists
+            # anywhere in ChaChaNotes_DB); task-19041 removed the rest of
+            # the pane for the same reasons: #add-module-btn had no
+            # dispatcher anywhere and no module concept exists in any
+            # schema (#module-list was never populated, #module-name fed
+            # only that dead button), and the export row (#export-pdf-btn,
+            # #export-md-btn -- which also duplicated the Mindmaps pane's
+            # button id -- and #export-scorm-btn) had no exportable course
+            # to act on and no SCORM code exists anywhere in the tree.
+            # Replaced with an honest notice.
+            yield Static(
+                "Course creation is not available yet in this build. "
+                "There is currently no way to build, import, or export a "
+                "course from this screen.",
+                id="course-creation-empty-state",
+                classes="course-creation-empty-state",
+            )
 
 
 class StudyGuideWidget(Widget):
-    """Widget for creating and managing study guides"""
+    """Placeholder pane: study guides are not available in this build."""
 
     DEFAULT_CSS = """
     StudyGuideWidget {
         height: 100%;
         width: 100%;
     }
-    
+
     .study-guide-container {
         padding: 1;
         height: 100%;
     }
-    
-    .guide-content {
+
+    .study-guide-empty-state {
         border: round $surface;
         padding: 1;
-        height: 20;
-        margin-bottom: 1;
-    }
-    
-    .key-concepts {
-        height: 10;
-        border: round $surface;
-        margin-bottom: 1;
-    }
-    
-    .practice-questions {
-        height: 10;
-        border: round $surface;
-        margin-bottom: 1;
+        color: $text-muted;
     }
     """
 
@@ -576,73 +508,48 @@ class StudyGuideWidget(Widget):
         with ScrollableContainer(classes="study-guide-container"):
             yield Label("📋 Study Guide", classes="section-title")
 
-            # Topic selection
-            with Horizontal(classes="form-row"):
-                yield Label("Topic:", classes="form-label")
-                yield Select(options=[("new", "New Topic")], id="guide-topic-select")
-
-            yield Label("Guide Title:")
-            yield Input(placeholder="Enter guide title...", id="guide-title")
-
-            # Guide content
-            yield Label("Guide Content:")
-            yield TextArea(
-                "Enter or generate study guide content...",
-                id="guide-content",
-                classes="guide-content",
+            # task-16845 removed #generate-guide-btn (no topic to generate
+            # from: the topics table is write-only); task-19041 removed the
+            # rest of the pane for the same reasons: no guide or concept
+            # schema exists anywhere in ChaChaNotes_DB or Study_Interop, so
+            # #save-guide-btn had no destination, #add-concept-btn could
+            # only feed an in-session #key-concepts-list nothing persists
+            # or reads, and #generate-questions-btn had no generation
+            # service (#practice-questions-list was never populated). The
+            # dead-end form around them (#guide-topic-select -- one static
+            # option, its .value consumer-less per the TASK-16841 sweep --
+            # #guide-title, #guide-content, #concept-input) existed solely
+            # to feed those buttons and went with them. Replaced with an
+            # honest notice. (Chat/document_generator.py's study-guide
+            # export is a different, conversation-scoped feature -- see
+            # task-16845's evidence.)
+            yield Static(
+                "Study guides are not available yet in this build. "
+                "There is currently no way to create, generate, or save a "
+                "study guide from this screen.",
+                id="study-guide-empty-state",
+                classes="study-guide-empty-state",
             )
-
-            # Key concepts section
-            yield Label("Key Concepts:", classes="subsection-title")
-            yield ListView(id="key-concepts-list", classes="key-concepts")
-
-            with Horizontal(classes="form-row"):
-                yield Input(placeholder="Add key concept...", id="concept-input")
-                yield Button("Add", id="add-concept-btn")
-
-            # Practice questions
-            yield Label("Practice Questions:", classes="subsection-title")
-            yield ListView(id="practice-questions-list", classes="practice-questions")
-
-            # Action buttons
-            with Horizontal(classes="form-row"):
-                yield Button(
-                    "Generate from Topic", id="generate-guide-btn", variant="success"
-                )
-                yield Button("Generate Questions", id="generate-questions-btn")
-                yield Button("Save Guide", id="save-guide-btn", variant="primary")
 
 
 class LearningMapWidget(Widget):
-    """Widget for visualizing and managing learning paths"""
+    """Placeholder pane: the learning map is not available in this build."""
 
     DEFAULT_CSS = """
     LearningMapWidget {
         height: 100%;
         width: 100%;
     }
-    
+
     .learning-map-container {
         padding: 1;
         height: 100%;
     }
-    
-    .map-tree {
-        height: 1fr;
-        width: 70%;
-        border: round $surface;
-        margin-right: 1;
-    }
-    
-    .map-controls {
-        width: 30%;
-        padding: 1;
-    }
-    
-    .progress-display {
+
+    .learning-map-empty-state {
         border: round $surface;
         padding: 1;
-        margin-bottom: 1;
+        color: $text-muted;
     }
     """
 
@@ -651,36 +558,26 @@ class LearningMapWidget(Widget):
         with ScrollableContainer(classes="learning-map-container"):
             yield Label("🗺️ Learning Map", classes="section-title")
 
-            with Horizontal():
-                # Learning path visualization
-                yield Tree("Learning Path", id="learning-map-tree", classes="map-tree")
-
-                # Controls and info
-                with Vertical(classes="map-controls"):
-                    # Progress display
-                    with Vertical(classes="progress-display"):
-                        yield Label("Overall Progress:", classes="subsection-title")
-                        yield Static("0% Complete", id="overall-progress")
-                        yield Label("Current Topic:", classes="subsection-title")
-                        yield Static("None selected", id="current-topic")
-
-                    yield Label("Path Actions:", classes="subsection-title")
-                    yield Button(
-                        "Add Milestone", id="add-milestone-btn", variant="primary"
-                    )
-                    yield Button(
-                        "Mark Complete", id="mark-complete-btn", variant="success"
-                    )
-                    yield Button("Set Dependencies", id="set-dependencies-btn")
-
-                    yield Label("Import/Export:", classes="subsection-title")
-                    yield Button("Import from Course", id="import-course-btn")
-                    yield Button("Export Path", id="export-path-btn")
-                    yield Button(
-                        "Generate Suggestions",
-                        id="generate-suggestions-btn",
-                        variant="success",
-                    )
+            # task-16845 removed #add-milestone-btn (no milestone concept
+            # exists in any schema); task-19041 removed the rest of the
+            # pane for the same reasons: every remaining button had no
+            # dispatcher anywhere -- #mark-complete-btn's only conceivable
+            # sink is the write-only update_topic_progress (nothing reads
+            # topic progress back), #set-dependencies-btn and
+            # #generate-suggestions-btn have no backing concept or service,
+            # #import-course-btn has no course to import (no course table
+            # exists), and #export-path-btn has nothing to export
+            # (learning_paths is write-only). #learning-map-tree was a
+            # static "Learning Path" skeleton nothing populates, and
+            # #overall-progress/#current-topic were hard-coded statics
+            # nothing ever updated. Replaced with an honest notice.
+            yield Static(
+                "The learning map is not available yet in this build. "
+                "There is currently no way to view a learning path or "
+                "track progress from this screen.",
+                id="learning-map-empty-state",
+                classes="learning-map-empty-state",
+            )
 
 
 class StudyWindow(Container):
@@ -750,11 +647,6 @@ class StudyWindow(Container):
     }
     
     .card-input {
-        height: 5;
-        margin-bottom: 1;
-    }
-    
-    .course-description {
         height: 5;
         margin-bottom: 1;
     }
@@ -889,6 +781,7 @@ class StudyWindow(Container):
             self.run_worker(
                 self.flashcards_controller.end_review_session_if_needed(),
                 exclusive=True,
+                group="study-end-review-session",
             )
 
         # Remove old content
@@ -1019,12 +912,20 @@ class StudyWindow(Container):
         delete_deck_note.display = server_mode
 
     def _schedule_flashcards_refresh(self) -> None:
-        self.run_worker(self.flashcards_controller.initialize_view(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.initialize_view(),
+            exclusive=True,
+            group="study-flashcards-initialize-view",
+        )
         self.call_after_refresh(self._configure_flashcards_lifecycle_controls)
         self.call_after_refresh(self._notify_shell_state_changed)
 
     def _schedule_quizzes_refresh(self) -> None:
-        self.run_worker(self.quizzes_controller.initialize_view(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.initialize_view(),
+            exclusive=True,
+            group="study-quizzes-initialize-view",
+        )
         self.call_after_refresh(self._configure_quizzes_lifecycle_controls)
         self.call_after_refresh(self._notify_shell_state_changed)
 
@@ -1112,15 +1013,27 @@ class StudyWindow(Container):
 
     @on(Button.Pressed, "#create-deck-button")
     def handle_create_deck(self) -> None:
-        self.run_worker(self.flashcards_controller.create_deck(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.create_deck(),
+            exclusive=True,
+            group="study-create-deck",
+        )
 
     @on(Button.Pressed, "#flashcard-refresh-button")
     def handle_refresh_cards(self) -> None:
-        self.run_worker(self.flashcards_controller.refresh_cards(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.refresh_cards(),
+            exclusive=True,
+            group="study-refresh-cards",
+        )
 
     @on(Button.Pressed, "#create-card-btn")
     def handle_create_card(self) -> None:
-        self.run_worker(self.flashcards_controller.create_card(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.create_card(),
+            exclusive=True,
+            group="study-create-card",
+        )
 
     @on(Button.Pressed, "#delete-deck-button")
     async def handle_delete_deck(self) -> None:
@@ -1144,7 +1057,11 @@ class StudyWindow(Container):
 
     @on(Button.Pressed, "#start-review-btn")
     def handle_start_review(self) -> None:
-        self.run_worker(self.flashcards_controller.start_review(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.start_review(),
+            exclusive=True,
+            group="study-start-review",
+        )
 
     @on(Button.Pressed, "#show-answer-button")
     def handle_show_answer(self) -> None:
@@ -1158,41 +1075,91 @@ class StudyWindow(Container):
     @on(Button.Pressed, "#review-rating-5")
     def handle_review_rating(self, event: Button.Pressed) -> None:
         rating = int(str(event.button.id).rsplit("-", 1)[-1])
+        # TASK-19559: a spaced-repetition rating is a DURABLE WRITE, so it is
+        # deliberately NOT `exclusive=True`. Exclusivity cancels the previous
+        # worker in the same group, and `submit_rating` awaits the review save
+        # -- a second fast press would kill the first press's save before it
+        # reached the database, and `CancelledError` is a `BaseException` that
+        # the handler's `except Exception:` cannot even observe. Ratings are
+        # instead serialised inside `StudyFlashcardsController.submit_rating`
+        # (an `asyncio.Lock`), so presses queue and every one persists.
+        # The explicit group also keeps these workers out of `"default"`, where
+        # any other Study worker would cancel them.
         self.run_worker(
-            self.flashcards_controller.submit_rating(rating), exclusive=True
+            self.flashcards_controller.submit_rating(rating),
+            group="study-flashcard-rating",
         )
 
     @on(Select.Changed, "#deck-select")
     def handle_deck_select_changed(self, event: Select.Changed) -> None:
-        self.run_worker(self.flashcards_controller.handle_deck_changed())
+        # TASK-19559 review: `handle_deck_changed` ends the review session and
+        # then rebuilds `#card-list` -- the same list `handle_refresh_cards`
+        # rebuilds. Both writers must share one exclusive group so the newer
+        # rebuild supersedes the older one; ungrouped and non-exclusive, this
+        # one sat in "default" and interleaved with the grouped refresh,
+        # leaving `#card-list` holding one row per interleaved append while
+        # `current_cards` held the true count.
+        self.run_worker(
+            self.flashcards_controller.handle_deck_changed(),
+            exclusive=True,
+            group="study-refresh-cards",
+        )
 
     @on(Button.Pressed, "#create-quiz-button")
     def handle_create_quiz(self) -> None:
-        self.run_worker(self.quizzes_controller.create_quiz(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.create_quiz(),
+            exclusive=True,
+            group="study-create-quiz",
+        )
 
     @on(Button.Pressed, "#delete-quiz-button")
     def handle_delete_quiz(self) -> None:
-        self.run_worker(self.quizzes_controller.delete_quiz(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.delete_quiz(),
+            exclusive=True,
+            group="study-delete-quiz",
+        )
 
     @on(Button.Pressed, "#create-quiz-question-button")
     def handle_create_quiz_question(self) -> None:
-        self.run_worker(self.quizzes_controller.create_question(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.create_question(),
+            exclusive=True,
+            group="study-create-quiz-question",
+        )
 
     @on(Button.Pressed, "#delete-quiz-question-button")
     def handle_delete_quiz_question(self) -> None:
-        self.run_worker(self.quizzes_controller.delete_question(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.delete_question(),
+            exclusive=True,
+            group="study-delete-quiz-question",
+        )
 
     @on(Button.Pressed, "#start-quiz-attempt-button")
     def handle_start_quiz_attempt(self) -> None:
-        self.run_worker(self.quizzes_controller.start_attempt(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.start_attempt(),
+            exclusive=True,
+            group="study-start-quiz-attempt",
+        )
 
     @on(Button.Pressed, "#submit-quiz-answer-button")
     def handle_submit_quiz_answer(self) -> None:
-        self.run_worker(self.quizzes_controller.submit_current_answer(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.submit_current_answer(),
+            exclusive=True,
+            group="study-submit-quiz-answer",
+        )
 
     @on(Button.Pressed, "#load-quiz-attempt-history-button")
     def handle_load_quiz_attempt_history(self) -> None:
-        self.run_worker(self.quizzes_controller.load_selected_attempt(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.load_selected_attempt(),
+            exclusive=True,
+            group="study-load-quiz-attempt-history",
+        )
 
     @on(Select.Changed, "#quiz-select")
     async def handle_quiz_select_changed(self, event: Select.Changed) -> None:

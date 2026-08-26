@@ -22,7 +22,7 @@ Tests/
 ├── ChaChaNotesDB/          # Character/Chat/Notes database tests
 ├── DB/                     # General database tests
 ├── Event_Handlers/         # Event handling tests
-├── Integration/            # Cross-module integration tests
+├── integration/            # Cross-module integration tests
 ├── LLM_Management/         # LLM provider management tests
 ├── Media_DB/               # Media database tests
 ├── Notes/                  # Notes functionality tests
@@ -76,8 +76,7 @@ pytest --cov=tldw_chatbook --cov-report=html
 # Run tests with timeout (default: 300s)
 pytest --timeout=60
 
-# Run tests in parallel (requires pytest-xdist — being added to the dev
-# extras in task-1453; not installed by default before that)
+# Run tests in parallel (requires pytest-xdist, included in the dev extras)
 pytest -n auto
 ```
 
@@ -358,16 +357,16 @@ response = get_mock_response("openai", streaming=False)
 
 The project uses GitHub Actions for continuous integration:
 
-1. **Simple Workflow** (`python-app.yml`):
-   - Basic single Python version testing
-   - Runs on main branch pushes/PRs
+1. **Test Workflow** (`test.yml`):
+   - Core job runs the full non-UI suite on Ubuntu and macOS (Python 3.12)
+   - Separate jobs for UI tests, workflow self-checks, and artifact-lease tests
+   - Nightly deep job (`nightly-deep`, scheduled) carries the OS/Python
+     breadth (Ubuntu 3.11/3.12/3.13, macOS 3.12, Windows 3.12) plus the
+     `--run-slow` tier and coverage
+   - Test result and coverage reporting
 
-2. **Comprehensive Workflow** (`test.yml`):
-   - Matrix testing (Python 3.11, 3.12, 3.13)
-   - Multi-platform (Ubuntu, macOS, Windows)
-   - Separate jobs for unit/integration/UI tests
-   - Test result reporting
-   - Coverage reporting
+2. **Guard Workflows** (`backlog-guard.yml`, `css-bundle-guard.yml`):
+   - Repo-hygiene and CSS bundle checks
 
 ### Running Tests Locally Like CI
 

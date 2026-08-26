@@ -37,7 +37,7 @@ from Tests.UI.test_settings_configuration_hub import (
     StyledSettingsDestinationHarness,
     _open_settings_category,
 )
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 
 pytestmark = pytest.mark.asyncio
@@ -108,10 +108,10 @@ async def test_items_status_filter_paints_every_status_option():
         await pilot.pause()
 
         assert select.query_one(SelectOverlay).option_count == len(
-            ItemsPane._STATUS_OPTIONS
+            ArticleListPane._FILTER_OPTIONS
         )
         painted = _painted_option_labels(screen, select)
-        expected = [label for label, _value in ItemsPane._STATUS_OPTIONS]
+        expected = [label for label, _value in ArticleListPane._FILTER_OPTIONS]
         assert painted == expected, (
             "every status option must reach the screen intact; the overlay "
             f"painted {painted!r}"
@@ -138,7 +138,7 @@ async def test_the_status_filter_still_shows_its_value_when_focused_or_hovered()
         select = screen.query_one("#items-status-select", Select)
 
         blurred = _painted_rows(screen, select.region)[0]
-        assert "All statuses" in blurred, "precondition: the value is readable at rest"
+        assert "All" in blurred, "precondition: the value is readable at rest"
 
         # Hover FIRST, on a blurred control -- which is the order a user meets
         # them in, and the only order that measures hover at all. Round 2, O1
@@ -146,7 +146,7 @@ async def test_the_status_filter_still_shows_its_value_when_focused_or_hovered()
         # outranks hover, so hovering an already-focused Select correctly
         # shows the focus colour and says nothing about the hover rule.
         current, rest_background = await _hover(pilot, screen, select)
-        assert "All statuses" in _painted_rows(screen, select.region)[0], (
+        assert "All" in _painted_rows(screen, select.region)[0], (
             "a hovered one-row Select must still say what it is set to"
         )
         assert current.styles.background != rest_background, (
@@ -158,7 +158,7 @@ async def test_the_status_filter_still_shows_its_value_when_focused_or_hovered()
         select.focus()
         await pilot.pause()
         await pilot.pause()
-        assert "All statuses" in _painted_rows(screen, select.region)[0], (
+        assert "All" in _painted_rows(screen, select.region)[0], (
             "and so must a focused one"
         )
 
@@ -195,20 +195,27 @@ async def _hover(pilot, screen, select: Select):
     return current, rest_background
 
 
-async def test_items_status_filter_covers_every_status_the_backend_produces():
-    """AC#1's other half: the vocabulary is the backend's, not a subset.
+async def test_items_status_filter_covers_the_reader_set_the_backend_produces():
+    """AC#1's other half, TASK-3072: the reader set is the backend's
+    vocabulary minus the two statuses a reader deliberately hides.
 
-    Pinned against `LocalWatchlistsService.ITEM_STATUSES` so adding a status
-    to the backend without adding it to the filter fails here rather than
-    silently making those items unreachable (which is TASK-2301's harm).
+    Still pinned against `LocalWatchlistsService.ITEM_STATUSES`, so adding a
+    status to the backend without deciding whether a reader should see it
+    fails here rather than silently making those items unreachable (which is
+    TASK-2301's harm). The exclusions are named literally, not computed:
+    `ignored` was hidden by the user on purpose, `error` belongs to Runs.
     """
     from tldw_chatbook.Subscriptions.local_watchlists_service import (
         LocalWatchlistsService,
     )
 
-    filter_values = {value for _label, value in ItemsPane._STATUS_OPTIONS}
-    assert "all" in filter_values, "the filter must offer an unfiltered view"
-    assert filter_values - {"all"} == set(LocalWatchlistsService.ITEM_STATUSES)
+    filter_values = {value for _label, value in ArticleListPane._FILTER_OPTIONS}
+    assert filter_values == {"unread", "all"}, (
+        "the reader's filter is exactly the Unread/All pair"
+    )
+    assert ArticleListPane._READER_STATUSES == (
+        set(LocalWatchlistsService.ITEM_STATUSES) - {"ignored", "error"}
+    )
 
 
 async def test_picking_a_status_filters_the_items_list():
@@ -220,7 +227,7 @@ async def test_picking_a_status_filters_the_items_list():
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#items-status-select", timeout=5.0)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         pane.items = [
             {"id": "1", "title": "Fresh", "status": "new", "source_name": "F"},
             {"id": "2", "title": "Filed", "status": "ingested", "source_name": "F"},
@@ -229,12 +236,12 @@ async def test_picking_a_status_filters_the_items_list():
         assert len(pane.displayed_items()) == 2
 
         select = screen.query_one("#items-status-select", Select)
-        select.value = "ingested"
+        select.value = "unread"
         await pilot.pause()
         await pilot.pause()
 
-        displayed = screen.query_one("#watchlists-items-pane", ItemsPane).displayed_items()
-        assert [row["id"] for row in displayed] == ["2"]
+        displayed = screen.query_one("#watchlists-items-pane", ArticleListPane).displayed_items()
+        assert [row["id"] for row in displayed] == ["1"]
 
 
 async def test_new_rule_condition_select_paints_the_real_vocabulary():
@@ -371,17 +378,31 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
     Nothing in the existing suite saw it (`test_settings_provider_test_draft.py`
     stayed green), so it is pinned here, on the painted rows, in all three
     states.
+
+    task-17664: the original exemplar died by design — 484c74af2 replaced
+    the visible provider Select with the search + picker flow and kept
+    `#settings-provider-value` only as a hidden manual-entry compat control
+    (`settings-provider-manual-hidden`, zero-size), which made this pin
+    IndexError on an empty paint. The contract outlives the exemplar
+    (~21 bordered compact Selects remain), so it is pinned on the Console
+    Behavior compaction-mode Select instead, scrolled into view first the
+    way a user reaches it.
     """
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=(180, 50)) as pilot:
-        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = pilot.app.screen
-        await _wait_for_selector(screen, pilot, "#settings-provider-value", timeout=5.0)
-        select = screen.query_one("#settings-provider-value", Select)
+        await _wait_for_selector(
+            screen, pilot, "#settings-console-context-compaction-mode", timeout=5.0
+        )
+        select = screen.query_one("#settings-console-context-compaction-mode", Select)
         assert "-textual-compact" in select.classes, (
             "precondition: this control is the compact-AND-bordered shape"
         )
+        select.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.pause()
 
         def _frame() -> tuple[str, str]:
             rows = _painted_rows(screen, select.region)
@@ -400,7 +421,7 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
             f"painted {_painted_rows(screen, select.region)!r}"
         )
 
-        await pilot.hover("#settings-provider-value")
+        await pilot.hover("#settings-console-context-compaction-mode")
         await pilot.pause()
         assert _frame() == (rest_top, rest_bottom), (
             "and on hover -- a frame that appears and disappears under the "
@@ -486,10 +507,13 @@ async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
     host = _watchlists_host()
     async with host.run_test(size=UAT_SIZE) as pilot:
         screen = _active_destination_screen(host)
-        screen.active_section = "items"
+        screen.active_section = (
+            "items" if select_id == "#items-status-select" else "sources"
+        )
         await pilot.pause()
         await _wait_for_selector(screen, pilot, select_id, timeout=5.0)
         select = screen.query_one(select_id, Select)
+        assert not select.disabled, "focus contrast must be measured on a focusable control"
 
         rest = _rendered_background(screen, select.region)
         select.focus()

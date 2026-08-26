@@ -95,7 +95,7 @@ async def test_generate_button_previews_the_result(
     ):
         editor._area("description").text = "hand-written"
 
-        await pilot.click("#personas-char-editor-generate-description")
+        _press(screen, "#personas-char-editor-generate-description")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -115,7 +115,7 @@ async def test_generate_uses_the_editors_selected_context_mode(
         screen,
         editor,
     ):
-        await pilot.click("#personas-char-editor-generate-context")
+        _press(screen, "#personas-char-editor-generate-context")
         await pilot.pause()
         # Scenario lives in the Advanced section; open it the way a user would.
         _press(screen, "#personas-char-editor-advanced-toggle")
@@ -149,7 +149,7 @@ async def test_generate_sends_the_live_editor_values_not_the_saved_record(
     ):
         editor._area("description").text = "a drowned library"
 
-        await pilot.click("#personas-char-editor-generate-personality")
+        _press(screen, "#personas-char-editor-generate-personality")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -172,7 +172,7 @@ async def test_generation_failure_notifies_and_leaves_no_preview(
             (str(message), severity)
         )
 
-        await pilot.click("#personas-char-editor-generate-description")
+        _press(screen, "#personas-char-editor-generate-description")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -224,7 +224,7 @@ async def test_whole_character_button_reveals_a_concept_input(
         row = editor.query_one("#personas-char-editor-concept-row")
         assert row.display is False
 
-        await pilot.click("#personas-char-editor-generate-whole")
+        _press(screen, "#personas-char-editor-generate-whole")
         await pilot.pause()
 
         assert row.display is True
@@ -247,11 +247,11 @@ async def test_whole_character_fills_empty_fields(
         screen,
         editor,
     ):
-        await pilot.click("#personas-char-editor-generate-whole")
+        _press(screen, "#personas-char-editor-generate-whole")
         await pilot.pause()
         editor.query_one("#personas-char-editor-concept", Input).value = "a map trader"
 
-        await pilot.click("#personas-char-editor-concept-run")
+        _press(screen, "#personas-char-editor-concept-run")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -276,13 +276,14 @@ async def test_whole_character_does_not_clobber_fields_the_author_wrote(
         editor.query_one("#personas-char-editor-name", Input).value = "Mine"
         editor._area("description").text = "my own description"
 
-        await pilot.click("#personas-char-editor-generate-whole")
+        _press(screen, "#personas-char-editor-generate-whole")
         await pilot.pause()
         editor.query_one("#personas-char-editor-concept", Input).value = "anything"
-        await pilot.click("#personas-char-editor-concept-run")
+        _press(screen, "#personas-char-editor-concept-run")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+        assert controller.whole_calls == ["anything"]
         assert editor.query_one("#personas-char-editor-name", Input).value == "Mine"
         assert editor._area("description").text == "my own description"
 
@@ -301,10 +302,10 @@ async def test_whole_character_requires_a_concept(
         screen._notify = lambda message, severity="information": notices.append(
             str(message)
         )
-        await pilot.click("#personas-char-editor-generate-whole")
+        _press(screen, "#personas-char-editor-generate-whole")
         await pilot.pause()
 
-        await pilot.click("#personas-char-editor-concept-run")
+        _press(screen, "#personas-char-editor-concept-run")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 

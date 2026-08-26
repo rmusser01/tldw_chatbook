@@ -561,21 +561,36 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "url": row.get("url") or row.get("canonical_url"),
         "status": row.get("status") or "new",
         # TASK-2306: which run produced this item, and how many content-alert
-        # rules it matched. Both columns are already on the row (`SELECT i.*`)
-        # and both are what the Runs tab's Items sub-region displays -- its
-        # "Alerts" column had no source at all before this, so it rendered
-        # `0` over every item however many alerts had fired.
+        # rules it matched. Both columns are on the row (`get_new_items`
+        # selected `i.*` at the time this was written; TASK-15464 narrowed
+        # that to an explicit column list, `SubscriptionsDB._LIST_ITEM_
+        # COLUMNS`, which still names `run_id`/`alert_matches` -- both are
+        # small scalars, not the large-payload columns that narrowing
+        # dropped) and both are what the Runs tab's Items sub-region
+        # displays -- its "Alerts" column had no source at all before this,
+        # so it rendered `0` over every item however many alerts had fired.
         "run_id": row.get("run_id"),
         "alert_count": _alert_match_count(row.get("alert_matches")),
         "author": row.get("author"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "published_date": row.get("published_date"),
-        # Phase D reader fields. `get_new_items` is `SELECT i.*`, so these are
-        # already on the row -- this dict was simply not carrying them, which
-        # made every item title-only downstream regardless of what Phase A
-        # persisted.
+        # Phase D reader fields. Originally added because `get_new_items` was
+        # `SELECT i.*` and these were already on the row but this dict simply
+        # was not carrying them (title-only downstream regardless of what
+        # Phase A persisted). TASK-15464: `get_new_items` is NO LONGER
+        # `SELECT i.*` -- `content` is absent from a freshly-loaded LIST row
+        # now (fetched separately, once, only for an opened item -- see
+        # `SubscriptionsDB.get_item_content` and
+        # `WatchlistsCollectionsScreen._load_item_content`). `row.get(...)`
+        # here still does the right thing either way: `None` when absent,
+        # the real value once `_load_item_content` has merged it in.
         "content": row.get("content"),
+        # TASK-15464: the list row's OWN preview snippet source
+        # (`article_list._render_row`'s `body_snippet`) -- a cheap `substr`
+        # projection (`_LIST_ITEM_COLUMNS`), never the full body. Present on
+        # every list row regardless of whether `content` itself is.
+        "content_preview": row.get("content_preview"),
         "content_kind": row.get("content_kind"),
         # Read by `content_pane.render_article` to decide whether the body is
         # markdown source or plain text.
@@ -585,11 +600,12 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "change_percentage": row.get("change_percentage"),
         "change_type": row.get("change_type"),
         "diff_summary": row.get("diff_summary"),
-        # Spec #2 phase 1 read-path lesson (Phase D's shape, repeated):
-        # `get_new_items` is `SELECT i.*`, so the DB already returns this
-        # column -- coerce SQLite's 0/1 to an actual bool, or every
-        # downstream consumer sees a truthy int instead of a real flag.
+        # Spec #2 phase 1 read-path lesson (Phase D's shape, repeated).
+        # Coerce SQLite's 0/1 to an actual bool, or every downstream
+        # consumer sees a truthy int instead of a real flag.
         "queued_for_briefing": bool(row.get("queued_for_briefing")),
+        # task-3072: same column-present/bool-coercion shape for the star.
+        "is_flagged": bool(row.get("is_flagged")),
         # `canonical_url` is deliberately NOT re-exported as its own key: it
         # is already folded into `url` two lines above (`row.get("url") or
         # row.get("canonical_url")`), and a second copy under a second name

@@ -14,13 +14,18 @@ This screen replaces that architecture with the shared Lab frame
 (``lab_frame.LabScreen``): the library rail, detail body and readiness
 inspector are the frame's three regions, driven by selection state
 (``EvalsSelection``, ``evals_state.py``) instead of a hand-rolled screen
-stack. **No ``Screen`` subclass is mounted inside any region here.** Detail
-and inspector content is swapped by a screen-level
-``refresh(recompose=True)`` on selection change, which tears down and
-remounts plain widgets (``Static``/``Button``/``Vertical``) -- never a
-``Screen``. ``LabScreen.recompose()`` repopulates the regions and
-re-schedules the deferred body afterwards, which is what makes that
-selection-driven recompose safe here.
+stack. **No ``Screen`` subclass is mounted inside any region here.**
+
+Detail and inspector content is swapped REGION BY REGION on selection change
+(``select`` -> ``_swap_selection_regions``), tearing down and remounting plain
+widgets (``Static``/``Button``/``Vertical``) -- never a ``Screen``. Until
+task-15475 this was a screen-level ``refresh(recompose=True)``, which also
+rebuilt the nav bar, footer, header row and mode strip -- 150-300 widgets by
+the input-latency audit's count -- and is now reserved for whole-screen
+rebuilds. Two consequences worth knowing before touching the swap: the rail's
+ROWS are only rebuilt when a caller says they changed (``rail_dirty``), and
+each region's frame-owned collapse header is NOT mode content, so a swap
+removes only the children it put there (see ``_replace_region``).
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.css.query import QueryError
 from textual.widgets import Button, Static
 
 from ...Chat.Chat_Functions import chat_api_call
@@ -71,6 +77,12 @@ from .lab_frame import LabScreen
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+
+
+#: Class on the collapse header the WORKBENCH composes as the first child of
+#: `#lab-rail` and `#lab-inspector` (see `lab_workbench._region_collapse_header`).
+#: Frame-owned chrome, not mode content -- a region swap must step around it.
+_FRAME_REGION_HEADER_CLASS = "console-rail-header"
 
 
 def _extract_chat_reply_text(response: Any) -> str:
@@ -224,9 +236,16 @@ class EvalsScreen(LabScreen):
         #: reintroduce the duplicate run-group snapshot read that I2
         #: fixed. Cleared wherever the selection changes.
         self._preflight_cache: dict[str, PreflightResult] | None = None
+        #: task-15475: selection swaps are serialized by this lock and
+        #: superseded by revision rather than cancelled, so a teardown is
+        #: never interrupted half-done. `_selection_rail_dirty` accumulates
+        #: across superseded calls -- see `select`.
+        self._selection_swap_lock = asyncio.Lock()
+        self._selection_swap_revision = 0
+        self._selection_rail_dirty = False
         # Shared with LibraryRail by reference (see its own docstring) so
         # collapsed/expanded rail sections survive a selection-triggered
-        # recompose, which constructs a brand-new LibraryRail instance.
+        # rebuild, which constructs a brand-new LibraryRail instance.
         self._rail_open_sections: dict[str, bool] = {
             section_id: True for section_id in RAIL_SECTIONS
         }
@@ -380,7 +399,13 @@ class EvalsScreen(LabScreen):
         """
         return getattr(app_instance, "chachanotes_db", None)
 
-    def select(self, *, kind: SelectionKind, id: Optional[str] = None) -> None:  # noqa: A002
+    def select(  # noqa: A002
+        self,
+        *,
+        kind: SelectionKind,
+        id: Optional[str] = None,
+        rail_dirty: bool = True,
+    ) -> None:
         """Set the workbench's active selection and refresh dependent panes.
 
         Public, not just an internal message handler: it is the shell's own
@@ -388,11 +413,15 @@ class EvalsScreen(LabScreen):
         rail row press) routes here via ``_on_library_selection_changed``
         below, but a caller may also drive selection directly.
 
-        A plain (non-async) method: it only schedules the recompose
-        (``refresh(recompose=True)``), it does not await its
-        completion -- callers that need the panes settled should
-        ``await pilot.pause()`` afterward, mirroring every other
-        recompose-driven screen in this app.
+        A plain (non-async) method: it only SCHEDULES the region swap, it
+        does not await its completion -- callers that need the panes settled
+        should ``await pilot.pause()`` afterward, exactly as they did when
+        this scheduled a ``refresh(recompose=True)``.
+
+        task-15475: it no longer recomposes the screen. A screen recompose
+        rebuilt the nav bar, footer, header row, mode strip and the whole
+        ``LabWorkbench`` -- 150-300 widgets by the input-latency audit's
+        count -- to repaint two regions that read the selection.
 
         Args:
             kind: The selected object's kind (``SelectionKind`` --
@@ -401,12 +430,216 @@ class EvalsScreen(LabScreen):
             id: The selected object's id. Only meaningful for a non-
                 ``"none"`` ``kind``; may be ``None`` (e.g. for ``kind=
                 "none"``, or a caller clearing the selection).
+            rail_dirty: Whether the rail's ROWS (not just which one is
+                active) may have changed. Defaults to ``True``, the safe
+                answer for every mutation caller -- a save, a finished run, a
+                duplicate, a delete -- and for any caller outside this class.
+                Only the rail-click path passes ``False``: the rail is what
+                posted that selection, so its rows cannot have moved, and it
+                just re-marks the active row in place.
         """
         self._selection = EvalsSelection(kind=kind, id=id)
         self._preflight_cache = None
         self._register_grid_shortcuts()
-        if self.is_mounted:
-            self.refresh(recompose=True)
+        if not self.is_mounted:
+            return
+        # Accumulated, never overwritten: if a rail-rebuilding selection is
+        # superseded by a rail-click one before either swap runs, the rail
+        # still has to be rebuilt.
+        self._selection_rail_dirty = self._selection_rail_dirty or rail_dirty
+        self._selection_swap_revision += 1
+        self.run_worker(
+            self._swap_selection_regions(
+                revision=self._selection_swap_revision,
+            ),
+            group="evals-selection-regions",
+            # NOT exclusive. An exclusive group cancels the in-flight swap,
+            # and the cancellation can land INSIDE `remove_children` -- which
+            # strands a region emptied but never refilled (the rail, if the
+            # superseding swap is a rail-click one that does not rebuild it)
+            # and skips the post-teardown mouse-capture sweep. A lock plus a
+            # revision check gets the same "only the newest wins" without ever
+            # interrupting a teardown: superseded swaps no-op BEFORE touching
+            # anything. Mirrors `speech_playground_pane`'s reconcile-to-current
+            # idiom in the same programme.
+            exclusive=False,
+            exit_on_error=False,
+        )
+
+    async def _swap_selection_regions(self, *, revision: int) -> None:
+        """Rebuild the Lab regions that read the selection, and only those.
+
+        The three regions are the frame's (``lab_frame.LabScreen``):
+        ``#lab-rail``, ``#lab-body``, ``#lab-inspector``. Everything outside
+        them -- the header row and its status chips (static for this mode),
+        the mode strip, the nav bar and the footer -- is unaffected by a
+        selection, so it now survives one.
+
+        Removals are awaited before the replacements mount: Textual's
+        ``remove`` is deferred, and every id here (``#evals-detail-pane``,
+        ``#evals-inspector-pane``, the rail's row ids) is re-used by the
+        replacement, so mounting early raises ``DuplicateIds``.
+
+        The whole swap runs inside ``self.batch()`` -- the same lock-plus-
+        ``batch_update`` ``Widget.recompose`` uses. Not a nicety: two
+        separately-awaited region swaps each drove their own layout/repaint
+        pass, and batching them cut the swap's own cost from a median of
+        105 ms to 88 ms on the isolated harness.
+
+        Serialized by a lock and superseded by revision, never cancelled --
+        see ``select`` for why an exclusive worker group was the wrong tool.
+
+        Focus is captured before the teardown and restored after IF it was
+        inside a region this swap rebuilds and its id still resolves. Ids are
+        stable across a rebuild (the rail's row ids, the detail pane's field
+        ids), so this beats what the whole-screen recompose managed -- it left
+        focus wherever Textual's ``_reset_focus`` happened to drop it, which
+        on a rail rebuild is a section TOGGLE, one Space away from collapsing
+        the section the user is working in.
+
+        The restore is deferred and yields to the body: a freshly mounted body
+        may claim focus ON PURPOSE (``ResultsGrid.on_mount`` focuses its
+        DataTable so the ``l``/``b``/``s``/``e`` keys the footer advertises
+        actually work). Anything focused inside ``#lab-body`` after the swap is
+        that deliberate claim and is left alone; anything else is Textual's
+        automatic reset, which the captured identity overrides.
+
+        Args:
+            revision: The ``select`` call this swap belongs to. A swap whose
+                revision is no longer current returns without touching a
+                single widget.
+
+        Returns:
+            None.
+        """
+        async with self._selection_swap_lock:
+            if revision != self._selection_swap_revision or not self.is_mounted:
+                # Superseded while queued (or the screen went away): the newest
+                # swap owns the work, including this one's rail_dirty.
+                return
+            rail_dirty = self._selection_rail_dirty
+            self._selection_rail_dirty = False
+            focus_id = self._focused_id_in_swapped_regions(rail_dirty=rail_dirty)
+
+            # Same protection the whole-screen recompose gave (task-627): a
+            # widget about to be torn down -- the detail pane is full of
+            # `Input`s -- must not be left holding the mouse capture, or every
+            # click app-wide is silently swallowed from then on.
+            self.release_mouse_capture_for_teardown()
+            async with self.batch():
+                if rail_dirty:
+                    await self._replace_region(
+                        "#lab-rail", list(self.compose_lab_rail())
+                    )
+                else:
+                    try:
+                        self.query_one(LibraryRail).apply_selection(self._selection)
+                    except QueryError:
+                        # No rail mounted (teardown race) -- the body/inspector
+                        # swap below is still worth doing if they are there.
+                        pass
+
+                body = self.build_lab_body()
+                await self._replace_region(
+                    "#lab-body", [] if body is None else [body]
+                )
+                await self._replace_region(
+                    "#lab-inspector", list(self.compose_lab_inspector())
+                )
+            # A MouseDown already queued on a child's pump can capture that
+            # child DURING the removal drain, after the release above.
+            self.sweep_stale_mouse_capture()
+            if not self.is_mounted:
+                return
+            # Same notification the frame's own deferred body mount fires, so a
+            # mode that re-wires itself against a fresh body keeps working.
+            self.on_lab_body_ready()
+            if focus_id:
+                self.call_later(self._restore_selection_focus, focus_id)
+
+    def _focused_id_in_swapped_regions(self, *, rail_dirty: bool) -> Optional[str]:
+        """The focused widget's id, if this swap is about to destroy it.
+
+        Args:
+            rail_dirty: Whether ``#lab-rail`` is being rebuilt too.
+
+        Returns:
+            The id to restore afterwards, or None when focus is elsewhere,
+            unidentifiable, or on a widget that survives.
+        """
+        focused = self.app.focused if self.is_running else None
+        if focused is None or focused.screen is not self or not focused.id:
+            return None
+        region_ids = ["lab-body", "lab-inspector"]
+        if rail_dirty:
+            region_ids.append("lab-rail")
+        for ancestor in focused.ancestors_with_self:
+            if getattr(ancestor, "id", None) in region_ids:
+                return focused.id
+        return None
+
+    def _restore_selection_focus(self, focus_id: str) -> None:
+        """Put focus back on ``focus_id`` unless the new body claimed it.
+
+        Deferred (``call_later``) rather than immediate so it runs AFTER the
+        focus callbacks a freshly mounted widget queued from its own
+        ``on_mount`` -- which is what lets it see, and yield to, a deliberate
+        claim like ``ResultsGrid``'s.
+        """
+        if not self.is_mounted:
+            return
+        focused = self.app.focused
+        if focused is not None:
+            for ancestor in focused.ancestors_with_self:
+                if getattr(ancestor, "id", None) == "lab-body":
+                    # A fresh body widget focused itself on purpose.
+                    return
+        try:
+            self.query_one(f"#{focus_id}").focus()
+        except QueryError:
+            # The widget has no counterpart in the rebuilt region (a different
+            # selection kind renders different controls) -- leave focus alone.
+            pass
+
+    async def _replace_region(self, region_id: str, content: list[Any]) -> None:
+        """Swap one Lab region's MODE-OWNED children for ``content``.
+
+        Mode-owned is the load-bearing word. ``#lab-rail`` and
+        ``#lab-inspector`` are not empty containers the mode fills: the
+        WORKBENCH composes a collapse header (title + collapse button) as
+        each region's first child, because collapse is frame-owned, not a
+        per-mode concern (``lab_workbench.LabWorkbench.compose``). That is
+        precisely why ``LabScreen._populate_regions`` mounts mode content with
+        ``mount_all``, which appends, and says so.
+
+        A blanket ``remove_children()`` here destroyed those headers on the
+        first selection -- permanently, since nothing recomposes the screen
+        any more and the collapse buttons have no keyboard binding. Removing
+        an explicit list of the non-header children keeps the frame's chrome
+        and leaves it first, exactly where a fresh compose puts it.
+
+        Args:
+            region_id: ``#``-prefixed id of the frame region to refill.
+            content: Widgets to mount after the existing mode content is gone.
+
+        Returns:
+            None.
+        """
+        try:
+            region = self.query_one(region_id)
+        except QueryError:
+            logger.warning("Lab region {} missing; selection swap skipped.", region_id)
+            return
+        mode_owned = [
+            child
+            for child in region.children
+            if not child.has_class(_FRAME_REGION_HEADER_CLASS)
+            and not child.has_class("-textual-system")
+        ]
+        if mode_owned:
+            await region.remove_children(mode_owned)
+        if content and region.is_mounted:
+            await region.mount_all(content)
 
     def _selection_unmoved_since_launch(
         self, launch_selection: EvalsSelection, bench_task_id: Optional[str]
@@ -571,7 +804,14 @@ class EvalsScreen(LabScreen):
         self, event: LibraryRail.EvalsSelectionChanged
     ) -> None:
         event.stop()
-        self.select(kind=event.selection.kind, id=event.selection.id)
+        # task-15475: the RAIL knows whether it just mutated its own rows (an
+        # import, a "+ New bench") or merely reported a row press; forward its
+        # answer rather than assuming "came from the rail" means "unchanged".
+        self.select(
+            kind=event.selection.kind,
+            id=event.selection.id,
+            rail_dirty=event.rail_dirty,
+        )
 
     @on(BenchEditor.Saved)
     def _on_bench_editor_saved(self, event: BenchEditor.Saved) -> None:

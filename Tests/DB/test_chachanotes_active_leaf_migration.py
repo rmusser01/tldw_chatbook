@@ -11,11 +11,14 @@ def test_fresh_db_is_v28_with_active_leaf_column(tmp_path):
         version = conn.execute(
             "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"
         ).fetchone()["version"]
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+        }
     # A fresh DB always migrates to the CURRENT schema version, not the
     # version this column was introduced at -- this assertion moves with
     # each newer migration.
-    assert version == 32
+    assert version == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert "active_leaf_message_id" in cols
 
 

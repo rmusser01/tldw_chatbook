@@ -1,26 +1,630 @@
+import asyncio
 import os
-from unittest.mock import patch
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _static_text,
 )
-from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_settings_configuration_hub import (
     StyledSettingsDestinationHarness,
     _click_scrolled_settings_button,
     _open_settings_category,
     _wait_for_settings_text,
 )
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderProbeResult,
+    ProviderTestEvidence,
+    ProviderTestEvidenceStore,
+)
+from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+)
 from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
     overlay_provider_draft_config,
 )
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
+)
+
+
+def _semantic_identity(
+    endpoint: str,
+    *,
+    provider_key: str = "custom",
+    credential_source: str = "none",
+    credential_revision: int = 0,
+    draft_generation: int = 1,
+) -> ProviderDraftIdentity:
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+
+    connection_identity = canonical_connection_identity(provider_key, endpoint)
+    assert connection_identity is not None
+    return ProviderDraftIdentity(
+        provider_key=provider_key,
+        connection_identity=connection_identity,
+        credential_source=credential_source,
+        credential_revision=credential_revision,
+        draft_generation=draft_generation,
+    )
+
+
+def _settled_store(identity: ProviderDraftIdentity) -> ProviderTestEvidenceStore:
+    store = ProviderTestEvidenceStore()
+    token = store.begin(identity)
+    assert store.settle(
+        token,
+        ProviderTestEvidence(identity, "reachable", ("model-a", "model-b")),
+    )
+    return store
+
+
+def _settle_identity(
+    store: ProviderTestEvidenceStore, identity: ProviderDraftIdentity
+) -> ProviderTestEvidence:
+    evidence = ProviderTestEvidence(
+        identity, "reachable", (f"model-{identity.draft_generation}",)
+    )
+    token = store.begin(identity)
+    assert store.settle(token, evidence)
+    return evidence
+
+
+def _rebase_after_save(
+    store: ProviderTestEvidenceStore,
+    tested: ProviderDraftIdentity,
+    saved: ProviderDraftIdentity,
+    mutation: ConfigMutationResult,
+) -> bool:
+    lease = store.begin_save(tested)
+    return store.rebase_after_save(tested, saved, mutation, lease=lease)
+
+
+def test_equivalent_url_save_rebases_evidence_only_after_fully_applied():
+    tested = _semantic_identity(
+        "https://example.test/proxy/v1/models", draft_generation=4
+    )
+    saved = _semantic_identity(
+        "https://example.test/proxy/v1/chat/completions", draft_generation=5
+    )
+    store = _settled_store(tested)
+
+    partial = ConfigMutationResult(True, False, "cache_reload")
+    assert not _rebase_after_save(store, tested, saved, partial)
+    assert store.evidence_for(saved) is None
+    assert store.evidence_for(tested) is None
+
+    store = _settled_store(tested)
+    applied = ConfigMutationResult(True, True, None)
+    assert _rebase_after_save(store, tested, saved, applied)
+    rebound = store.evidence_for(saved)
+    assert rebound is not None
+    assert rebound.identity == saved
+    assert rebound.model_ids == ("model-a", "model-b")
+
+
+def test_exact_draft_credential_save_rebases_to_stored_source():
+    tested = _semantic_identity(
+        "https://example.test/v1/models",
+        credential_source="draft",
+        credential_revision=8,
+        draft_generation=4,
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions",
+        credential_source="stored",
+        credential_revision=8,
+        draft_generation=5,
+    )
+    store = _settled_store(tested)
+
+    assert _rebase_after_save(
+        store, tested, saved, ConfigMutationResult(True, True, None)
+    )
+    rebound = store.evidence_for(saved)
+    assert rebound is not None
+    assert rebound.identity.credential_source == "stored"
+    assert rebound.model_ids == ("model-a", "model-b")
+
+
+@pytest.mark.parametrize(
+    ("tested_source", "saved_source"),
+    [
+        ("stored", "environment"),
+        ("stored", "none"),
+        ("environment", "stored"),
+        ("none", "stored"),
+    ],
+)
+def test_other_credential_source_transitions_do_not_rebase(tested_source, saved_source):
+    tested = _semantic_identity(
+        "https://example.test/v1/models",
+        credential_source=tested_source,
+        credential_revision=8,
+        draft_generation=4,
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions",
+        credential_source=saved_source,
+        credential_revision=8,
+        draft_generation=5,
+    )
+    store = _settled_store(tested)
+
+    assert not _rebase_after_save(
+        store, tested, saved, ConfigMutationResult(True, True, None)
+    )
+    assert store.evidence_for(saved) is None
+
+
+def test_draft_to_stored_revision_change_does_not_rebase():
+    tested = _semantic_identity(
+        "https://example.test/v1/models",
+        credential_source="draft",
+        credential_revision=8,
+        draft_generation=4,
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions",
+        credential_source="stored",
+        credential_revision=9,
+        draft_generation=5,
+    )
+    store = _settled_store(tested)
+
+    assert not _rebase_after_save(
+        store, tested, saved, ConfigMutationResult(True, True, None)
+    )
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        _semantic_identity(
+            "https://other.test/v1/chat/completions", draft_generation=2
+        ),
+        _semantic_identity(
+            "https://example.test/v1/chat/completions",
+            provider_key="openai",
+            draft_generation=2,
+        ),
+        _semantic_identity(
+            "https://example.test/v1/chat/completions",
+            credential_source="draft",
+            draft_generation=2,
+        ),
+        _semantic_identity(
+            "https://example.test/v1/chat/completions",
+            credential_revision=1,
+            draft_generation=2,
+        ),
+    ],
+)
+def test_successful_save_does_not_rebase_changed_semantics(changed):
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    store = _settled_store(tested)
+
+    assert not _rebase_after_save(
+        store, tested, changed, ConfigMutationResult(True, True, None)
+    )
+    assert store.evidence_for(changed) is None
+    assert store.evidence_for(tested) is None
+
+
+def test_model_choice_from_returned_ids_does_not_invalidate_endpoint_evidence():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=7
+    )
+    store = _settled_store(identity)
+
+    for selected_model in ("model-a", "model-b"):
+        evidence = store.evidence_for(identity)
+        assert evidence is not None
+        assert selected_model in evidence.model_ids
+
+
+def test_failed_save_does_not_rebase_evidence_to_saved_identity():
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    store = _settled_store(tested)
+
+    assert not _rebase_after_save(
+        store,
+        tested,
+        saved,
+        ConfigMutationResult(False, False, "before_replace"),
+    )
+    assert store.evidence_for(saved) is None
+    assert store.evidence_for(tested) is None
+
+
+def test_conflict_invalidates_even_when_mutation_claims_fully_applied():
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    store = _settled_store(tested)
+
+    assert not _rebase_after_save(
+        store,
+        tested,
+        saved,
+        ConfigMutationResult(True, True, None, conflict=True),
+    )
+    assert store.evidence_for(tested) is None
+    assert store.evidence_for(saved) is None
+
+
+def test_conflict_invalidates_active_test_token():
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+    token = store.begin(tested)
+    lease = store.begin_save(tested)
+
+    assert not store.rebase_after_save(
+        tested,
+        saved,
+        ConfigMutationResult(True, True, None, conflict=True),
+        lease=lease,
+    )
+    assert store.evidence_for(tested) is None
+    assert not store.settle(
+        token,
+        ProviderTestEvidence(tested, "reachable", ("model-a",)),
+    )
+
+
+def test_late_partial_save_does_not_clear_newer_settled_evidence():
+    first = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    second = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+    _settle_identity(store, first)
+    first_lease = store.begin_save(first)
+    newer_evidence = _settle_identity(store, second)
+
+    assert not store.rebase_after_save(
+        first,
+        first,
+        ConfigMutationResult(False, False, "before_replace"),
+        lease=first_lease,
+    )
+    assert store.evidence_for(second) == newer_evidence
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace", conflict=True),
+        ConfigMutationResult(True, True, None, conflict=True),
+    ],
+    ids=["conflict", "conflict-fully-applied"],
+)
+def test_late_conflict_does_not_clear_newer_settled_evidence(mutation):
+    first = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    second = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+    _settle_identity(store, first)
+    first_lease = store.begin_save(first)
+    newer_evidence = _settle_identity(store, second)
+
+    assert not store.rebase_after_save(first, first, mutation, lease=first_lease)
+    assert store.evidence_for(second) == newer_evidence
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace"),
+        ConfigMutationResult(True, True, None, conflict=True),
+    ],
+    ids=["partial", "conflict"],
+)
+def test_stale_save_result_does_not_cancel_newer_active_test(mutation):
+    first = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    second = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+    _settle_identity(store, first)
+    first_lease = store.begin_save(first)
+    token = store.begin(second)
+
+    assert not store.rebase_after_save(first, first, mutation, lease=first_lease)
+    testing = store.evidence_for(second)
+    assert testing is not None
+    assert testing.endpoint == "testing"
+
+    settled = ProviderTestEvidence(second, "reachable", ("model-2",))
+    assert store.settle(token, settled)
+    assert store.evidence_for(second) == settled
+
+
+def test_successful_save_cannot_rebase_to_an_older_draft_generation():
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=3
+    )
+    older = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    store = _settled_store(tested)
+
+    assert not _rebase_after_save(
+        store, tested, older, ConfigMutationResult(True, True, None)
+    )
+    assert store.evidence_for(older) is None
+
+
+def test_save_lease_is_immutable_value_free_and_secret_free():
+    identity = _semantic_identity(
+        "https://secret-host.test/v1/chat/completions", draft_generation=1
+    )
+    store = _settled_store(identity)
+
+    lease = store.begin_save(identity)
+
+    assert repr(lease) == "<ProviderEvidenceSaveLease>"
+    assert not hasattr(lease, "__dict__")
+    assert "custom" not in repr(lease)
+    assert "secret-host" not in repr(lease)
+    assert "identity" not in dir(lease)
+    assert "epoch" not in dir(lease)
+    with pytest.raises(AttributeError):
+        lease.identity = identity
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace"),
+        ConfigMutationResult(True, True, None, conflict=True),
+        ConfigMutationResult(True, True, None),
+    ],
+    ids=["partial", "conflict", "success"],
+)
+def test_same_identity_late_save_cannot_change_newer_settled_state(mutation):
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=3
+    )
+    store = _settled_store(identity)
+    stale_lease = store.begin_save(identity)
+    newer = _settle_identity(store, identity)
+
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        mutation,
+        lease=stale_lease,
+    )
+    assert store.evidence_for(identity) == newer
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace"),
+        ConfigMutationResult(True, True, None, conflict=True),
+        ConfigMutationResult(True, True, None),
+    ],
+    ids=["partial", "conflict", "success"],
+)
+def test_same_identity_late_save_cannot_cancel_newer_active_test(mutation):
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=3
+    )
+    store = _settled_store(identity)
+    stale_lease = store.begin_save(identity)
+    token = store.begin(identity)
+
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        mutation,
+        lease=stale_lease,
+    )
+    settled = ProviderTestEvidence(identity, "reachable", ("model-new",))
+    assert store.settle(token, settled)
+    assert store.evidence_for(identity) == settled
+
+
+def test_save_lease_is_single_use_after_successful_rebase():
+    tested = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=3
+    )
+    store = _settled_store(tested)
+    lease = store.begin_save(tested)
+    mutation = ConfigMutationResult(True, True, None)
+
+    assert store.rebase_after_save(tested, saved, mutation, lease=lease)
+    rebound = store.evidence_for(saved)
+    assert not store.rebase_after_save(tested, saved, mutation, lease=lease)
+    assert store.evidence_for(saved) == rebound
+
+
+def test_rejected_save_callback_consumes_lease():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    lease = store.begin_save(identity)
+
+    assert not store.rebase_after_save(identity, identity, object(), lease=lease)
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+
+
+def test_parallel_save_lease_becomes_stale_after_first_rebase():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    first = store.begin_save(identity)
+    second = store.begin_save(identity)
+    mutation = ConfigMutationResult(True, True, None)
+
+    assert not store.rebase_after_save(identity, identity, mutation, lease=first)
+    assert store.rebase_after_save(identity, identity, mutation, lease=second)
+
+
+def test_mismatched_save_callback_cannot_consume_current_exact_lease():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    other = _semantic_identity(
+        "https://other.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    lease = store.begin_save(identity)
+    mutation = ConfigMutationResult(True, True, None)
+
+    assert not store.rebase_after_save(other, other, mutation, lease=lease)
+    assert store.rebase_after_save(identity, identity, mutation, lease=lease)
+
+
+def test_begin_save_requires_exact_current_store_identity():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    other = _semantic_identity(
+        "https://other.test/v1/chat/completions", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+
+    assert store.begin_save(identity) is None
+    store.begin(identity)
+    assert store.begin_save(other) is None
+    assert store.begin_save(identity) is not None
+
+
+def test_cancel_save_consumes_only_current_lease_without_clearing_evidence():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    lease = store.begin_save(identity)
+    assert lease is not None
+
+    assert store.cancel_save(lease)
+    assert not store.cancel_save(lease)
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+    assert store.evidence_for(identity) is not None
+
+
+def test_save_lease_storage_remains_single_and_bounded():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    latest = None
+
+    for _ in range(100):
+        latest = store.begin_save(identity)
+
+    assert latest is not None
+    assert not hasattr(store, "_save_leases")
+    assert store._save_lease is not None
+    assert store._save_lease[0] is latest
+
+
+def test_invalidated_save_lease_cannot_rebase_recreated_identical_evidence():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    lease = store.begin_save(identity)
+    assert store.invalidate(identity)
+    recreated = _settle_identity(store, identity)
+
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+    assert store.evidence_for(identity) == recreated
+
+
+@pytest.mark.parametrize("state", ["changed-semantics", "testing"])
+def test_current_fully_applied_save_advances_generation_without_preserved_evidence(
+    state,
+):
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=8
+    )
+    store = ProviderTestEvidenceStore()
+    token = None
+    if state == "changed-semantics":
+        _settle_identity(store, tested)
+        saved = _semantic_identity(
+            "https://other.test/v1/chat/completions", draft_generation=8
+        )
+    elif state == "testing":
+        token = store.begin(tested)
+
+    lease = store.begin_save(tested)
+    assert not store.rebase_after_save(
+        tested,
+        saved,
+        ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+    if token is not None:
+        assert not store.settle(
+            token,
+            ProviderTestEvidence(tested, "reachable", ("model-a",)),
+        )
+    with pytest.raises(ValueError):
+        store.begin(_semantic_identity(
+            "https://example.test/v1/chat/completions", draft_generation=7
+        ))
 
 
 def _base_config():
@@ -109,6 +713,23 @@ def _bare_settings_screen(app_config):
     return screen
 
 
+def test_provider_source_ui_honors_persisted_explicit_keyless_decision():
+    screen = _bare_settings_screen(
+        {
+            "api_settings": {
+                "custom": {
+                    "credential_source": "none",
+                    "api_key": "saved-settings-ui-canary",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        }
+    )
+    screen._provider_draft = lambda: None
+
+    assert screen._provider_current_credential_source("custom") == "none"
+
+
 def test_findings_show_draft_endpoint_tagged():
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:9099"}}}
     screen = _bare_settings_screen(app_config)
@@ -125,7 +746,7 @@ def test_findings_relabel_draft_api_key_source_and_hide_value():
     app_config = {"api_settings": {"openai": {"api_key": "fake-draft-key-not-real"}}}
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
-    detail, summary, passed = screen._build_provider_readiness_findings(
+    detail, summary, _passed = screen._build_provider_readiness_findings(
         "OpenAI", "gpt-4o", readiness,
         draft_endpoint="", dirty={"api_key"},
     )
@@ -202,7 +823,7 @@ def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
     assert readiness.ready is True  # config-level readiness is fine...
 
-    detail, summary, passed = screen._build_provider_readiness_findings(
+    detail, _summary, passed = screen._build_provider_readiness_findings(
         "OpenAI", "", readiness,
         draft_endpoint="", dirty=set(),
     )
@@ -250,6 +871,194 @@ def test_mark_provider_test_result_stale_invalidates_prior_verdict():
     screen._provider_test_result = SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
     screen._mark_provider_test_result_stale()
     assert screen._provider_test_result == SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
+
+
+def test_settings_converts_probe_outcome_to_exact_evidence_dto():
+    outcome = SettingsEndpointProbeOutcome(
+        state="reachable",
+        summary="reachable (2 models)",
+        model_ids=("model-a", "model-b"),
+    )
+
+    converted = SettingsScreen._provider_probe_result_from_outcome(outcome)
+
+    assert type(converted) is ProviderProbeResult
+    assert converted == ProviderProbeResult(
+        endpoint="reachable",
+        model_ids=("model-a", "model-b"),
+    )
+
+
+def test_settings_converts_tts_enum_probe_state_to_exact_chat_string():
+    outcome = SettingsEndpointProbeOutcome(
+        state=SpeechTTSConnectionState.UNREACHABLE,
+        summary="unreachable: timeout",
+        category="timeout",
+    )
+
+    converted = SettingsScreen._provider_probe_result_from_outcome(outcome)
+
+    assert type(converted.endpoint) is str
+    assert converted == ProviderProbeResult(
+        endpoint="unreachable",
+        model_ids=(),
+        category="timeout",
+    )
+
+
+def test_model_edit_cancels_active_probe_token_but_not_settled_evidence():
+    identity = _semantic_identity("https://example.test/v1/models")
+    screen = _bare_settings_screen({})
+    store = ProviderTestEvidenceStore()
+    screen._provider_test_evidence_store = store
+    screen._provider_current_draft_identity = lambda: identity
+    screen._provider_test_result = "Provider test | endpoint probe: checking"
+    screen._update_provider_test_result = lambda: None
+    token = store.begin(identity)
+
+    screen._update_provider_evidence_for_edit("model", "model-b")
+
+    assert not store.settle(
+        token,
+        ProviderProbeResult(endpoint="reachable", model_ids=("model-a",)),
+    )
+    assert store.evidence_for(identity) is None
+    assert "re-run" in screen._provider_test_result.lower()
+
+    settled_token = store.begin(identity)
+    assert store.settle(
+        settled_token,
+        ProviderProbeResult(
+            endpoint="reachable",
+            model_ids=("model-a", "model-b"),
+        ),
+    )
+    screen._provider_test_result = "Provider test | endpoint reachable"
+    screen._update_provider_evidence_for_edit("model", "model-b")
+    assert store.evidence_for(identity) is not None
+    assert "re-run" not in screen._provider_test_result.lower()
+
+
+@pytest.mark.asyncio
+async def test_probe_worker_cancellation_clears_exact_testing_state(monkeypatch):
+    identity = _semantic_identity("https://example.test/v1/models")
+    screen = _bare_settings_screen({})
+    store = ProviderTestEvidenceStore()
+    screen._provider_test_evidence_store = store
+    screen._provider_test_result = "Provider test | endpoint probe: checking"
+    screen._update_provider_test_result = lambda: None
+    token = store.begin(identity)
+
+    async def cancelled_probe(*_args, **_kwargs):
+        raise asyncio.CancelledError("secret-cancel-detail")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        cancelled_probe,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await SettingsScreen._provider_endpoint_probe_worker.__wrapped__(
+            screen,
+            "https://example.test/v1",
+            "custom",
+            "Provider test",
+            "Provider test",
+            identity,
+            token,
+        )
+
+    assert store.evidence_for(identity) is None
+    assert "checking" not in screen._provider_test_result.lower()
+    assert "cancel" in screen._provider_test_result.lower()
+    assert "secret-cancel-detail" not in screen._provider_test_result
+
+
+@pytest.mark.asyncio
+async def test_chat_settings_probe_worker_passes_explicit_chat_catalog_purpose(
+    monkeypatch,
+):
+    screen = _bare_settings_screen({})
+    screen._update_provider_test_result = lambda: None
+    screen._apply_provider_endpoint_probe_outcome = lambda *_args, **_kwargs: None
+    captured: dict[str, object] = {}
+
+    async def capture_probe(base_url, **kwargs):
+        captured["base_url"] = base_url
+        captured.update(kwargs)
+        return SettingsEndpointProbeOutcome(
+            state="reachable",
+            summary="reachable (1 model)",
+            model_ids=("gpt-4o",),
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        capture_probe,
+    )
+
+    await SettingsScreen._provider_endpoint_probe_worker.__wrapped__(
+        screen,
+        "https://example.test/v1/chat/completions",
+        "openai",
+        "Provider test",
+        "Provider test passed",
+    )
+
+    assert captured == {
+        "base_url": "https://example.test/v1/chat/completions",
+        "provider": "openai",
+        "purpose": "chat_catalog",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stale_probe_cancellation_does_not_clear_newer_testing_token(monkeypatch):
+    older = _semantic_identity(
+        "https://example.test/v1/models",
+        draft_generation=1,
+    )
+    newer = _semantic_identity(
+        "https://example.test/v1/models",
+        draft_generation=2,
+    )
+    screen = _bare_settings_screen({})
+    store = ProviderTestEvidenceStore()
+    screen._provider_test_evidence_store = store
+    screen._provider_test_result = "New provider test | endpoint probe: checking"
+    screen._update_provider_test_result = lambda: None
+    stale_token = store.begin(older)
+    current_token = store.begin(newer)
+
+    async def cancelled_probe(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        cancelled_probe,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await SettingsScreen._provider_endpoint_probe_worker.__wrapped__(
+            screen,
+            "https://example.test/v1",
+            "custom",
+            "Old provider test",
+            "Old provider test",
+            older,
+            stale_token,
+        )
+
+    evidence = store.evidence_for(newer)
+    assert evidence is not None
+    assert evidence.endpoint == "testing"
+    assert screen._provider_test_result == (
+        "New provider test | endpoint probe: checking"
+    )
+    assert store.settle(
+        current_token,
+        ProviderProbeResult(endpoint="reachable", model_ids=("model-a",)),
+    )
 
 
 def test_discovery_status_distinguishes_malformed_from_unsupported():
@@ -378,6 +1187,16 @@ def _provider_test_result_text(screen) -> str:
     return _static_text(screen.query_one("#settings-provider-test-result", Static))
 
 
+async def _reachable_endpoint_probe(
+    _base_url: str, **_kwargs: object
+) -> SettingsEndpointProbeOutcome:
+    return SettingsEndpointProbeOutcome(
+        state="reachable",
+        summary="reachable (1 model)",
+        model_ids=("llama-3",),
+    )
+
+
 @pytest.mark.asyncio
 async def test_test_provider_button_click_runs_the_check():
     """AC#2: clicking #settings-test-provider (not the 't' hotkey) runs the test."""
@@ -393,8 +1212,14 @@ async def test_test_provider_button_click_runs_the_check():
         # Sanity: the test has not run yet (mount-time default copy only).
         assert _provider_test_result_text(screen) == "Provider test has not run."
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+            _reachable_endpoint_probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "endpoint reachable")
 
         result_text = _provider_test_result_text(screen)
         assert "Provider test" in result_text
@@ -433,8 +1258,14 @@ async def test_test_provider_button_runs_with_provider_input_focused():
         # Sanity: this is exactly the state that would make the 't' hotkey no-op.
         assert screen._settings_text_entry_has_focus() is True
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+            _reachable_endpoint_probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "endpoint reachable")
 
         assert "Provider test" in _provider_test_result_text(screen)
 
@@ -494,6 +1325,89 @@ async def test_t_hotkey_does_not_run_test_while_input_focused():
         screen.action_settings_test_category()
         await pilot.pause()
         assert _provider_test_result_text(screen) == before
+
+
+@pytest.mark.asyncio
+async def test_model_edit_during_probe_rejects_late_old_model_result(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://localhost:8080", "model": "model-a"}
+    }
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_probe(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        return SettingsEndpointProbeOutcome(
+            state="reachable",
+            summary="reachable (1 model)",
+            model_ids=("model-a",),
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        delayed_probe,
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.action_settings_test_category()
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert "checking" in screen._provider_test_result
+
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "model-b"
+        await pilot.pause()
+        release.set()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        current_identity = screen._provider_current_draft_identity()
+        assert current_identity is not None
+        assert screen._provider_evidence_store().evidence_for(current_identity) is None
+        assert "re-run" in screen._provider_test_result.lower()
+        assert "endpoint reachable" not in screen._provider_test_result.lower()
+
+
+@pytest.mark.asyncio
+async def test_probe_worker_unexpected_exception_settles_bounded_failure(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://localhost:8080", "model": "model-a"}
+    }
+
+    async def failing_probe(*_args, **_kwargs):
+        raise RuntimeError("secret-probe-detail")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        failing_probe,
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        identity = screen._provider_current_draft_identity()
+        assert identity is not None
+
+        screen.action_settings_test_category()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        result = screen._provider_test_result
+        assert "checking" not in result.lower()
+        assert "connection error" in result.lower()
+        assert "secret-probe-detail" not in result
+        evidence = screen._provider_evidence_store().evidence_for(identity)
+        assert evidence is not None
+        assert evidence.endpoint == "unreachable"
+        assert evidence.category == "connection_error"
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,10 @@ from unittest.mock import Mock
 
 import pytest
 from textual.css.query import NoMatches
-from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
@@ -51,7 +54,6 @@ _RECOVERY_POLL_LIMIT = 600
 #: Shorter than the recovery budget on purpose: by this point the press has
 #: landed, so a long wait here would only slow a genuine failure down.
 _EFFECT_POLL_LIMIT = 100
-
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -123,7 +125,7 @@ def _load_console_live_work_source_readiness_state():
     return ConsoleLiveWorkSourceReadinessState
 
 
-class ConsoleHarness(App):
+class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -1941,10 +1943,20 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         ChatScreen: A bare ChatScreen instance suitable for unit-level
             restore-path testing.
     """
-    from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_fleet_controller,
+        stub_image_controller,
+        stub_message_controller,
+    )
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
+    screen._retrieval = SimpleNamespace(_capture_console_staged_rag=Mock())
+    # Precedes the `_console_chat_store` assignment: that setter reaches
+    # `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` (TASK-21381).
+    stub_fleet_controller(screen, context="live work handoffs screen")
     screen._console_chat_store = ConsoleChatStore()
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._console_visible_draft_session_id = None
@@ -1956,6 +1968,7 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     # are reached through `ChatScreen`'s delegations. `ChatScreen.__new__`
     # skips the construction `__init__` would do. Those three read only
     # `app_instance`, so nothing else is wired.
+    resolved_app = app_instance if app_instance is not None else NO_APP
     stub_message_controller(
         screen,
         context="test_console_live_work_handoffs._bare_console_screen",
@@ -1964,7 +1977,12 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         # `getattr(..., None)`. `stub_message_controller` refuses to INFER a
         # missing app (an inferred `None` snapshot is a silent-default hole),
         # so the absence is declared here instead. task-3024/2769.
-        app_instance=app_instance if app_instance is not None else NO_APP,
+        app_instance=resolved_app,
+    )
+    stub_image_controller(
+        screen,
+        context="test_console_live_work_handoffs._bare_console_screen",
+        app_instance=resolved_app,
     )
     return screen
 
@@ -2553,7 +2571,7 @@ async def test_stage_console_library_rag_launch_swaps_card_without_screen_recomp
         composer_before = screen.query_one("#console-native-composer")
         recompose_calls = _spy_screen_recompose(screen)
 
-        screen._stage_console_library_rag_launch(_library_rag_launch())
+        screen._retrieval._stage_console_library_rag_launch(_library_rag_launch())
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
 
@@ -2588,11 +2606,15 @@ async def test_stage_console_library_rag_launch_restage_replaces_single_card():
         await _wait_for_selector(screen, pilot, "#console-live-work-source-readiness")
         recompose_calls = _spy_screen_recompose(screen)
 
-        screen._stage_console_library_rag_launch(_library_rag_launch("searching"))
+        screen._retrieval._stage_console_library_rag_launch(
+            _library_rag_launch("searching")
+        )
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
 
-        screen._stage_console_library_rag_launch(_library_rag_launch("staged"))
+        screen._retrieval._stage_console_library_rag_launch(
+            _library_rag_launch("staged")
+        )
         await pilot.pause()
         await pilot.pause()
 
@@ -2631,7 +2653,9 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         assert list(rail_body.children).index(tray) == 0
 
         # Readiness -> pending-launch swap mounts after the run inspector.
-        screen._stage_console_library_rag_launch(_library_rag_launch("searching"))
+        screen._retrieval._stage_console_library_rag_launch(
+            _library_rag_launch("searching")
+        )
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
         card = screen.query_one("#console-pending-launch-card")
@@ -2675,7 +2699,9 @@ async def test_stage_console_library_rag_launch_still_auto_opens_inspector():
         # Mirrors `_apply_console_library_rag_search_outcome`'s blocked
         # branch: flag set BEFORE staging (TASK-259 ordering).
         screen._pending_console_launch_auto_open_inspector = True
-        screen._stage_console_library_rag_launch(_library_rag_launch("blocked"))
+        screen._retrieval._stage_console_library_rag_launch(
+            _library_rag_launch("blocked")
+        )
         await pilot.pause()
 
         assert screen.query_one("#console-right-rail").styles.display != "none"
@@ -2872,8 +2898,7 @@ class _ExistingChaChaDBDouble:
         requested_notes = set(json.loads(params[0]))
         requested_conversations = set(json.loads(params[1]))
         rows = [
-            ("notes", note_id)
-            for note_id in sorted(requested_notes & self.note_ids)
+            ("notes", note_id) for note_id in sorted(requested_notes & self.note_ids)
         ]
         rows += [
             ("chat_history", conversation_id)
@@ -3015,4 +3040,3 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
         assert isinstance(launch.payload.get("evidence_bundle"), dict)
         assert chat_screen_module._source_mentions_rag(launch.source) is False
         assert screen._console_send_blocked_reason() == ""
-

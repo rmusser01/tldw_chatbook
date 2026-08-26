@@ -4,6 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
@@ -13,7 +17,7 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 @pytest.mark.asyncio
 async def test_footer_uses_global_shortcuts_by_default():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -29,7 +33,7 @@ async def test_footer_uses_global_shortcuts_by_default():
 
 @pytest.mark.asyncio
 async def test_footer_replaces_stale_context_shortcuts():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -57,7 +61,18 @@ async def test_footer_replaces_stale_context_shortcuts():
 
 @pytest.mark.asyncio
 async def test_footer_renders_workbench_shortcuts():
-    class TestApp(App):
+    """task-2860: a screen's own hint for a reserved global key (F6/F1/
+    Ctrl+P/Ctrl+Q) renders VERBATIM -- it used to be silently dropped by a
+    hardcoded ``_RESERVED_GLOBAL_KEYS`` filter, on the theory that the
+    always-present global strip already covers the key. That filter
+    censored real, screen-specific content: Console's F6 hint says "next
+    pane" (what the key actually does here), not the generic "F6 panes".
+    The key must still never be shown twice, though -- once the context
+    covers it, the generic global copy for that SAME key is excluded (see
+    ``_remaining_global_text``), so "F1" appears exactly once even though
+    both the context AND the (undeduped) global constant would otherwise
+    spell it "F1 help"."""
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -76,13 +91,23 @@ async def test_footer_renders_workbench_shortcuts():
         shortcut_display = footer.query_one("#footer-key-quit", Static)
         rendered = str(shortcut_display.renderable)
 
-        # Reserved global keys (F1/F6/Ctrl+P/Ctrl+Q) are never duplicated by
-        # the screen context — the always-present global strip covers them.
-        assert "F6 next pane" not in rendered
+        # The screen's own F6 copy survives -- this is the fix.
+        assert "F6 next pane" in rendered
+        # It is never duplicated: the generic "F6 panes" global copy is
+        # excluded once the context already covers "f6" (same reasoning
+        # covers F1 here: context supplies "F1 help", the generic global
+        # segment for f1 is dropped, so the substring appears once, not
+        # twice).
+        assert "F6 panes" not in rendered
         assert rendered.count("F1") == 1
+        assert rendered.count("F1 help") == 1
         # Non-reserved context hints render ahead of the globals.
         assert "Ctrl+K switch session" in rendered
-        assert "F1 help" in rendered
+        # The un-covered reserved keys (Ctrl+P, Ctrl+Q) still get their
+        # generic global hint -- the fix narrows the filter, it does not
+        # remove the always-present-globals contract.
+        assert "Ctrl+P palette" in rendered
+        assert "Ctrl+Q quit" in rendered
 
 
 @pytest.mark.asyncio
@@ -122,7 +147,7 @@ async def test_footer_db_indicator_collapses_when_empty_and_stays_down():
     """The DB-size indicator only takes footer space while it has content;
     the priority reflow must not resurrect an empty indicator on resize."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -159,7 +184,7 @@ async def test_footer_token_chip_hidden_until_a_real_count_lands():
     hides again when the count clears (non-chat tabs write "" via the
     periodic updater)."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -188,7 +213,7 @@ async def test_footer_token_chip_hidden_until_a_real_count_lands():
 async def test_footer_memory_stats_yield_to_key_hints_when_narrow():
     """A narrow footer hides the debug memory stats to preserve the key hints."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -226,7 +251,7 @@ async def test_footer_memory_stats_yield_to_key_hints_when_narrow():
 async def test_footer_reflows_when_counts_change_without_a_resize():
     """A word/token count change re-runs the priority reflow (Qodo #834)."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -235,8 +260,8 @@ async def test_footer_reflows_when_counts_change_without_a_resize():
     # "Tokens: --" placeholder's 10 cells; the chip now starts hidden and
     # empty, so the same push-over-the-edge exercise runs at 90 cols.
     # Merge recalibration (82 cols): the merged footer's no-context hint set
-    # is the four-key global strip ("F1 help · F6 panes · Ctrl+P palette ·
-    # Ctrl+Q quit"), wider than the two-key default this budget was tuned
+    # is the four-key global strip ("F1 help · F6 next pane · Ctrl+P palette
+    # · Ctrl+Q quit"), wider than the two-key default this budget was tuned
     # against. 82 terminal cols puts the widget at exactly the DB-stats
     # minimum width (80, after the footer's 2-cell padding): the stats fit
     # with the compact hints (71 cells) and the grown word count pushes
@@ -293,7 +318,7 @@ async def test_footer_compacts_globals_before_dropping_screen_hints_when_narrow(
             ("n", "new note"),
         )
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -335,6 +360,35 @@ async def test_footer_compacts_globals_before_dropping_screen_hints_when_narrow(
 
 
 @pytest.mark.asyncio
+async def test_footer_keeps_primary_ingest_and_recovery_hints_at_80_columns():
+    """TASK-15702: narrow fitting preserves the ordered workflow prefix."""
+
+    class TestApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="library",
+            shortcuts=(
+                ("enter", "start"),
+                ("esc", "back"),
+                ("r", "retry"),
+                ("/", "search"),
+                ("F6", "next pane"),
+            ),
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+        assert "enter start" in rendered, rendered
+        assert "esc back" in rendered, rendered
+        assert "r retry" in rendered, rendered
+        assert not rendered.startswith("…"), rendered
+
+
+@pytest.mark.asyncio
 async def test_footer_control_reproduces_the_historical_ellipsis_drop():
     """Control case: confirms the 100-column width used above genuinely
     REACHES the new compact-globals intermediate step (LIB-18) -- i.e.
@@ -343,7 +397,7 @@ async def test_footer_control_reproduces_the_historical_ellipsis_drop():
     reproduce the historical bare-ellipsis drop itself (there is no
     fixture here with that step disabled to show the old behavior)."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -366,3 +420,124 @@ async def test_footer_control_reproduces_the_historical_ellipsis_drop():
             "/ focus search | i import content | n new note | "
             f"{footer.GLOBAL_HINTS_COMPACT}"
         ), rendered
+
+
+def _library_landing_shortcuts_with_pane_cycle() -> tuple[tuple[str, str], ...]:
+    """Mirrors ``LibraryScreen.LIBRARY_LANDING_SHORTCUTS`` -- the real
+    registration task-2860 was filed against (`/`, `i`, `n`, and the F6
+    pane-cycle hint the reserved-key filter used to silently drop)."""
+    return (
+        ("/", "focus search"),
+        ("i", "import content"),
+        ("n", "new note"),
+        ("F6", "next pane"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_footer_screen_supplied_f6_hint_survives_at_170_cols():
+    """task-2860 AC#1: at full width the screen's own F6 copy ("next
+    pane") renders, and the generic global "F6 panes" text does not --
+    the key is covered exactly once, by the more specific label."""
+
+    class TestApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(170, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="library", shortcuts=_library_landing_shortcuts_with_pane_cycle()
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+
+        assert "F6 next pane" in rendered, rendered
+        assert "F6 panes" not in rendered, rendered
+        assert rendered.count("F6") == 1, rendered
+        # The other three globals are untouched -- the fix narrows the
+        # filter to the ONE key the screen actually covers.
+        assert "F1 help" in rendered, rendered
+        assert "Ctrl+P palette" in rendered, rendered
+        assert "Ctrl+Q quit" in rendered, rendered
+
+
+@pytest.mark.asyncio
+async def test_footer_screen_supplied_f6_hint_survives_at_100_cols():
+    """task-2860's actual reported bug, reproduced directly: at the live
+    100-column Library repro width, the compact-globals step (LIB-18)
+    historically omitted F6 entirely; before the fix, the context's own
+    F6 hint had ALSO already been
+    stripped by ``_RESERVED_GLOBAL_KEYS``, so the key vanished from the
+    footer entirely (advertised nowhere, though the binding still worked).
+    The fix renders the context unfiltered, so F6 survives here even
+    though the compact global tier omits it."""
+
+    class TestApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(100, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="library", shortcuts=_library_landing_shortcuts_with_pane_cycle()
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+
+        assert "focus search" in rendered, rendered
+        assert "import content" in rendered, rendered
+        assert "new note" in rendered, rendered
+        assert "F6 next pane" in rendered, rendered
+        assert rendered.count("F6") == 1, rendered
+        assert not rendered.startswith("…"), rendered
+
+
+@pytest.mark.asyncio
+async def test_footer_screen_supplied_f6_hint_survives_at_80_cols():
+    """Same repro, the other live-verified width (80 cols)."""
+
+    class TestApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="library", shortcuts=_library_landing_shortcuts_with_pane_cycle()
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+
+        assert "F6" in rendered, rendered
+        assert rendered.count("F6") == 1, rendered
+
+
+@pytest.mark.asyncio
+async def test_footer_genuine_reserved_key_duplicate_still_collapses_to_one():
+    """A screen whose own label happens to COINCIDE with the generic
+    global copy (e.g. a hypothetical screen advertising ("Ctrl+Q", "quit"),
+    same text the global cluster already uses) must still show the key
+    exactly once -- the fix narrows what gets filtered, it does not
+    disable dedup altogether."""
+
+    class TestApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(170, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="settings",
+            shortcuts=(("s", "save"), ("Ctrl+Q", "quit")),
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+
+        assert rendered.count("Ctrl+Q") == 1, rendered
+        assert rendered.count("quit") == 1, rendered
+        assert "s save" in rendered, rendered

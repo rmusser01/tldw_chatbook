@@ -9,7 +9,7 @@ server identity (``server:<user_id>``).
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -68,6 +68,7 @@ class SchedulingService:
         runtime_source: str = "local",
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
+        on_queue_changed: Callable[[], None] | None = None,
     ) -> None:
         self.db = db
         self.server_client = server_client or SchedulingServerClient()
@@ -76,6 +77,36 @@ class SchedulingService:
         self.watchlist_projection = watchlist_projection
         self.briefing_projection = briefing_projection
         self.sync_engine = SyncEngine(db, self.server_client, self.owner_id)
+        #: Called after any reminder mutation that can change what the
+        #: scheduler should dispatch (create/update/delete, local or
+        #: server-persisted). The app wires this to
+        #: ``SchedulerLoop.request_reload`` so a reminder created mid-session
+        #: reaches the live queue on the next tick instead of waiting for
+        #: the periodic ~30-minute reload (task-18937). Kept optional and
+        #: exception-guarded: a broken callback must never fail the mutation.
+        self.on_queue_changed = on_queue_changed
+
+    def _notify_queue_changed(self) -> None:
+        """Invoke the queue-changed callback, tolerating a broken one.
+
+        The exception log carries the owner and the callback's qualified
+        name so a wiring failure can be correlated with the scheduler
+        instance it affected (review finding: bare message, no context).
+        """
+        if self.on_queue_changed is None:
+            return
+        callback = self.on_queue_changed
+        try:
+            callback()
+        except Exception:  # noqa: BLE001 - callback failure is not the caller's
+            logger.exception(
+                "Scheduling on_queue_changed callback failed for owner "
+                "{owner} (callback {callback}); the mutation itself "
+                "succeeded and the scheduler queue will reload on its "
+                "periodic interval",
+                owner=self.owner_id,
+                callback=getattr(callback, "__qualname__", repr(callback)),
+            )
 
     def set_owner(self, owner_id: str) -> None:
         """Switch the active owner and propagate it to the sync engine."""
@@ -126,6 +157,7 @@ class SchedulingService:
                 self.owner_id,
                 {"action": "create", "fields": server_payload},
             )
+        self._notify_queue_changed()
 
         row = self.db.get_reminder_task(task_id)
         assert row is not None
@@ -218,6 +250,7 @@ class SchedulingService:
                 self.owner_id,
                 {"action": "update", "fields": dict(payload)},
             )
+        self._notify_queue_changed()
 
         row = self.db.get_reminder_task(task_id)
         assert row is not None
@@ -245,6 +278,7 @@ class SchedulingService:
                 self.db.delete_pending_mutation_for_record(
                     task_id, _REMINDER_PRIMITIVE, self.owner_id
                 )
+                self._notify_queue_changed()
                 return True
             except ServerUnavailableError:
                 logger.warning(
@@ -267,14 +301,67 @@ class SchedulingService:
             self.db.delete_pending_mutation_for_record(
                 task_id, _REMINDER_PRIMITIVE, self.owner_id
             )
+            self._notify_queue_changed()
             return True
 
-        return self.db.delete_reminder_task(task_id)
+        deleted = self.db.delete_reminder_task(task_id)
+        if deleted:
+            self._notify_queue_changed()
+        return deleted
 
     async def sync_now(self, owner_id: str | None = None) -> None:
-        """Trigger a full sync for the given owner (defaults to current owner)."""
+        """Trigger a full sync for the given owner (defaults to current owner).
+
+        A successful sync can insert, update, and delete reminder rows the
+        scheduler has already queued, so it fires ``on_queue_changed`` like
+        every other mutation path (review finding: sync left the live queue
+        stale until the ~30-minute periodic reload -- pulled reminders did
+        not dispatch on time and remotely-deleted ones kept firing).
+        """
         target_owner = owner_id if owner_id is not None else self.owner_id
         await self.sync_engine.sync_now(target_owner)
+        self._notify_queue_changed()
+
+    async def run_reminder_now(self, task_id: str, loop: Any = None) -> ReminderTask | None:
+        """Dispatch a reminder immediately through the scheduler's own path.
+
+        The service seam for the workbench's Run-now action (task-18938):
+        it delegates to ``SchedulerLoop.run_reminder_now`` -- the SAME
+        dispatch unit ``tick`` uses -- so a manual run is a real dispatch
+        (recurring next occurrence persisted; one_time consumed), never a
+        parallel code path. The task keeps its enabled/disabled state.
+
+        Args:
+            task_id: The reminder's local id.
+            loop: The app's ``SchedulerLoop``. When omitted, manual dispatch
+                is refused honestly (returned as ``None`` with a log line)
+                rather than silently skipped -- without the loop there is no
+                registered handler to run.
+
+        Returns:
+            The refreshed task after dispatch, or ``None`` when the task is
+            missing, the loop/handler is unavailable, or the handler failed
+            (the failure is already recorded on the task's ``last_status``
+            by the dispatch seam).
+        """
+        if loop is None:
+            logger.warning(
+                "Manual reminder run refused for task {task_id}: no scheduler "
+                "loop available",
+                task_id=task_id,
+            )
+            return None
+        row = self.db.get_reminder_task(task_id)
+        if row is None:
+            return None
+
+        succeeded = await loop.run_reminder_now(task_id)
+        self._notify_queue_changed()
+
+        row = self.db.get_reminder_task(task_id)
+        if row is None or not succeeded:
+            return None
+        return self._row_to_reminder(row)
 
     def _use_server(self) -> bool:
         """Return True when server operations should be attempted."""
@@ -364,6 +451,7 @@ class SchedulingService:
         self.db.delete_pending_mutation_for_record(
             task_id, _REMINDER_PRIMITIVE, self.owner_id
         )
+        self._notify_queue_changed()
 
         row = self.db.get_reminder_task(task_id)
         assert row is not None
@@ -399,4 +487,8 @@ class SchedulingService:
         data = dict(row)
         if data.get("last_status") is None:
             data.pop("last_status", None)
+        if data.get("missed_count") is None:
+            data.pop("missed_count", None)
+        if data.get("timeout_seconds") is None:
+            data.pop("timeout_seconds", None)
         return ReminderTask(**data)

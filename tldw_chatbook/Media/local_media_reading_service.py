@@ -18,9 +18,29 @@ from typing import Any, Mapping, Optional
 from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+# (task-21102) RAG_Search.chunking_service (the full Chunking shim + vendored
+# engine, ~15k LOC) is deliberately NOT imported at module scope: this module
+# is on the app's boot-import path via ``Media/__init__``, and only
+# ``_chunk_text`` needs the service. It is imported there, on first real use.
 from tldw_chatbook.STT.persistence import (
     load_transcription_provenance_document,
 )
+
+# Sentinel for ``get_library_media_chunks``'s ``chunk_type`` filter: the
+# primary (flat / NULL ``chunk_type``) family -- the family flat ingest
+# writes. Distinct from both ``None`` (also accepted as primary, so callers
+# can build filters from nullable state) and from any real ``chunk_type``
+# string an ECS parent/child run writes ("paragraph", "section", ...). The
+# literal string ``"primary"`` is accepted as an alias for the same family
+# so the strings reported back in ``families`` round-trip as filters.
+PRIMARY_CHUNK_FAMILY: Any = object()
+
+# Renderings of NULL in the item-level signals (both documented in
+# ``get_library_media_chunks``): the NULL chunk family is reported as
+# "primary", and a NULL engine stamp (pre-v6 rows) as "legacy" -- the same
+# key ``LocalRAGAdminService.count_chunks_by_engine_version`` reports.
+_PRIMARY_FAMILY_LABEL = "primary"
+_LEGACY_ENGINE_LABEL = "legacy"
 
 
 class LocalMediaReadingService:
@@ -98,15 +118,267 @@ class LocalMediaReadingService:
     ) -> list[dict[str, Any]]:
         return [self._enrich_with_read_it_later_state(row) for row in rows]
 
+    # --- Library read seams (task-1337) ---
+
+    def list_library_media(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Page the active local media library for agent-facing list tools.
+
+        Args:
+            limit: Maximum number of media items to return.
+            offset: Number of media items to skip.
+
+        Returns:
+            A bounded page containing items, exact total, offset, and limit.
+
+        Raises:
+            ValueError: If no local media database is configured.
+            DatabaseError: If the local media database cannot be read.
+        """
+        db = self._require_db()
+        payload = db.list_library_media_page(limit=limit, offset=offset)
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def search_library_media(
+        self, *, query: str, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search the active local media library for agent-facing tools.
+
+        Args:
+            query: Literal case-insensitive search text.
+            limit: Maximum number of media items to return.
+            offset: Number of matching items to skip.
+
+        Returns:
+            A bounded page with exact total and match evidence.
+
+        Raises:
+            ValueError: If no local media database is configured.
+            DatabaseError: If the local media database cannot be read.
+        """
+        db = self._require_db()
+        payload = db.search_library_media_page(query=query, limit=limit, offset=offset)
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def get_library_media_text(
+        self, media_uuid: str, *, start: int = 0, max_chars: int = 8000
+    ) -> Optional[dict[str, Any]]:
+        """Read a windowed text segment for one active media item.
+
+        Args:
+            media_uuid: Stable media UUID.
+            start: Zero-based character offset.
+            max_chars: Maximum characters to return.
+
+        Returns:
+            Bounded media metadata and text, or None when absent.
+
+        Raises:
+            ValueError: If no local media database is configured.
+            DatabaseError: If the local media database cannot be read.
+        """
+        db = self._require_db()
+        return db.get_library_media_text(media_uuid, start=start, max_chars=max_chars)
+
+    def get_library_media_chunks(
+        self,
+        media_id: Any,
+        *,
+        chunk_index: int,
+        chunk_type: Any = PRIMARY_CHUNK_FAMILY,
+        context: int = 0,
+        budget: int,
+    ) -> Optional[dict[str, Any]]:
+        """Read one stored chunk plus budget-bounded neighbors for one item.
+
+        The backend read seam for the chunk-fetch agent tool (spec §4.2):
+        reads ``UnvectorizedMediaChunks`` verbatim -- nothing is re-chunked
+        or synthesized. Family-aware (spec §8.10): the unique key is
+        ``(media_id, chunk_index, chunk_type)``; flat ingest rows carry NULL
+        ``chunk_type`` (the primary family) while ECS parent/child rows
+        carry type values.
+
+        Args:
+            media_id: Numeric media id (coerced via ``int``).
+            chunk_index: Zero-based chunk index within the family.
+            chunk_type: Family filter. The default sentinel
+                ``PRIMARY_CHUNK_FAMILY`` (also ``None`` and the literal
+                string ``"primary"``) selects the primary (NULL) family; any
+                other string selects that family verbatim.
+            context: Neighbor rows to consider on EACH side of the requested
+                chunk (nearest-first). Missing indices (item edges) are not
+                counted as dropped.
+            budget: Maximum UTF-8 bytes of NEIGHBOR text. The requested
+                chunk is always returned; neighbors are added nearest-first
+                until the budget would be exceeded, and each existing
+                neighbor left out counts toward ``dropped_neighbors``
+                (spec §8.12 -- budget wins over context).
+
+        Returns:
+            ``None`` when the item has no live stored chunk rows (or no
+            active media row) -- the no-chunks degradation signal (§8.13).
+            Otherwise ``{chunks, families, engine_versions,
+            dropped_neighbors, media_version}`` where ``chunks`` is ordered
+            by ``chunk_index`` with the requested chunk centered, each entry
+            carrying ``{chunk_index, chunk_type, text, start_char,
+            end_char, word_count, metadata}`` (metadata JSON parsed
+            defensively, unparseable → ``{}``). ``families`` (NULL →
+            ``"primary"``) and ``engine_versions`` (NULL stamp →
+            ``"legacy"``, pre-v6) are DISTINCT over ALL the item's live
+            rows regardless of the filter -- the disambiguation and
+            staleness signals. An out-of-range index or missing family is
+            reported by the requested chunk being ABSENT from ``chunks``
+            (never a raise); the tool layer maps that to its named errors.
+
+        Raises:
+            ValueError: If no local media database is configured.
+            DatabaseError: If the local media database cannot be read.
+        """
+        db = self._require_db()
+        normalized_media_id = self._coerce_media_id(media_id)
+        requested_index = int(chunk_index)
+        normalized_context = max(int(context or 0), 0)
+        normalized_budget = int(budget)
+        # Family filter: sentinel / None / the "primary" alias -> the NULL
+        # family (``family_value is None`` matches SQL NULL below); any other
+        # string filters to that family verbatim.
+        if chunk_type is PRIMARY_CHUNK_FAMILY or chunk_type is None:
+            family_value: Optional[str] = None
+        else:
+            family_value = str(chunk_type)
+            if family_value == _PRIMARY_FAMILY_LABEL:
+                family_value = None
+
+        conn = db.get_connection()
+        media_row = conn.execute(
+            "SELECT version FROM Media WHERE id = ? AND deleted = 0 AND is_trash = 0",
+            (normalized_media_id,),
+        ).fetchone()
+        if media_row is None:
+            return None
+
+        rows = conn.execute(
+            """
+            SELECT chunk_index, chunk_type, chunk_text, start_char, end_char,
+                   metadata, chunk_engine_version
+            FROM UnvectorizedMediaChunks
+            WHERE media_id = ? AND deleted = 0
+            ORDER BY chunk_index, chunk_type
+            """,
+            (normalized_media_id,),
+        ).fetchall()
+        if not rows:
+            return None
+
+        families = sorted(
+            {
+                row["chunk_type"] if row["chunk_type"] is not None else _PRIMARY_FAMILY_LABEL
+                for row in rows
+            }
+        )
+        engine_versions = sorted(
+            {
+                str(row["chunk_engine_version"])
+                if row["chunk_engine_version"] is not None
+                else _LEGACY_ENGINE_LABEL
+                for row in rows
+            }
+        )
+
+        family_rows = [row for row in rows if row["chunk_type"] == family_value]
+        by_index = {int(row["chunk_index"]): row for row in family_rows}
+
+        def _payload(row: Any) -> dict[str, Any]:
+            text = str(row["chunk_text"] or "")
+            try:
+                metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            return {
+                "chunk_index": int(row["chunk_index"]),
+                "chunk_type": row["chunk_type"] if row["chunk_type"] is not None else _PRIMARY_FAMILY_LABEL,
+                "text": text,
+                "start_char": row["start_char"],
+                "end_char": row["end_char"],
+                "word_count": len(text.split()),
+                "metadata": metadata,
+            }
+
+        requested_row = by_index.get(requested_index)
+        if requested_row is None:
+            # Absent, not an error: the tool layer owns the named errors.
+            return {
+                "chunks": [],
+                "families": families,
+                "engine_versions": engine_versions,
+                "dropped_neighbors": 0,
+                "media_version": int(media_row["version"]),
+            }
+
+        selected = [requested_row]
+        used_neighbor_bytes = 0
+        dropped_neighbors = 0
+        for distance in range(1, normalized_context + 1):
+            for offset in (-distance, distance):
+                candidate = by_index.get(requested_index + offset)
+                if candidate is None:
+                    continue
+                cost = len(str(candidate["chunk_text"] or "").encode("utf-8"))
+                if used_neighbor_bytes + cost <= normalized_budget:
+                    selected.append(candidate)
+                    used_neighbor_bytes += cost
+                else:
+                    dropped_neighbors += 1
+        selected.sort(key=lambda row: int(row["chunk_index"]))
+
+        return {
+            "chunks": [_payload(row) for row in selected],
+            "families": families,
+            "engine_versions": engine_versions,
+            "dropped_neighbors": dropped_neighbors,
+            "media_version": int(media_row["version"]),
+        }
+
     def search_media(
         self,
         *,
         query: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
+        library_summary: bool = False,
         **filters: Any,
     ) -> dict[str, Any]:
         db = self._require_db()
+
+        if library_summary:
+            sqlite_integer_max = 2**63 - 1
+            if (
+                not isinstance(limit, int)
+                or isinstance(limit, bool)
+                or limit < 1
+                or limit > sqlite_integer_max
+            ):
+                raise ValueError("Limit must be a positive SQLite integer.")
+            if (
+                not isinstance(offset, int)
+                or isinstance(offset, bool)
+                or offset < 0
+                or offset > sqlite_integer_max
+            ):
+                raise ValueError("Offset must be a non-negative SQLite integer.")
 
         caller_media_ids_filter = filters.get("media_ids_filter")
         media_ids_filter = self._normalize_media_id_filter(caller_media_ids_filter)
@@ -134,10 +406,17 @@ class LocalMediaReadingService:
                     "limit": limit,
                 }
 
-        results_per_page = max(limit + offset, limit)
+        results_per_page = limit if library_summary else max(limit + offset, limit)
         fts_match_query = filters.get("fts_match_query")
         fts_match_kwargs = (
             {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
+        )
+        chunking_status = filters.get("chunking_status")
+        chunking_status_kwargs = (
+            {"chunking_status": chunking_status} if chunking_status is not None else {}
+        )
+        library_summary_kwargs = (
+            {"offset": offset, "library_summary": True} if library_summary else {}
         )
         rows, total = db.search_media_db(
             search_query=query,
@@ -155,9 +434,15 @@ class LocalMediaReadingService:
             include_trash=bool(filters.get("include_trash", False)),
             include_deleted=bool(filters.get("include_deleted", False)),
             **fts_match_kwargs,
+            **chunking_status_kwargs,
+            **library_summary_kwargs,
         )
-        items = self._enrich_rows_with_read_it_later_state(
-            list(rows)[offset : offset + limit]
+        items = (
+            list(rows)
+            if library_summary
+            else self._enrich_rows_with_read_it_later_state(
+                list(rows)[offset : offset + limit]
+            )
         )
         return {
             "items": items,
@@ -165,6 +450,10 @@ class LocalMediaReadingService:
             "offset": offset,
             "limit": limit,
         }
+
+    def list_library_media_types(self) -> list[str]:
+        """Return every active local Media type in database order."""
+        return list(self._require_db().get_distinct_media_types())
 
     def get_media_detail(
         self,
@@ -248,8 +537,12 @@ class LocalMediaReadingService:
         rows = (
             db.get_connection()
             .execute(
+                # task-4025: ``trash_date`` was already the sort key but was
+                # never selected, so the Library Trash view had no timestamp
+                # to render a "trashed <age>" from. Carried through by
+                # ``_build_local_media_list_response``.
                 """
-            SELECT id, title, type
+            SELECT id, title, type, trash_date
             FROM Media
             WHERE deleted = 0 AND is_trash = 1
             ORDER BY trash_date DESC, last_modified DESC, id DESC
@@ -1483,28 +1776,58 @@ class LocalMediaReadingService:
         chunk_size: int,
         chunk_overlap: int,
     ) -> list[dict[str, Any]]:
+        """Split ``text`` into chunks via the converged ChunkingService.
+
+        Phase B (chunking-engine-parity, task 9): the legacy body sliced raw
+        characters in a ``range(0, len(text), step)`` loop, splitting mid-word
+        by construction. It now delegates to the engine-backed
+        ``ChunkingService`` (words method), which splits on word units, while
+        keeping this method's input normalization and output contract
+        unchanged for its callers.
+
+        Args:
+            text: Text to chunk.
+            perform_chunking: When False, chunking is skipped entirely.
+            chunk_size: Target chunk size (legacy semantics: passed through to
+                the engine after normalization; the words method reads it as
+                a max word count).
+            chunk_overlap: Overlap between consecutive chunks.
+
+        Returns:
+            List of chunk dicts with the legacy keys ``index``,
+            ``chunk_index``, ``start_char``, ``end_char`` and ``text``.
+        """
         if not perform_chunking:
             return []
+        # Same normalization as the legacy char-slicer: size floored at 1,
+        # overlap clamped into [0, size - 1]. The engine would raise a
+        # ChunkingError on these degenerate values; the legacy contract clamps.
         normalized_size = max(int(chunk_size or 0), 1)
         normalized_overlap = min(max(int(chunk_overlap or 0), 0), normalized_size - 1)
-        step = normalized_size - normalized_overlap
+        # Function-local import (task-21102): keeps the Chunking engine off
+        # the boot path; a sys.modules hit after the first chunking call.
+        from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
+
+        engine_chunks = ChunkingService().chunk_text(
+            text,
+            chunk_size=normalized_size,
+            chunk_overlap=normalized_overlap,
+            method="words",
+        )
         chunks: list[dict[str, Any]] = []
-        for index, start in enumerate(range(0, len(text), step)):
-            end = min(start + normalized_size, len(text))
-            chunk_text = text[start:end]
+        for index, engine_chunk in enumerate(engine_chunks):
+            chunk_text = str(engine_chunk.get("text") or "")
             if chunk_text == "":
                 continue
             chunks.append(
                 {
                     "index": index,
                     "chunk_index": index,
-                    "start_char": start,
-                    "end_char": end,
+                    "start_char": engine_chunk.get("start_char", 0),
+                    "end_char": engine_chunk.get("end_char", 0),
                     "text": chunk_text,
                 }
             )
-            if end >= len(text):
-                break
         return chunks
 
     def create_file_artifact(
@@ -1760,6 +2083,15 @@ class LocalMediaReadingService:
         if author is not None:
             author = str(author)
         keywords = self._merge_keyword_values(tags, article.get("keywords"))
+        # task-4026: ``restore_trashed=True`` is deliberate. Saving a
+        # reading item is an explicit user action naming ONE exact URL;
+        # re-saving something previously moved to Trash is an explicit
+        # restore decision (same reasoning as the Library ingest writer,
+        # ``persist_parsed_media``). Without it the DB layer now skips
+        # trashed matches even with ``overwrite=True`` and this method
+        # would fail with no remedy. This is NOT the bulk-import path
+        # (``_materialize_reading_import_row``), which stays
+        # non-restoring by design (task-4022 I1).
         media_id, _, _ = db.add_media_with_keywords(
             url=str(article.get("url") or normalized_url),
             title=final_title,
@@ -1769,6 +2101,7 @@ class LocalMediaReadingService:
             analysis_content=summary,
             author=author,
             overwrite=True,
+            restore_trashed=True,
         )
         if media_id is None:
             raise ValueError(
@@ -4890,6 +5223,13 @@ class LocalMediaReadingService:
             last_modified = payload.get("last_modified")
             if last_modified:
                 item["last_modified"] = str(last_modified)
+            # task-4025: same conditional-passthrough contract as
+            # ``last_modified`` above -- only present when the source query
+            # selected it (``list_media_trash``), so the Trash view can
+            # render "trashed <age>" per row.
+            trash_date = payload.get("trash_date")
+            if trash_date:
+                item["trash_date"] = str(trash_date)
             items.append(item)
         keywords_map: dict[int, list[str]] = {}
         keywords_available: bool | None = None

@@ -13,6 +13,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Checkbox, Static, TextArea
@@ -38,11 +39,16 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 from .console_prompts_browse import ConsolePromptsBrowse
 from .console_prompt_improve_view import (
     ConsolePromptImprovementContext,
     ConsolePromptImproveView,
+    SYSTEM_ANALYSIS_ABSENT_DISCLOSURE,
+    SYSTEM_ANALYSIS_ABSENT_TOOLTIP,
+    SYSTEM_ANALYSIS_DISCLOSURE,
+    SYSTEM_ANALYSIS_LABEL,
     improvement_provider_summary,
 )
 from .console_composer_bar import ComposerDraftSnapshot
@@ -55,6 +61,15 @@ from .console_prompts_state import (
 
 
 _PER_PAGE = 10
+_OUTCOME_FIRST_OPTIONAL_BLOCK_IDS = frozenset(
+    {
+        "role",
+        "personality",
+        "collaboration-style",
+        "success-criteria",
+        "stop-rules",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -173,7 +188,9 @@ def _saved_record_identifier(record: Mapping[str, Any]) -> str:
     return str(value)
 
 
-class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
+class ConsolePromptsModal(
+    SafeModalDismissMixin, ModalScreen[ConsolePromptsResult | None]
+):
     """One responsive modal shell with internal prompt-workbench modes."""
 
     MODES = ("browse", "edit", "improve", "recipe")
@@ -199,7 +216,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
     #console-prompts-dirty-guard.visible { display: block; }
     """
 
-    BINDINGS = [("escape", "back", "Back")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#console-prompts-modal"
 
     def __init__(
         self,
@@ -212,6 +230,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         improve_unavailable_reason: str = "",
         configure_provider: Callable[[], Any] | None = None,
         improvement_context: ConsolePromptImprovementContext | Any | None = None,
+        initial_mode: Literal["browse", "improve"] = "browse",
         activate_improvement_context: Callable[[], Any] | None = None,
         capture_manual_resolution: Callable[[], Any] | None = None,
         build_improvement_snapshot: Callable[..., Any] | None = None,
@@ -221,6 +240,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         | None = None,
         retry_improvement_persistence: Callable[[ConsolePromptsResult], Any]
         | None = None,
+        open_library_prompt: Callable[[PromptSource, str], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -239,7 +259,10 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._validate_improvement = validate_improvement
         self._apply_improvement_result = apply_improvement_result
         self._retry_improvement_persistence = retry_improvement_persistence
-        self.state = ConsolePromptsState.initial()
+        self._open_library_prompt = open_library_prompt
+        if initial_mode not in {"browse", "improve"}:
+            raise ValueError(f"Unsupported initial Prompt mode: {initial_mode}")
+        self.state = ConsolePromptsState(mode_stack=(initial_mode,))
         self.browse_result = PromptBrowseResult(
             source="local", items=(), page=1, total_pages=1, total_items=0
         )
@@ -251,10 +274,20 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._compatibility_state = ""
         self._request_counter = 0
         self._active_request_id: str | None = None
+        self._apply_in_progress = False
         self._improvement_worker: Any | None = None
         self._activation_counter = 0
         self._active_activation_id: str | None = None
         self._activation_worker: Any | None = None
+        self._pending_activation_mode: Literal["auto", "review", "recipe"] | None = None
+        recovery = str(getattr(improvement_context, "unavailable_recovery", "provider"))
+        self._improve_recovery: Literal["provider", "draft", "reopen"]
+        if recovery == "draft":
+            self._improve_recovery = "draft"
+        elif recovery == "reopen":
+            self._improve_recovery = "reopen"
+        else:
+            self._improve_recovery = "provider"
         self._last_improvement_mode: Literal["auto", "review", "recipe"] | None = None
         self._captured_improvement_request: Any | None = None
         self._pending_persistence_result: ConsolePromptsResult | None = None
@@ -264,6 +297,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._recipe_definition: BlockArtifactDefinition | None = None
         self._recipe_source_fingerprint: str | None = None
         self._recipe_selecting = False
+        self._saved_recipe_library_target: tuple[PromptSource, str] | None = None
         self._manual_apply_resolution: Any | None = None
         self._include_system_context = bool(
             getattr(improvement_context, "current_system_prompt", "")
@@ -276,10 +310,16 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                     "Prompt Workbench", id="console-prompts-title", markup=False
                 )
                 yield Static(
-                    "Prompts / Browse", id="console-prompts-location", markup=False
+                    self._location_copy(self.state.mode),
+                    id="console-prompts-location",
+                    markup=False,
                 )
             with Vertical(id="console-prompts-body"):
-                yield self._browse_widget()
+                yield (
+                    self._improve_widget()
+                    if self.state.mode == "improve"
+                    else self._browse_widget()
+                )
             with Vertical(id="console-prompts-dirty-guard"):
                 yield Static(
                     "Unsaved block changes would be lost. Keep editing, or discard them and go back.",
@@ -298,18 +338,28 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             query=self.state.query,
             page=self.state.page,
             improve_unavailable_reason=self._improve_unavailable_reason,
-            can_configure_provider=self._configure_provider is not None,
+            can_configure_provider=self._can_offer_provider_recovery(),
             manual_improve_available=self._improvement_context is not None,
             id="console-prompts-browse",
         )
 
     def on_mount(self) -> None:
+        self._apply_in_progress = False
         self._set_responsive(self.app.size.width, self.app.size.height)
-        self.run_worker(
-            self.reload_browse(),
-            exclusive=False,
-            group=f"console-prompts-load-{id(self)}",
-        )
+        if self.state.mode == "browse":
+            self.run_worker(
+                self.reload_browse(),
+                exclusive=False,
+                group=f"console-prompts-load-{id(self)}",
+            )
+        else:
+            self._sync_improve_gates()
+            if self._improve_unavailable_reason:
+                self._set_improvement_status(self._improve_unavailable_reason)
+            self.call_after_refresh(
+                self._focus_widget,
+                self._improve_initial_focus_id(),
+            )
 
     def on_resize(self, event: Any) -> None:
         self._set_responsive(event.size.width, event.size.height)
@@ -346,13 +396,26 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         if widget_id:
             self.state = self.state.remember_focus(self.state.mode, widget_id)
 
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        widget_id = event.widget.id
+        if not widget_id:
+            return
+        try:
+            body = self.query_one("#console-prompts-body", Vertical)
+        except NoMatches:
+            return
+        if body in event.widget.ancestors:
+            self.state = self.state.remember_focus(self.state.mode, widget_id)
+
     def _focus_widget(self, widget_id: str | None) -> None:
         if not widget_id:
             return
         try:
-            self.query_one(f"#{widget_id}").focus()
+            widget = self.query_one(f"#{widget_id}")
         except NoMatches:
             return
+        widget.focus()
+        widget.scroll_visible(animate=False, immediate=True)
 
     async def enter_mode(
         self, mode: PromptModalMode, *, focus_id: str | None = None
@@ -371,6 +434,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         )
 
     async def _back_internal(self, *, discard: bool = False) -> None:
+        if self._apply_in_progress:
+            return
         self._cancel_improvement_activation()
         self._reset_persistence_retry()
         if self._active_request_id is not None:
@@ -421,6 +486,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 editor = PromptBlockEditor(
                     self._editor_state,
                     can_update_original=self._can_update_original(),
+                    show_back=False,
                     id="console-prompts-editor",
                 )
                 await body.mount(editor)
@@ -446,11 +512,22 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 parts.append("Unsaved working copy")
         return " / ".join(parts)
 
+    def _can_offer_provider_recovery(self) -> bool:
+        """Return whether the current blocker is repairable in provider settings."""
+
+        return bool(
+            self._improve_unavailable_reason
+            and self._improve_recovery == "provider"
+            and self._configure_provider is not None
+        )
+
     def _improve_widget(self) -> ConsolePromptImproveView | Vertical:
         if self._improvement_context is not None:
             return ConsolePromptImproveView(
                 self._improvement_context,
                 model_unavailable_reason=self._improve_unavailable_reason,
+                show_configure_provider=self._can_offer_provider_recovery(),
+                include_system_context=self._include_system_context,
                 id="console-prompts-improve-mode",
             )
         container = Vertical(id="console-prompts-improve-mode")
@@ -461,10 +538,13 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             )
         )
         for label, button_id in (
-            ("Analyze and auto-improve", "console-prompts-auto-improve"),
-            ("Analyze and user review", "console-prompts-review-improve"),
+            ("Replace draft automatically", "console-prompts-auto-improve"),
             (
-                "Create or follow a structured recipe",
+                "Analyze and user review (Recommended)",
+                "console-prompts-review-improve",
+            ),
+            (
+                "Build a reusable prompt",
                 "console-prompts-structured-recipe",
             ),
         ):
@@ -474,26 +554,46 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             if disabled:
                 button.tooltip = self._improve_unavailable_reason
             container.compose_add_child(button)
+        if self._can_offer_provider_recovery():
+            container.compose_add_child(
+                Button(
+                    "Configure provider / model",
+                    id="console-prompts-configure-provider",
+                )
+            )
         return container
 
     async def _mount_recipe_choices(self, body: Vertical | None = None) -> None:
         if body is None:
             body = self.query_one("#console-prompts-body", Vertical)
             await body.remove_children()
-        fill = Button("Fill with AI", id="console-prompts-recipe-fill", disabled=True)
         await body.mount(
-            Vertical(
+            VerticalScroll(
                 Static(
-                    "Start with a useful structure, select a saved Recipe, or begin blank.",
+                    "Choose a starting point. Saved formats remain Recipes in Library > Prompts.",
                     markup=False,
                 ),
                 Button(
-                    "Outcome-first Recipe",
+                    "Outcome-first",
                     id="console-prompts-recipe-outcome-first",
                 ),
-                Button("Select a saved Recipe", id="console-prompts-recipe-saved"),
-                Button("Blank Recipe", id="console-prompts-recipe-blank"),
-                fill,
+                Static(
+                    "Outcome-first starts with Goal, context and evidence, constraints, and output; reveal optional guidance when useful.",
+                    id="console-prompts-recipe-outcome-description",
+                    markup=False,
+                ),
+                Button("Saved Recipe", id="console-prompts-recipe-saved"),
+                Static(
+                    "Saved Recipe reuses a format from Library > Prompts.",
+                    id="console-prompts-recipe-saved-description",
+                    markup=False,
+                ),
+                Button("Blank", id="console-prompts-recipe-blank"),
+                Static(
+                    "Blank starts with empty System and User lanes for your own blocks.",
+                    id="console-prompts-recipe-blank-description",
+                    markup=False,
+                ),
                 Static("", id="console-prompts-improvement-status", markup=False),
                 id="console-prompts-recipe-mode",
             )
@@ -510,7 +610,10 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         )
 
     def _supports_structured_save(self, artifact_type: str) -> bool:
-        capabilities = self.state.selected_capabilities
+        source = self.state.selected_source or self.state.source
+        capabilities = self.state.selected_capabilities or self._capabilities_by_source.get(
+            source
+        )
         if capabilities is None:
             return False
         kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
@@ -525,36 +628,26 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 editor = self.query_one(PromptBlockEditor)
             except NoMatches:
                 return
-        editor.set_update_original_available(self._can_update_original())
-        has_issues = bool(editor.state.issues)
-        for artifact_type, selector, kind in (
-            ("prompt", "#prompt-editor-save-prompt", "block_prompt"),
-            ("recipe", "#prompt-editor-save-recipe", "block_recipe"),
-        ):
-            button = editor.query_one(selector, Button)
-            supported = self._supports_structured_save(artifact_type)
-            recipe_conversion_blocked = bool(
-                artifact_type == "recipe" and not editor.state.can_save_as_recipe
-            )
-            button.disabled = has_issues or not supported or recipe_conversion_blocked
-            if not supported:
-                button.tooltip = (
-                    f"Save unavailable — {self.state.selected_source or self.state.source} "
-                    f"does not support {kind}; switch source or keep editing."
-                )
-            elif recipe_conversion_blocked:
-                button.tooltip = RECIPE_MAPPED_CONTEXT_BLOCKED_COPY
-            else:
-                button.tooltip = None
-        update = editor.query_one("#prompt-editor-update-original", Button)
-        update.disabled = has_issues or not self._can_update_original()
-        if not self._can_update_original():
-            update.tooltip = (
+        editor.set_update_original_available(
+            self._can_update_original(),
+            unavailable_reason=(
                 "Update unavailable — this source does not support conditional updates "
                 "for this version; save as new."
-            )
-        else:
-            update.tooltip = None
+            ),
+        )
+        source = self.state.selected_source or self.state.source
+        prompt_supported = self._supports_structured_save("prompt")
+        recipe_supported = self._supports_structured_save("recipe")
+        editor.set_save_capabilities(
+            prompt=prompt_supported,
+            recipe=recipe_supported,
+            prompt_unavailable_reason=(
+                "" if prompt_supported else f"{source} does not support block_prompt."
+            ),
+            recipe_unavailable_reason=(
+                "" if recipe_supported else f"{source} does not support block_recipe."
+            ),
+        )
         can_apply_saved_prompt = bool(
             self._improvement_context is not None
             and self._apply_improvement_result is not None
@@ -573,7 +666,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         apply_button.tooltip = "Applying to the composer is unavailable in this stage; save the Prompt instead."
         apply_reason = editor.query_one("#prompt-editor-apply-reason", Static)
         apply_reason.update(
-            "Apply unavailable in this stage — save the Prompt instead."
+            "Apply unavailable — save this Prompt. System changes only on Apply in "
+            "this active session."
         )
         apply_reason.add_class("blocked")
 
@@ -883,6 +977,14 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 button.tooltip = self._improve_unavailable_reason
             else:
                 button.tooltip = None
+        try:
+            structured = self.query_one("#console-prompts-structured-recipe", Button)
+        except NoMatches:
+            return
+        structured.disabled = active
+        structured.tooltip = (
+            "Wait for the current provider resolution to finish." if active else None
+        )
 
     def _set_improvement_status(self, message: str) -> None:
         try:
@@ -947,22 +1049,39 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         else:
             improve.tooltip = self._improve_unavailable_reason or None
 
-    def _begin_improvement_activation(self) -> None:
+    def _begin_improvement_activation(
+        self, mode: Literal["auto", "review", "recipe"]
+    ) -> None:
         if self._active_activation_id is not None:
             return
         activation_id = self._next_activation_id()
         self._active_activation_id = activation_id
-        self._set_activation_busy(True)
+        self._pending_activation_mode = mode
+        if self.state.mode in {"improve", "recipe"}:
+            self._sync_improve_gates(active=True)
+            self._set_improvement_status(
+                "Resolving current provider, model, and endpoint…"
+            )
+        else:
+            self._set_activation_busy(True)
         self._activation_worker = self.run_worker(
             self._run_improvement_activation(activation_id),
             exclusive=True,
             group=f"console-prompt-improvement-activation-{id(self)}",
         )
 
+    def _improve_initial_focus_id(self) -> str:
+        if self._can_offer_provider_recovery():
+            return "console-prompts-configure-provider"
+        if self._improve_unavailable_reason:
+            return "console-prompts-structured-recipe"
+        return "console-prompts-review-improve"
+
     def _cancel_improvement_activation(self) -> bool:
         if self._active_activation_id is None:
             return False
         self._active_activation_id = None
+        self._pending_activation_mode = None
         worker = self._activation_worker
         self._activation_worker = None
         if worker is not None:
@@ -976,13 +1095,18 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                     context = await _maybe_await(self._activate_improvement_context())
                 except asyncio.CancelledError:
                     return
-                except Exception:
+                except Exception as exc:
                     if self._active_activation_id != activation_id:
                         return
-                    self._improve_unavailable_reason = (
-                        "Prompt improvement could not resolve the current provider target. "
-                        "Review Console provider settings and reopen Improve."
-                    )
+                    if isinstance(exc, ValueError) and str(exc).strip():
+                        self._improve_unavailable_reason = str(exc).strip()
+                        self._improve_recovery = "reopen"
+                    else:
+                        self._improve_unavailable_reason = (
+                            "Prompt improvement could not resolve the current provider "
+                            "target. Review Console provider settings and reopen Improve."
+                        )
+                        self._improve_recovery = "provider"
                 else:
                     if self._active_activation_id != activation_id:
                         return
@@ -998,19 +1122,43 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                         self._improve_unavailable_reason = str(
                             getattr(context, "model_unavailable_reason", "") or ""
                         ).strip()
+                        recovery = str(
+                            getattr(context, "unavailable_recovery", "provider")
+                        )
+                        if recovery == "reopen":
+                            self._improve_recovery = "reopen"
+                        elif recovery == "draft":
+                            self._improve_recovery = "draft"
+                        else:
+                            self._improve_recovery = "provider"
             if self._active_activation_id != activation_id:
                 return
-            if (
-                not self._improve_unavailable_reason
-                or self._improvement_context is not None
-            ):
-                await self.enter_mode("improve")
-                if self._improve_unavailable_reason:
-                    self._set_improvement_status(self._improve_unavailable_reason)
+            pending_mode = self._pending_activation_mode
+            if self.state.mode == "improve" and self._improve_unavailable_reason:
+                await self._mount_mode("improve")
+            else:
+                try:
+                    self.query_one("#console-prompts-provider-summary", Static).update(
+                        improvement_provider_summary(self._improvement_context)
+                    )
+                except NoMatches:
+                    pass
+            if self._improve_unavailable_reason:
+                self._sync_improve_gates()
+                self._set_improvement_status(self._improve_unavailable_reason)
+                if self.state.mode == "improve":
+                    self.call_after_refresh(
+                        self._focus_widget,
+                        self._improve_initial_focus_id(),
+                    )
+                return
+            if pending_mode is not None:
+                self._begin_improvement(pending_mode)
         finally:
             if self._active_activation_id == activation_id:
                 self._active_activation_id = None
                 self._activation_worker = None
+                self._pending_activation_mode = None
                 self._set_activation_busy(False)
 
     def _begin_improvement(self, mode: Literal["auto", "review", "recipe"]) -> None:
@@ -1209,48 +1357,102 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         )
 
     async def _coordinate_apply(
-        self, result: ConsolePromptsResult, captured: Any
+        self,
+        result: ConsolePromptsResult,
+        captured: Any,
+        *,
+        _generation: int | None = None,
     ) -> None:
+        generation = _generation
+        if generation is None:
+            generation = self._claim_apply_transaction()
+            if generation is None:
+                return
+        if not self._apply_presentation_is_current(generation):
+            return
         self._reset_persistence_retry()
         if self._apply_improvement_result is None:
-            self.dismiss(result)
+            self.dismiss_safe_once(result)
+            self._set_apply_in_progress(False)
             return
         try:
-            outcome = await _maybe_await(
-                self._apply_improvement_result(result, captured)
-            )
-        except Exception:
+            try:
+                outcome = await _maybe_await(
+                    self._apply_improvement_result(result, captured)
+                )
+            except Exception:
+                if self._apply_presentation_is_current(generation):
+                    self._set_improvement_status(
+                        "The prompt changed while this result was open. Capture it again and retry."
+                    )
+                return
+            if not self._apply_presentation_is_current(generation):
+                return
+            kind = str(getattr(outcome, "kind", "applied"))
+            if kind == "applied":
+                if not self.dismiss_safe_once(result):
+                    self._set_improvement_status("Applied to the Console.")
+                return
+            if kind == "persistence_failed":
+                self._pending_persistence_result = result
+                self._set_improvement_status(
+                    "Applied to this session, but could not save to the conversation."
+                )
+                self._set_persistence_retry_visible(
+                    True,
+                    focus=True,
+                )
+                return
+            if (
+                kind == "stale"
+                and getattr(captured, "mode", "") in {"auto", "review"}
+                and result.apply_user
+                and result.user_text is not None
+            ):
+                await self._mount_review(result.user_text)
             self._set_improvement_status(
-                "The prompt changed while this result was open. Capture it again and retry."
+                str(
+                    getattr(outcome, "user_message", "")
+                    or "The live Console state changed. Capture the prompt again and retry."
+                )
             )
-            return
-        kind = str(getattr(outcome, "kind", "applied"))
-        if kind == "applied":
-            self.dismiss(result)
-            return
-        if kind == "persistence_failed":
-            self._pending_persistence_result = result
-            self._set_improvement_status(
-                "Applied to this session, but could not save to the conversation."
-            )
-            self._set_persistence_retry_visible(
-                True,
-                focus=True,
-            )
-            return
-        if (
-            kind == "stale"
-            and getattr(captured, "mode", "") in {"auto", "review"}
-            and result.apply_user
-            and result.user_text is not None
+        finally:
+            if self._safe_mount_generation == generation:
+                self._set_apply_in_progress(False)
+
+    def _apply_presentation_is_current(self, generation: int) -> bool:
+        return self.is_mounted and self._safe_mount_generation == generation
+
+    def _claim_apply_transaction(self) -> int | None:
+        if self._apply_in_progress or not self.is_mounted:
+            return None
+        self._set_apply_in_progress(True)
+        return self._safe_mount_generation
+
+    def _set_apply_in_progress(self, active: bool) -> None:
+        self._apply_in_progress = active
+        for selector in (
+            "#console-prompts-back",
+            "#console-prompts-close",
+            "#console-prompts-review-apply",
+            "#prompt-editor-apply",
         ):
-            await self._mount_review(result.user_text)
-        self._set_improvement_status(
-            str(
-                getattr(outcome, "user_message", "")
-                or "The live Console state changed. Capture the prompt again and retry."
-            )
-        )
+            try:
+                self.query_one(selector, Button).disabled = active
+            except NoMatches:
+                continue
+        if not self.is_mounted:
+            return
+        try:
+            status = self.query_one("#console-prompts-improvement-status", Static)
+        except NoMatches:
+            return
+        status.can_focus = active
+        if active:
+            status.update("Applying changes to the Console…")
+            status.focus()
+        else:
+            self._sync_editor_host_gates()
 
     async def _mount_review(self, candidate: str) -> None:
         body = self.query_one("#console-prompts-body", Vertical)
@@ -1271,19 +1473,27 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             )
         )
 
-    async def _apply_review_candidate(self) -> None:
+    async def _apply_review_candidate(self, generation: int) -> None:
+        if not self._apply_presentation_is_current(generation):
+            return
         captured = self._captured_improvement_request
         if captured is None:
             self._set_improvement_status("The captured request is no longer available.")
+            self._set_apply_in_progress(False)
             return
         candidate = self.query_one("#console-prompts-review-user", TextArea).text
         try:
             if self._validate_improvement is not None:
                 await _maybe_await(self._validate_improvement(captured, candidate))
         except Exception:
+            if not self._apply_presentation_is_current(generation):
+                return
             self._set_improvement_status(
                 "Protected prompt material changed. Restore the protected placeholders before applying."
             )
+            self._set_apply_in_progress(False)
+            return
+        if not self._apply_presentation_is_current(generation):
             return
         await self._coordinate_apply(
             self._result_for(
@@ -1294,6 +1504,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 captured=captured,
             ),
             captured,
+            _generation=generation,
         )
 
     async def _mount_recipe_editor(
@@ -1301,6 +1512,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         definition: BlockArtifactDefinition,
         *,
         artifact_type: Literal["prompt", "recipe"] = "recipe",
+        initially_hidden_block_ids: frozenset[str] = frozenset(),
     ) -> None:
         if artifact_type == "recipe":
             self._recipe_definition = definition
@@ -1348,24 +1560,40 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                     self._improve_unavailable_reason
                     or "Add text to the unsent message before using AI fill."
                 )
+            has_system = bool(
+                getattr(
+                    self._improvement_context,
+                    "current_system_prompt",
+                    "",
+                )
+            )
+            analysis_context = Checkbox(
+                SYSTEM_ANALYSIS_LABEL,
+                value=self._include_system_context,
+                id="console-prompts-include-system",
+                disabled=not has_system,
+            )
+            if not has_system:
+                analysis_context.tooltip = SYSTEM_ANALYSIS_ABSENT_TOOLTIP
             widgets.extend(
                 [
-                    Checkbox(
-                        "Include system prompt as analysis context",
-                        value=self._include_system_context,
-                        id="console-prompts-include-system",
-                        disabled=not bool(
-                            getattr(
-                                self._improvement_context,
-                                "current_system_prompt",
-                                "",
-                            )
+                    Vertical(
+                        Static(
+                            "",
+                            id="console-prompts-recipe-save-confirmation",
+                            markup=False,
                         ),
+                        Button(
+                            "Open Library",
+                            id="console-prompts-open-saved-recipe",
+                        ),
+                        id="console-prompts-recipe-save-confirmation-panel",
                     ),
+                    analysis_context,
                     Static(
-                        "Controls analysis context for Fill only. It does not enable "
-                        "System apply; System apply remains a separate, off-by-default "
-                        "review choice.",
+                        SYSTEM_ANALYSIS_DISCLOSURE
+                        if has_system
+                        else SYSTEM_ANALYSIS_ABSENT_DISCLOSURE,
                         id="console-prompts-recipe-analysis-disclosure",
                         markup=False,
                     ),
@@ -1379,6 +1607,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 PromptBlockEditor(
                     self._editor_state,
                     can_update_original=False,
+                    show_back=False,
+                    initially_hidden_block_ids=initially_hidden_block_ids,
                     id="console-prompts-editor",
                 ),
             ]
@@ -1389,9 +1619,20 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 id="console-prompts-recipe-scroll",
             )
         )
+        if artifact_type == "recipe":
+            confirmation = self.query_one(
+                "#console-prompts-recipe-save-confirmation-panel", Vertical
+            )
+            confirmation.display = False
+            open_library = self.query_one(
+                "#console-prompts-open-saved-recipe", Button
+            )
+            open_library.can_focus = False
 
     def _show_dirty_guard(self) -> None:
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
+        if guard.display:
+            return
         guard.add_class("visible")
         guard.display = True
         self.call_after_refresh(self._focus_widget, "console-prompts-keep-editing")
@@ -1401,10 +1642,51 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         guard.remove_class("visible")
         guard.display = False
 
+    def _keep_editing(self) -> None:
+        self._hide_dirty_guard()
+        self.call_after_refresh(
+            self._focus_widget,
+            self.state.focus_for(self.state.mode),
+        )
+
+    def _improvement_is_cancelling(self) -> bool:
+        worker = self._improvement_worker
+        return bool(worker is not None and worker.is_cancelled and worker.is_running)
+
+    def _request_close(self) -> None:
+        if self._apply_in_progress:
+            return
+        self._recipe_selecting = False
+        self._cancel_improvement_activation()
+        if self._active_request_id is not None:
+            self._cancel_improvement()
+            return
+        if self._improvement_is_cancelling():
+            return
+        if self.state.mode in {"edit", "recipe"} and self.state.dirty:
+            self._show_dirty_guard()
+            return
+        self.dismiss_safe_once(None)
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        guard = self.query_one("#console-prompts-dirty-guard", Vertical)
+        if guard.display:
+            if source == "escape":
+                self._keep_editing()
+            return
+        self._request_close()
+
     @on(ConsolePromptsBrowse.ImproveRequested)
-    def _improve_requested(self, event: ConsolePromptsBrowse.ImproveRequested) -> None:
+    async def _improve_requested(
+        self, event: ConsolePromptsBrowse.ImproveRequested
+    ) -> None:
         event.stop()
-        self._begin_improvement_activation()
+        await self.enter_mode(
+            "improve",
+            focus_id=self._improve_initial_focus_id(),
+        )
+        if self._improve_unavailable_reason:
+            self._set_improvement_status(self._improve_unavailable_reason)
 
     @on(Checkbox.Changed, "#console-prompts-include-system")
     def _include_system_changed(self, event: Checkbox.Changed) -> None:
@@ -1514,6 +1796,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self, event: PromptBlockEditor.ApplyRequested
     ) -> None:
         event.stop()
+        if self._manual_apply_resolution is None:
+            await self._capture_manual_apply_target()
         if self.state.mode == "edit":
             decoded = self._decoded
             source = self.state.selected_source
@@ -1559,15 +1843,20 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             )
         else:
             return
-        await self._coordinate_apply(
-            self._result_for(
-                user_text=event.user_prompt,
-                system_text=event.system_prompt,
-                apply_user=event.apply_user,
-                apply_system=event.apply_system,
-                captured=guard,
-            ),
-            guard,
+        generation = self._claim_apply_transaction()
+        if generation is None:
+            return
+        result = self._result_for(
+            user_text=event.user_prompt,
+            system_text=event.system_prompt,
+            apply_user=event.apply_user,
+            apply_system=event.apply_system,
+            captured=guard,
+        )
+        self.run_worker(
+            self._coordinate_apply(result, guard, _generation=generation),
+            exclusive=False,
+            group=f"console-prompts-apply-{id(self)}",
         )
 
     def _cancel_improvement(self) -> None:
@@ -1594,7 +1883,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         kind = str(getattr(outcome, "kind", ""))
         if kind == "applied":
             self._reset_persistence_retry()
-            self.dismiss(result)
+            self.dismiss_safe_once(result)
             return
         if kind == "persistence_failed":
             self._set_improvement_status(
@@ -1634,6 +1923,15 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             self.notify(message, severity="warning")
             return
         if not self._supports_structured_save(artifact_type):
+            source = self.state.selected_source or self.state.source
+            if source not in self._capabilities_by_source:
+                try:
+                    self._capabilities_by_source[source] = await _maybe_await(
+                        self._capabilities(source)
+                    )
+                except Exception:
+                    pass
+        if not self._supports_structured_save(artifact_type):
             self.notify(
                 f"{artifact_label} save is unavailable — the selected source does not support this structured artifact kind.",
                 severity="warning",
@@ -1670,6 +1968,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             )
             return
         if artifact_type == "recipe":
+            self._show_recipe_saved_confirmation(saved)
             self.notify("Recipe saved as a new artifact.")
             return
         if not isinstance(saved, Mapping):
@@ -1722,6 +2021,60 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._sync_editor_host_gates()
         self.notify("Prompt saved.")
 
+    def _show_recipe_saved_confirmation(self, saved: Any) -> None:
+        """Expose the Library destination when a saved Recipe has an identity."""
+
+        try:
+            panel = self.query_one(
+                "#console-prompts-recipe-save-confirmation-panel", Vertical
+            )
+            confirmation = self.query_one(
+                "#console-prompts-recipe-save-confirmation", Static
+            )
+            open_library = self.query_one(
+                "#console-prompts-open-saved-recipe", Button
+            )
+        except NoMatches:
+            return
+        record = dict(saved) if isinstance(saved, Mapping) else {}
+        name = str(record.get("name") or "Recipe").strip() or "Recipe"
+        target: tuple[PromptSource, str] | None = None
+        source_value = str(record.get("backend") or "")
+        source: PromptSource = (
+            source_value
+            if source_value in {"local", "server"}
+            else self.state.selected_source or self.state.source
+        )  # type: ignore[assignment]
+        local_id = record.get("local_id")
+        if source == "local" and type(local_id) is int and local_id > 0:
+            identity = str(local_id)
+        elif source == "local" and str(record.get("id") or "").isdecimal():
+            identity = str(record["id"])
+        else:
+            try:
+                identity = _saved_record_identifier(record)
+            except ValueError:
+                identity = ""
+        if source == "local" and identity.isdecimal():
+            target = (source, identity)
+        self._saved_recipe_library_target = target
+        confirmation.update(f"{name} saved to Library > Prompts as a Recipe.")
+        panel.display = True
+        open_library.display = True
+        open_library.disabled = target is None or self._open_library_prompt is None
+        open_library.can_focus = not open_library.disabled
+        if open_library.disabled:
+            open_library.tooltip = (
+                "Deep link available only for local recipes; open Library > "
+                "Prompts and select its source."
+                if identity
+                else "Reload Library > Prompts to find this Recipe; its saved "
+                "identity was not returned."
+            )
+            return
+        open_library.tooltip = "Open the newly saved Recipe in Library > Prompts."
+        self.call_after_refresh(self._focus_widget, "console-prompts-open-saved-recipe")
+
     @on(Button.Pressed)
     async def _shell_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -1730,22 +2083,10 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             await self._back_internal()
         elif button_id == "console-prompts-close":
             event.stop()
-            self._recipe_selecting = False
-            self._cancel_improvement_activation()
-            if self._active_request_id is not None:
-                self._cancel_improvement()
-                return
-            if self.state.mode in {"edit", "recipe"} and self.state.dirty:
-                self._show_dirty_guard()
-            else:
-                self.dismiss(None)
+            self._request_close()
         elif button_id == "console-prompts-keep-editing":
             event.stop()
-            self._hide_dirty_guard()
-            self.call_after_refresh(
-                self._focus_widget,
-                self.state.focus_for(self.state.mode),
-            )
+            self._keep_editing()
         elif button_id == "console-prompts-discard":
             event.stop()
             self._hide_dirty_guard()
@@ -1756,10 +2097,14 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             await self.enter_mode("recipe")
         elif button_id == "console-prompts-auto-improve":
             event.stop()
-            self._begin_improvement("auto")
+            self._begin_improvement_activation("auto")
         elif button_id == "console-prompts-review-improve":
             event.stop()
-            self._begin_improvement("review")
+            self._begin_improvement_activation("review")
+        elif button_id == "console-prompts-configure-provider":
+            event.stop()
+            if self._configure_provider is not None:
+                await _maybe_await(self._configure_provider())
         elif button_id == "console-prompts-improvement-cancel":
             event.stop()
             self._cancel_improvement()
@@ -1770,9 +2115,23 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         elif button_id == "console-prompts-persistence-retry":
             event.stop()
             await self._retry_persistence()
+        elif button_id == "console-prompts-open-saved-recipe":
+            event.stop()
+            target = self._saved_recipe_library_target
+            if target is None or self._open_library_prompt is None:
+                return
+            opened = await _maybe_await(self._open_library_prompt(*target))
+            if opened:
+                self.dismiss_safe_once(None)
         elif button_id == "console-prompts-review-apply":
             event.stop()
-            await self._apply_review_candidate()
+            generation = self._claim_apply_transaction()
+            if generation is not None:
+                self.run_worker(
+                    self._apply_review_candidate(generation),
+                    exclusive=False,
+                    group=f"console-prompts-apply-{id(self)}",
+                )
         elif button_id == "console-prompts-recipe-outcome-first":
             event.stop()
             self._recipe_source = None
@@ -1780,7 +2139,10 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             self._recipe_version = 0
             definition = outcome_first_recipe()
             self._recipe_source_fingerprint = _fingerprint_definition(definition)
-            await self._mount_recipe_editor(definition)
+            await self._mount_recipe_editor(
+                definition,
+                initially_hidden_block_ids=_OUTCOME_FIRST_OPTIONAL_BLOCK_IDS,
+            )
         elif button_id == "console-prompts-recipe-blank":
             event.stop()
             self._recipe_source = None
@@ -1795,7 +2157,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             await self.enter_mode("browse", focus_id="console-prompts-search")
         elif button_id == "console-prompts-recipe-fill":
             event.stop()
-            self._begin_improvement("recipe")
+            self._begin_improvement_activation("recipe")
         elif button_id == "console-prompts-convert":
             event.stop()
             record = self._selected_record or {}
@@ -1814,7 +2176,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
 
     def action_back(self) -> None:
         if self.query_one("#console-prompts-dirty-guard", Vertical).display:
-            self._hide_dirty_guard()
+            self._keep_editing()
             return
         self.run_worker(
             self._back_internal(),

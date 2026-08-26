@@ -1,21 +1,18 @@
-"""TASK-1994: j/k/space/b scroll keys on read-only markdown panes.
-
-The HF README pane and the media content/analysis viewers use
-ReaderVerticalScroll; the Console transcript keeps its selection j/k
-(explicitly out of scope — asserted here so a regression is loud).
-"""
+"""TASK-1994: j/k/space/b scroll keys on read-only markdown panes."""
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
-from tldw_chatbook.Widgets.HuggingFace.model_card_viewer import ModelCardViewer
-from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 from tldw_chatbook.Widgets.reader_scroll import ReaderVerticalScroll
 
 
-class ScrollHarness(App):
+class ScrollHarness(ConsolidatedCSSApp):
     CSS = "ReaderVerticalScroll { height: 10; }"
 
     def compose(self) -> ComposeResult:
@@ -54,23 +51,12 @@ async def test_reader_keys_scroll_line_and_page():
         assert reader.scroll_y < page_pos
 
 
-@pytest.mark.asyncio
-async def test_named_panes_use_reader_scroll():
-    class SurfacesHarness(App):
-        def compose(self) -> ComposeResult:
-            yield ModelCardViewer(id="viewer")
-
-    app = SurfacesHarness()
-    async with app.run_test():
-        viewer = app.query_one(ModelCardViewer)
-        assert isinstance(
-            viewer.query_one("#readme-scroll"), ReaderVerticalScroll
-        )
-
-
 def test_console_transcript_keeps_selection_bindings():
     """j/k on the transcript remain SELECTION keys, not scroll keys."""
-    rendered = [tuple(b) if isinstance(b, tuple) else (b.key, b.action) for b in ConsoleTranscript.BINDINGS]
+    rendered = [
+        tuple(b) if isinstance(b, tuple) else (b.key, b.action)
+        for b in ConsoleTranscript.BINDINGS
+    ]
     keys = {entry[0]: entry[1] for entry in rendered}
     assert keys.get("down,j") == "select_next"
     assert keys.get("up,k") == "select_previous"

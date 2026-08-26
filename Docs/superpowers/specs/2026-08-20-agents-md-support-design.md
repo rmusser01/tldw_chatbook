@@ -138,22 +138,13 @@ keep the same fields only in live/screen state; if a session becomes a durable
 conversation, its current control state is then written through the local-only
 column.
 
-Chatbook has no inbound conversation-sync/apply service in v1;
-`DB.Sync_Client.ClientSyncEngine` is media-only and is not part of this design.
-The implemented boundary is therefore precise: the column is omitted from
-outbound `conversations_sync_*` trigger conditions and payloads, and every
-existing conversation mutation path updates explicit synchronized columns
-without replacing or clearing `console_project_context_json`. This includes
-ordinary updates, soft delete/restore, and Chatbook import conflict handling.
-The current importer creates a new conversation for non-skip resolutions
-(including its current `REPLACE` behavior), so it leaves an existing row's
-local state untouched; every genuinely new imported row starts null/legacy-
-disabled until Console writes its own state. A future inbound conversation-
-sync/apply service must preserve this local-only column through create,
-update, delete, undelete, replay, and conflict resolution, but adding that
-service is outside v1. The preservation invariant applies across restart and
-must be enforced at any such future apply boundary rather than inferred only
-from outbound triggers.
+Local-only also means **preserved by inbound sync**. Remote create, update,
+delete, undelete, replay, and forced conflict-resolution code must update only
+the synchronized column allowlist and must never replace or clear an existing
+`console_project_context_json`. A remote create that collides with an existing
+local row preserves the local column; a genuinely new remote row starts with
+it null/legacy-disabled. This invariant applies across restart and is tested at
+the `ClientSyncEngine` apply boundary, not inferred only from outbound triggers.
 
 At every agent dispatch, Chatbook resolves `working_folder_binding_id` through
 the workspace registry, revalidates the canonical locator, recomputes its
@@ -728,15 +719,9 @@ filter.
   screen-state fallback, temporary-to-durable promotion, migration from the
   actual schema head, and proof that local-only writes create no sync-log row
   or conversation version bump.
-- Existing conversation update, soft-delete, restore, and Chatbook import
-  conflict paths preserve an existing local project-context column across
-  restart. Import `SKIP` leaves the row untouched; non-skip resolutions create
-  a new null/disabled row and do not overwrite the existing row. Tests also
-  prove outbound conversation triggers and payloads omit the local column.
-- A contract test or documented extension point records that any future
-  inbound conversation-sync/apply service must use a synchronized-column
-  allowlist and preserve this column; implementing such a service is outside
-  v1 because none exists today.
+- Inbound sync remote create/update/delete/undelete/replay and forced
+  remote-wins conflict resolution preserve an existing local project-context
+  column across restart; a genuinely new remote row starts null/disabled.
 - First-use notice proceed/cancel/disable behavior with and without a root
   source, including disclosure that nested sources may load later and
   re-consent on provider/custom-endpoint changes but not model-only changes.

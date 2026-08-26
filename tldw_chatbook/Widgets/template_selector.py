@@ -17,6 +17,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import (
     Button,
     Label,
@@ -30,6 +31,12 @@ from textual.widgets import (
 )
 from loguru import logger
 
+
+#: Debounce for the template search `Input` -- mirrors the picker/filter
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). A settled
+#: search clears and rebuilds every category's `ListView`, which should
+#: not happen on every keystroke (task-15476).
+TEMPLATE_SEARCH_DEBOUNCE_SECONDS = 0.2
 
 TEMPLATE_CREATE_DISABLED_TOOLTIP = (
     "Select an evaluation template before creating a task."
@@ -151,6 +158,7 @@ class TemplateListWidget(Container):
         self.templates = templates
         self.on_template_selected = on_template_selected
         self.templates_by_category = self._organize_by_category()
+        self._search_debounce_timer: Timer | None = None
 
     def _organize_by_category(self) -> Dict[str, List[Dict[str, Any]]]:
         """Organize templates by category."""
@@ -183,8 +191,18 @@ class TemplateListWidget(Container):
 
     @on(Input.Changed, "#template-search")
     def handle_search(self, event: Input.Changed):
-        """Handle template search."""
-        search_term = event.value.lower()
+        """Handle template search (debounced -- task-15476)."""
+        raw_value = event.value
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+        self._search_debounce_timer = self.set_timer(
+            TEMPLATE_SEARCH_DEBOUNCE_SECONDS,
+            lambda: self._apply_search_debounced(raw_value),
+        )
+
+    def _apply_search_debounced(self, raw_value: str) -> None:
+        self._search_debounce_timer = None
+        search_term = raw_value.lower()
 
         # Filter and update template lists
         for category, templates in self.templates_by_category.items():

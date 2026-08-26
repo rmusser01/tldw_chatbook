@@ -352,3 +352,138 @@ def test_library_use_in_console_bundle_matches_console_run_builder_shape():
     ).to_payload()
 
     assert launch.payload["evidence_bundle"] == console_run_bundle_payload
+
+
+def test_evidence_bundle_hybrid_reference_scores_the_vector_leg_not_the_fusion():
+    """(RAG-port P0/Task 6) `EvidenceReference.score` is declared as a
+    retrieval score on the unit interval and is adapted downstream as a
+    `ZERO_TO_ONE` similarity -- so a fused RRF number (theoretical max
+    `1/(rrf_k + 1)`: the ~0.016 these rows carry came from `rrf_k=60`, and
+    the shipped k is now 5, i.e. ~0.167 -- still not a similarity, at any k)
+    must never occupy that slot. The rule is enforced by score KIND, not by
+    magnitude, so these hand-built rows stay valid. The honest similarity
+    for a hybrid row is Task 2's preserved
+    vector leg; the fused number stays available, unaltered, in the
+    reference's `hybrid_fusion` metadata block."""
+    bundle = build_library_rag_evidence_bundle(
+        {
+            "title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "source_id": "media-42",
+            "chunk_id": "chunk-7",
+            "score": 0.016393442622950824,
+            "provenance": {
+                "source_type": "media",
+                "hybrid_fusion": {
+                    "fts_rank": 1,
+                    "vector_rank": 1,
+                    "fts_score": 0.001,
+                    "vector_score": 0.83,
+                    "alpha": 0.7,
+                    "rrf_k": 60,
+                },
+            },
+        },
+        query="Why did the incident happen?",
+    )
+
+    reference = bundle.to_payload()["references"][0]
+    assert reference["metadata"]["score_kind"] == "hybrid_fusion"
+    assert reference["score"] == pytest.approx(0.83)
+    assert reference["metadata"]["hybrid_fusion"]["vector_score"] == pytest.approx(0.83)
+
+
+def test_evidence_bundle_fts_only_hybrid_reference_carries_no_similarity():
+    """(RAG-port P0/Task 6) No vector leg means no similarity exists --
+    the reference discloses the kind and leaves `score` absent rather than
+    presenting the fused 0.0x number as a weak similarity."""
+    bundle = build_library_rag_evidence_bundle(
+        {
+            "title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "source_id": "media-42",
+            "score": 0.004918032786885246,
+            "provenance": {
+                "source_type": "media",
+                "hybrid_fusion": {
+                    "fts_rank": 1,
+                    "vector_rank": None,
+                    "fts_score": 0.001,
+                    "vector_score": None,
+                },
+            },
+        },
+        query="Why did the incident happen?",
+    )
+
+    reference = bundle.to_payload()["references"][0]
+    assert reference["metadata"]["score_kind"] == "hybrid_fusion"
+    assert "score" not in reference
+
+
+def test_evidence_bundle_reranked_reference_never_presents_a_similarity():
+    """(RAG-port P0/Task 6) Reranker scores are unbounded (cross-encoder
+    logits, 0-10 LLM scales). A reranker score that happens to land inside
+    [0, 1] would otherwise silently pass the unit-interval field validator
+    and be read downstream as a cosine similarity."""
+    bundle = build_library_rag_evidence_bundle(
+        {
+            "title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "source_id": "media-42",
+            "score": 0.4,
+            "provenance": {
+                "source_type": "media",
+                "_final_score_kind": "reranker",
+            },
+        },
+        query="Why did the incident happen?",
+    )
+
+    reference = bundle.to_payload()["references"][0]
+    assert reference["metadata"]["score_kind"] == "reranker"
+    assert "score" not in reference
+
+
+def test_evidence_bundle_plain_similarity_reference_is_unchanged():
+    """Protected oracle: a plain semantic row (no fusion block, no reranker
+    channel) keeps its score verbatim and is labelled for what it is."""
+    bundle = build_library_rag_evidence_bundle(
+        {
+            "title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "source_id": "note-42",
+            "score": 0.93,
+        },
+        query="Why did the incident happen?",
+    )
+
+    reference = bundle.to_payload()["references"][0]
+    assert reference["score"] == pytest.approx(0.93)
+    assert reference["metadata"]["score_kind"] == "vector_similarity"
+
+
+def test_console_live_work_payload_discloses_score_kind():
+    """(RAG-port P0/Task 6) The Console live-work payload carries the same
+    kind disclosure as the bundle it embeds, so a downstream consumer of
+    `payload["score"]` can tell a similarity from a fused rank score."""
+    payload = build_library_rag_console_live_work_payload(
+        {
+            "title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "source_id": "media-42",
+            "score": 0.016393442622950824,
+            "provenance": {
+                "hybrid_fusion": {
+                    "fts_rank": 1,
+                    "vector_rank": 1,
+                    "fts_score": 0.001,
+                    "vector_score": 0.83,
+                },
+            },
+        },
+        query="Why did the incident happen?",
+    )
+
+    assert payload["score_kind"] == "hybrid_fusion"
+    assert payload["score"] == pytest.approx(0.83)

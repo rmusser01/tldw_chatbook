@@ -1,5 +1,6 @@
 """Focused CCP handler tests for dual character/persona management."""
 
+import asyncio
 from functools import partial
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -169,8 +170,16 @@ class TestCCPConversationHandler:
 
         mock_window.run_worker.assert_called_once()
         call_args = mock_window.run_worker.call_args
-        assert call_args[0][0] == handler._load_conversation_sync
-        assert call_args[0][1] == "conv-1"
+        # TASK-19563: worker args travel with the callable. Passing them as
+        # extra positional `run_worker` arguments bound them to `run_worker`'s
+        # own name/group parameters and then collided with the explicit
+        # `name=` keyword -- a guaranteed TypeError that this assertion used
+        # to pin in place, because a Mock window never raised it.
+        worker_callable = call_args[0][0]
+        assert isinstance(worker_callable, partial)
+        assert worker_callable.func == handler._load_conversation_sync
+        assert worker_callable.args == ("conv-1",)
+        assert len(call_args[0]) == 1
 
     def test_search_excludes_workspace_scoped_conversations_from_general_results(
         self, mock_window
@@ -198,9 +207,15 @@ class TestCCPConversationHandler:
         mock_window.state.selected_persona_id = None
         handler = CCPConversationHandler(mock_window)
 
-        CCPConversationHandler._search_conversations_sync.__wrapped__(
-            handler, "Alpha", "title"
-        )
+        handler._search_conversations_sync("Alpha", "title")
+
+        # TASK-19563: results are handed to the event loop rather than written
+        # straight onto the handler, so the arrival-time generation check gets
+        # a say. Drive that hop the way `call_from_thread` would.
+        mock_window.call_from_thread.assert_called_once()
+        callback, generation, results = mock_window.call_from_thread.call_args[0]
+        assert callback == handler._apply_search_results
+        asyncio.run(handler._apply_search_results(generation, results))
 
         assert [row["id"] for row in handler.search_results] == ["conv-global-1"]
 
@@ -221,7 +236,9 @@ class TestCCPCharacterHandler:
         worker_callable = call_args[0][0]
         assert isinstance(worker_callable, partial)
         assert worker_callable.func == handler._load_character_sync
-        assert worker_callable.args == ("char.local.alice",)
+        # TASK-19563: the dispatch generation rides along with the id, so the
+        # arrival callback can reject a superseded load.
+        assert worker_callable.args == ("char.local.alice", 1)
 
     @pytest.mark.asyncio
     async def test_list_chat_greetings_routes_via_scope_service(self, mock_window):
@@ -472,3 +489,106 @@ class TestCCPMessageManager:
 
         mock_fetch.assert_called_with("conv-1")
         assert manager.current_messages[0]["id"] == "msg-1"
+
+
+class _TitleSearchDb:
+    """Return exactly one row per query, named after the query itself."""
+
+    def search_conversations_by_title(self, title_query, limit=100):
+        return [
+            {
+                "id": f"conv-{title_query}",
+                "title": title_query,
+                "discovery_owner": "general_chat",
+                "scope_type": "global",
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_ccp_conversation_search_discards_out_of_order_stale_results(
+    mock_window,
+):
+    """TASK-19563: the slower `"a"` read must not overwrite the `"ab"` list.
+
+    These are *thread* workers. `Worker.cancel()` does not stop a thread
+    worker -- its body runs to completion in the executor and its
+    `call_from_thread` callback still lands -- so grouping alone cannot help.
+    The test therefore runs BOTH worker bodies and then delivers their results
+    **newest first**, which is precisely the interleaving that leaves the list
+    showing results for a prefix of what the search box now reads.
+
+    Born red against the branch base twice over: the dispatch raised
+    `TypeError: run_worker() got multiple values for argument 'name'` (so the
+    search never ran at all), and there was no generation to compare on
+    arrival.
+    """
+    mock_window.app_instance.chachanotes_db = _TitleSearchDb()
+    mock_window.state.selected_character_id = None
+    mock_window.state.selected_persona_id = None
+    handler = CCPConversationHandler(mock_window)
+
+    rendered: list[list[str]] = []
+
+    async def _record_render():
+        rendered.append([row["id"] for row in handler.search_results])
+
+    handler._update_search_results_ui = _record_render
+
+    # The user types "a", then "ab" before the first read has come back.
+    await handler.handle_search("a", "title")
+    await handler.handle_search("ab", "title")
+    assert mock_window.run_worker.call_count == 2
+
+    # Both bodies run to completion -- a thread worker cannot be cancelled.
+    for call in mock_window.run_worker.call_args_list:
+        worker_callable = call[0][0]
+        assert isinstance(worker_callable, partial)
+        worker_callable()
+
+    deliveries = [call[0] for call in mock_window.call_from_thread.call_args_list]
+    assert len(deliveries) == 2, "both reads should have produced a delivery"
+
+    # Deliver OUT OF ORDER: the newest result first, the stale one second.
+    for callback, generation, results in reversed(deliveries):
+        await callback(generation, results)
+
+    assert rendered == [["conv-ab"]], (
+        "a superseded search result was rendered; renders=" f"{rendered}"
+    )
+    assert [row["id"] for row in handler.search_results] == ["conv-ab"]
+
+
+@pytest.mark.asyncio
+async def test_ccp_character_load_discards_out_of_order_stale_results(mock_window):
+    """TASK-19563: a superseded character card must never be displayed.
+
+    Display corruption only -- the modern save path carries its own generation
+    guard, so stored character data is not at risk either way.
+    """
+    handler = CCPCharacterHandler(mock_window)
+    displayed: list[str] = []
+    handler._display_character_card = lambda: displayed.append(
+        str(handler.current_character_id)
+    )
+
+    await handler.load_character("char.local.alice")
+    await handler.load_character("char.local.bob")
+    assert mock_window.run_worker.call_count == 2
+
+    first_generation, second_generation = (
+        call[0][0].args[1] for call in mock_window.run_worker.call_args_list
+    )
+    assert second_generation > first_generation
+
+    # Newest arrives first, then the stale one.
+    handler._apply_loaded_character(
+        second_generation, "char.local.bob", {"name": "Bob"}
+    )
+    handler._apply_loaded_character(
+        first_generation, "char.local.alice", {"name": "Alice"}
+    )
+
+    assert displayed == ["char.local.bob"]
+    assert handler.current_character_id == "char.local.bob"
+    assert handler.current_character_data == {"name": "Bob"}

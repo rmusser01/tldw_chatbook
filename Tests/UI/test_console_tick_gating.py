@@ -110,10 +110,14 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
 
         # Start from a known-clean cache regardless of what mount-time syncs
         # already did.
-        console._invalidate_console_persisted_rows_cache()
+        console._workspace._invalidate_console_persisted_rows_cache()
         baseline = len(service.list_calls)
 
         await console._sync_native_console_chat_ui()
+        for _ in range(40):
+            if console._workspace._console_persisted_rows_cache is not None:
+                break
+            await pilot.pause(0.05)
         after_first = len(service.list_calls)
         assert after_first > baseline, "first sync after invalidation must query the DB"
 
@@ -131,8 +135,12 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
         )
 
         # Explicit invalidation forces exactly one more fresh query.
-        console._invalidate_console_persisted_rows_cache()
+        console._workspace._invalidate_console_persisted_rows_cache()
         await console._sync_native_console_chat_ui()
+        for _ in range(40):
+            if console._workspace._console_persisted_rows_cache is not None:
+                break
+            await pilot.pause(0.05)
         after_invalidate = len(service.list_calls)
         assert after_invalidate > after_third, (
             "explicit cache invalidation must force a fresh DB query"
@@ -145,6 +153,10 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
             CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS + 0.5
         )
         await console._sync_native_console_chat_ui()
+        for _ in range(40):
+            if console._workspace._console_persisted_rows_refresh_key is None:
+                break
+            await pilot.pause(0.05)
         after_ttl = len(service.list_calls)
         assert after_ttl > after_invalidate, (
             "a stale (TTL-expired) cache entry must force a fresh DB query"
@@ -201,6 +213,21 @@ async def test_console_workspace_context_tray_sync_state_always_recomposes():
     errors. The guard was not implemented; this locks in the (still real)
     screen-side optimization instead (see the next test) and protects
     against a future reintroduction of the widget-level guard.
+
+    UPDATED BY TASK-15454. The claim this test pinned -- "sync_state must
+    ALWAYS recompose" -- was a proxy for the real invariant, which is "an
+    equal state is not evidence the DOM shows it". `sync_state` may now skip,
+    but ONLY on evidence: `compose()` records the (row id, row key) sequence
+    it built, and `_can_skip_recompose` compares it against the rows actually
+    mounted, on an instance the rail has already pushed to, with no recompose
+    latched. So this case -- a value-equal state pushed into a settled tray --
+    is now a proven no-op and correctly skips.
+    Every case the revert was actually about still recomposes and is pinned in
+    `Tests/UI/test_console_workspace_tray_recompose_guard.py`, including the
+    click-targeting one (rows missing from the DOM while `.state` still lists
+    them), which fails against the naive full-equality guard. Confirmed by
+    mutation while writing that file: replacing `_can_skip_recompose` with
+    `return state == self.state` reds it.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -208,6 +235,9 @@ async def test_console_workspace_context_tray_sync_state_always_recomposes():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
+        # The guard needs a settled DOM to read; let the boot sync burst end.
+        for _ in range(4):
+            await pilot.pause()
 
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
@@ -224,10 +254,19 @@ async def test_console_workspace_context_tray_sync_state_always_recomposes():
             same_value_state = replace(tray.state)
             assert same_value_state == tray.state
             tray.sync_state(same_value_state)
+            assert refresh_calls == [], (
+                "a value-equal state pushed into a tray whose mounted rows "
+                "still match what compose() built must not rebuild the tray"
+            )
+
+            # ... but the skip is evidence-based, not value-based: break the
+            # evidence and the same push must rebuild.
+            tray._composed_row_signature = (("console-workspace-conversation-0", "x"),)
+            tray.sync_state(replace(tray.state))
             assert refresh_calls == [1], (
-                "ConsoleWorkspaceContextTray.sync_state must always recompose "
-                "-- an equality guard here breaks click targeting (see "
-                "docstring)"
+                "a tray whose DOM no longer matches what compose() built must "
+                "still recompose on an equal state -- that DESYNC, not state "
+                "equality, is what the TASK-251 revert was about"
             )
 
 
@@ -269,16 +308,19 @@ async def test_console_workspace_context_legacy_alias_kick_skipped_when_state_un
         with (
             patch.object(console, "run_worker", counting_run_worker),
             patch.object(
-                console._workspace, "_build_console_workspace_context_state", pinned_build
+                console._workspace,
+                "_build_console_workspace_context_state",
+                pinned_build,
             ),
         ):
             console._sync_console_workspace_context()
             await pilot.pause()
-            assert worker_calls == [1], "the first (changed) sync must kick the worker"
+            assert worker_calls, "the first (changed) sync must kick the worker"
+            changed_sync_calls = len(worker_calls)
 
             console._sync_console_workspace_context()
             await pilot.pause()
-            assert worker_calls == [1], (
+            assert len(worker_calls) == changed_sync_calls, (
                 "re-syncing with unchanged workspace-context state must not "
                 "kick the legacy-alias worker again"
             )
@@ -414,7 +456,9 @@ async def test_console_workspace_context_tray_not_recomposed_when_state_unchange
         )
         with (
             patch.object(
-                console._workspace, "_build_console_workspace_context_state", pinned_build
+                console._workspace,
+                "_build_console_workspace_context_state",
+                pinned_build,
             ),
             patch.object(ConsoleWorkspaceContextTray, "refresh", counting_refresh),
         ):
@@ -436,10 +480,12 @@ async def test_console_workspace_context_tray_not_recomposed_when_state_unchange
 
 @pytest.mark.asyncio
 async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
-    """TASK-344/349 (PR #745 Qodo #3): a fresh tray from ANY mid-run
-    full-screen recompose must still get its healing sync_state push even
-    under the unchanged-state run skip — the skip only applies to an
-    already-synced instance whose DOM is known-consistent."""
+    """Fresh peer context trays still heal after a mid-run recompose.
+
+    TASK-344/349 (PR #745 Qodo #3) introduced the one-time healing push;
+    TASK-14810 projects that state into Sessions, Workspaces, and
+    Conversations, so all three fresh tray instances must move together.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -454,7 +500,9 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
         )
         with (
             patch.object(
-                console._workspace, "_build_console_workspace_context_state", pinned_build
+                console._workspace,
+                "_build_console_workspace_context_state",
+                pinned_build,
             ),
             patch.object(ConsoleWorkspaceContextTray, "refresh", counting_refresh),
         ):
@@ -462,18 +510,29 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
             await pilot.pause()
             before = len(recompose_calls)
 
-            # Simulate a mid-run full-screen recompose: a FRESH tray instance
-            # with no per-widget synced marker. It must be recomposed once
-            # more despite the unchanged state (its DOM is not yet settled).
-            tray = console.query_one(
-                "#console-workspace-context", ConsoleWorkspaceContextTray
-            )
-            if hasattr(tray, "_console_workspace_context_synced"):
-                del tray._console_workspace_context_synced
+            # Simulate a mid-run full-screen recompose: FRESH tray instances
+            # with no per-widget synced marker. They must be recomposed once
+            # more despite the unchanged state (their DOM is not yet settled).
+            #
+            # TASK-15454: the marker is now cleared on ALL THREE projections,
+            # not just the Conversations one. A real full-screen recompose
+            # constructs three brand-new trays, so all three are markerless --
+            # the previous one-tray simulation only worked because the tray
+            # itself recomposed unconditionally, and each tray now checks its
+            # own marker before it may skip. The assertion below (three
+            # recomposes, the trays healing together) is unchanged.
+            for selector in (
+                "#console-session-context",
+                "#console-workspaces-context",
+                "#console-workspace-context",
+            ):
+                tray = console.query_one(selector, ConsoleWorkspaceContextTray)
+                if hasattr(tray, "_console_workspace_context_synced"):
+                    del tray._console_workspace_context_synced
 
             console._sync_console_workspace_context()
             await pilot.pause()
-            assert len(recompose_calls) == before + 1, (
-                "a fresh (post-recompose) tray must still get one healing "
-                "sync_state push during a run"
+            assert len(recompose_calls) == before + 3, (
+                "a fresh (post-recompose) context projection must heal the "
+                "Sessions, Workspaces, and Conversations trays together"
             )

@@ -1,5 +1,5 @@
 ---
-id: task-2110
+id: TASK-2110
 title: 'STT: configured provider unavailable falls back silently with status=ok'
 status: To Do
 assignee: []

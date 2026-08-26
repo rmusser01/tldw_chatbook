@@ -6,6 +6,10 @@ from collections.abc import Mapping
 from ipaddress import ip_address
 from urllib.parse import urlparse, urlunparse
 
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    canonical_connection_identity,
+    resolve_provider_endpoint,
+)
 
 UNSAVED_ENDPOINT_COPY = (
     "Provider blocked: save the endpoint in Settings before using it from Console."
@@ -23,6 +27,7 @@ URL_BASED_PROVIDER_KEYS = frozenset(
         "local_vllm",
         "ollama",
         "oobabooga",
+        "qwencloud",
         "tabbyapi",
         "vllm",
     }
@@ -58,6 +63,7 @@ _BUILTIN_PROVIDER_ENDPOINTS = {
     "moonshot": "https://api.moonshot.ai/v1",
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "qwencloud": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "zai": "https://api.z.ai/api/paas/v4",
 }
 
@@ -89,9 +95,9 @@ def effective_provider_endpoint(
 ) -> str | None:
     """Resolve the exact endpoint a provider call would use at this moment.
 
-    Explicit Console selection wins without normalization, followed by the
-    provider's configured endpoint aliases and finally the adapter's built-in
-    cloud default.
+    Explicit Console selection wins, followed by the provider's configured
+    endpoint aliases and finally the adapter's built-in cloud default. Custom
+    OpenAI-compatible endpoint forms resolve to the chat URL actually used.
 
     Args:
         provider_key: Normalized provider readiness key.
@@ -103,7 +109,7 @@ def effective_provider_endpoint(
         when the provider has neither a configured nor built-in endpoint.
     """
     if isinstance(selected_endpoint, str) and selected_endpoint.strip():
-        return selected_endpoint
+        return _effective_contract_endpoint(provider_key, selected_endpoint)
     if provider_key == "huggingface" and _huggingface_router_mode(provider_settings):
         for key in ("router_base_url", "huggingface_router_base_url"):
             router_endpoint = provider_settings.get(key)
@@ -112,8 +118,33 @@ def effective_provider_endpoint(
         return builtin_provider_endpoint(provider_key, provider_settings)
     configured_endpoint = first_configured_endpoint(provider_settings)
     if configured_endpoint:
-        return configured_endpoint
+        return _effective_contract_endpoint(provider_key, configured_endpoint)
     return builtin_provider_endpoint(provider_key, provider_settings)
+
+
+def effective_provider_discovery_endpoint(
+    provider_key: str,
+    selected_endpoint: str | None,
+    provider_settings: Mapping[str, object],
+) -> str | None:
+    """Resolve the settings-aware OpenAI-compatible model-listing base."""
+
+    endpoint = effective_provider_endpoint(
+        provider_key,
+        selected_endpoint,
+        provider_settings,
+    )
+    if endpoint is None or provider_key != "huggingface":
+        return endpoint
+    if not _huggingface_router_mode(provider_settings):
+        return endpoint
+    try:
+        parsed = urlparse(endpoint)
+    except ValueError:
+        return endpoint
+    if (parsed.hostname or "").lower() != "router.huggingface.co":
+        return endpoint
+    return urlunparse((parsed.scheme, parsed.netloc, "/v1", "", "", ""))
 
 
 def builtin_provider_endpoint(
@@ -219,7 +250,23 @@ def safe_endpoint_display(url: str | None) -> str:
     parsed_endpoint = _parse_http_endpoint(url)
     if parsed_endpoint is None:
         return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
-    return _format_endpoint(parsed_endpoint, drop_default_port=False)
+    resolution = resolve_provider_endpoint("custom", url)
+    if resolution.persisted_endpoint is not None:
+        return resolution.normalized_input
+    legacy_display = _format_endpoint(parsed_endpoint, drop_default_port=False)
+    has_scheme = parsed_endpoint[0]
+    legacy_resolution = resolve_provider_endpoint("custom", legacy_display)
+    if legacy_resolution.persisted_endpoint is not None:
+        return legacy_resolution.normalized_input if has_scheme else legacy_display
+
+    if not has_scheme:
+        explicit_legacy_resolution = resolve_provider_endpoint(
+            "custom",
+            f"http://{legacy_display}",
+        )
+        if explicit_legacy_resolution.persisted_endpoint is not None:
+            return legacy_display
+    return _INVALID_ENDPOINT_DISPLAY
 
 
 def normalize_generic_endpoint_for_compare(url: str | None) -> str:
@@ -235,7 +282,18 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
     parsed_endpoint = _parse_http_endpoint(url)
     if parsed_endpoint is None:
         return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
+    identity = canonical_connection_identity("custom", url)
+    if identity is not None:
+        return identity[1]
     return _format_endpoint(parsed_endpoint, drop_default_port=True)
+
+
+def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
+    """Resolve endpoint forms only for adapters governed by the new contract."""
+    if provider_key not in {"custom", "custom_2", "llama_cpp", "local_llamacpp"}:
+        return endpoint
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    return resolution.persisted_endpoint or endpoint
 
 
 def _parse_http_endpoint(

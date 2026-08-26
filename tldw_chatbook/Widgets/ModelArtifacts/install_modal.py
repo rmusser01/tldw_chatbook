@@ -10,13 +10,14 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox
 
+from ..modal_dismissal import SafeModalDismissMixin
 from .plan_panel import ModelPlanPanel
 
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
 
 
-class ModelInstallModal(ModalScreen[bool]):
+class ModelInstallModal(SafeModalDismissMixin, ModalScreen[bool]):
     """Return consent for a plan while leaving all work to the host screen."""
 
     DEFAULT_CSS = """
@@ -45,7 +46,8 @@ class ModelInstallModal(ModalScreen[bool]):
     }
     """
 
-    BINDINGS = [("escape", "cancel", "Close")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = ".model-install-modal"
 
     def __init__(
         self,
@@ -115,13 +117,14 @@ class ModelInstallModal(ModalScreen[bool]):
         self._acknowledged = event.value
         self.query_one(f"#{self.confirm_id}", Button).disabled = self.ungrantable
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Dismiss with the decision represented by the pressed control."""
         if event.button.id == self.confirm_id:
             self.dismiss(True)
         elif event.button.id == self.cancel_id:
-            self.dismiss(False)
+            await self.request_safe_cancel(source="visible")
 
-    def action_cancel(self) -> None:
+    async def _perform_safe_cancel(self, *, source: str) -> None:
         """Dismiss the modal without consent."""
-        self.dismiss(False)
+        del source
+        self.dismiss_safe_once(False)

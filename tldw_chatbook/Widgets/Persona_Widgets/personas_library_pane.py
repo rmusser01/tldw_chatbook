@@ -13,6 +13,7 @@ from textual.events import Resize
 from textual.widgets import Button, Input, ListItem, ListView, Static
 
 from .personas_messages import (
+    ActorPackImportRequested,
     PersonaActionRequested,
     PersonaEntityKind,
     PersonaEntitySelected,
@@ -87,7 +88,7 @@ class PersonasLibraryPane(Vertical):
     # Structure only: colors come from the app stylesheet
     # (.console-action-subdued rows, ListView ListItem.--highlight, and
     # ListItem.personas-library-row.is-active in the bundle).
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasLibraryPane #personas-library-rows ListItem {
         width: 100%;
         min-width: 0;
@@ -260,9 +261,24 @@ class PersonasLibraryPane(Vertical):
                 classes="console-action-secondary",
             )
             yield Button(
+                "New Actor Pack",
+                id="personas-library-new-actor-pack",
+                tooltip=(
+                    "Create a local actor with a required portrait and "
+                    "portable identity."
+                ),
+                classes="console-action-secondary",
+            )
+            yield Button(
                 "Import",
                 id="personas-library-import",
                 tooltip="Import a character card (PNG or JSON).",
+                classes="console-action-secondary",
+            )
+            yield Button(
+                "Import Actor Pack",
+                id="personas-library-import-actor-pack",
+                tooltip="Review and activate a portable .tldw-actor-pack archive.",
                 classes="console-action-secondary",
             )
             yield Button(
@@ -326,6 +342,17 @@ class PersonasLibraryPane(Vertical):
             "characters",
             "dictionaries",
             "lore",
+        )
+        self.query_one("#personas-library-new-actor-pack", Button).display = mode in (
+            "characters",
+            "personas",
+        )
+        self.query_one("#personas-library-import-actor-pack", Button).display = (
+            mode
+            in (
+                "characters",
+                "personas",
+            )
         )
         sort_visible = mode in ("characters", "personas")
         self._sort_visible = sort_visible
@@ -415,9 +442,7 @@ class PersonasLibraryPane(Vertical):
             if row.is_unsaved:
                 classes += " is-unsaved"
             # F-040: marked rows carry a glyph prefix on the name line.
-            name_text = (
-                f"● {row.name}" if dom_id in self._marked_ids else row.name
-            )
+            name_text = f"● {row.name}" if dom_id in self._marked_ids else row.name
             if row.meta:
                 item = ListItem(
                     Vertical(
@@ -438,7 +463,9 @@ class PersonasLibraryPane(Vertical):
                 items.append(item)
             else:
                 items.append(
-                    ListItem(Static(name_text, markup=False), id=dom_id, classes=classes)
+                    ListItem(
+                        Static(name_text, markup=False), id=dom_id, classes=classes
+                    )
                 )
         await list_view.extend(items)
         # F-040: a mark never outlives its row - a refresh that drops a
@@ -628,6 +655,16 @@ class PersonasLibraryPane(Vertical):
     def _import_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="import"))
+
+    @on(Button.Pressed, "#personas-library-new-actor-pack")
+    def _new_actor_pack_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaActionRequested(action="create_actor_pack"))
+
+    @on(Button.Pressed, "#personas-library-import-actor-pack")
+    def _import_actor_pack_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(ActorPackImportRequested())
 
     @on(Button.Pressed, "#personas-library-duplicate")
     def _duplicate_pressed(self, event: Button.Pressed) -> None:

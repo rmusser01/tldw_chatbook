@@ -10,10 +10,12 @@ inspector (T6) can render and filter uniformly.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 _MAX_TAGS = 5
+_RESERVED_EXTERNAL_PROFILE_ID = "__local__"
 
 
 @dataclass(frozen=True)
@@ -53,7 +55,12 @@ class HubTool:
 
 def _normalized_schema(raw: Any) -> dict | None:
     if isinstance(raw, dict) and raw:
-        return raw
+        # task-1337 (plan Task 8): defensively COPY a non-empty schema --
+        # aliasing the source mapping would let a later mutation of the
+        # inventory/record rewrite an already-derived HubTool's schema.
+        # Empty/non-dict values still normalize to None; no schema is ever
+        # synthesized for entries lacking one.
+        return copy.deepcopy(raw)
     return None
 
 
@@ -100,13 +107,15 @@ def local_tools_from_record(record: dict) -> list[HubTool]:
         One `HubTool` per tool in `discovery_snapshot["tools"]`, or an
         empty list when there is no snapshot.
     """
+    profile_id = _text(record.get("profile_id"))
+    if profile_id == _RESERVED_EXTERNAL_PROFILE_ID:
+        return []
     snapshot = record.get("discovery_snapshot")
     if not isinstance(snapshot, Mapping):
         return []
     raw_tools = snapshot.get("tools")
     if not isinstance(raw_tools, list):
         return []
-    profile_id = _text(record.get("profile_id"))
     server_key = f"local:{profile_id}"
     stale = not record.get("is_connected")
     tools: list[HubTool] = []

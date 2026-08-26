@@ -553,18 +553,33 @@ async def test_erroring_notes_seam_contributes_zero_rows_without_raising(
     assert all(row["provenance"]["source_type"] != "note" for row in result["results"])
 
 
-# An erroring seam that is the ONLY queried seam is still "available" (attribute
-# present), so the result is empty results, not a blocked outcome.
+# An erroring seam that is the ONLY queried seam must NOT report `blocked`:
+# the seam is configured, so "configure retrieval" is the wrong advice. That
+# intent is preserved. What changed (TASK-18903) is the rest of the sentence.
+#
+# This test used to assert the search returned a plain dict with zero results
+# -- i.e. a SUCCESSFUL search that matched nothing. It reasoned that an
+# erroring seam "is still available (attribute present)", which is exactly the
+# conflation that task removed: a seam that RAN AND THREW contributed nothing,
+# and its empty rows mean nothing. Worse, empty rows normalize to
+# `status="empty"`, which IS in `LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES`, so
+# the old behaviour let a total outage reach the RAG answer path and answer
+# from no context at all.
+#
+# Now: `failed` -- not `blocked` (the original intent), and not a silent
+# success (the defect).
 @pytest.mark.asyncio
-async def test_erroring_only_seam_returns_empty_results_not_blocked():
+async def test_erroring_only_seam_reports_failed_not_blocked_and_not_empty_success():
     notes_service = FakeNotesScopeService(error=RuntimeError("notes index unavailable"))
     app = SimpleNamespace(notes_scope_service=notes_service)
     service = LibraryLocalRagSearchService(app)
 
     result = await service.search("credential", ("notes",), "search", top_k=5)
 
-    assert not isinstance(result, LibraryRagSearchOutcome)
-    assert result["results"] == []
+    assert isinstance(result, LibraryRagSearchOutcome)
+    assert result.status == "failed", "a thrown seam is not a zero-row success"
+    assert result.status != "blocked", "the seam IS configured; setup advice is wrong"
+    assert result.recovery_state is not None
 
 
 # Unknown scope types are ignored quietly rather than raising or matching a seam.
@@ -1558,3 +1573,68 @@ class TestLibraryRagAnswerRealRuntime:
         assert outcome.recovery_state is not None
         assert outcome.recovery_state.status_label == "Index empty"
         assert outcome.recovery_state.stable_selector == "library-rag-empty-state"
+
+
+# --- TASK-3502 note-(a): the reranker's disclosure tags had ZERO UI
+# consumers, so a Hybrid Full user with a dead credential saw normal-looking
+# results. Before a consumer can be built, the tag has to actually REACH the
+# panel -- this is the trace, end to end through the two normalization hops
+# (`_semantic_row`, then `LibraryRagResultRow.from_result`). ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tag,detail",
+    [
+        ("reranking_degraded", "3/5 scorings failed"),
+        ("reranking_skipped", "provider call failed (fake)"),
+    ],
+)
+async def test_reranking_disclosure_tag_survives_into_the_panels_result_rows(
+    tag, detail
+):
+    """`enhanced_rag_service_v2._tag_first_result` writes the tag into the
+    FIRST engine result's `metadata`; `_semantic_row` copies the whole
+    metadata block into the row's `provenance`, and
+    `LibraryRagResultRow.from_result` copies that mapping wholesale -- so it
+    arrives on the outcome the Search/RAG panel renders, unchanged and
+    without any extra plumbing."""
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "note-chunk",
+                "score": 0.9,
+                "document": "Note evidence.",
+                "metadata": {
+                    "title": "Note doc",
+                    "source_id": "note-1",
+                    "source_type": "note",
+                    tag: detail,
+                },
+            },
+            {
+                "id": "note-chunk-2",
+                "score": 0.5,
+                "document": "More note evidence.",
+                "metadata": {
+                    "title": "Note doc 2",
+                    "source_id": "note-2",
+                    "source_type": "note",
+                },
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    outcome = await run_library_rag_search(
+        SimpleNamespace(library_rag_search_service=service),
+        LibraryRagSearchRequest(
+            query="credential", source_types=("notes",), mode="rag", top_k=5
+        ),
+    )
+
+    assert outcome.status == "ready"
+    assert outcome.results[0].provenance[tag] == detail
+    # ...and only on the row the engine tagged.
+    assert tag not in outcome.results[1].provenance

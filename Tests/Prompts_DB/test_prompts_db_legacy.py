@@ -812,11 +812,33 @@ class TestSearchFunctionality(BaseTestCase):
         self.assertIn("Shared Term Prompt", names)
         self.assertIn("Another Code Prompt", names)
 
-    def test_search_with_invalid_fts_syntax_raises_error(self):
-        """Verify that malformed FTS queries raise a DatabaseError."""
-        # An unclosed quote is invalid syntax
-        with self.assertRaises(DatabaseError):
-            self.db.search_prompts('invalid "syntax', search_fields=["name"])
+    def test_search_with_a_typed_quote_is_matched_literally(self):
+        """TASK-19558 inverted this test, deliberately.
+
+        It used to assert that ``invalid "syntax`` raises ``DatabaseError``
+        -- i.e. that a user typing a double quote into the prompt search box
+        got an error. That was not a contract, it was the symptom: the raw
+        ``search_query`` was bound straight to FTS5 MATCH, so an unbalanced
+        quote produced ``OperationalError('unterminated string')``. The
+        plain-text parameter now quotes what it is given as a literal
+        phrase, so the query simply matches nothing rather than failing, and
+        a caller that genuinely wants to supply an FTS5 expression passes it
+        through ``fts_match_query``.
+        """
+        results, total = self.db.search_prompts(
+            'invalid "syntax', search_fields=["name"]
+        )
+        self.assertEqual((results, total), ([], 0))
+
+    def test_search_still_forwards_a_caller_built_match_expression(self):
+        """The seam an expression-supplying caller uses is unchanged."""
+        results, total = self.db.search_prompts(
+            "ignored",
+            search_fields=["name"],
+            fts_match_query='"Code" OR "Explainer"',
+        )
+        self.assertGreater(total, 0)
+        self.assertIn("Code Explainer", {r["name"] for r in results})
 
 
 class TestStandaloneFunctionExports(BaseTestCase):

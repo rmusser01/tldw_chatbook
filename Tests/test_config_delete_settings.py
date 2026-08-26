@@ -2,12 +2,12 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import threading
 import time
 import tomllib
+from pathlib import Path
 
 import pytest
 import toml
@@ -540,12 +540,12 @@ def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
                 self._owner = None
             self._lock.release()
 
-    instrumented_lock = InstrumentedLock(config_module._CONFIG_FILE_LOCK)
-    monkeypatch.setattr(config_module, "_CONFIG_FILE_LOCK", instrumented_lock)
+    instrumented_lock = InstrumentedLock(config_module._settings_rebuild_lock())
+    monkeypatch.setattr(config_module, "_SETTINGS_REBUILD_LOCK", instrumented_lock)
     monkeypatch.setattr(
         config_module,
         "load_settings",
-        lambda *, force_reload=False: {},
+        lambda *, force_reload=False, reload_bootstrap=None: {},
     )
 
     def controlled_atomic_write(*args, **kwargs):
@@ -869,6 +869,147 @@ def test_generic_mutation_cannot_bypass_revisioned_section_owner(
         "before_replace",
     )
     assert config_path.read_bytes() == original
+
+
+def test_settings_mutation_precondition_rejects_inside_atomic_writer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, {"global": {"keep": True}})
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    original = config_path.read_bytes()
+    checks = []
+
+    result = config_module.apply_settings_mutation_to_cli_config(
+        {"global": {"stale": True}},
+        mutation_precondition=lambda: checks.append("checked") or False,
+    )
+
+    assert result == config_module.ConfigMutationResult(
+        False,
+        False,
+        None,
+        conflict=True,
+        conflict_reason="identity_changed",
+    )
+    assert checks == ["checked"]
+    assert config_path.read_bytes() == original
+
+
+def test_settings_locked_snapshot_precondition_observes_authoritative_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {"api_settings": {"moonshot": {"api_region": "china"}}},
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    snapshot = config_module.get_atomic_config_snapshot()
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"api_settings.moonshot": {"api_region": "global"}}
+    ).fully_applied
+    observed = []
+
+    result = config_module.apply_settings_mutation_to_cli_config(
+        {"chat_defaults": {"model": "stale-model"}},
+        locked_snapshot_precondition=lambda current: observed.append(current) or False,
+    )
+
+    assert result == config_module.ConfigMutationResult(
+        False,
+        False,
+        None,
+        conflict=True,
+        conflict_reason="identity_changed",
+    )
+    assert len(observed) == 1
+    assert observed[0].generation > snapshot.generation
+    assert observed[0].values["api_settings"]["moonshot"]["api_region"] == "global"
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"]["moonshot"]["api_region"] == "global"
+    assert "stale-model" not in config_path.read_text(encoding="utf-8")
+
+
+def test_runtime_generation_guard_linearizes_nonblocking_handoff_ack(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        ConsoleFirstChatIntent,
+        HandoffChannel,
+        PendingHandoffStore,
+    )
+
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 71)
+    pending = PendingHandoffStore()
+    pending.stage_reserved_console_first_chat(
+        ConsoleFirstChatIntent("future-session", "openai", "model-a", 71)
+    )
+    claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    writer_attempting = threading.Event()
+    writer_published = threading.Event()
+
+    def publish_generation() -> None:
+        writer_attempting.set()
+        with config_module._config_file_lock():
+            config_module._CONFIG_GENERATION += 1
+            writer_published.set()
+
+    writer = threading.Thread(target=publish_generation)
+
+    def acknowledge() -> bool:
+        writer.start()
+        assert writer_attempting.wait(timeout=1)
+        assert writer_published.is_set() is False
+        return pending.acknowledge_current(claim)
+
+    assert config_module.run_if_runtime_config_generation_current(
+        71,
+        acknowledge,
+    ) is True
+    writer.join(timeout=1)
+
+    assert writer.is_alive() is False
+    assert writer_published.is_set() is True
+    assert config_module._CONFIG_GENERATION == 72
+    assert pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT) is None
+
+
+def test_runtime_generation_guard_skips_ack_after_publication(monkeypatch) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 82)
+    acknowledged = []
+
+    assert config_module.run_if_runtime_config_generation_current(
+        81,
+        lambda: acknowledged.append(True) or True,
+    ) is False
+    assert acknowledged == []
+
+
+def test_runtime_generation_guard_callback_exception_does_not_poison_lock(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 83)
+
+    with pytest.raises(RuntimeError, match="callback failure"):
+        config_module.run_if_runtime_config_generation_current(
+            83,
+            lambda: (_ for _ in ()).throw(RuntimeError("callback failure")),
+        )
+
+    assert config_module.run_if_runtime_config_generation_current(
+        83,
+        lambda: True,
+    ) is True
+    with config_module._config_file_lock():
+        config_module._CONFIG_GENERATION += 1
+    assert config_module.run_if_runtime_config_generation_current(
+        83,
+        lambda: True,
+    ) is False
 
 
 @pytest.mark.parametrize("serialized", [False, True])

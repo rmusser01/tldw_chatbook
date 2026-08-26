@@ -60,6 +60,42 @@ def test_full_detail_builds_all_metadata_lines_in_order():
     assert state.read_later is True
 
 
+def test_viewer_state_exposes_truthful_local_provenance_and_representation():
+    """Info mode has display facts without reinterpreting stored content."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "media-7",
+            "title": "Source",
+            "type": "article",
+            "url": "https://example.test/original",
+            "content": "# Complete stored Markdown",
+        },
+        now=NOW,
+    )
+
+    assert state.backend == "local"
+    assert state.canonical_id == "local:media:7"
+    assert state.original_source == "https://example.test/original"
+    assert state.stored_representation == "Complete stored text"
+
+
+def test_viewer_state_preserves_explicit_server_provenance():
+    state = build_library_media_viewer_state(
+        {
+            "id": "42",
+            "title": "Server report",
+            "type": "plaintext",
+            "content": "Remote body",
+        },
+        backend="server",
+        canonical_id="server:media:42",
+        now=NOW,
+    )
+
+    assert state.backend == "server"
+    assert state.canonical_id == "server:media:42"
+
+
 def test_media_type_key_fallback():
     """Falls back to media_type when type is absent."""
     detail = {"media_id": "1", "title": "T", "media_type": "pdf"}

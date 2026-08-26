@@ -17,6 +17,8 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     SubAgentSummary,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -393,7 +395,13 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
     bridge.run_reply(
         conversation_id="conv-1",
         session_id=session.id,
-        resolution=object(),
+        resolution=ConsoleProviderResolution(
+            provider="Groq",
+            base_url="",
+            model="test-model",
+            ready=True,
+            execution_key="groq",
+        ),
         assistant_message_id=assistant.id,
         model="test-model",
         session_system_prompt="",
@@ -434,7 +442,9 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        status_line, steps_text, subagents_text = console._agent._console_agent_section_lines()
+        status_line, steps_text, subagents_text = (
+            console._agent._console_agent_section_lines()
+        )
 
         assert "fetch [docs] ok" in steps_text
         assert "\\[" not in steps_text
@@ -481,7 +491,9 @@ async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        status_line, steps_text, subagents_text = console._agent._console_agent_section_lines()
+        status_line, steps_text, subagents_text = (
+            console._agent._console_agent_section_lines()
+        )
 
         assert status_line == "Agent: done"
         assert "Paris" in steps_text
@@ -613,12 +625,15 @@ async def test_drilldown_falls_back_to_overview_after_conversation_switch():
 
         fake_bridge = _FakeBridge()
         console._console_agent_bridge = fake_bridge
-        console._current_console_rail_conversation_id = lambda: (
+        console._character._current_console_rail_conversation_id = lambda: (
             fake_bridge.active_conversation_id
         )
 
-        # Drill into the (only) sub-agent run of conv-A.
-        console._agent._toggle_console_agent_drilldown_from_subagents_click()
+        # Drill into the (only) sub-agent run of conv-A. TASK-4: the old
+        # cycling toggle is gone -- a row now resolves directly to its own
+        # run id (here that id is already known, matching a real click on
+        # that row).
+        console._agent._drill_into_console_agent_subagent("run-1")
         assert console._console_agent_drilldown_run_id == "run-1"
         status_line, _steps, _subagents = console._agent._console_agent_section_lines()
         assert status_line.startswith("Sub-agent ·")
@@ -662,7 +677,7 @@ async def test_drilldown_render_path_rejects_record_from_other_conversation():
                 return AgentLiveSnapshot()
 
         console._console_agent_bridge = _FakeBridge()
-        console._current_console_rail_conversation_id = lambda: "conv-active"
+        console._character._current_console_rail_conversation_id = lambda: "conv-active"
         # Bypass the click-handler's own conversation tracking to isolate
         # the render path's independent conversation_id verification.
         console._console_agent_drilldown_run_id = "run-x"
@@ -714,19 +729,17 @@ async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
                 }
 
         console._console_agent_bridge = _FakeBridge()
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._console_agent_drilldown_run_id = "run-x"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
-        monkeypatch.setattr(
-            "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 40
-        )
+        monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda *a, **k: 40)
         _status, steps_at_40, _subagents = console._agent._console_agent_section_lines()
 
-        monkeypatch.setattr(
-            "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 300
+        monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda *a, **k: 300)
+        _status, steps_at_300, _subagents = (
+            console._agent._console_agent_section_lines()
         )
-        _status, steps_at_300, _subagents = console._agent._console_agent_section_lines()
 
         # A bare `[:80]` slice (the pre-fix behavior) would make BOTH of
         # these identical (both capped at 80) regardless of the configured
@@ -773,7 +786,7 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
         console._current_console_rail_state = lambda: SimpleNamespace(agent_open=False)
 
@@ -820,7 +833,7 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
         fake_bridge = _FakeBridge()
         console._console_agent_bridge = fake_bridge
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
         console._current_console_rail_state = lambda: SimpleNamespace(agent_open=True)
 
@@ -874,7 +887,7 @@ async def test_view_full_log_loads_off_thread_then_opens_the_modal():
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         stack_len_before = len(host.screen_stack)
@@ -939,12 +952,18 @@ async def test_activate_native_console_session_clears_stale_drilldown():
         assert console._console_agent_drilldown_run_id is None
 
 
-# --- Finding D: repeated clicks on the combined sub-agents rail line must
-# reach every sub-agent run, not just the newest one. ---
+# --- Finding D (original): repeated clicks on the combined sub-agents rail
+# line had to reach every sub-agent run, not just the newest one -- the old
+# mechanism was a cycling toggle that stepped one run per click. TASK-4
+# (PR2b supervisor fleet) replaced that cycle with per-row click routing: a
+# specific row's own id now resolves directly to its own run, so "every run
+# is reachable" is proven by clicking rows out of order (not sequentially)
+# and confirming each lands on exactly the run it names -- the meaning
+# Finding D pinned, preserved through a different mechanism. ---
 
 
 @pytest.mark.asyncio
-async def test_subagents_click_cycles_through_every_run_then_overview():
+async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -986,20 +1005,279 @@ async def test_subagents_click_cycles_through_every_run_then_overview():
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot()
 
+            def historical_snapshot(self, conversation_id):
+                # Mirrors the real bridge's `_derive_historical_snapshot`
+                # (PR2b Task 4 fix): each row's `run_id` is the record's own
+                # permanent id, exactly what a real resumed conversation's
+                # rows now carry.
+                return AgentLiveSnapshot(
+                    subagents=tuple(
+                        SubAgentSummary(
+                            text=r["task"], status=r["status"], run_id=r["id"]
+                        )
+                        for r in self._RUNS
+                    )
+                )
+
         console._console_agent_bridge = _FakeBridge()
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
 
-        clicked_sequence = []
-        for _ in range(5):
-            console._agent._toggle_console_agent_drilldown_from_subagents_click()
-            clicked_sequence.append(console._console_agent_drilldown_run_id)
-            await pilot.pause()  # drain the background rail-sync worker
-
-        # newest -> mid -> oldest -> overview -> newest again (wraps).
-        assert clicked_sequence == [
+        rows = console._agent._console_agent_fleet_rows()
+        assert [row.row_id for row in rows] == [
             "run-newest",
             "run-mid",
             "run-oldest",
-            None,
-            "run-newest",
         ]
+
+        # Click rows out of order -- proves each row resolves DIRECTLY to
+        # its own run, not by stepping through a shared cursor.
+        console._agent._drill_into_console_agent_subagent(rows[2].row_id)
+        await pilot.pause()  # drain the background rail-sync worker
+        assert console._console_agent_drilldown_run_id == "run-oldest"
+
+        console._agent._drill_into_console_agent_subagent(rows[0].row_id)
+        await pilot.pause()
+        assert console._console_agent_drilldown_run_id == "run-newest"
+
+        console._agent._drill_into_console_agent_subagent(rows[1].row_id)
+        await pilot.pause()
+        assert console._console_agent_drilldown_run_id == "run-mid"
+
+        # The dedicated Back button (not a row) always returns to the
+        # overview directly, regardless of which row was last drilled into.
+        console._console_agent_drilldown_run_id = None
+        assert console._console_agent_drilldown_run_id is None
+
+
+# -- PR2b Task 5: fleet token rollup + per-row cancel (controller unit) ---
+
+
+@pytest.mark.asyncio
+async def test_console_agent_fleet_token_total_sums_live_handles():
+    """Sums `FleetHandle.total_tokens` off the LIVE fleet snapshot -- the
+    same source `_console_agent_fleet_rows` itself reads for the row
+    builders, so the ticker's aggregate and each row's own token segment
+    can never disagree. A still-running handle's 0 naturally contributes
+    nothing (no separate "terminal only" filter needed)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        handles = (
+            FleetHandle(
+                handle_id="h1",
+                run_id="run-1",
+                agent="a",
+                task="t1",
+                status="done",
+                total_tokens=100,
+            ),
+            FleetHandle(
+                handle_id="h2",
+                run_id="run-2",
+                agent="a",
+                task="t2",
+                status="running",
+                total_tokens=0,
+            ),
+            FleetHandle(
+                handle_id="h3",
+                run_id="run-3",
+                agent="a",
+                task="t3",
+                status="done",
+                total_tokens=250,
+            ),
+        )
+
+        class _FakeBridge:
+            def fleet_snapshot(self, conversation_id):
+                return list(handles) if conversation_id == "conv-A" else []
+
+        console._console_agent_bridge = _FakeBridge()
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
+
+        assert console._agent._console_agent_fleet_token_total() == 350
+        # An unrelated conversation id never sees this fleet's spend.
+        console._character._current_console_rail_conversation_id = lambda: "conv-other"
+        assert console._agent._console_agent_fleet_token_total() == 0
+
+
+@pytest.mark.asyncio
+async def test_console_agent_fleet_token_total_is_zero_with_no_bridge():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        console._console_agent_bridge = None
+        assert console._agent._console_agent_fleet_token_total() == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_console_agent_fleet_row_delegates_to_the_bridge():
+    """`_cancel_console_agent_fleet_row` forwards the ACTIVE conversation
+    id plus the row's own id straight through to `ConsoleAgentBridge.
+    cancel_subagent` -- no resolution step, matching how a live row's
+    `row_id` already IS the handle id (`_fleet_row_from_handle`)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        calls = []
+
+        class _FakeBridge:
+            def cancel_subagent(self, conversation_id, handle_id):
+                calls.append((conversation_id, handle_id))
+                return True
+
+        console._console_agent_bridge = _FakeBridge()
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
+
+        assert console._agent._cancel_console_agent_fleet_row("h1") is True
+        assert calls == [("conv-A", "h1")]
+
+
+@pytest.mark.asyncio
+async def test_cancel_console_agent_fleet_row_returns_false_with_no_bridge():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        console._console_agent_bridge = None
+        assert console._agent._cancel_console_agent_fleet_row("h1") is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_console_agent_fleet_row_returns_false_with_no_row_id():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def cancel_subagent(self, conversation_id, handle_id):
+                raise AssertionError("must not be called with an empty row id")
+
+        console._console_agent_bridge = _FakeBridge()
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
+        assert console._agent._cancel_console_agent_fleet_row("") is False
+
+
+# -- PR3a-1 Task 6b (audit F1): a LIVE child's steps exist nowhere but the
+# -- bridge's own per-run slot
+#
+# `AgentService` persists a run's steps to `AgentRunsDB` once, at the end
+# (`_persist`), so `subagent_run`'s record carries an EMPTY step list for
+# the whole time a child is actually working -- and a fleet child now works
+# on past the turn that spawned it, so "the whole time" can be minutes with
+# no run in flight at all. Keying `_live` per run (the F1 fix) is what makes
+# that progress addressable; this is the surface it is addressed FROM.
+
+
+@pytest.mark.asyncio
+async def test_drilldown_shows_a_live_childs_steps_before_they_reach_the_db():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def subagent_run(self, run_id):
+                # Row exists from `create_run`; steps land only at the end.
+                return {
+                    "id": run_id,
+                    "conversation_id": "conv-A",
+                    "status": "running",
+                    "task": "long job",
+                    "steps": [],
+                }
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot()
+
+            def live_run_snapshot(self, conversation_id, run_id):
+                return AgentLiveSnapshot(
+                    status="running",
+                    step=2,
+                    steps=(AgentLiveStep("tool_result", "read notes.md", "subagent"),),
+                )
+
+        console._console_agent_bridge = _FakeBridge()
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_run_id = "run-child"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
+
+        status_line, steps_text, task_text = (
+            console._agent._console_agent_section_lines()
+        )
+
+        assert status_line.startswith("Sub-agent ·")
+        assert "read notes.md" in steps_text, (
+            "a live child's steps were dropped: the DB has none yet"
+        )
+        assert task_text == "long job"
+
+
+@pytest.mark.asyncio
+async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
+    """The DB record is COMPLETE; the live slot only keeps the last few.
+
+    So the live feed fills the gap and never replaces the record -- a
+    finished child must still drill in to its full persisted history.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def subagent_run(self, run_id):
+                return {
+                    "id": run_id,
+                    "conversation_id": "conv-A",
+                    "status": "done",
+                    "task": "long job",
+                    "steps": [{"kind": "tool_result", "summary": "persisted step"}],
+                }
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot()
+
+            def live_run_snapshot(self, conversation_id, run_id):
+                return AgentLiveSnapshot(
+                    status="done",
+                    step=1,
+                    steps=(AgentLiveStep("tool_result", "live step", "subagent"),),
+                )
+
+        console._console_agent_bridge = _FakeBridge()
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_run_id = "run-child"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
+
+        _status, steps_text, _task = console._agent._console_agent_section_lines()
+
+        assert "persisted step" in steps_text
+        assert "live step" not in steps_text

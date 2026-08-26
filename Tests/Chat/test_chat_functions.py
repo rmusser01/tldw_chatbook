@@ -21,6 +21,8 @@ from tldw_chatbook.config import CONFIG_TOML_CONTENT, RuntimeConfigSnapshot
 import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
 import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_api_calls_module
 from tldw_chatbook.Chat.Chat_Functions import (
+    API_CALL_HANDLERS,
+    EPHEMERAL_GROUPING_ENDPOINTS,
     chat_api_call,
     chat,
     save_chat_history_to_db_wrapper,
@@ -31,6 +33,7 @@ from tldw_chatbook.Chat.Chat_Functions import (
     process_user_input,
     ChatDictionary,
 )
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.Chat_Deps import ChatAuthenticationError, ChatAPIError
 #
 #######################################################################################################################
@@ -64,6 +67,36 @@ DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 DUMMY_ANTHROPIC_API_KEY = "DUMMY_ANTHROPIC_API_KEY"
 DUMMY_HUGGINGFACE_API_KEY = "DUMMY_HUGGINGFACE_API_KEY"
 DUMMY_HUGGINGFACE_SECRET_VALUE = "DUMMY_HUGGINGFACE_SECRET_VALUE"
+
+
+@pytest.mark.parametrize("endpoint", sorted(API_CALL_HANDLERS))
+def test_chat_api_handler_matrix_strips_or_preserves_ephemeral_marker(
+    monkeypatch, endpoint
+):
+    captured = {}
+
+    def handler(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setitem(chat_functions_module.API_CALL_HANDLERS, endpoint, handler)
+    messages = [
+        {
+            "role": "user",
+            "content": "context",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        }
+    ]
+    chat_functions_module.chat_api_call(endpoint, messages_payload=messages)
+
+    sent = captured[
+        chat_functions_module.PROVIDER_PARAM_MAP[endpoint]["messages_payload"]
+    ]
+    if endpoint in EPHEMERAL_GROUPING_ENDPOINTS:
+        assert sent[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+    else:
+        assert EPHEMERAL_ORIGIN_KEY not in sent[0]
+    assert messages[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
 
 
 def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
@@ -212,8 +245,8 @@ def test_chat_with_llama_posts_to_v1_chat_completions_regardless_of_suffix(
         ),
     )
     monkeypatch.setattr(
-        LLM_API_Calls_Local.requests,
-        "Session",
+        LLM_API_Calls_Local,
+        "create_default_session",
         lambda: _CapturedSession(captured, response_data),
     )
 
@@ -256,7 +289,16 @@ class _CapturedSession:
         self.closed = True
         return None
 
-    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+    def post(
+        self,
+        url,
+        *,
+        headers=None,
+        json=None,
+        stream=False,
+        timeout=None,
+        allow_redirects=None,
+    ):
         self._captured.update(
             {
                 "url": url,
@@ -413,9 +455,20 @@ class TestChatApiCall:
         assert '{"type":"error"' in exc_info.value.message
 
     def test_unsupported_endpoint_raises_error(self, mock_handlers):
+        """TASK-17165 changed this contract deliberately: an UNRECOGNISED
+        endpoint is no longer echoed back, because the sink cannot tell a
+        typo from a credential a mis-ordered caller put there (TASK-17065).
+        The message names the valid endpoints instead, which serves the typo
+        case better than repeating the typo."""
         mock_handlers.get.return_value = None
-        with pytest.raises(ValueError, match="Unsupported API endpoint: unsupported"):
+        with pytest.raises(ValueError, match="Unsupported API endpoint") as excinfo:
             chat_api_call("unsupported", messages_payload=[])
+
+        assert "redacted" in str(excinfo.value)
+        assert "unsupported" not in str(excinfo.value).replace(
+            "Unsupported API endpoint", ""
+        )
+        assert "Valid endpoints:" in str(excinfo.value)
 
     def test_http_error_401_raises_auth_error(self, mock_handlers, mocker):
         mock_response = MagicMock()
@@ -551,8 +604,8 @@ class TestProviderRequestPayloads:
             ),
         )
         monkeypatch.setattr(
-            llm_api_calls_module.requests,
-            "Session",
+            llm_api_calls_module,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -590,8 +643,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -629,8 +682,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -668,8 +721,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -695,8 +748,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ),
@@ -717,6 +770,69 @@ class TestProviderRequestPayloads:
         assert "max_tokens" not in captured["json"]
         assert "max_output_tokens" not in captured["json"]
 
+    def test_gpt_5_6_terra_vision_schema_reaches_chat_completions_payload(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        image_part = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,VEVSUkE="},
+        }
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "visual_compaction_evaluation",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Evaluate this image."},
+                    image_part,
+                ],
+            }
+        ]
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "create_default_session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
+            ),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=messages,
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-5.6-terra",
+            streaming=False,
+            max_tokens=4096,
+            response_format=response_format,
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/chat/completions"
+        assert captured["json"]["messages"] == messages
+        assert captured["json"]["messages"][0]["content"][1] == image_part
+        assert captured["json"]["response_format"] == response_format
+        assert captured["json"]["max_completion_tokens"] == 4096
+        assert "input" not in captured["json"]
+        assert "text" not in captured["json"]
+        assert "max_output_tokens" not in captured["json"]
+
     @pytest.mark.parametrize("model", ["o3", "openai/gpt-5.6-terra"])
     def test_openai_reasoning_none_for_non_gpt_5_6_uses_responses_api(
         self, monkeypatch, model
@@ -730,8 +846,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, {"output_text": "OK"}),
         )
 
@@ -759,8 +875,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, {"output_text": "OK"}),
         )
 
@@ -794,8 +910,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, {"output_text": "OK"}),
         )
 
@@ -839,8 +955,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, response_data),
         )
 
@@ -887,8 +1003,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, response_events),
         )
 
@@ -930,8 +1046,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, response_data),
         )
 
@@ -970,8 +1086,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(captured, response_data),
         )
         monkeypatch.setattr(
@@ -1004,8 +1120,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1053,8 +1169,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1105,8 +1221,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1143,8 +1259,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1186,8 +1302,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1225,8 +1341,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1258,7 +1374,11 @@ class TestProviderRequestPayloads:
 
         captured = {}
         warnings = []
-        monkeypatch.setattr(LLM_API_Calls.logger, "warning", warnings.append)
+        monkeypatch.setattr(
+            LLM_API_Calls.logger,
+            "warning",
+            lambda message, *args, **kwargs: warnings.append(str(message) % args),
+        )
         monkeypatch.setattr(
             LLM_API_Calls,
             "load_settings",
@@ -1272,8 +1392,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1302,9 +1422,11 @@ class TestProviderRequestPayloads:
         assert "temperature" not in payload
         assert "top_p" not in payload
         assert "top_k" not in payload
+        # TASK-18414: the suppression is no longer a Sonnet-5 name check, so the
+        # warning names the model that rejects the parameters instead.
         assert warnings == [
-            "Anthropic: omitting temperature/top_p/top_k because Claude Sonnet 5 "
-            "requires default sampling."
+            "Anthropic: omitting temperature/top_p/top_k because model "
+            "claude-sonnet-5 rejects sampling parameters."
         ]
 
     @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
@@ -1322,8 +1444,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1370,8 +1492,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1416,8 +1538,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1460,8 +1582,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1501,8 +1623,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {
@@ -1543,8 +1665,8 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(
-            LLM_API_Calls.requests,
-            "Session",
+            LLM_API_Calls,
+            "create_default_session",
             lambda: _CapturedSession(
                 captured,
                 {

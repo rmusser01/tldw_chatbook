@@ -1,8 +1,14 @@
 """Focused Pilot tests for shared managed-model controls."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from textual import events, on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Static
 
@@ -11,6 +17,15 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     PreflightReport,
 )
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef, ProvenanceClass
+from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportRequested
+
+
+_BUNDLED_CSS = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
 
 
 def _report(
@@ -53,7 +68,7 @@ def _report(
     )
 
 
-class _PanelApp(App):
+class _PanelApp(ConsolidatedCSSApp):
     def __init__(
         self,
         report: PreflightReport,
@@ -74,12 +89,18 @@ class _PanelApp(App):
         )
 
 
-class _ModalApp(App):
+class _ModalApp(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         return []
 
 
-class _ProgressApp(App):
+class _StyledModalApp(_ModalApp):
+    """Modal harness using the exact stylesheet loaded by the production app."""
+
+    CSS_PATH = _BUNDLED_CSS
+
+
+class _ProgressApp(ConsolidatedCSSApp):
     def __init__(self, initial=None) -> None:
         self.initial = initial
         super().__init__()
@@ -88,6 +109,18 @@ class _ProgressApp(App):
         from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
         yield ModelInstallProgress(self.initial)
+
+
+def test_progress_widget_idle_bar_is_hidden_before_mount() -> None:
+    """The idle bar must be safe before Textual finishes mounting its children."""
+    from textual.widgets import ProgressBar
+
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    widget = ModelInstallProgress()
+    bar = next(item for item in widget.compose() if isinstance(item, ProgressBar))
+
+    assert bar.display is False
 
 
 @pytest.mark.asyncio
@@ -148,9 +181,7 @@ async def test_plan_panel_renders_selected_file_details_as_plain_bounded_text(
     )
     app = _PanelApp(
         _report(tmp_path / "managed"),
-        selected_file_details=(
-            ("nested/model [q4].gguf", 1_234_567, digest, source),
-        ),
+        selected_file_details=(("nested/model [q4].gguf", 1_234_567, digest, source),),
     )
 
     async with app.run_test() as pilot:
@@ -216,6 +247,147 @@ async def test_confirm_and_cancel_return_decisions(tmp_path: Path) -> None:
         await pilot.click("#model-install-cancel")
         await pilot.pause()
         assert decisions == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_runtime_choice_modal_explains_and_returns_explicit_provider() -> None:
+    """Runtime handoff is an informed choice and cannot start a server itself."""
+    from tldw_chatbook.Widgets.ModelArtifacts import ManagedGGUFRuntimeChoiceModal
+
+    app = _ModalApp()
+    decisions: list[str | None] = []
+    async with app.run_test() as pilot:
+        await app.push_screen(ManagedGGUFRuntimeChoiceModal(), decisions.append)
+        await pilot.pause()
+
+        painted = "\n".join(
+            str(item.renderable) for item in app.screen.query(Static)
+        )
+        assert "Llama.cpp" in str(
+            app.screen.query_one("#managed-gguf-runtime-llamacpp", Button).label
+        )
+        assert "Llamafile" in str(
+            app.screen.query_one("#managed-gguf-runtime-llamafile", Button).label
+        )
+        assert "does not activate it or start a server" in painted
+        assert app.focused is app.screen.query_one(
+            "#managed-gguf-runtime-llamacpp", Button
+        )
+
+        await pilot.click("#managed-gguf-runtime-llamacpp")
+        await pilot.pause()
+
+        await app.push_screen(ManagedGGUFRuntimeChoiceModal(), decisions.append)
+        await pilot.click("#managed-gguf-runtime-llamafile")
+        await pilot.pause()
+
+        await app.push_screen(ManagedGGUFRuntimeChoiceModal(), decisions.append)
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert decisions == ["llamacpp", "llamafile", None]
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_model_install_library_modal_contract_exact_negative_once(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    app = _ModalApp()
+    results: list[bool] = []
+    modal = ModelInstallModal(
+        _report(tmp_path / "managed", license_id="NOASSERTION"),
+        model_label="Parakeet v2",
+        required_acknowledgment="I reviewed the source.",
+    )
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        assert modal.query_one(".model-install-modal")
+
+        if source == "visible":
+            await pilot.click("#model-install-cancel")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert len(results) == 1
+    assert results[0] is False
+    assert modal._acknowledged is False
+
+
+@pytest.mark.asyncio
+async def test_model_install_library_modal_contract_inside_and_non_primary_stay_open(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    app = _ModalApp()
+    results: list[bool] = []
+    modal = ModelInstallModal(_report(tmp_path / "managed"), model_label="Parakeet v2")
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        await pilot.click(".model-plan-panel")
+        event = events.Click(
+            modal,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=3,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=0,
+            screen_y=0,
+        )
+        await modal._dispatch_message(event)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert results == []
+
+
+@pytest.mark.asyncio
+async def test_model_install_library_modal_contract_positive_is_exact_true(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    app = _ModalApp()
+    results: list[bool] = []
+    modal = ModelInstallModal(_report(tmp_path / "managed"), model_label="Parakeet v2")
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        await pilot.click("#model-install-confirm")
+        await pilot.pause()
+
+    assert len(results) == 1
+    assert results[0] is True
+    assert type(results[0]) is bool
+
+
+@pytest.mark.asyncio
+async def test_model_install_repeated_input_dismisses_once(tmp_path: Path) -> None:
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    app = _ModalApp()
+    results: list[bool] = []
+    modal = ModelInstallModal(_report(tmp_path / "managed"), model_label="Parakeet v2")
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        await pilot.press("escape", "escape")
+        await pilot.pause()
+
+    assert results == [False]
 
 
 @pytest.mark.asyncio
@@ -400,7 +572,7 @@ async def test_progress_callback_marshals_across_threads_not_direct_mutation() -
         make_progress_callback,
     )
 
-    class _HostApp(App):
+    class _HostApp(ConsolidatedCSSApp):
         """Mirrors every real host's own wiring, not CuratedView's specifically."""
 
         def compose(self) -> ComposeResult:
@@ -411,7 +583,9 @@ async def test_progress_callback_marshals_across_threads_not_direct_mutation() -
             self.query_one(ModelInstallProgress).update_progress(event.progress)
 
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
-    event = AcquisitionProgress("fetch", reference, "encoder.onnx", 1_048_576, 2_097_152)
+    event = AcquisitionProgress(
+        "fetch", reference, "encoder.onnx", 1_048_576, 2_097_152
+    )
 
     app = _HostApp()
     async with app.run_test() as pilot:
@@ -427,7 +601,9 @@ async def test_progress_callback_marshals_across_threads_not_direct_mutation() -
         def _invoke_off_thread() -> None:
             try:
                 callback(event)
-            except BaseException as exc:  # pragma: no cover - fails the assertions below
+            except (
+                BaseException
+            ) as exc:  # pragma: no cover - fails the assertions below
                 errors.append(exc)
 
         thread = threading.Thread(target=_invoke_off_thread)
@@ -442,3 +618,375 @@ async def test_progress_callback_marshals_across_threads_not_direct_mutation() -
 
         await pilot.pause()
         assert "encoder.onnx" in str(detail.renderable)
+
+
+@pytest.mark.asyncio
+async def test_unready_root_activation_is_keyboard_reachable() -> None:
+    """A valid installed root can be activated before readiness exists."""
+    from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
+        ActivationRequested,
+        ModelActivationControls,
+    )
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+
+    class _ActivationApp(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            self.requested: list[ArtifactRef] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield ModelActivationControls(
+                reference,
+                active=False,
+                ready=False,
+                allow_activation=True,
+            )
+
+        def on_activation_requested(self, event: ActivationRequested) -> None:
+            self.requested.append(event.reference)
+
+    app = _ActivationApp()
+    async with app.run_test() as pilot:
+        activate = app.query_one(".model-activate", Button)
+        assert activate.disabled is False
+        activate.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert app.requested == [reference]
+
+
+@pytest.mark.asyncio
+async def test_default_unready_controls_keep_activation_visible_but_disabled() -> None:
+    """Legacy callers retain corrupt-model recovery controls without activation."""
+    from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
+        ActivationRequested,
+        ModelActivationControls,
+    )
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+
+    class _RecoveryApp(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            self.requested: list[ArtifactRef] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield ModelActivationControls(reference, active=False, ready=False)
+
+        def on_activation_requested(self, event: ActivationRequested) -> None:
+            self.requested.append(event.reference)
+
+    app = _RecoveryApp()
+    async with app.run_test() as pilot:
+        controls = app.query_one(ModelActivationControls)
+        activate = app.query_one(".model-activate", Button)
+        assert activate.disabled is True
+
+        controls.set_pending(True)
+        controls.set_pending(False)
+        await pilot.pause()
+        assert activate.disabled is True
+
+        activate.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert app.requested == []
+
+
+class _ImportControlApp(ConsolidatedCSSApp):
+    """Capture local-import requests through Textual's real message route."""
+
+    def __init__(self, source: Path, *, pending: bool = False) -> None:
+        self.source = source
+        self.pending = pending
+        self.received: list[Path] = []
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportControls
+
+        yield LocalGGUFImportControls(self.source, pending=self.pending)
+
+    @on(LocalGGUFImportRequested)
+    def _capture_import_request(self, event: LocalGGUFImportRequested) -> None:
+        self.received.append(event.path)
+
+
+class _StyledImportControlApp(_ImportControlApp):
+    """Import-control harness using the production stylesheet bundle."""
+
+    CSS_PATH = _BUNDLED_CSS
+
+
+def _painted_text(app: App) -> str:
+    """Return the text actually emitted by the screen compositor."""
+    return "".join(
+        segment.text
+        for strip in app.screen._compositor.render_strips()
+        for segment in strip
+    )
+
+
+def _painted_region_text(app: App, widget: Static) -> str:
+    """Return ASCII text the compositor paints inside one widget's region."""
+    lines: list[str] = []
+    for y in range(widget.region.y, widget.region.bottom):
+        cursor = 0
+        parts: list[str] = []
+        for segment in app.screen._compositor.render_strips()[y]:
+            next_cursor = cursor + segment.cell_length
+            start = max(widget.region.x, cursor)
+            end = min(widget.region.right, next_cursor)
+            if start < end:
+                parts.append(segment.text[start - cursor : end - cursor])
+            cursor = next_cursor
+        lines.append("".join(parts))
+    return "".join(lines)
+
+
+def _relative_luminance(color) -> float:
+    """Return WCAG relative luminance for a compositor-painted Rich colour."""
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _contrast(first, second) -> float:
+    """Return the WCAG contrast ratio of two compositor-painted colours."""
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_foreground_and_background(
+    app: App, widget: Button
+) -> tuple[object, object]:
+    """Return the painted colours for the first visible button-label glyph."""
+    for y in range(widget.region.y, widget.region.bottom):
+        cursor = 0
+        for segment in app.screen._compositor.render_strips()[y]:
+            next_cursor = cursor + segment.cell_length
+            overlaps = cursor < widget.region.right and next_cursor > widget.region.x
+            if overlaps and segment.text.strip() and segment.style is not None:
+                foreground = segment.style.color
+                background = segment.style.bgcolor
+                if foreground is not None and background is not None:
+                    return foreground, background
+            cursor = next_cursor
+    raise AssertionError(f"no painted glyph colours inside {widget.region!r}")
+
+
+@pytest.mark.asyncio
+async def test_unmanaged_import_control_posts_the_exact_selected_path(
+    tmp_path: Path,
+) -> None:
+    """The reusable row control sends intent only, preserving the selected Path."""
+    source = tmp_path / "outside.gguf"
+    app = _ImportControlApp(source)
+
+    async with app.run_test() as pilot:
+        await pilot.click(".model-import")
+        await pilot.pause()
+
+    assert app.received == [source]
+
+
+@pytest.mark.asyncio
+async def test_pending_unmanaged_import_control_is_disabled_and_posts_no_intent(
+    tmp_path: Path,
+) -> None:
+    """A pending import cannot be started a second time through the row action."""
+    app = _ImportControlApp(tmp_path / "outside.gguf", pending=True)
+
+    async with app.run_test() as pilot:
+        control = app.query_one(".model-import", Button)
+        assert control.disabled is True
+        control.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert app.received == []
+
+
+def test_pending_import_handler_does_not_post_when_dispatched_directly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The pending guard remains necessary even if an event bypasses disabled UI."""
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportControls
+
+    control = LocalGGUFImportControls(tmp_path / "outside.gguf", pending=True)
+    posted: list[object] = []
+    stopped: list[bool] = []
+    monkeypatch.setattr(control, "post_message", posted.append)
+
+    control.on_button_pressed(SimpleNamespace(stop=lambda: stopped.append(True)))
+
+    assert stopped == [True]
+    assert posted == []
+
+
+@pytest.mark.asyncio
+async def test_pending_import_action_has_three_to_one_painted_contrast() -> None:
+    """The production stylesheet keeps a pending Import label legible."""
+    app = _StyledImportControlApp(Path("/private/model.gguf"), pending=True)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        button = app.query_one(".model-import", Button)
+        foreground, background = _painted_foreground_and_background(app, button)
+
+    assert _contrast(foreground, background) >= 3.0
+
+
+@pytest.mark.asyncio
+async def test_local_import_modal_states_copy_original_and_compatibility_truth(
+    tmp_path: Path,
+) -> None:
+    """Consent says exactly what local import will and will not establish."""
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportConsentModal
+
+    source = tmp_path / "user [private].gguf"
+    app = _ModalApp()
+    async with app.run_test() as pilot:
+        await app.push_screen(LocalGGUFImportConsentModal(source, 4_194_304))
+        await pilot.pause()
+        statics = list(app.screen.query(Static))
+        text = "\n".join(str(widget.renderable) for widget in statics)
+
+    assert source.name in text
+    assert str(source) in text
+    assert "4.0 MiB" in text
+    assert "managed copy" in text
+    assert "original stays in place" in text
+    assert "License and runtime compatibility are not verified" in text
+    assert all(widget._render_markup is False for widget in statics)
+
+
+@pytest.mark.asyncio
+async def test_local_import_modal_confirm_cancel_and_escape_return_booleans(
+    tmp_path: Path,
+) -> None:
+    """Every consent exit returns a boolean decision without starting import work."""
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportConsentModal
+
+    source = tmp_path / "outside.gguf"
+    app = _ModalApp()
+    decisions: list[bool] = []
+    async with app.run_test() as pilot:
+        await app.push_screen(LocalGGUFImportConsentModal(source, 1), decisions.append)
+        await pilot.pause()
+        confirm = app.screen.query_one("#local-gguf-import-confirm", Button)
+        cancel = app.screen.query_one("#local-gguf-import-cancel", Button)
+        await pilot.press("tab")
+        assert app.focused is cancel
+        await pilot.press("tab")
+        assert app.focused is confirm
+        await pilot.press("shift+tab")
+        assert app.focused is cancel
+        await pilot.press("tab")
+        assert app.focused is confirm
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await app.push_screen(LocalGGUFImportConsentModal(source, 1), decisions.append)
+        await pilot.pause()
+        await pilot.press("tab")
+        assert app.focused is app.screen.query_one("#local-gguf-import-cancel", Button)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await app.push_screen(LocalGGUFImportConsentModal(source, 1), decisions.append)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert decisions == [True, False, False]
+
+
+@pytest.mark.asyncio
+async def test_long_path_consent_keeps_facts_and_actions_painted_at_80_columns() -> (
+    None
+):
+    """The 80x24 production modal scrolls facts without clipping its actions."""
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportConsentModal
+
+    source = Path("/").joinpath(*(["very-long-directory-name"] * 24), "model.gguf")
+    assert len(str(source)) >= 500
+    app = _StyledModalApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.push_screen(LocalGGUFImportConsentModal(source, 4_194_304))
+        await pilot.pause()
+        cancel = app.screen.query_one("#local-gguf-import-cancel", Button)
+        confirm = app.screen.query_one("#local-gguf-import-confirm", Button)
+        painted = _painted_text(app)
+
+        for button, label in ((cancel, "Cancel"), (confirm, "Import")):
+            assert button in app.screen._compositor.visible_widgets
+            assert 0 <= button.region.x
+            assert button.region.right <= app.size.width
+            assert 0 <= button.region.y
+            assert button.region.bottom <= app.size.height
+            assert label in painted
+
+        for protected_fact in (
+            "managed copy",
+            "original stays in place",
+            "License and runtime compatibility are not verified",
+        ):
+            assert protected_fact in painted
+        source_path = app.screen.query(Static)[1]
+        assert _painted_region_text(app, source_path).rstrip() == str(source)
+
+        await pilot.press("tab")
+        assert app.focused is cancel
+        await pilot.press("tab")
+        assert app.focused is confirm
+
+
+@pytest.mark.asyncio
+async def test_progress_widget_reuses_byte_bar_for_local_copy_only() -> None:
+    """Local import shares the stable display; only copy is a byte phase."""
+    from tldw_chatbook.Model_Artifacts import LocalGGUFImportProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    events = (
+        LocalGGUFImportProgress("copy", "outside.gguf", 512, 1024),
+        LocalGGUFImportProgress("inspect", None, 0, 0),
+        LocalGGUFImportProgress("verify", None, 0, 0),
+        LocalGGUFImportProgress("finalize", None, 0, 0),
+    )
+    expected_labels = (
+        "Copying model into Chatbook",
+        "Checking GGUF structure",
+        "Verifying managed copy",
+        "Finalizing managed model",
+    )
+    app = _ProgressApp()
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        bar = widget.query_one("#model-install-progress-bar")
+        for index, (event, expected_label) in enumerate(zip(events, expected_labels)):
+            widget.update_progress(event)
+            await pilot.pause()
+            text = "\n".join(str(item.renderable) for item in widget.query(Static))
+            assert expected_label in text
+            assert bar.display is (index == 0)
+            if index == 0:
+                assert "outside.gguf" in text
+                assert "/" in text
+            else:
+                assert "outside.gguf" not in text
+                assert "/" not in text

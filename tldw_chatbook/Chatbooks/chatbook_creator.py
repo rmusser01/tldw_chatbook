@@ -16,7 +16,7 @@ import threading
 import zipfile
 import hashlib
 import html
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -34,9 +34,16 @@ from .chatbook_models import (
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
+from ..Chat.provider_continuation import (
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
+)
+from ..Chat.assistant_generation_state import normalize_assistant_generation_state
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..config import load_console_library_migration_seed
+from ..Prompt_Management.prompt_chatbook_record import encode_chatbook_prompt_record
 from ..STT.persistence import load_transcription_provenance_document
 from ..Utils.input_validation import sanitize_string
 from ..Utils.path_validation import validate_filename
@@ -81,6 +88,30 @@ class ExportProgress:
 
 class ChatbookExportCancelled(Exception):
     """Raised internally when cancel_check() returns True at a checkpoint."""
+
+
+class _ConversationGraphProjectionError(RuntimeError):
+    """Raised when a V2 export cannot read the complete message graph."""
+
+
+class PromptChatbookExportError(RuntimeError):
+    """Report one bounded Prompt collection failure.
+
+    Attributes:
+        archive_item_id: Opaque archive-local Prompt identifier.
+        category: Fixed stage where collection failed.
+    """
+
+    def __init__(self, archive_item_id: str, category: str) -> None:
+        self.archive_item_id = archive_item_id
+        self.category = category
+        super().__init__("Unable to export one or more Prompts.")
+
+    def __repr__(self) -> str:
+        return (
+            "PromptChatbookExportError("
+            f"archive_item_id={self.archive_item_id!r}, category={self.category!r})"
+        )
 
 
 class ChatbookCreator:
@@ -249,7 +280,7 @@ class ChatbookCreator:
             # Initialize manifest
             logger.info("ChatbookCreator.create_chatbook: Initializing manifest")
             manifest = ChatbookManifest(
-                version=ChatbookVersion.V1,
+                version=ChatbookVersion.V2,
                 name=name,
                 description=description,
                 author=author,
@@ -418,6 +449,18 @@ class ChatbookCreator:
                     "auto_included": list(self.auto_included_characters),
                 },
             )
+        except PromptChatbookExportError as exc:
+            logger.error(
+                "ChatbookCreator.create_chatbook: Prompt export failed "
+                "item={} category={}",
+                exc.archive_item_id,
+                exc.category,
+            )
+            dependency_info = {
+                "missing_dependencies": list(self.missing_dependencies),
+                "auto_included": list(self.auto_included_characters),
+            }
+            return False, "Unable to export one or more Prompts.", dependency_info
         except Exception as e:
             logger.opt(exception=True).error(
                 "ChatbookCreator.create_chatbook: Error creating chatbook"
@@ -454,7 +497,11 @@ class ChatbookCreator:
             )
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_creator")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
             sidecar_path=get_user_data_dir()
@@ -482,8 +529,9 @@ class ChatbookCreator:
                     )
                     continue
 
-                # Get DB messages and merge any sidecar RAG/citation context.
-                db_messages = db.get_messages_for_conversation(conv_id)
+                # V2 is a graph package, so include inactive variants and
+                # tombstones rather than flattening the currently visible path.
+                db_messages = self._conversation_graph_messages(db, str(conv_id))
                 context_messages = conversation_service.get_messages_with_context(
                     conv_id
                 )
@@ -502,8 +550,8 @@ class ChatbookCreator:
                 if hasattr(last_modified, "isoformat"):
                     last_modified = last_modified.isoformat()
 
-                exported_messages = []
-                citation_messages = []
+                exported_messages: list[dict[str, Any]] = []
+                citation_messages: list[dict[str, Any]] = []
                 # Positions >= 1 are batch-fetched per CHUNK of messages —
                 # batching keeps the query count low while bounding peak
                 # memory (the rows carry BLOBs; an attachment-heavy
@@ -545,14 +593,32 @@ class ChatbookCreator:
                     )
                     citation_metadata.update(citation_report_metadata)
 
+                active_leaf = db.get_conversation_active_leaf(str(conv_id))
+                if not isinstance(active_leaf, (str, int)):
+                    active_leaf = None
                 conv_data = {
-                    "id": conv["id"],
+                    "id": str(conv["id"]),
                     "name": title,
                     "created_at": created_at,
                     "updated_at": last_modified,
                     "character_id": conv.get("character_id"),
+                    "active_leaf_message_id": str(active_leaf)
+                    if active_leaf is not None
+                    else None,
                     "messages": exported_messages,
                 }
+                conv_data["selected_path_message_ids"] = self._selected_path_ids(
+                    exported_messages,
+                    conv_data["active_leaf_message_id"],
+                )
+                contains_private = any(
+                    "_private" in message for message in exported_messages
+                )
+                if contains_private:
+                    conv_data["private_data_warning"] = (
+                        "This conversation contains private provider continuation data."
+                    )
+                    citation_metadata["contains_private_provider_continuation"] = True
 
                 # Write conversation file
                 conv_file = self._conversation_export_path(
@@ -567,7 +633,7 @@ class ChatbookCreator:
                 # Add to manifest
                 manifest.content_items.append(
                     ContentItem(
-                        id=conv_id,
+                        id=str(conv_id),
                         type=ContentType.CONVERSATION,
                         title=title,
                         created_at=datetime.fromisoformat(conv_data["created_at"]),
@@ -587,6 +653,8 @@ class ChatbookCreator:
                         auto_include_dependencies,
                     )
 
+            except _ConversationGraphProjectionError:
+                raise
             except Exception as e:
                 logger.error(f"Error collecting conversation {conv_id}: {e}")
 
@@ -594,9 +662,51 @@ class ChatbookCreator:
     # queries while bounding how many attachment BLOBs sit in memory at once.
     _ATTACHMENT_FETCH_CHUNK = 50
 
+    @staticmethod
+    def _conversation_graph_messages(
+        db: CharactersRAGDB, conversation_id: str
+    ) -> list[dict[str, Any]]:
+        """Return every row needed to reconstruct one conversation graph."""
+        cursor = db.execute_query(
+            """
+            SELECT id, conversation_id, parent_message_id, sender, content,
+                   image_data, image_mime_type, timestamp, role, deleted,
+                   variant_of, variant_number, is_selected_variant,
+                   total_variants, provider_continuation_json,
+                   assistant_generation_state
+              FROM messages
+             WHERE conversation_id = ?
+             ORDER BY timestamp ASC, rowid ASC
+            """,
+            (conversation_id,),
+        )
+        rows = cursor.fetchall()
+        if not isinstance(rows, list):
+            raise _ConversationGraphProjectionError(
+                "Conversation graph projection unavailable."
+            )
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _selected_path_ids(
+        messages: Sequence[Mapping[str, Any]], active_leaf_message_id: object
+    ) -> list[str]:
+        """Return the root-to-leaf owner path without flattening siblings."""
+        by_id = {str(message["id"]): message for message in messages}
+        current = str(active_leaf_message_id) if active_leaf_message_id else None
+        path: list[str] = []
+        seen: set[str] = set()
+        while current in by_id and current not in seen:
+            seen.add(current)
+            path.append(current)
+            parent = by_id[current].get("parent_id")
+            current = str(parent) if parent is not None else None
+        path.reverse()
+        return path
+
     def _export_message_chunk(
         self,
-        chunk: list[Mapping[str, Any]],
+        chunk: Sequence[Mapping[str, Any]],
         extra_attachments: Mapping[str, list],
         conv_dir: Path,
         exported_messages: list,
@@ -612,7 +722,7 @@ class ChatbookCreator:
             exported_messages: Accumulator for every exported message dict.
             citation_messages: Accumulator for citation-bearing messages.
         """
-        for msg in chunk:
+        for order, msg in enumerate(chunk, start=len(exported_messages)):
             timestamp = (
                 msg.get("timestamp")
                 or msg.get("created_at")
@@ -622,13 +732,52 @@ class ChatbookCreator:
                 timestamp = timestamp.isoformat()
             message_id = msg.get("id")
             message_data = {
-                "id": message_id,
+                "id": str(message_id),
+                "parent_id": str(msg["parent_message_id"])
+                if msg.get("parent_message_id") is not None
+                else None,
                 "role": msg.get("role") or msg.get("sender"),
                 "content": msg["message"]
                 if "message" in msg
                 else msg.get("content", ""),
                 "timestamp": timestamp,
+                "order": order,
+                "deleted": bool(msg.get("deleted")),
+                "variant_of": str(msg["variant_of"])
+                if msg.get("variant_of") is not None
+                else None,
+                "variant_number": int(msg.get("variant_number") or 1),
+                "is_selected_variant": bool(msg.get("is_selected_variant")),
+                "total_variants": int(msg.get("total_variants") or 1),
             }
+            private_json = msg.get("provider_continuation_json")
+            checkpoint = None
+            if private_json is not None:
+                checkpoint = parse_provider_continuation_json(private_json)
+                canonical = dump_provider_continuation_json(checkpoint)
+                message_data["_private"] = {
+                    "provider_continuation": json.loads(canonical or "null")
+                }
+            raw_state = msg.get("assistant_generation_state")
+            if raw_state is not None and message_data["role"] != "assistant":
+                raise _ConversationGraphProjectionError(
+                    "Conversation graph projection unavailable."
+                )
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=message_data["role"],
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        checkpoint is not None and checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise _ConversationGraphProjectionError(
+                    "Conversation graph projection unavailable."
+                ) from None
+            message_data["assistant_generation_state"] = (
+                generation_state.value if generation_state is not None else None
+            )
             attachment_entries = self._export_message_attachments(
                 msg,
                 extra_attachments.get(str(message_id), []),
@@ -733,8 +882,8 @@ class ChatbookCreator:
 
     @staticmethod
     def _merge_message_context(
-        db_messages: list[Mapping[str, Any]],
-        context_messages: list[Mapping[str, Any]],
+        db_messages: Sequence[Mapping[str, Any]],
+        context_messages: Sequence[Mapping[str, Any]],
     ) -> list[dict[str, Any]]:
         context_by_id = {
             str(message.get("id")): message for message in context_messages
@@ -1022,7 +1171,11 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_creator")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         notes_dir = work_dir / "content" / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1104,7 +1257,11 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_creator")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         chars_dir = work_dir / "content" / "characters"
         chars_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1286,59 +1443,73 @@ class ChatbookCreator:
         manifest: ChatbookManifest,
         content: ChatbookContent,
     ) -> None:
-        """Collect prompts."""
+        """Collect portable Prompt records or abort the whole archive."""
+        if not prompt_ids:
+            return
         db_path = self.db_paths.get("Prompts")
         if not db_path:
-            return
+            raise PromptChatbookExportError("item-000001", "source")
 
-        db = PromptsDatabase(db_path, "chatbook_creator")
+        try:
+            db = PromptsDatabase(db_path, "chatbook_creator")
+        except Exception:
+            raise PromptChatbookExportError("item-000001", "source") from None
         prompts_dir = work_dir / "content" / "prompts"
-        prompts_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            prompts_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            db.close_connection()
+            raise PromptChatbookExportError("item-000001", "write") from None
 
         total = len(prompt_ids)
-        for idx, prompt_id in enumerate(prompt_ids):
-            self._check_cancel()
-            self._emit_progress("prompts", idx + 1, total)
-            try:
-                # Get prompt details
-                prompt = db.get_prompt_by_id(int(prompt_id))
-                if not prompt:
-                    continue
+        try:
+            for idx, selected_id in enumerate(prompt_ids):
+                self._check_cancel()
+                archive_item_id = f"item-{idx + 1:06d}"
+                self._emit_progress("prompts", idx + 1, total)
+                try:
+                    source_id = int(selected_id)
+                except (TypeError, ValueError, OverflowError):
+                    raise PromptChatbookExportError(
+                        archive_item_id, "selection"
+                    ) from None
+                try:
+                    prompt = db.fetch_prompt_chatbook_snapshot(source_id)
+                except Exception:
+                    raise PromptChatbookExportError(archive_item_id, "source") from None
+                if prompt is None:
+                    raise PromptChatbookExportError(archive_item_id, "missing")
+                try:
+                    prompt_data = encode_chatbook_prompt_record(prompt)
+                except Exception:
+                    raise PromptChatbookExportError(archive_item_id, "record") from None
 
-                # Create prompt data
-                prompt_data = {
-                    "id": prompt["id"],
-                    "name": prompt["name"],
-                    "description": prompt.get("details", ""),
-                    "content": prompt.get("system_prompt", "")
-                    or prompt.get("user_prompt", ""),
-                    "created_at": prompt.get("created_at", datetime.now().isoformat()),
-                    "updated_at": prompt.get("updated_at", datetime.now().isoformat()),
-                }
+                prompt_file = prompts_dir / f"prompt_{archive_item_id}.json"
+                try:
+                    with open(prompt_file, "w", encoding="utf-8") as handle:
+                        json.dump(
+                            prompt_data,
+                            handle,
+                            indent=2,
+                            ensure_ascii=False,
+                        )
+                except Exception:
+                    raise PromptChatbookExportError(archive_item_id, "write") from None
 
-                # Write prompt file
-                prompt_file = prompts_dir / f"prompt_{prompt_id}.json"
-                with open(prompt_file, "w", encoding="utf-8") as f:
-                    json.dump(prompt_data, f, indent=2, ensure_ascii=False)
-
-                # Add to content
                 content.prompts.append(prompt_data)
-
-                # Add to manifest
                 manifest.content_items.append(
                     ContentItem(
-                        id=prompt_id,
+                        id=archive_item_id,
                         type=ContentType.PROMPT,
-                        title=prompt["name"],
-                        description=prompt.get("description"),
-                        created_at=datetime.fromisoformat(prompt["created_at"]),
-                        updated_at=datetime.fromisoformat(prompt["updated_at"]),
-                        file_path=f"content/prompts/prompt_{prompt_id}.json",
+                        title=prompt_data["name"],
+                        description=prompt_data["details"],
+                        created_at=None,
+                        updated_at=None,
+                        file_path=(f"content/prompts/prompt_{archive_item_id}.json"),
                     )
                 )
-
-            except Exception as e:
-                logger.error(f"Error collecting prompt {prompt_id}: {e}")
+        finally:
+            db.close_connection()
 
     # Kept scripts per briefing are denormalized, small text blobs (preset
     # name + two JSON strings). Export must never silently truncate a
@@ -1386,7 +1557,11 @@ class ChatbookCreator:
             )
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_creator")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         kept_dir = work_dir / "content" / "kept_briefings"
         kept_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1573,7 +1748,11 @@ class ChatbookCreator:
                 )
                 return
 
-            db = CharactersRAGDB(db_path, "chatbook_creator")
+            db = CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
 
             try:
                 # Get character card (which includes all details)
@@ -1697,6 +1876,16 @@ class ChatbookCreator:
                 f.write("\n## Tags\n\n")
                 f.write(", ".join(manifest.tags))
                 f.write("\n")
+
+            if any(
+                item.metadata.get("contains_private_provider_continuation")
+                for item in manifest.content_items
+            ):
+                f.write("\n## Private provider data\n\n")
+                f.write(
+                    "This chatbook contains private provider continuation data. "
+                    "Share it only with trusted recipients.\n"
+                )
 
             f.write("\n## Structure\n\n")
             f.write("```\n")

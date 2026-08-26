@@ -1,5 +1,5 @@
 ---
-id: task-2523
+id: TASK-2523
 title: Legacy-key bridge's modern-key lookup is exact-key while the readiness reader's is normalized
 status: To Do
 assignee: []

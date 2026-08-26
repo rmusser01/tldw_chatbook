@@ -473,8 +473,13 @@ def test_overflow_and_watermark_stay_exact_over_a_backlog_larger_than_the_cap():
     source = _new_source(db, watchlist, "torrent")
 
     cap = 5
+    # Now-relative on purpose: the first-briefing window is the last
+    # FIRST_WINDOW_DAYS days by wall clock, so a hard-coded date silently
+    # ages out of it and the selection comes back empty (this exact test
+    # started failing on 2026-07-31 + 7d with an all-empty selection).
+    recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     backlog = [
-        _add_item(db, source, f"Item {n}", "2026-07-29T09:00:00+00:00")
+        _add_item(db, source, f"Item {n}", recent)
         for n in range(cap + 30)
     ]
 

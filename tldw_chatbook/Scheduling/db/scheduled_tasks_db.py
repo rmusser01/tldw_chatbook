@@ -26,7 +26,7 @@ from tldw_chatbook.DB.sql_validation import validate_identifier
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = 3
 
     _REMINDER_TASK_COLUMNS = {
         "id",
@@ -43,6 +43,8 @@ class ScheduledTasksDB(BaseDB):
         "next_run_at",
         "last_run_at",
         "missed_at",
+        "missed_count",
+        "timeout_seconds",
         "link_type",
         "link_id",
         "link_url",
@@ -134,11 +136,47 @@ class ScheduledTasksDB(BaseDB):
     ):
         super().__init__(db_path, client_id, check_integrity_on_startup)
 
-    def _initialize_schema(self) -> None:
-        """Create tables, indexes, and schema version row."""
-        from tldw_chatbook.Scheduling.db.migrations.v0_to_v1 import migrate
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = super()._get_connection()
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local reminder/automation
+        # store) and avoids an fsync per commit. This DB opens a fresh
+        # connection per operation (`closing(self._get_connection())` /
+        # `transaction()` throughout this file), so synchronous must be
+        # re-applied on every open, not just the first (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
 
-        migrate(self)
+    def _initialize_schema(self) -> None:
+        """Create tables, indexes, and schema version row, migrating forward.
+
+        Each migration checks its own applicability on the connection it
+        will migrate. For a ``:memory:`` database every
+        ``_get_connection()`` is a fresh empty database -- a version check
+        done on one connection tells nothing about the next -- so the chain
+        must not consult ``get_schema_version()`` between migrations the
+        way a file-backed database could. The migrations themselves detect
+        their condition structurally (the presence of their column), which
+        is memory-correct: an empty memory database runs v0_to_v1, finds
+        no ``missed_count``, adds it, finds no ``timeout_seconds``, adds
+        it, and every step lands on a consistent v3 schema even though
+        each step sees its own connection.
+        """
+        from tldw_chatbook.Scheduling.db.migrations.v0_to_v1 import (
+            migrate as migrate_v0_to_v1,
+        )
+        from tldw_chatbook.Scheduling.db.migrations.v1_to_v2 import (
+            migrate as migrate_v1_to_v2,
+        )
+        from tldw_chatbook.Scheduling.db.migrations.v2_to_v3 import (
+            migrate as migrate_v2_to_v3,
+        )
+
+        migrate_v0_to_v1(self)
+        migrate_v1_to_v2(self)
+        migrate_v2_to_v3(self)
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
@@ -718,22 +756,78 @@ class ScheduledTasksDB(BaseDB):
         task_id: str,
         now: datetime,
         success: bool = True,
+        *,
+        grace_seconds: float = 0.0,
+        timed_out: bool = False,
     ) -> None:
         """Update a reminder after dispatch so it is not immediately redispatched.
 
         For ``one_time`` reminders the task is disabled and ``next_run_at`` is
         cleared. For ``recurring`` reminders the next occurrence is computed from
         the stored cron expression and timezone.
+
+        Missed-fire accounting (task-18937): when the scheduled time of this
+        dispatch (the stored ``next_run_at``) is more than ``grace_seconds``
+        before ``now``, the dispatch was late. The row then records
+        ``missed_at`` = the earliest owed occurrence's scheduled time and, for
+        recurring tasks, ``missed_count`` = occurrences that elapsed
+        undispatched *before* this one (the dispatch itself covers exactly one
+        occurrence; skipped ones are counted, never replayed --
+        run-once-then-continue). An on-time dispatch clears both fields: the
+        state describes the last dispatch and self-heals.
+
+        What "late" does NOT tell you (task-19562): *why*. This docstring
+        used to assert the cause -- "the scheduler was not running (or not
+        aware of the task) at the scheduled time" -- and the UI repeated it
+        as "Missed while away". Both were wrong for a real and ordinary
+        case: ``SchedulerLoop.tick`` awaits every due handler serially and
+        inline, so one slow handler delays every task behind it, easily past
+        the grace, with the scheduler running throughout. These two fields
+        record the lateness and the skipped occurrences, which are true
+        regardless of cause; the cause itself is reported by the loop, which
+        is the only place that knows it (``SchedulerLoop.
+        _report_lateness_cause``).
+
+        Timeout (task-18939): ``timed_out=True`` records the distinct
+        terminal status ``"timed_out"`` -- the dispatch ran but was
+        cancelled at its execution deadline. This stays separate from both
+        ``"completed"`` (finished) and ``"missed"`` (ran and raised):
+        ran-but-cancelled is its own honest outcome, and the schedule still
+        advances so a wedged handler can never wedge the loop.
         """
         row = self.get_reminder_task(task_id)
         if row is None:
             return
 
+        if timed_out:
+            last_status = "timed_out"
+        else:
+            last_status = "completed" if success else "missed"
         fields: dict[str, Any] = {
             "last_run_at": now,
-            "last_status": "completed" if success else "missed",
+            "last_status": last_status,
             "updated_at": now,
         }
+
+        scheduled_at = self._parse_utc_iso(row.get("next_run_at"))
+        late_by = (
+            (now - scheduled_at).total_seconds()
+            if scheduled_at is not None
+            else 0.0
+        )
+        if scheduled_at is not None and late_by > grace_seconds:
+            fields["missed_at"] = scheduled_at
+            schedule_kind = row.get("schedule_kind")
+            if schedule_kind == "recurring":
+                fields["missed_count"] = self._count_missed_occurrences(
+                    row, scheduled_at, now
+                )
+            else:
+                # one_time: fired late, nothing was skipped before it.
+                fields["missed_count"] = 0
+        else:
+            fields["missed_at"] = None
+            fields["missed_count"] = 0
 
         schedule_kind = row.get("schedule_kind")
         if schedule_kind == "one_time":
@@ -754,6 +848,65 @@ class ScheduledTasksDB(BaseDB):
             fields["next_run_at"] = next_run
 
         self.update_reminder_task(task_id, **fields)
+
+    @staticmethod
+    def _parse_utc_iso(value: Any) -> Optional[datetime]:
+        """Parse a stored UTC ISO-8601 string, tolerating junk as ``None``."""
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    #: Cap for skipped-occurrence counting: a hostile or hand-edited cron
+    #: (every second) must not turn a long absence into an unbounded loop.
+    #: The stored value uses the negative sentinel below when the true count
+    #: exceeds the cap, so a capped count is never presented as exact
+    #: (review finding: silent truncation).
+    _MISSED_COUNT_CAP = 100_000
+    _MISSED_COUNT_OVERFLOW = -1
+
+    @classmethod
+    def _count_missed_occurrences(
+        cls, row: dict[str, Any], scheduled_at: datetime, now: datetime
+    ) -> int:
+        """Count cron occurrences in ``(scheduled_at, now)`` -- the skipped ones.
+
+        The occurrence AT ``scheduled_at`` is the one this late dispatch
+        covers, and an occurrence landing exactly at ``now`` coincides with
+        the dispatch itself (the user is notified at that moment), so both
+        endpoints are exclusive: "skipped" means scheduled strictly between
+        the owed occurrence and when the dispatch actually fired. Returns 0
+        when the cron expression is unusable -- an honest unknown is
+        reported as "none skipped" rather than an exception.
+
+        Returns ``_MISSED_COUNT_OVERFLOW`` (-1) when more than
+        ``_MISSED_COUNT_CAP`` occurrences elapsed: the UI renders that as
+        an explicit "more than N" rather than a false exact number.
+        """
+        cron_expr = row.get("cron")
+        if not cron_expr or not isinstance(cron_expr, str):
+            return 0
+        tz_name = row.get("timezone") or "UTC"
+        try:
+            tz: tzinfo = ZoneInfo(tz_name)
+        except Exception:
+            tz = timezone.utc
+        try:
+            iterator = croniter(cron_expr, scheduled_at.astimezone(tz))
+        except (ValueError, KeyError):
+            return 0
+        skipped = 0
+        while skipped <= cls._MISSED_COUNT_CAP:
+            occurrence = iterator.get_next(datetime)
+            if occurrence is None or occurrence >= now:
+                return skipped
+            skipped += 1
+        return cls._MISSED_COUNT_OVERFLOW
 
     # ------------------------------------------------------------------
     # Automation definitions

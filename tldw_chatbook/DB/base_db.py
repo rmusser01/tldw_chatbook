@@ -39,6 +39,8 @@ class BaseDB(ABC):
         db_path: Union[str, Path],
         client_id: str = "default",
         check_integrity_on_startup: bool = False,
+        *,
+        initialize_schema: bool = True,
     ):
         """
         Initialize the base database with standardized path handling.
@@ -47,6 +49,7 @@ class BaseDB(ABC):
             db_path: Path to the SQLite database file or ':memory:'
             client_id: Client identifier for multi-client support
             check_integrity_on_startup: Whether to run integrity check on startup
+            initialize_schema: Whether to initialize the subclass schema
         """
         # Standardized path handling
         if isinstance(db_path, Path):
@@ -66,10 +69,11 @@ class BaseDB(ABC):
         self.client_id = client_id
 
         # Initialize schema (implemented by subclasses)
-        self._initialize_schema()
+        if initialize_schema:
+            self._initialize_schema()
 
         # Run integrity check if requested
-        if check_integrity_on_startup and not self.is_memory_db:
+        if initialize_schema and check_integrity_on_startup and not self.is_memory_db:
             logger.info(
                 f"Running startup integrity check for {self.__class__.__name__}"
             )

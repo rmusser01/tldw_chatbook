@@ -14,7 +14,7 @@ from pathlib import Path
 from textual import on
 from textual.app import ComposeResult
 from textual.events import Mount
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Label, Select
 
 ##############################################################################
 # Local imports.
@@ -40,6 +40,12 @@ class BaseFileDialog(FileSystemPickerScreen):
 
     DEFAULT_CSS = """
     BaseFileDialog InputBar {
+        /* task-3304 (MI-15): the filename input carried no label at all --
+           a bare box between the listing and the buttons. */
+        #file-name-label {
+            margin-right: 1;
+            color: $text-muted;
+        }
         Input {
             /* The filename field owns all of the row's flexible space; the
             file-type filter Select next to it gets a fixed width instead
@@ -101,7 +107,11 @@ class BaseFileDialog(FileSystemPickerScreen):
 
     def _input_bar(self) -> ComposeResult:
         """Provide any widgets for the input before, before the buttons."""
-        yield Input(Path(self._default_file or "").name)
+        # (task-3304, MI-15) Name the field: the bar's Input was unlabeled.
+        # The label precedes the Input, so the task-1479 scoped lookup
+        # (InputBar's first Input) still resolves the filename field.
+        yield Label("File name:", id="file-name-label")
+        yield Input(Path(self._default_file or "").name, placeholder="File name")
         if self._filters:
             yield FileFilter(
                 self._filters.selections,

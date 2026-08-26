@@ -4,8 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
@@ -44,7 +48,7 @@ def _tool(
     )
 
 
-class ToolsModeApp(App):
+class ToolsModeApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[object] = []
@@ -58,10 +62,95 @@ class ToolsModeApp(App):
     def on_mcp_tools_mode_empty_action_requested(self, event) -> None:
         self.events.append(event)
 
+    def on_mcp_tools_mode_local_tools_enabled_changed(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_tools_mode_workspace_root_save_requested(self, event) -> None:
+        self.events.append(event)
+
+
+class ToolsModeBundledCSSApp(ToolsModeApp):
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
 
 def _row_texts(table: DataTable, row_index: int) -> list[str]:
     row = table.get_row_at(row_index)
     return [cell.plain if hasattr(cell, "plain") else str(cell) for cell in row]
+
+
+@pytest.mark.asyncio
+async def test_local_tool_controls_are_visible_and_emit_configuration_requests():
+    app = ToolsModeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(
+            enabled=True,
+            workspace_root="C:/work/notes",
+            visible=True,
+        )
+        await pilot.pause()
+
+        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
+        root_input = app.query_one("#mcp-tools-workspace-root", Input)
+        assert checkbox.value is True
+        assert root_input.value == "C:/work/notes"
+        assert "Enabled" in str(
+            app.query_one("#mcp-tools-local-enabled-state", Static).renderable
+        )
+        assert "Ask" in str(
+            app.query_one("#mcp-tools-local-config-help", Static).renderable
+        )
+
+        checkbox.value = False
+        root_input.value = "C:/other/notes"
+        app.query_one("#mcp-tools-workspace-save", Button).press()
+        await pilot.pause()
+
+        enabled_events = [
+            event
+            for event in app.events
+            if isinstance(event, MCPToolsMode.LocalToolsEnabledChanged)
+        ]
+        root_events = [
+            event
+            for event in app.events
+            if isinstance(event, MCPToolsMode.WorkspaceRootSaveRequested)
+        ]
+        assert enabled_events[-1].enabled is False
+        assert root_events[-1].workspace_root == "C:/other/notes"
+
+
+@pytest.mark.asyncio
+async def test_local_tool_controls_can_hide_for_server_source():
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(enabled=True, workspace_root="", visible=False)
+        await pilot.pause()
+
+        assert app.query_one("#mcp-tools-local-config").display is False
+
+
+@pytest.mark.asyncio
+async def test_local_tool_controls_render_with_bundled_css_at_100x30():
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(
+            enabled=True,
+            workspace_root="C:/workspace/notes",
+            visible=True,
+        )
+        await pilot.pause()
+
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in app.screen._compositor.render_strips()
+        )
+        assert "Local workspace, web, and Watchlists tools" in rendered
+        assert "Save root" in rendered
+        assert "C:/workspace/notes" in rendered
+        assert app.query_one("#mcp-tools-filter-text", Input).region.height > 0
 
 
 @pytest.mark.asyncio
@@ -122,18 +211,39 @@ async def test_rows_render_grouped_sorted_with_tags_and_schema_columns():
         assert app.query_one("#mcp-tools-empty").display is False
 
 
-def test_all_builtin_tools_render_form_column():
-    """RAG-48 part 3: with array-of-simple-items support in
-    `parse_schema()`, every one of the ten builtin tools' real manifest
-    `inputSchema` -- including `search_rag.media_types` and
-    `ingest_media.tags`, both `array` typed -- renders as a form rather
-    than falling back to raw JSON."""
+def test_builtin_tools_use_form_except_for_nested_spec_schemas():
+    """Nested spec inputs must use honest raw mode; other builtins stay forms."""
+    from tldw_chatbook.Library.library_tool_contract import (
+        LIBRARY_TOOL_DESCRIPTORS,
+    )
     from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
 
     tools = describe_local_mcp_capabilities()["tools"]
-    assert len(tools) == 10
+    legacy_tool_names = {
+        "chat_with_llm",
+        "chat_with_character",
+        "search_rag",
+        "search_conversations",
+        "create_note",
+        "search_notes",
+        "list_characters",
+        "get_conversation_history",
+        "export_conversation",
+    }
+    assert {tool["name"] for tool in tools} == (
+        legacy_tool_names | set(LIBRARY_TOOL_DESCRIPTORS)
+    )
+    raw_tool_names = {"library_save_chunk_spec", "library_rechunk_media"}
+    assert {
+        tool["name"] for tool in tools if parse_schema(tool["inputSchema"]) is None
+    } == raw_tool_names
     for tool in tools:
-        assert parse_schema(tool["inputSchema"]) is not None, tool["name"]
+        parsed = parse_schema(tool["inputSchema"])
+        if tool["name"] in raw_tool_names:
+            assert parsed is None
+            assert tool["inputSchema"]["properties"]["spec"]["type"] == "object"
+        else:
+            assert parsed is not None, tool["name"]
 
 
 @pytest.mark.asyncio
@@ -640,7 +750,7 @@ async def test_tags_column_stays_stable_while_filtering_to_a_tagless_subset():
 
 def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     """T7 (P3 UX batch) gave `#mcp-tools-table` `height: auto; max-height:
-    70%;` in `MCPToolsMode.DEFAULT_CSS` alone -- no matching rule was ever
+    70%;` in `MCPToolsMode.BUNDLED_CSS` alone -- no matching rule was ever
     added to the bundle-source component file (`_agentic_terminal.tcss`),
     unlike the established `#mcp-detail-builtin-toggles` / `#mcp-servers-
     form` / `#mcp-import-list` lockstep pairs there. Without a bundle-layer
@@ -672,7 +782,7 @@ def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
 
 
 def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """Defect 1 (QA round mcp-hub-phase3-2026-07): `MCPToolsMode.DEFAULT_CSS`
+    """Defect 1 (QA round mcp-hub-phase3-2026-07): `MCPToolsMode.BUNDLED_CSS`
     gives `#mcp-tools-filter-server-slot Select` a fixed `width: 28`, but
     Textual's cascade always treats every CSS_PATH-sourced rule (the app
     bundle) as higher priority than any widget's own DEFAULT_CSS regardless
@@ -702,7 +812,7 @@ def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() ->
         )
 
 
-class ToolsModeAppWithBundledCSS(App):
+class ToolsModeAppWithBundledCSS(ConsolidatedCSSApp):
     """Same harness as `ToolsModeApp` above but with the real bundled
     stylesheet loaded, so the filter-server Select contests its actual CSS
     priority battle against `_conversations.tcss`'s global
@@ -711,7 +821,7 @@ class ToolsModeAppWithBundledCSS(App):
     `RailAppWithBundledCSS` in test_mcp_rail.py. Regression coverage for
     Defect 1 (QA round mcp-hub-phase3-2026-07): before the bundle-layer fix
     above, this Select rendered at 0x0 under the real app stylesheet even
-    though `MCPToolsMode.DEFAULT_CSS` alone (no CSS_PATH) already asked for
+    though `MCPToolsMode.BUNDLED_CSS` alone (no CSS_PATH) already asked for
     the correct `width: 28`."""
 
     CSS_PATH = str(_BUNDLED_STYLESHEET)
@@ -747,7 +857,7 @@ async def test_filter_server_select_has_nonzero_geometry_with_bundled_css():
             "filter-server Select collapsed to zero width under the real "
             "bundled stylesheet (Defect 1, QA round mcp-hub-phase3-2026-07) "
             "-- _conversations.tcss's global `Select { width: 100%; }` rule "
-            "is clobbering MCPToolsMode's own DEFAULT_CSS override again."
+            "is clobbering MCPToolsMode's own BUNDLED_CSS override again."
         )
         assert select.size.height > 0, "filter-server Select collapsed to zero height"
 
@@ -774,26 +884,34 @@ async def test_state_column_cells_carry_semantic_color_by_effective_state():
             _tool(server_key="local:docs", server_label="docs", name="unresolved"),
         ]
         states = {
-            ("local:docs", "allowed"): EffectiveToolState(state="allow", origin="tool_override"),
-            ("local:docs", "asked"): EffectiveToolState(state="ask", origin="global_default"),
-            ("local:docs", "denied"): EffectiveToolState(state="deny", origin="tool_override"),
+            ("local:docs", "allowed"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+            ("local:docs", "asked"): EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+            ("local:docs", "denied"): EffectiveToolState(
+                state="deny", origin="tool_override"
+            ),
         }
         await canvas.update_tools(tools, empty_diagnosis=None, states=states)
         await pilot.pause()
 
         table = app.query_one("#mcp-tools-table", DataTable)
-        rows_by_tool = {
-            _row_texts(table, i)[0]: i for i in range(table.row_count)
-        }
-        assert table.get_cell_at((rows_by_tool["allowed"], 1)).style == state_text(
-            "Allow •", "ready"
-        ).style
-        assert table.get_cell_at((rows_by_tool["asked"], 1)).style == state_text(
-            "Ask", "warning"
-        ).style
-        assert table.get_cell_at((rows_by_tool["denied"], 1)).style == state_text(
-            "Off •", "error"
-        ).style
-        assert table.get_cell_at((rows_by_tool["unresolved"], 1)).style == state_text(
-            "—", "muted"
-        ).style
+        rows_by_tool = {_row_texts(table, i)[0]: i for i in range(table.row_count)}
+        assert (
+            table.get_cell_at((rows_by_tool["allowed"], 1)).style
+            == state_text("Allow •", "ready").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["asked"], 1)).style
+            == state_text("Ask", "warning").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["denied"], 1)).style
+            == state_text("Off •", "error").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["unresolved"], 1)).style
+            == state_text("—", "muted").style
+        )

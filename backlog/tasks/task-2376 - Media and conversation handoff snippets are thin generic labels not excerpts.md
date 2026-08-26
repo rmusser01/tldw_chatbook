@@ -1,5 +1,5 @@
 ---
-id: task-2376
+id: TASK-2376
 title: Media and conversation handoff snippets are thin generic labels, not excerpts
 status: To Do
 assignee: []

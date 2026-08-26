@@ -13,9 +13,11 @@ from tldw_chatbook.Sync_Interop.sync_profile_status_state import (
 )
 
 
+# task-4023 AC#7: ONE sentence combining purpose and next action -- the
+# empty canvas used to stack four separate "nothing here" sentences.
 LIBRARY_COLLECTIONS_EMPTY_COPY = (
-    "No stored collection items are available locally yet. Collections are for "
-    "reading, reviewing, and reusing saved content."
+    "Collections gather saved content for reading and review — "
+    "create one below to start."
 )
 LIBRARY_COLLECTIONS_NAME_MAX_LENGTH = 120
 LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH = 500
@@ -358,6 +360,20 @@ class LibraryCollectionDetail:
 
 
 @dataclass(frozen=True)
+class LibraryCollectionDeleteReceipt:
+    """Stable identity for one Collection available to restore."""
+
+    collection_id: str
+    name: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.collection_id, str) or not self.collection_id.strip():
+            raise ValueError("Collection delete receipt id must be non-empty text.")
+        if not isinstance(self.name, str):
+            raise TypeError("Collection delete receipt name must be text.")
+
+
+@dataclass(frozen=True)
 class LibraryCollectionsPanelState:
     """Pure display state for the Library Collections management panel."""
 
@@ -369,6 +385,8 @@ class LibraryCollectionsPanelState:
     create_action: LibraryCollectionActionState
     rename_action: LibraryCollectionActionState
     delete_action: LibraryCollectionActionState
+    delete_receipt: LibraryCollectionDeleteReceipt | None = None
+    mutation_in_flight: bool = False
     sync_profile_status: SyncProfileStatusDisplay | None = None
     error_message: str = ""
     recovery_copy: str = ""
@@ -383,6 +401,8 @@ class LibraryCollectionsPanelState:
         error_message: Any = "",
         create_name: Any = "",
         rename_name: Any = None,
+        delete_receipt: LibraryCollectionDeleteReceipt | None = None,
+        mutation_in_flight: bool = False,
         sync_profile_summary: Mapping[str, Any] | None = None,
     ) -> "LibraryCollectionsPanelState":
         records = tuple(
@@ -442,6 +462,10 @@ class LibraryCollectionsPanelState:
         create_action = _create_action(create_name, summary_rows)
         rename_action = _rename_action(rename_name, selected_detail, summary_rows)
         delete_action = _delete_action(selected_detail)
+        if mutation_in_flight:
+            create_action = _busy_action(create_action)
+            rename_action = _busy_action(rename_action)
+            delete_action = _busy_action(delete_action)
         sync_profile_status = (
             SyncProfileStatusDisplay.from_summary(sync_profile_summary)
             if sync_profile_summary is not None
@@ -457,10 +481,22 @@ class LibraryCollectionsPanelState:
             create_action=create_action,
             rename_action=rename_action,
             delete_action=delete_action,
+            delete_receipt=delete_receipt,
+            mutation_in_flight=bool(mutation_in_flight),
             sync_profile_status=sync_profile_status,
             error_message=error_copy,
             recovery_copy=recovery_copy,
         )
+
+
+def _busy_action(action: LibraryCollectionActionState) -> LibraryCollectionActionState:
+    """Disable one action while a Collection mutation owns shared state."""
+    return LibraryCollectionActionState(
+        label=action.label,
+        enabled=False,
+        widget_id=action.widget_id,
+        disabled_reason="Another Collection change is in progress.",
+    )
 
 
 def _name_exists(

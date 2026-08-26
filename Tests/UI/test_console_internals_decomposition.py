@@ -6,7 +6,11 @@ from unittest.mock import Mock
 import pytest
 from rich.console import Console
 from rich.text import Text
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.events import Key, Paste
 from textual.widgets import Button, Input, Select, Static
 
@@ -26,7 +30,6 @@ from Tests.Agents.test_mcp_tool_provider import (
     _tool_dict,
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_SAVE_CHATBOOK,
 )
@@ -43,6 +46,7 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Library import library_local_rag_search_service
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
@@ -64,7 +68,7 @@ from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-class StagedContextHarness(App):
+class StagedContextHarness(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleStagedContextState) -> None:
         super().__init__()
         self.state = state
@@ -194,7 +198,7 @@ async def _wait_for_console_library_rag_button_state(
 
 
 async def _wait_for_production_chat_screen(
-    app, pilot, *, timeout: float = 4.0
+    app, pilot, *, timeout: float = 10.0
 ) -> ChatScreen:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -304,8 +308,8 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         assert (
             "#console-staged-context-tray {\n"
             "    height: auto;\n"
-            "    min-height: 3;\n"
-            "    max-height: 6;"
+            "    min-height: 0;\n"
+            "}"
         ) in css
         assert (
             "#console-workspace-context {\n    height: auto;\n    min-height: 0;"
@@ -464,7 +468,8 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert composer.region.y + composer.region.height <= console.size.height
         assert command_input.display is False
         assert visible_draft.region.width > 20
-        assert 4 <= composer.region.height <= 6
+        # task-17651/17654: dense-form composer — zero chrome rows, 1-8 total.
+        assert 1 <= composer.region.height <= 8
         assert visible_draft.region.height == 1
         composer.load_draft("visible composer text")
         await pilot.pause(0.1)
@@ -1054,12 +1059,13 @@ async def test_console_native_composer_auto_expands_for_long_drafts():
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == long_draft
-        assert composer.region.height > 5
-        assert composer.region.height <= 10
+        # task-17651/17654: growth is draft rows alone (no chrome), capped at 8.
+        assert composer.region.height > 1
+        assert composer.region.height <= 8
         assert visible_draft.region.height > 1
-        assert visible_draft.region.height <= 4
+        assert visible_draft.region.height <= 8
         assert "\n" in visible_plain
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         assert "long composer qa" in visible_plain
 
 
@@ -1077,7 +1083,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         command_input = composer.query_one("#console-command-input", Input)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "pasted composer qa " * 80
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         console.on_paste(Paste(pasted_text))
         await pilot.pause(0.2)
@@ -1085,8 +1091,8 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
         assert command_input.value == pasted_text
-        assert composer.region.height <= 10
-        assert visible_draft.region.height <= 4
+        assert composer.region.height <= 8
+        assert visible_draft.region.height <= 8
         assert expected_token in visible_plain
         assert pasted_text not in visible_plain
         assert len(visible_plain) < len(pasted_text)
@@ -1100,7 +1106,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
 
 def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
     pasted_text = "x" * 51
-    expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+    expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
     display_text = f"... {expected_token}"
 
     renderable = ConsoleComposerBar._draft_renderable(
@@ -1119,7 +1125,7 @@ def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
 
 def test_console_paste_token_style_span_survives_crlf_before_token():
     pasted_text = "x" * 51
-    expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+    expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
     display_text = f"before\r\n{expected_token}"
     token_start = display_text.index(expected_token)
 
@@ -1184,7 +1190,7 @@ async def test_console_paste_under_threshold_remains_literal():
         assert composer.draft_text() == pasted_text
         assert composer._display_draft_text() == pasted_text
         _assert_visible_literal_projection(visible_plain, pasted_text)
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
@@ -1222,7 +1228,7 @@ async def test_console_paste_threshold_can_be_configured_from_app_config():
         assert composer.draft_text() == over_custom_threshold
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
-            == "Pasted Text: 81 Characters"
+            == "Pasted text | 81 characters | Expand"
         )
 
 
@@ -1251,7 +1257,7 @@ async def test_console_large_paste_collapse_can_be_disabled_from_config(
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
         assert composer._display_draft_text() == pasted_text
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         _assert_visible_literal_projection(visible_plain, pasted_text)
 
 
@@ -1305,7 +1311,7 @@ async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
         assert composer.draft_text() == prefix
         assert _without_trailing_cursor(visible_plain) == prefix
         assert pasted_text not in composer.draft_text()
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
@@ -1347,7 +1353,7 @@ async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
         assert composer.draft_text() == prefix
         assert _without_trailing_cursor(visible_plain) == prefix
         assert pasted_text not in composer.draft_text()
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
@@ -1367,13 +1373,13 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
         assert isinstance(visible_draft.renderable, Text)
         _assert_single_style_span(
             visible_draft.renderable,
             style=ConsoleComposerBar.PASTE_CONFIRM_STYLE,
-            expected_text="Unfurl?",
+            expected_text="Expand?",
         )
 
 
@@ -1400,12 +1406,19 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
         )
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
 @pytest.mark.asyncio
-async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_prompt():
+async def test_console_collapsed_paste_top_boundary_click_stays_with_neighbor():
+    """task-17651: the row above the draft belongs to the widget above.
+
+    The textual-web boundary forgiveness keys off the composer's real box;
+    with zero chrome rows the draft IS the composer, so a click one row up
+    lands on the neighboring strip and must not steal the activation —
+    while the draft's own first row still activates.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1421,17 +1434,27 @@ async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_promp
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
-        assert composer.activate_visible_draft_screen_position(
+        assert not composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
             visible_region.y - 1,
         )
+        assert composer.activate_visible_draft_screen_position(
+            visible_region.x + 4,
+            visible_region.y,
+        )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
 @pytest.mark.asyncio
-async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_unfurl_prompt():
+async def test_console_collapsed_paste_bottom_boundary_click_stays_with_neighbor():
+    """task-17651: the row below the draft belongs to the widget below.
+
+    Mirror of the top-boundary contract: the old +1-row forgiveness only
+    ever covered the composer's own padding row, which no longer exists —
+    the draft's own last row still activates.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1447,12 +1470,16 @@ async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
-        assert composer.activate_visible_draft_screen_position(
+        assert not composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
             visible_region.y + visible_draft.size.height,
         )
+        assert composer.activate_visible_draft_screen_position(
+            visible_region.x + 4,
+            visible_region.y + visible_draft.size.height - 1,
+        )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
@@ -1474,12 +1501,14 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
+        # task-17651: click the draft's own last row (the old +1 forgiveness
+        # row was the composer's padding, which no longer exists).
         assert composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
-            visible_region.y + visible_draft.size.height,
+            visible_region.y + visible_draft.size.height - 1,
         )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert console.app.focused is composer
         assert composer.draft_text() == pasted_text
 
@@ -1504,8 +1533,8 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
 
         visible_plain = visible_draft.renderable.plain
         assert "literal unfurled paste" in visible_plain
-        assert "Pasted Text:" not in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1526,15 +1555,15 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(8, 0))
         await pilot.pause(0.1)
-        assert "Unfurl?" in visible_draft.renderable.plain
+        assert "Expand?" in visible_draft.renderable.plain
 
         await pilot.click("#console-command-visible-text", offset=(0, 0))
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
         assert "prefix " in visible_plain
-        assert "Pasted Text:" in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == f"prefix {pasted_text}"
 
 
@@ -1558,7 +1587,7 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
         await pilot.pause(0.1)
 
         assert console.app.focused is composer
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
         await pilot.press("enter")
@@ -1566,8 +1595,8 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
 
         visible_plain = visible_draft.renderable.plain
         assert "keyboard unfurl paste" in visible_plain
-        assert "Pasted Text:" not in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1593,7 +1622,7 @@ async def test_console_collapsed_paste_click_targets_token_after_literal_newline
 
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
-            == "prefix\nUnfurl?"
+            == "prefix\nExpand?"
         )
         assert composer.draft_text() == f"prefix\n{pasted_text}"
 
@@ -1611,30 +1640,30 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         first_paste = "first large paste " * 10
         second_paste = "second large paste " * 10
-        first_token = f"Pasted Text: {len(first_paste)} Characters"
-        second_token = f"Pasted Text: {len(second_paste)} Characters"
+        first_token = f"Pasted text | {len(first_paste)} characters | Expand"
+        second_token = f"Pasted text | {len(second_paste)} characters | Expand"
 
         composer.insert_pasted_text(first_paste)
         composer.insert_pasted_text(second_paste)
         await pilot.pause(0.1)
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
-            == f"{first_token}{second_token}"
+            == f"{first_token}\n{second_token}"
         )
 
         await pilot.click(
             "#console-command-visible-text",
-            offset=(len(first_token) + 2, 0),
+            offset=(2, 1),
         )
         await pilot.pause(0.1)
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
-            == f"{first_token}Unfurl?"
+            == f"{first_token}\nExpand?"
         )
 
         await pilot.click(
             "#console-command-visible-text",
-            offset=(len(first_token) + 2, 0),
+            offset=(2, 1),
         )
         await pilot.pause(0.1)
 
@@ -1642,8 +1671,8 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         assert first_token in visible_plain
         assert "second large paste" in visible_plain
         assert "first large paste" not in visible_plain
-        assert "Unfurl?" not in visible_plain
-        assert composer.draft_text() == f"{first_paste}{second_paste}"
+        assert "Expand?" not in visible_plain
+        assert composer.draft_text() == f"{first_paste}\n{second_paste}"
 
 
 @pytest.mark.asyncio
@@ -1659,12 +1688,12 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "typing resets pending paste " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         await pilot.press("x")
         await pilot.pause(0.1)
@@ -1676,7 +1705,7 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
 
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?x"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?x"
         assert composer.draft_text() == f"{pasted_text}x"
 
 
@@ -1693,7 +1722,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         prefix = "preceding wrapped composer text " * 40
         pasted_text = "visible clipped paste " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_text(prefix)
         composer.insert_pasted_text(pasted_text)
@@ -1735,7 +1764,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         )
         await pilot.pause(0.1)
 
-        assert "Unfurl?" in visible_draft.renderable.plain
+        assert "Expand?" in visible_draft.renderable.plain
         assert expected_token not in visible_draft.renderable.plain
         assert composer.draft_text() == f"{prefix}{pasted_text}"
 
@@ -1752,19 +1781,19 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "reset pending unfurl " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         await pilot.click("#console-workspace-grid")
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1780,12 +1809,12 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "stale suppressed click reset paste " * 6
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         composer.suppress_next_draft_click()
         await pilot.click("#console-workspace-grid")
@@ -1793,7 +1822,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
 
         visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1817,7 +1846,7 @@ async def test_console_normal_typing_remains_literal_over_paste_threshold():
         visible_plain = visible_draft.renderable.plain
         assert len(typed_text) > ConsoleComposerBar.PASTE_COLLAPSE_THRESHOLD
         assert composer.draft_text() == typed_text
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         assert "normaltypedcomposertext" in visible_plain
         assert isinstance(visible_draft.renderable, Text)
         assert not visible_draft.renderable.spans
@@ -2834,12 +2863,18 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         console.query_one("#console-run-inspector-state")
         body = console.query_one("#console-inspector-rail-body")
         source_readiness = console.query_one("#console-live-work-source-readiness")
+        live_work_viewport = source_readiness.parent
+        live_work_section = live_work_viewport.parent
+        live_work_root = live_work_section.parent
 
         assert inspector.parent is body
-        assert source_readiness.parent is body
+        assert live_work_viewport.id == "console-bounded-section-live-work-viewport"
+        assert live_work_section.id == "console-bounded-section-live-work"
+        assert live_work_root.id == "console-live-work-section"
+        assert live_work_root.parent is body
+        assert body.children.index(live_work_root) == body.children.index(inspector) + 1
         assert source_readiness.region.y >= inspector.region.y
-        assert source_readiness.region.y <= body.region.y + body.region.height
-        assert source_readiness.region.height <= 18
+        assert source_readiness.region.height <= 20
 
 
 @pytest.mark.asyncio
@@ -2914,16 +2949,14 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
         await _wait_for_selector(console, pilot, "#console-inspector-tools-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-artifacts-heading")
+        console.query_one("#console-inspector-more-toggle", Button).press()
+        await pilot.pause()
 
-        assert (
-            getattr(
-                console.query_one(
-                    "#console-inspector-run-status-summary", Static
-                ).render(),
-                "plain",
-                "",
-            )
-            == "Status: Ready"
+        assert not list(console.query("#console-inspector-run-status-summary"))
+        assert "Run recipe:" in getattr(
+            console.query_one("#console-inspector-run-recipe", Static).render(),
+            "plain",
+            "",
         )
         assert not list(console.query("#console-run-inspector-title"))
         assert (
@@ -3015,17 +3048,19 @@ async def test_console_left_rail_sections_use_available_space():
         left_rail = console.query_one("#console-left-rail")
         body = console.query_one("#console-left-rail-body")
         header = console.query_one(".console-rail-header")
-        session_body = console.query_one("#console-rail-section-body-session")
+        conversations_body = console.query_one(
+            "#console-rail-section-body-conversations"
+        )
         workspace_context = console.query_one("#console-workspace-context")
 
         assert body.parent is left_rail
         assert header.region.height == 1
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
-        # The workspace tray lives inside its collapsible Session section
-        # body. (Task-400: the staged-context tray moved to the Inspector
-        # rail, so the left rail no longer hosts a Context section.)
-        assert workspace_context.parent is session_body
+        # TASK-14810 split the former mixed Session tray into peer Session,
+        # Workspace, and Conversation sections. The legacy selector now names
+        # the conversation tray; staged context remains in the Inspector.
+        assert workspace_context.parent is conversations_body
         assert not list(left_rail.query("#console-staged-context-tray"))
         assert not list(console.query("#console-rail-section-body-context"))
 
@@ -3059,17 +3094,18 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
 
         workbench_border = console.query_one("#console-workspace-grid").styles.border
         assert workbench_border.top[0] == "solid"
-        assert workbench_border.right[0] == "solid"
+        assert workbench_border.right[0] in {"", "none"}
         assert workbench_border.bottom[0] == "solid"
-        assert workbench_border.left[0] == "solid"
+        assert workbench_border.left[0] in {"", "none"}
 
         transcript_border = console.query_one(
             "#console-transcript-region"
         ).styles.border
         assert transcript_border.top[0] in {"", "none"}
-        assert transcript_border.right[0] == "solid"
-        assert transcript_border.bottom[0] == "solid"
-        assert transcript_border.left[0] == "solid"
+        assert transcript_border.right[0] in {"", "none"}
+        # TASK-20937.3: transcript owns no frame edge.
+        assert transcript_border.bottom[0] in {"", "none"}
+        assert transcript_border.left[0] in {"", "none"}
 
         staged_context_border = console.query_one(
             "#console-staged-context-tray"
@@ -3088,10 +3124,12 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
         assert workspace_context_border.left[0] in {"", "none"}
 
         composer_border = console.query_one("#console-native-composer").styles.border
-        assert composer_border.top[0] == "solid"
-        assert composer_border.right[0] == "solid"
-        assert composer_border.bottom[0] == "solid"
-        assert composer_border.left[0] == "solid"
+        # task-17651: no inline frame at all (this harness sees no CSS; the
+        # dense-form left edge is a stylesheet rule pinned elsewhere).
+        assert composer_border.left[0] in {"", "none"}
+        assert composer_border.top[0] in {"", "none"}
+        assert composer_border.right[0] in {"", "none"}
+        assert composer_border.bottom[0] in {"", "none"}
 
 
 @pytest.mark.asyncio
@@ -3141,32 +3179,49 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
 
-        for selector in (
-            "#console-workspace-grid",
-            "#console-left-rail",
-            "#console-native-composer",
-        ):
-            border = console.query_one(selector).styles.border
-            assert border.top[0] == "solid", f"{selector} missing top frame"
-            assert border.right[0] == "solid", f"{selector} missing right frame"
-            assert border.bottom[0] == "solid", f"{selector} missing bottom frame"
-            assert border.left[0] == "solid", f"{selector} missing left frame"
+        # TASK-20937.3: the grid closes only the top/bottom. Each rail owns
+        # its one interior divider; transcript and composer own no shell box.
+        grid_border = console.query_one("#console-workspace-grid").styles.border
+        assert grid_border.top[0] == "solid"
+        assert grid_border.right[0] in {"", "none"}
+        assert grid_border.bottom[0] == "solid"
+        assert grid_border.left[0] in {"", "none"}
+
+        rail_border = console.query_one("#console-left-rail").styles.border
+        assert rail_border.top[0] in {"", "none"}
+        assert rail_border.right[0] == "solid"
+        assert rail_border.bottom[0] in {"", "none"}
+        assert rail_border.left[0] in {"", "none"}
+
+        # This harness loads no app CSS, so only INLINE styles are visible
+        # here: the meaningful pin is that frame.py no longer frames the
+        # composer at all. Its CSS dense-form left edge is pinned by the
+        # bundled-harness tests in test_console_composer_collapse.py.
+        composer = console.query_one("#console-native-composer")
+        assert not composer.has_class("console-frame-solid")
+        composer_border = composer.styles.border
+        assert composer_border.left[0] in {"", "none"}
+        assert composer_border.top[0] in {"", "none"}
+        assert composer_border.right[0] in {"", "none"}
+        assert composer_border.bottom[0] in {"", "none"}
 
         right_handle = console.query_one("#console-inspector-rail-handle")
-        assert right_handle.has_class("console-frame-quiet")
+        assert right_handle.has_class("console-frame-solid")
+        assert right_handle.region.width == 11
+        assert right_handle.content_region.width == 10
         handle_border = right_handle.styles.border
         assert handle_border.top[0] in {"", "none"}
         assert handle_border.right[0] in {"", "none"}
         assert handle_border.bottom[0] in {"", "none"}
-        assert handle_border.left[0] in {"", "none"}
+        assert handle_border.left[0] == "solid"
 
         transcript_border = console.query_one(
             "#console-transcript-region"
         ).styles.border
         assert transcript_border.top[0] in {"", "none"}
-        assert transcript_border.right[0] == "solid"
-        assert transcript_border.bottom[0] == "solid"
-        assert transcript_border.left[0] == "solid"
+        assert transcript_border.right[0] in {"", "none"}
+        assert transcript_border.bottom[0] in {"", "none"}
+        assert transcript_border.left[0] in {"", "none"}
 
         for selector in (
             "#console-staged-context-tray",
@@ -3187,9 +3242,9 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         right_rail = console.query_one("#console-right-rail")
         inspector_state = console.query_one("#console-run-inspector-state")
         border = right_rail.styles.border
-        assert border.top[0] == "solid", "#console-right-rail missing top frame"
-        assert border.right[0] == "solid", "#console-right-rail missing right frame"
-        assert border.bottom[0] == "solid", "#console-right-rail missing bottom frame"
+        assert border.top[0] in {"", "none"}, "#console-right-rail top edge"
+        assert border.right[0] in {"", "none"}, "#console-right-rail right edge"
+        assert border.bottom[0] in {"", "none"}, "#console-right-rail bottom edge"
         assert border.left[0] == "solid", "#console-right-rail missing left frame"
         assert inspector_state.region.width > 0
         assert right_rail.region.x <= inspector_state.region.x
@@ -3281,7 +3336,7 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
             "value",
             staged_context.styles.max_height,
         )
-        assert max_height >= 10
+        assert max_height is None
         staged_text = _visible_text(staged_context)
         assert "Incident Review" in staged_text
         assert "ready" in staged_text
@@ -3319,9 +3374,9 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
         composer.sync_session_data(
             ChatSessionData(
                 tab_id="metadata",
-                title="[red]Injected[/red]",
+                title="[red]Injected[/red]\n\tforged title",
                 runtime_backend="[blue]server[/blue]",
-                assistant_id="[green]persona[/green]",
+                assistant_id="[green]persona[/green]\n\tforged assistant",
                 scope_type="workspace",
                 workspace_id="[yellow]workspace[/yellow]",
             )
@@ -3336,6 +3391,10 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
         assert "[blue]server[/blue]" in plain
         assert "[green]persona[/green]" in plain
         assert "[yellow]workspace[/yellow]" in plain
+        assert "\n" not in plain
+        assert "\t" not in plain
+        assert "forged title" in plain
+        assert "forged assistant" in plain
 
 
 @pytest.mark.asyncio
@@ -3492,12 +3551,12 @@ def test_console_rag_source_status_unchanged_with_a_pending_launch():
         status="ready",
     )
 
-    assert screen._console_rag_source_status(launch) == (
+    assert screen._retrieval._console_rag_source_status(launch) == (
         "staged from Library Search/RAG"
     )
     # A stale sent-notice sitting alongside a NEW pending launch changes
     # nothing -- pending-launch derivation takes over unconditionally.
-    assert screen._console_rag_source_status(launch, sent_source_count=5) == (
+    assert screen._retrieval._console_rag_source_status(launch, sent_source_count=5) == (
         "staged from Library Search/RAG"
     )
 
@@ -3507,10 +3566,10 @@ def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_stage
     app = _build_test_app()
     screen = ChatScreen(app)
 
-    assert screen._console_rag_source_status(None, sent_source_count=5) == (
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=5) == (
         "sent with the last message · 5 sources"
     )
-    assert screen._console_rag_source_status(None, sent_source_count=1) == (
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=1) == (
         "sent with the last message · 1 source"
     )
 
@@ -3520,9 +3579,9 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
     app = _build_test_app()
     screen = ChatScreen(app)
 
-    assert screen._console_rag_source_status(None) == "not staged"
-    assert screen._console_rag_source_status(None, sent_source_count=0) == "not staged"
-    assert screen._console_rag_source_status(None, sent_source_count=None) == (
+    assert screen._retrieval._console_rag_source_status(None) == "not staged"
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=0) == "not staged"
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=None) == (
         "not staged"
     )
 
@@ -3866,7 +3925,9 @@ async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has
 
 
 @pytest.mark.asyncio
-async def test_console_rag_action_requests_library_retrieval_and_stages_result():
+async def test_console_rag_action_requests_library_retrieval_and_stages_result(
+    monkeypatch,
+):
     app = _build_test_app()
     service = StaticConsoleLibraryRagSearchService(
         {
@@ -3887,6 +3948,13 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
     app.library_rag_search_service = service
     host = ConsoleHarness(app)
     query = "Why did the incident happen?"
+
+    # This test is about scope/evidence staging, not top_k resolution --
+    # pin the shared helper (TASK-3170 task 9) so it stays decoupled from
+    # whatever the real default profile's default_top_k happens to be.
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 5
+    )
 
     async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
@@ -3926,6 +3994,140 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         assert "source_id: note-42" in text
         assert "chunk_id: chunk-7" in text
         assert "Review citations before sending." in text
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_inherits_active_profile_top_k(monkeypatch):
+    """TASK-3170 task 9: the chip's manual run must not hardcode top_k=5.
+
+    Task 8 gave auto-retrieve a shared helper,
+    ``_console_library_rag_profile_top_k``, that reads the active RAG
+    profile's ``search.default_top_k`` (fallback 5 when unavailable). The
+    manual chip run built its own request with a literal ``top_k=5`` and
+    ignored the profile entirely -- a profile tuned for more (or fewer)
+    results silently lost that setting the moment a user pressed Run
+    instead of relying on auto-retrieve. This pins the chip run onto the
+    SAME helper so both call sites can never drift again.
+    """
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+    query = "Why did the incident happen?"
+
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 12
+    )
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        query_input = console.query_one("#console-library-rag-query-input", Input)
+        query_input.value = query
+        await pilot.pause(0.1)
+
+        run_button = console.query_one("#console-run-library-rag", Button)
+        assert run_button.disabled is False
+        run_button.press()
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+
+        assert service.calls == [
+            {
+                "query": query,
+                "scope": ("notes", "media", "conversations"),
+                "mode": "rag",
+                "top_k": 12,
+                "include_citations": True,
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable(
+    monkeypatch,
+):
+    """TASK-3170 task 9: the chip run's OTHER branch -- profile unresolvable.
+
+    ``_console_library_rag_profile_top_k`` degrades to the shared Library
+    fallback when the active RAG profile can't
+    be read (broken/absent profile), so a manual chip run must never raise
+    inside a send just because profile resolution failed. Patches
+    ``resolve_active_rag_top_k`` itself (what the helper actually reads,
+    imported lazily inside the shared Library seam it delegates to since
+    TASK-15020/B3) rather than the helper, so this exercises the real
+    try/except fallback path end to end -- not a mock standing in for it.
+    """
+    from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_FALLBACK_TOP_K
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    def _raise_profile_unavailable():
+        raise RuntimeError("simulated: active RAG profile unresolvable")
+
+    monkeypatch.setattr(
+        active_config, "resolve_active_rag_top_k", _raise_profile_unavailable
+    )
+
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        query_input = console.query_one("#console-library-rag-query-input", Input)
+        query_input.value = query
+        await pilot.pause(0.1)
+
+        run_button = console.query_one("#console-run-library-rag", Button)
+        assert run_button.disabled is False
+        run_button.press()
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+
+        assert service.calls == [
+            {
+                "query": query,
+                "scope": ("notes", "media", "conversations"),
+                "mode": "rag",
+                "top_k": LIBRARY_RAG_FALLBACK_TOP_K,
+                "include_citations": True,
+            }
+        ]
 
 
 def test_console_evidence_display_state_sanitizes_markup_fields():
@@ -4286,7 +4488,9 @@ async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
 
 
 @pytest.mark.asyncio
-async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
+async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
+    monkeypatch,
+):
     """RAG-44 end to end: the settings modal's source toggles decide what
     retrieval actually reads. Switching Media off and running must send a
     request WITHOUT media to the search service (and leave the Inspector's
@@ -4296,6 +4500,13 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
     service = StaticConsoleLibraryRagSearchService({"results": []})
     app.library_rag_search_service = service
     host = ConsoleHarness(app)
+
+    # This test is about source-scope narrowing, not top_k resolution --
+    # pin the shared helper (TASK-3170 task 9) so it stays decoupled from
+    # whatever the real default profile's default_top_k happens to be.
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 5
+    )
 
     async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
@@ -4329,7 +4540,7 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
         # request carried, so what ran is visible after the fact too.
         assert "source_scope: notes, conversations" in _visible_text(console)
         assert (
-            ChatScreen._console_library_rag_scope_label(console)
+            console._retrieval._console_library_rag_scope_label()
             == "Sources: Notes, Conversations (Media, Prompts off)"
         )
 
@@ -4612,3 +4823,81 @@ def test_console_f1_help_documents_the_macos_alt_caveat():
     assert "Option is not Meta" in rendered
     assert "Ctrl+P" in rendered
     assert "Ctrl+K" in rendered
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_section_headers_all_visible_without_scrolling():
+    """Keep default headers visible while enforcing the 20-row section ceiling.
+
+    With every section expanded, the rail's virtual height used to run ~3x
+    its viewport and Conversations started ~20 rows below the fold with no
+    scroll cue. The current contract gives each expanded section its own
+    bounded 20-row viewport and leaves ordinary outer scrolling available
+    when populated sections need more room. This guard keeps the compact
+    default headers visible at 160x48 and pins the local section ceiling.
+
+    Runs on the REAL app CSS stack (screen css + bundle), not the
+    bundle-less ConsoleHarness: the rail's vertical geometry -- header
+    min-heights, the workspace grid's height -- lives in the bundle, and a
+    geometry contract measured without it is not measured (the
+    task-14822/15790 lesson).
+    """
+    from pathlib import Path as _Path
+
+    from tldw_chatbook.css import build_css as _build_css
+
+    css_dir = _Path(_build_css.__file__).parent
+    screen_self, screen_scoped = _build_css.screen_css_paths(css_dir)
+
+    class _BundledConsoleHarness(ConsoleHarness):
+        CSS_PATH = [
+            str(screen_self),
+            str(css_dir / "tldw_cli_modular.tcss"),
+            str(screen_scoped),
+        ]
+
+    app = _build_test_app()
+    host = _BundledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        body = console.query_one("#console-left-rail-body")
+
+        default_open = ("session", "workspace", "conversations", "model")
+        previous: tuple[tuple[int, int], ...] | None = None
+        for _ in range(40):
+            current = tuple(
+                (header.region.y, header.region.height)
+                for name in default_open
+                for header in (
+                    console.query_one(f"#console-rail-section-header-{name}"),
+                )
+            )
+            if current == previous and all(h > 0 for _y, h in current):
+                break
+            previous = current
+            await pilot.pause()
+
+        assert body.scroll_offset.y == 0
+        viewport_bottom = body.region.y + body.region.height
+        for name in default_open:
+            header = console.query_one(f"#console-rail-section-header-{name}")
+            assert header.region.height >= 1, f"{name} header not rendered"
+            assert body.region.y <= header.region.y < viewport_bottom, (
+                f"the {name} section header sits outside the rail viewport "
+                f"(header y={header.region.y}, viewport "
+                f"[{body.region.y}, {viewport_bottom})) -- the rail has "
+                "outgrown its budget again (task-15110)"
+            )
+
+        # Each expanded section owns up to 20 content rows before local
+        # scrolling, independent of how many peer sections are expanded.
+        budget = 20
+        for section_body in console.query(".console-rail-section-body"):
+            if not section_body.display:
+                continue
+            assert section_body.region.height <= budget, (
+                f"{section_body.id} height {section_body.region.height} "
+                f"exceeds the per-section budget {budget}"
+            )

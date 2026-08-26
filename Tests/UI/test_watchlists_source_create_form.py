@@ -30,11 +30,12 @@ What the UAT saw, established in code:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Select, Switch, TextArea
 
 from Tests.UI.full_app_destination_context import (
     StaticWatchlistsScopeService,
@@ -87,6 +88,23 @@ URL_FAMILY_FIELD_ORDER = [
     "sources-create-ignore-selectors",
     "sources-create-submit",
     "sources-create-cancel",
+]
+
+SERVER_FIELD_ORDER = [
+    "sources-create-name",
+    "sources-create-url",
+    "sources-create-type",
+    "sources-create-active",
+    "sources-create-watchlist",
+    "sources-create-tags",
+    "sources-create-submit",
+    "sources-create-cancel",
+]
+
+FORM_CASES = [
+    ("local", "rss", CREATE_FIELD_ORDER),
+    ("local", "url", URL_FAMILY_FIELD_ORDER),
+    ("server", "rss", SERVER_FIELD_ORDER),
 ]
 
 
@@ -172,6 +190,96 @@ async def _choose_source_type(pilot, pane, value: str) -> None:
         f"the pane never took source type {value!r}"
     )
     await pilot.pause(0.1)
+
+
+async def _choose_runtime_backend(screen, pilot, value: str) -> None:
+    """Choose a backend through the production selector and await its watcher."""
+    screen.query_one("#watchlists-backend-select", Select).value = value
+    for _ in range(200):
+        await pilot.pause(0.02)
+        if screen.runtime_backend == value:
+            break
+    assert screen.runtime_backend == value
+    await pilot.pause(0.1)
+
+
+def _option_pairs(select: Select) -> list[tuple[str, object]]:
+    return [(str(label), value) for label, value in select._options]
+
+
+@pytest.mark.asyncio
+async def test_backend_switch_preserves_the_complete_open_create_draft():
+    app = _build_test_app()
+    watchlist_id = int(app.watchlist_bundle_service.create("Reading")["id"])
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_destination_screen(host)
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if screen._tree_watchlists:
+                break
+        assert screen._tree_watchlists
+
+        screen, pane = await _open_sources_create_form(pilot, host)
+        await _choose_source_type(pilot, pane, "url")
+        pane.query_one("#sources-create-name", Input).value = "Morning"
+        pane.query_one("#sources-create-url", Input).value = "https://example.test"
+        pane.query_one("#sources-create-active", Switch).value = False
+        pane.query_one("#sources-create-watchlist", Select).value = watchlist_id
+        pane.query_one("#sources-create-tags", Input).value = "news, daily"
+        pane.query_one("#sources-create-frequency", Select).value = 86_400
+        pane.query_one("#sources-create-ignore-selectors", TextArea).text = (
+            ".ad\n.counter"
+        )
+        await pilot.pause(0.2)
+
+        await _choose_runtime_backend(screen, pilot, "server")
+
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane
+        assert pane.show_create_form is True
+        assert _option_pairs(pane.query_one("#sources-create-type", Select)) == [
+            ("RSS", "rss"),
+            ("Site", "site"),
+            ("Forum", "forum"),
+        ]
+        assert pane.query_one("#sources-create-type", Select).value == "rss"
+        assert not pane.query("#sources-create-frequency")
+        assert not pane.query("#sources-create-ignore-selectors")
+        assert pane.query_one("#sources-create-name", Input).value == "Morning"
+        assert (
+            pane.query_one("#sources-create-url", Input).value
+            == "https://example.test"
+        )
+        assert pane.query_one("#sources-create-active", Switch).value is False
+        assert (
+            pane.query_one("#sources-create-watchlist", Select).value
+            == watchlist_id
+        )
+        assert pane.query_one("#sources-create-tags", Input).value == "news, daily"
+
+        await _choose_runtime_backend(screen, pilot, "local")
+
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane
+        assert pane.show_create_form is True
+        assert _option_pairs(pane.query_one("#sources-create-type", Select)) == [
+            ("RSS", "rss"),
+            ("Atom", "atom"),
+            ("Web page", "url"),
+        ]
+        assert pane.query_one("#sources-create-type", Select).value == "rss"
+        assert pane.query_one("#sources-create-frequency", Select).value == 86_400
+        await _choose_source_type(pilot, pane, "url")
+        assert (
+            pane.query_one("#sources-create-ignore-selectors", TextArea).text
+            == ".ad\n.counter"
+        )
+        assert pane.query_one("#sources-create-active", Switch).value is False
+        assert (
+            pane.query_one("#sources-create-watchlist", Select).value
+            == watchlist_id
+        )
 
 
 @pytest.mark.parametrize("size", SIZES)
@@ -497,18 +605,24 @@ async def test_typing_straight_after_opening_the_form_lands_in_name(size):
 
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize(
-    "source_type,field_order",
-    [("rss", CREATE_FIELD_ORDER), ("url", URL_FAMILY_FIELD_ORDER)],
-    ids=["feed", "page"],
+    "runtime_backend,source_type,field_order",
+    FORM_CASES,
+    ids=["local-feed", "local-page", "server-feed"],
 )
 @pytest.mark.asyncio
 async def test_tab_walks_the_create_form_in_visual_order(
-    size, source_type, field_order
+    size, runtime_backend, source_type, field_order
 ):
     """AC#4: from the focused first field, `Tab` follows what the eye sees."""
     host = _watchlists_host()
     async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        if runtime_backend != "local":
+            await _choose_runtime_backend(screen, pilot, runtime_backend)
         screen, pane = await _open_sources_create_form(pilot, host)
+        if runtime_backend == "server":
+            assert not pane.query("#sources-create-frequency")
+            assert not pane.query("#sources-create-ignore-selectors")
         if source_type != "rss":
             await _choose_source_type(pilot, pane, source_type)
             pane.query_one("#sources-create-name", Input).focus()
@@ -575,13 +689,13 @@ async def test_create_and_cancel_sit_side_by_side_like_the_dialog(size):
 
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize(
-    "source_type,field_order",
-    [("rss", CREATE_FIELD_ORDER), ("url", URL_FAMILY_FIELD_ORDER)],
-    ids=["feed", "page"],
+    "runtime_backend,source_type,field_order",
+    FORM_CASES,
+    ids=["local-feed", "local-page", "server-feed"],
 )
 @pytest.mark.asyncio
 async def test_the_whole_create_form_fits_inside_the_sources_pane(
-    size, source_type, field_order
+    size, runtime_backend, source_type, field_order
 ):
     """Every control has to be reachable, not merely present.
 
@@ -595,7 +709,13 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(
     """
     host = _watchlists_host()
     async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        if runtime_backend != "local":
+            await _choose_runtime_backend(screen, pilot, runtime_backend)
         screen, pane = await _open_sources_create_form(pilot, host)
+        if runtime_backend == "server":
+            assert not pane.query("#sources-create-frequency")
+            assert not pane.query("#sources-create-ignore-selectors")
         if source_type != "rss":
             await _choose_source_type(pilot, pane, source_type)
 
@@ -681,6 +801,122 @@ async def test_a_source_can_be_created_end_to_end_through_the_form(size):
         )
 
 
+@pytest.mark.asyncio
+async def test_submission_backend_governs_creation_filing_and_confirmation():
+    app = _build_test_app()
+    bundle = app.watchlist_bundle_service
+    watchlist_id = int(bundle.create("Reading")["id"])
+    source_id = int(
+        bundle._db.add_subscription(
+            name="Race Feed",
+            type="rss",
+            source="https://race.example/feed",
+        )
+    )
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    create_worker_entered = asyncio.Event()
+    release_create_worker = asyncio.Event()
+    submitted_backends: list[str] = []
+    create_calls: list[dict[str, object]] = []
+    reload_backends: list[str] = []
+    notices: list[str] = []
+
+    async def record_create(*, runtime_backend, payload):
+        create_calls.append(
+            {"runtime_backend": runtime_backend, "payload": dict(payload)}
+        )
+        return {"id": f"local:subscription:{source_id}", "source_id": source_id}
+
+    async def record_source_reload(*, runtime_backend, **_kwargs):
+        reload_backends.append(runtime_backend)
+        return []
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_destination_screen(host)
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if screen._tree_watchlists:
+                break
+        assert screen._tree_watchlists
+        screen._controller.create_source = record_create
+        screen._controller.list_sources = record_source_reload
+        screen._notify_watchlists = (
+            lambda message, severity="information", **_kwargs: notices.append(message)
+        )
+
+        original_create_source = screen._create_source
+
+        async def gate_before_create_body(payload, *, runtime_backend):
+            """Pause the worker before production can consult screen state."""
+            submitted_backends.append(runtime_backend)
+            create_worker_entered.set()
+            await release_create_worker.wait()
+            await original_create_source(
+                payload,
+                runtime_backend=runtime_backend,
+            )
+
+        screen._create_source = gate_before_create_body
+
+        _screen, pane = await _open_sources_create_form(pilot, host)
+        pane.query_one("#sources-create-name", Input).value = "Race Feed"
+        pane.query_one("#sources-create-url", Input).value = (
+            "https://race.example/feed"
+        )
+        pane.query_one("#sources-create-watchlist", Select).value = watchlist_id
+        await pilot.pause(0.2)
+        pane.query_one("#sources-create-submit", Button).press()
+
+        await asyncio.wait_for(create_worker_entered.wait(), timeout=2)
+        assert submitted_backends == ["local"]
+        assert create_calls == [], (
+            "the gate must pause before the original _create_source body"
+        )
+        await _choose_runtime_backend(screen, pilot, "server")
+        release_create_worker.set()
+        await host.workers.wait_for_complete()
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if reload_backends and notices:
+                break
+
+        assert create_calls[0]["runtime_backend"] == "local"
+        assert bundle.list_sources(watchlist_id) == [source_id]
+        assert any('Source created in "Reading".' == notice for notice in notices)
+        assert reload_backends[-1] == "server"
+
+
+@pytest.mark.asyncio
+async def test_unrelated_create_failure_keeps_the_generic_error_copy():
+    host = _watchlists_host()
+    notices: list[tuple[str, str]] = []
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _open_sources_create_form(pilot, host)
+
+        async def fail_create(*, runtime_backend, payload):
+            raise ValueError("the supported RSS source failed for another reason")
+
+        screen._controller.create_source = fail_create
+        screen.app_instance.notify = (
+            lambda message, severity="information", **_kwargs: notices.append(
+                (message, severity)
+            )
+        )
+        pane.query_one("#sources-create-name", Input).value = "Broken RSS"
+        pane.query_one("#sources-create-url", Input).value = "https://broken.test/rss"
+        await pilot.pause(0.1)
+        pane.query_one("#sources-create-submit", Button).press()
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if notices:
+                break
+
+        assert notices == [("Failed to create source.", "error")]
+
+
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_clicking_any_row_of_the_name_input_focuses_it(size):
@@ -760,7 +996,10 @@ async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
         screen._load_sources = watch_sources
         screen._load_tree_data = watch_tree
 
-        await screen._create_source({"name": "AI News RSS", "url": "https://x/f"})
+        await screen._create_source(
+            {"name": "AI News RSS", "url": "https://x/f"},
+            runtime_backend="local",
+        )
         for _ in range(20):
             await pilot.pause()
             if {"sources", "tree"} <= set(reloaded):

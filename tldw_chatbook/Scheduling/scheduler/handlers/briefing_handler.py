@@ -60,6 +60,13 @@ class BriefingJobHandler:
     `asyncio.create_task` result with no other reference is only weakly
     held by the event loop).
 
+    Task-19561 gave that same set a second job. Because these tasks are not
+    Textual workers, they were invisible to app shutdown, which only ever
+    cancelled `App.workers` -- so quitting destroyed a live generation
+    mid-flight instead of cancelling it. `shutdown()` (below) is the seam
+    `app.py`'s `on_unmount` now calls to reach them while the loop is still
+    running.
+
     Task 3 (kept-briefings, task-1780): once a spawned generation resolves
     `complete`, `_run_generation` auto-mirrors it into ChaChaNotes via
     `briefing_keep.keep_briefing(..., origin="scheduled")` -- see
@@ -159,9 +166,67 @@ class BriefingJobHandler:
             )
             return
 
-        spawned = asyncio.create_task(self._run_generation(watchlist_id))
+        spawned = asyncio.create_task(
+            self._run_generation(watchlist_id),
+            name=f"briefing_generation_watchlist_{watchlist_id}",
+        )
         self._pending_generations.add(spawned)
         spawned.add_done_callback(self._pending_generations.discard)
+
+    async def shutdown(self, *, timeout: float = 5.0) -> int:
+        """Cancel and settle every generation this handler still owns.
+
+        Task-19561. `handle` deliberately spawns generations as bare
+        `asyncio.Task`s rather than Textual workers (Locked Decision 3 --
+        a multi-minute LLM call must not stall the scheduler tick), which
+        also means they are absent from `App.workers`, the only collection
+        app shutdown was cancelling. They therefore survived teardown as
+        detached tasks whose event loop was about to close underneath
+        them: asyncio's "Task was destroyed but it is pending", a `generating`
+        row nobody would move again, and any write in flight abandoned
+        wherever it happened to be. Shutdown now reaches them through this
+        method; `app.py`'s `on_unmount` calls it while the loop is still
+        alive, so the cancellation is actually delivered and awaited.
+
+        The row a cancelled generation leaves behind stays `generating`, on
+        purpose: writing a terminal status from inside a cancellation, on a
+        loop that is closing, is exactly the racing background write
+        `local_watchlists_service` documents as trading one stale row for a
+        stale row plus a destroyed task. The startup sweep
+        (`Subscriptions/startup_reconcile.py`) reconciles it instead, which
+        also covers the terminations no shutdown hook can ever run for.
+
+        Idempotent, and safe to call with nothing in flight.
+
+        Args:
+            timeout: Seconds to wait for the cancelled tasks to settle
+                before giving up on them. Exceeding it is logged, never
+                raised -- a shutdown must not fail on this.
+
+        Returns:
+            How many in-flight generations were cancelled.
+        """
+        pending = [task for task in self._pending_generations if not task.done()]
+        if not pending:
+            return 0
+        for task in pending:
+            task.cancel()
+        # `asyncio.wait`, NOT `wait_for(gather(...))`: on expiry `wait_for`
+        # cancels what it is waiting on and then awaits that cancellation,
+        # so a task that swallows `CancelledError` hangs the very call whose
+        # timeout was supposed to bound it. `wait` just returns and reports.
+        _, unsettled = await asyncio.wait(pending, timeout=timeout)
+        for task in pending:
+            if task.done() and not task.cancelled():
+                # Retrieve any exception so a cancelled-at-shutdown task
+                # cannot surface as "exception was never retrieved".
+                task.exception()
+        if unsettled:
+            logger.warning(
+                f"{len(unsettled)} scheduled briefing generation(s) did not "
+                f"settle within {timeout}s of cancellation."
+            )
+        return len(pending)
 
     def _default_preset_id(self, watchlist_id: int) -> int | None:
         """The watchlist's stored `default_briefing_preset_id`, or `None`.
@@ -175,8 +240,10 @@ class BriefingJobHandler:
         `WatchlistCheckHandler.handle`, which calls the service method
         `get_subscription()`, not raw `.conn` SQL, and reads a table this
         handler's own spawned generations never write to concurrently.
-        Both distinctions matter here: `SubscriptionsDB` sets no
-        `busy_timeout` (SQLite's 5s default applies), and THIS handler's
+        Both distinctions matter here: `SubscriptionsDB` waits up to
+        `Subscriptions_DB.BUSY_TIMEOUT_MS` (5 s) for a contended write --
+        pinned explicitly by task-19562, previously the inherited sqlite3
+        default, and measured rather than assumed -- and THIS handler's
         own `generate_briefing` calls write to `watchlists`'/`briefings`'
         shared connection from `asyncio.to_thread` workers -- so a direct,
         synchronous call here could block on a lock its own spawned work

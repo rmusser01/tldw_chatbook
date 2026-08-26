@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from uuid import UUID
+
 import pytest
 
 from tldw_chatbook.TTS.adapter_types import (
@@ -20,12 +22,38 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionOverrides,
     TTSSelectionSource,
     TTSStudioDraftSelection,
+    tts_configuration_is_active,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSPreferencesSnapshot,
     StudioTTSSelectionOverrides,
 )
+
+_CHARACTER_PROFILE_ID = UUID("11111111-1111-4111-8111-111111111111")
+_DEFAULT_PROFILE_ID = UUID("22222222-2222-4222-8222-222222222222")
+
+
+@pytest.mark.asyncio
+async def test_provider_only_projection_matches_full_resolution_precedence() -> None:
+    resolver = TTSEffectiveSettingsResolver()
+    runtime = _ResolutionRuntime()
+    global_preferences = _global_preferences(provider_id="openai")
+    explicit = TTSSelectionOverrides(provider_id="chatterbox")
+
+    projected = resolver.project_provider(
+        global_preferences=global_preferences,
+        explicit=explicit,
+    )
+    resolved = await resolver.resolve_non_studio(
+        global_preferences=global_preferences,
+        global_preferences_revision=7,
+        provider_revision_reader=runtime.provider_revision,
+        catalog_reader=runtime.read_catalog,
+        explicit=explicit,
+    )
+
+    assert projected == resolved.provider_id == "chatterbox"
 
 
 def _global_preferences(
@@ -157,6 +185,70 @@ class _ResolutionRuntime:
         return self.capability
 
 
+def test_provider_revision_accessors_keep_publication_and_runtime_ids_distinct() -> (
+    None
+):
+    revisions = TTSEffectiveSelectionRevisions(
+        global_preferences=8,
+        studio_preferences=None,
+        character_repository=None,
+        character_profile=None,
+        default_profile_repository=None,
+        default_profile_revision=None,
+        provider_configuration=41,
+        provider_catalog=None,
+        provider_saved=7,
+        provider_applied=7,
+    )
+
+    assert revisions.provider_saved == 7
+    assert revisions.provider_applied == 7
+    assert revisions.provider_active == 41
+    assert revisions.provider_configuration == 41
+
+
+class _ActiveConfigurationService:
+    def __init__(self, *, saved: int, applied: int, active: int) -> None:
+        self.saved = saved
+        self.applied = applied
+        self.active = active
+
+    def saved_configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "openai"
+        return self.saved
+
+    def applied_configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "openai"
+        return self.applied
+
+    def configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "openai"
+        return self.active
+
+
+def test_active_configuration_compares_publication_generations_not_runtime_revision() -> (
+    None
+):
+    service = _ActiveConfigurationService(saved=7, applied=7, active=41)
+
+    assert tts_configuration_is_active(service, "openai", 7) is True
+
+    service.applied = 6
+    assert tts_configuration_is_active(service, "openai", 7) is False
+
+
+def test_active_configuration_rejects_missing_active_runtime_identity() -> None:
+    service = _ActiveConfigurationService(saved=7, applied=7, active=-1)
+
+    assert tts_configuration_is_active(service, "openai", 7) is False
+
+
+def test_active_configuration_rejects_unsaved_bootstrap_generation() -> None:
+    service = _ActiveConfigurationService(saved=0, applied=0, active=1)
+
+    assert tts_configuration_is_active(service, "openai", 0) is False
+
+
 @pytest.mark.asyncio
 async def test_global_only_resolution_preserves_legacy_selection_without_catalog() -> (
     None
@@ -224,6 +316,7 @@ async def test_normal_resolution_applies_explicit_then_character_then_global() -
         ),
         repository_generation=9,
         profile_revision=6,
+        profile_id=_CHARACTER_PROFILE_ID,
     )
 
     resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
@@ -718,6 +811,7 @@ async def test_incomplete_character_profile_blocks_instead_of_using_global_value
         ),
         repository_generation=2,
         profile_revision=3,
+        profile_id=_CHARACTER_PROFILE_ID,
     )
 
     with pytest.raises(TTSEffectiveResolutionError) as caught:
@@ -1093,6 +1187,7 @@ async def test_default_profile_wins_over_global_and_loses_to_character() -> None
         ),
         repository_generation=4,
         profile_revision=2,
+        profile_id=_DEFAULT_PROFILE_ID,
     )
     resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
         default_profile=default_profile,
@@ -1128,6 +1223,7 @@ async def test_character_profile_outranks_default_profile() -> None:
         ),
         repository_generation=9,
         profile_revision=6,
+        profile_id=_CHARACTER_PROFILE_ID,
     )
     default_profile = TTSDefaultProfileSelection(
         selection=TTSSelectionOverrides(
@@ -1142,6 +1238,7 @@ async def test_character_profile_outranks_default_profile() -> None:
         ),
         repository_generation=4,
         profile_revision=2,
+        profile_id=_DEFAULT_PROFILE_ID,
     )
     resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
         character_profile=character,
@@ -1192,6 +1289,7 @@ async def test_incomplete_default_profile_blocks_instead_of_using_global_values(
         ),
         repository_generation=2,
         profile_revision=3,
+        profile_id=_DEFAULT_PROFILE_ID,
     )
 
     with pytest.raises(TTSEffectiveResolutionError) as caught:

@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorAction,
 )
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
+from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
 
 pytestmark = pytest.mark.asyncio
 
@@ -45,6 +46,12 @@ async def test_worldbooks_block_renders_rows_and_actions():
         row = pilot.app.query_one("#console-inspector-worldbooks-row-0", Static)
         assert str(row.renderable) == "Alpha: 2 entries"
         assert pilot.app.query_one("#console-inspector-worldbooks-attach", Button)
+        heading = pilot.app.query_one("#console-inspector-worldbooks-heading")
+        body = pilot.app.query_one(
+            "#console-bounded-section-world-books", ConsoleBoundedSection
+        )
+        assert heading.parent is body.parent
+        assert row in body.query("*")
 
 
 async def test_worldbooks_block_absent_when_empty():

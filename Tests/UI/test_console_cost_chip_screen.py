@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import (
     _build_test_app,
     _visible_text,
@@ -45,6 +47,7 @@ from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
+from Tests.console_provider_doubles import provider_resolution
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
 
@@ -95,14 +98,14 @@ class _AnthropicCostGateway:
         self.sent_messages: list[list[dict]] = []
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
-            provider="anthropic",
-            base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
-            ready=True,
-            visible_copy="",
-            prompt_caching=True,
-        )
+        return provider_resolution(
+                   provider="anthropic",
+                   base_url=selection.base_url or "",
+                   model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
+                   ready=True,
+                   visible_copy="",
+                   prompt_caching=True,
+               )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.sent_messages.append(list(messages))
@@ -122,14 +125,14 @@ class _AnthropicWaitingGateway:
         self.release = asyncio.Event()
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
-            provider="anthropic",
-            base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
-            ready=True,
-            visible_copy="",
-            prompt_caching=True,
-        )
+        return provider_resolution(
+                   provider="anthropic",
+                   base_url=selection.base_url or "",
+                   model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
+                   ready=True,
+                   visible_copy="",
+                   prompt_caching=True,
+               )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         yield "partial"
@@ -158,6 +161,7 @@ async def _send_and_settle(console, pilot, draft: str, expect_text: str) -> None
 async def test_cost_chip_shows_dollar_figure_after_priced_send():
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -200,6 +204,7 @@ async def _mount_and_send_warm_reply(console, pilot):
 async def test_editing_earlier_history_alerts_the_warm_cache_chip():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -255,6 +260,7 @@ async def test_projected_delta_estimator_skipped_when_warm_without_break_reason(
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -309,6 +315,7 @@ async def test_projected_delta_estimator_skipped_when_warm_without_break_reason(
 async def test_reverting_the_edit_clears_the_alert():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -378,6 +385,7 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -436,6 +444,7 @@ async def test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expire
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -479,6 +488,7 @@ def test_build_console_cost_state_returns_none_without_native_session():
     repository_for_matching_database`` in test_console_native_chat_flow.py)
     -- no store has been created yet, so there is no active native session."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     screen = ChatScreen(app)
     assert screen._console_chat_store is None
 
@@ -497,6 +507,7 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
     not a real spend) appears -- even though the session has zero
     messages."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -530,7 +541,7 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
             payload={"query": "question", "evidence_bundle": bundle.to_payload()},
             status="staged",
         )
-        console._stage_console_library_rag_launch(launch)
+        console._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         state = console._build_console_cost_state()
@@ -542,8 +553,41 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
 
 
 @pytest.mark.asyncio
+async def test_build_console_cost_state_includes_fleet_token_spend():
+    """PR2b Task 5 (cost rollup): the active conversation's LIVE sub-agent
+    fleet spend reaches the cost chip's tooltip -- the aggregate this task
+    wires from `ConsoleAgentController._console_agent_fleet_token_total`
+    into `build_cost_snapshot`'s `fleet_tokens` keyword. Overrides the
+    controller method directly (rather than wiring a fake bridge through
+    the rail's own conversation-id plumbing) so this test pins the ONE
+    thing new here -- that `_build_console_cost_state` actually reads and
+    forwards that seam -- without re-deriving the fleet-token-total math
+    itself (already covered in `Tests/UI/test_console_agent_rail.py`).
+    """
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-cost-chip")
+
+        baseline = console._build_console_cost_state()
+        assert baseline is not None
+        assert "Sub-agents:" not in baseline.tooltip
+
+        console._agent._console_agent_fleet_token_total = lambda: 4200
+
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Sub-agents: 4.2k tok (not priced)" in state.tooltip
+
+
+@pytest.mark.asyncio
 async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(200, 48)) as pilot:
@@ -568,6 +612,7 @@ async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
 async def test_ttl_timer_expires_the_chip_and_stops_itself():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -609,6 +654,7 @@ async def test_ttl_timer_expires_the_chip_and_stops_itself():
 async def test_fingerprint_recompute_is_skipped_while_streaming():
     gateway = _AnthropicWaitingGateway()
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -629,12 +675,12 @@ async def test_fingerprint_recompute_is_skipped_while_streaming():
 
         before_memo = console._console_cost_fp_revisions.get(session_id)
 
-        user_message = next(
-            message
-            for message in store.messages_for_session(session_id)
-            if message.role is ConsoleMessageRole.USER
+        settings = store.session_settings(session_id)
+        assert settings is not None
+        store.replace_session_settings(
+            session_id,
+            replace(settings, system_prompt="bumped-while-streaming"),
         )
-        store.update_message_content(user_message.id, "bumped-while-streaming")
         bumped_revision = store.payload_revision(session_id)
 
         console._build_console_cost_state()
@@ -651,8 +697,13 @@ async def test_fingerprint_recompute_is_skipped_while_streaming():
 
 @pytest.mark.asyncio
 async def test_cost_chip_press_opens_the_breakdown_modal():
+    """task-8: the cost chip now opens the shared Conversation Inspector
+    (not the retired standalone cost modal, deleted in task-10), starting
+    on its Costs tab -- copies this file's existing chip-press driver
+    verbatim, only the pushed-modal assertion changes."""
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -672,11 +723,16 @@ async def test_cost_chip_press_opens_the_breakdown_modal():
         chip.action_open_cost_breakdown()
         await pilot.pause()
 
-        from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal
+        from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+            TAB_COSTS,
+            ConsoleConversationInspector,
+        )
 
-        assert isinstance(host.screen_stack[-1], ConsoleCostModal)
-        modal_text = _visible_text(host.screen_stack[-1])
-        assert "Cost breakdown" in modal_text
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleConversationInspector)
+        assert modal.query_one("#console-inspector-tabs").active == TAB_COSTS
+        modal_text = _visible_text(modal)
+        assert "Conversation Inspector" in modal_text
         assert "Total" in modal_text
 
 
@@ -710,6 +766,7 @@ async def test_cost_chip_state_isolated_across_session_tabs():
     """
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="priced on A")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -765,3 +822,37 @@ async def test_cost_chip_state_isolated_across_session_tabs():
         assert session_b.id in console._console_cost_fp_revisions
         assert session_a.id != session_b.id
         assert console._console_cost_fp_revisions[session_a.id] == revision_a
+
+
+@pytest.mark.asyncio
+async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
+    """PR3a-1 Task 6b (audit F3): the money a child billed AFTER its turn's
+    usage was attached reaches the chip.
+
+    It is not on the message row and will not be until PR 3a-2's
+    last-child-done re-attach, so the chip's existing unpriced sub-agent
+    line is where it is named instead of vanishing. Overrides the
+    controller seam directly, exactly as the sibling fleet-token test does,
+    so this pins the ONE new thing: that `_build_console_cost_state` reads
+    and forwards it.
+    """
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-cost-chip")
+
+        baseline = console._build_console_cost_state()
+        assert baseline is not None
+        assert "Sub-agents:" not in baseline.tooltip
+
+        controller = console._ensure_console_chat_controller()
+        assert controller is not None
+        controller.unattributed_fleet_tokens = lambda session_id: 1300
+
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Sub-agents: 1.3k tok (not priced)" in state.tooltip

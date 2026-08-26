@@ -641,23 +641,67 @@ class FileProcessor:
         return name
 
 
+def _format_size_bytes(size_bytes: int) -> str:
+    """Return ``size_bytes`` as a human-readable B/KB/MB/GB string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    size_kb = size_bytes / 1024
+    if size_kb < 1024:
+        return f"{size_kb:.1f} KB"
+    size_mb = size_kb / 1024
+    if size_mb < 1024:
+        return f"{size_mb:.1f} MB"
+    size_gb = size_mb / 1024
+    return f"{size_gb:.1f} GB"
+
+
 def get_formatted_file_size(file_path: Path) -> Optional[str]:
     """Returns the file size in a human-readable format (KB, MB, GB) or None if file doesn't exist."""
     try:
         if not file_path.exists() or not file_path.is_file():
             return None
-        size_bytes = os.path.getsize(file_path)
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        size_kb = size_bytes / 1024
-        if size_kb < 1024:
-            return f"{size_kb:.1f} KB"
-        size_mb = size_kb / 1024
-        if size_mb < 1024:
-            return f"{size_mb:.1f} MB"
-        size_gb = size_mb / 1024
-        return f"{size_gb:.1f} GB"
+        return _format_size_bytes(os.path.getsize(file_path))
     except OSError:  # Catch potential errors like permission denied
+        return None
+
+
+def get_formatted_db_size_with_wal(db_path: Path) -> Optional[str]:
+    """Returns a SQLite DB file's size PLUS its ``-wal``/``-shm`` sidecars.
+
+    task-2859 item 5: a SQLite DB running in WAL mode defers committed
+    writes to a ``<db>-wal`` file until a checkpoint folds them back into
+    the main file -- reporting only the main file's size can understate
+    the DB's real on-disk footprint by orders of magnitude on a busy,
+    uncheckpointed database (the reported case: "4.0 KB" while the WAL
+    alone held roughly 4 MB). ``None`` if the main DB file itself is
+    missing; a missing/absent ``-wal``/``-shm`` sidecar (the common case,
+    right after a checkpoint) simply contributes 0 bytes rather than
+    failing the whole computation.
+
+    Args:
+        db_path: Path to the main ``.db``/``.sqlite`` file.
+
+    Returns:
+        Human-readable combined size (e.g. ``"4.2 MB"``), or ``None`` when
+        the main DB file doesn't exist or isn't a regular file.
+    """
+    try:
+        if not db_path.exists() or not db_path.is_file():
+            return None
+        total_bytes = os.path.getsize(db_path)
+        for sidecar_suffix in ("-wal", "-shm"):
+            sidecar_path = db_path.with_name(db_path.name + sidecar_suffix)
+            try:
+                if sidecar_path.is_file():
+                    total_bytes += os.path.getsize(sidecar_path)
+            except OSError:
+                # A sidecar that vanishes between the is_file() check and
+                # getsize() (e.g. a checkpoint completing mid-read) is not
+                # a reason to fail the whole size report -- it contributes
+                # 0 bytes, same as never having existed.
+                continue
+        return _format_size_bytes(total_bytes)
+    except OSError:
         return None
 
 

@@ -316,6 +316,11 @@ class _AvailabilityRepository:
     async def create_profile(self, *_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("availability must not create profiles")
 
+    async def create_profile_with_reference(
+        self, *_args: Any, **_kwargs: Any
+    ) -> Any:
+        raise AssertionError("availability must not create profile references")
+
     async def update_profile(self, *_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("availability must not update profiles")
 
@@ -333,6 +338,9 @@ class _AvailabilityRepository:
 
     async def get_profile(self, profile_id: UUID) -> Any:
         raise AssertionError(profile_id)
+
+    async def get_reference(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("availability must not read profile references")
 
     async def set_assignment(
         self,

@@ -30,9 +30,10 @@ What was NOT covered, and is pinned here:
    `_sync_console_agent_section` into the really-mounted Statics.
 2. That the sync's equality guard is observable behaviour (a second tick
    really does skip the `Static.update()` calls), not just an internal memo.
-3. The drill-in cycle stepping over *persisted* sub-agent runs, with
-   `_console_agent_full_log_run_id` tracking drill-in vs overview against
-   those same real records.
+3. Drilling directly into a *persisted* sub-agent run by its own row id
+   (PR2b Task 4 replaced the old cycling toggle with per-row click
+   routing), with `_console_agent_full_log_run_id` tracking drill-in vs
+   overview against those same real records.
 4. `_console_subagent_counts_for_rows`' batching and its row-set cache
    invalidation, measured against a real DB rather than a fake bridge.
 5. `_ensure_console_agent_bridge`'s durable-vs-`:memory:` fork and its
@@ -52,6 +53,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSection,
+)
 
 #: Terminal size the agent-section tests mount at -- wide enough that the
 #: Agent rail section is expanded rather than collapsed by the responsive
@@ -130,7 +134,7 @@ async def test_persisted_run_state_reaches_the_mounted_agent_rail_statics(tmp_pa
         bridge = _bridge_over(db_path)
         console._console_agent_bridge = bridge
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         # Precondition: nothing live -- the text below can only come from the
@@ -146,12 +150,45 @@ async def test_persisted_run_state_reaches_the_mounted_agent_rail_statics(tmp_pa
         assert "summarize docs" in subagents_text
 
         console._sync_console_agent_section()
+        # The fleet mini-section goes from 0 rows (nothing set up yet at
+        # initial compose) to 2 -- a structural change, so `sync_state`
+        # schedules a `refresh(recompose=True)` rather than patching in
+        # place (`ConsoleInspectorSection.sync_state`'s own discipline,
+        # Task 3). The row Statics queried below don't exist until that
+        # recompose actually runs.
+        await pilot.pause()
 
         assert _static_text(console, "#console-agent-section-status") == "Agent: done"
         assert "final answer" in _static_text(console, "#console-agent-section-steps")
-        painted_subagents = _static_text(console, "#console-agent-section-subagents")
+        # PR2b Task 4: the joined-string Static that used to live at this id
+        # is now a `ConsoleInspectorSection` -- read its mounted rows'
+        # primary/secondary text instead of a single Static's renderable.
+        fleet_section = console.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        painted_subagents = " ".join(
+            f"{row.primary_text} {row.secondary_text}" for row in fleet_section.rows
+        )
         assert "research pricing" in painted_subagents
         assert "summarize docs" in painted_subagents
+        # Review round 2 (Task 4 approval, one Medium finding): the check
+        # above reads `InspectorSectionRow` value objects -- plain Python
+        # attributes the controller built, not what the compositor actually
+        # painted. Blanking every row's rendered Static content left this
+        # test green (the reviewer proved it; mutation-verified again
+        # below). This IS the historical/resumed path (nothing live has
+        # ever run in this process -- see the docstring), the one path
+        # whose real DOM rendering was otherwise unguarded anywhere in the
+        # suite: `test_state_2_expanded_rows_render_two_painted_lines_per_
+        # child` (`Tests/UI/test_console_fleet_panel.py`) only exercises the
+        # LIVE-handle row builder. Read the REAL mounted row Statics too.
+        painted_row_statics = " ".join(
+            f"{_static_text(console, f'#console-inspector-section-agent-fleet-row-{i}-primary')} "
+            f"{_static_text(console, f'#console-inspector-section-agent-fleet-row-{i}-secondary')}"
+            for i in range(len(fleet_section.rows))
+        )
+        assert "research pricing" in painted_row_statics
+        assert "summarize docs" in painted_row_statics
 
 
 @pytest.mark.asyncio
@@ -163,7 +200,9 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
     reaches ``Static.update()`` at all.
     """
     db_path = tmp_path / "agent_runs.db"
-    _seed_done_primary_with_subagents(db_path, tasks=("research pricing",))
+    _primary_id, sub_ids = _seed_done_primary_with_subagents(
+        db_path, tasks=("research pricing",)
+    )
 
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -175,7 +214,7 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
 
         console._console_agent_bridge = _bridge_over(db_path)
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         console._sync_console_agent_section()
@@ -187,7 +226,10 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
 
         # ...and a genuinely changed payload does repaint: drilling in flips
         # the status line, so the guard is a guard and not a one-shot.
-        console._agent._toggle_console_agent_drilldown_from_subagents_click()
+        # TASK-4: drills directly into the seeded sub-agent's own row id
+        # (the old cycling toggle stepped to it via `runs[0]`; a click on
+        # its row now resolves the same target directly).
+        console._agent._drill_into_console_agent_subagent(sub_ids[0])
         await pilot.pause()
         console._sync_console_agent_section()
         assert _static_text(console, "#console-agent-section-status").startswith(
@@ -196,12 +238,16 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_drilldown_cycle_steps_persisted_subagents_and_retargets_the_full_log(
+async def test_drilldown_row_click_retargets_the_full_log_to_that_run(
     tmp_path,
 ):
-    """The drill-in cycles over the run store's own records, newest first,
-    and the "View full log" target follows it -- overview targets the latest
-    primary run, a drill-in targets the drilled-into sub-agent."""
+    """A specific row's drill-in retargets "View full log" to THAT run --
+    overview targets the latest primary run, drilling into a sub-agent row
+    targets that row's own run, directly (not via a shared cycling cursor;
+    TASK-4 replaced the old step-through-every-run toggle with per-row
+    click routing -- see ``test_console_agent_rail.py``'s
+    ``test_clicking_a_specific_subagent_row_drills_into_that_run_directly``
+    for the row-derivation half of this same replacement)."""
     db_path = tmp_path / "agent_runs.db"
     primary_id, sub_ids = _seed_done_primary_with_subagents(
         db_path, tasks=("oldest task", "newest task")
@@ -216,7 +262,7 @@ async def test_drilldown_cycle_steps_persisted_subagents_and_retargets_the_full_
 
         console._console_agent_bridge = _bridge_over(db_path)
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         # Overview: the affordance targets the conversation's latest primary.
@@ -230,22 +276,24 @@ async def test_drilldown_cycle_steps_persisted_subagents_and_retargets_the_full_
         full_log_run_id = console._agent._console_agent_full_log_run_id
         assert full_log_run_id() == primary_id
 
-        seen = []
-        for _ in range(3):
-            console._agent._toggle_console_agent_drilldown_from_subagents_click()
-            await pilot.pause()
-            seen.append(
-                (
-                    console._console_agent_drilldown_run_id,
-                    full_log_run_id(),
-                )
-            )
+        # Drill into the OLDEST sub-agent's row directly -- not "the first
+        # one a cycling cursor would reach".
+        console._agent._drill_into_console_agent_subagent(oldest_sub)
+        await pilot.pause()
+        assert console._console_agent_drilldown_run_id == oldest_sub
+        assert full_log_run_id() == oldest_sub
 
-        assert seen == [
-            (newest_sub, newest_sub),
-            (oldest_sub, oldest_sub),
-            (None, primary_id),
-        ]
+        # Click a DIFFERENT row next, out of any sequential order -- proves
+        # each row resolves to its own run independently of drill history.
+        console._agent._drill_into_console_agent_subagent(newest_sub)
+        await pilot.pause()
+        assert console._console_agent_drilldown_run_id == newest_sub
+        assert full_log_run_id() == newest_sub
+
+        # Back to the overview (the dedicated Back button's own effect,
+        # not a row) -- the affordance reverts to the latest primary run.
+        console._console_agent_drilldown_run_id = None
+        assert full_log_run_id() == primary_id
 
 
 @pytest.mark.asyncio
@@ -351,3 +399,51 @@ def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
         db_path=str(tmp_path / "chacha.db")
     )
     assert screen._ensure_console_agent_bridge() is not None
+
+
+@pytest.mark.asyncio
+async def test_drilldown_header_names_the_resumed_from_run(tmp_path):
+    """PR3b Task 4: a resumed sub-agent's drill-in header carries its
+    lineage -- ``resumed from <id>`` -- read straight off the run row's
+    ``resumed_from_run_id`` column (SELECT * flows it here for free); a
+    row without one keeps the exact pre-existing header."""
+    db_path = tmp_path / "agent_runs.db"
+    _primary_id, sub_ids = _seed_done_primary_with_subagents(
+        db_path, tasks=("original attempt",)
+    )
+    original_sub = sub_ids[0]
+    db = AgentRunsDB(db_path, client_id="t")
+    resumed_sub = db.create_run(
+        conversation_id="conv-A",
+        agent_kind="subagent",
+        task="original attempt",
+        parent_run_id=_primary_id,
+        resumed_from_run_id=original_sub,
+    )
+    db.set_status(resumed_sub, "done", result="second pass")
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        console._console_agent_bridge = _bridge_over(db_path)
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
+
+        console._agent._drill_into_console_agent_subagent(resumed_sub)
+        await pilot.pause()
+        console._sync_console_agent_section()
+        status = _static_text(console, "#console-agent-section-status")
+        assert status.startswith("Sub-agent · done")
+        assert f"resumed from {original_sub}" in status
+
+        # A NON-resumed row's header is byte-identical to before.
+        console._agent._drill_into_console_agent_subagent(original_sub)
+        await pilot.pause()
+        console._sync_console_agent_section()
+        assert (
+            _static_text(console, "#console-agent-section-status")
+            == "Sub-agent · done (Back)"
+        )

@@ -1,0 +1,346 @@
+{
+  "evidence_label": "task602_native_parakeet_matrix",
+  "platforms": {
+    "linux-aarch64": {
+      "artifacts": {
+        "v2_int8": {
+          "closure_fingerprint": "d52f16e6505c8efc3e5a9178f597e2414814ae44e677ea0cd75b317a240effc0",
+          "reference": {
+            "artifact_id": "parakeet-v2",
+            "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "v3_int8": {
+          "closure_fingerprint": "9ec622539e4e11990aef699c7c43f4e9f05c0d5c0e8235abec04f0ced8bbb1e8",
+          "reference": {
+            "artifact_id": "parakeet-v3",
+            "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "vad": {
+          "artifact_id": "silero-vad",
+          "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+          "variant": "f32"
+        }
+      },
+      "checks": {
+        "batch_reuse": "passed",
+        "cancellation": "passed",
+        "long_form_vad": "passed",
+        "package_resolution": "passed",
+        "retry_wiring": "passed",
+        "runtime_probe": "passed",
+        "v2_int8_cpu": "passed",
+        "v3_int8_cpu": "passed"
+      },
+      "cleanup": "passed",
+      "durations_seconds": {
+        "acquisition": 50.96749551,
+        "long_form_vad": 0.564366751999998,
+        "total": 60.012201932,
+        "v2_int8_cpu": 2.828385818000001,
+        "v3_int8_cpu": 2.6293048510000006
+      },
+      "evidence_label": "task602_native_parakeet",
+      "evidence_name": "linux-aarch64",
+      "execution_provider": "CPUExecutionProvider",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "aarch64",
+        "python": "3.12.13",
+        "system": "Linux"
+      },
+      "packages": {
+        "ctranslate2": "4.8.1",
+        "faster-whisper": "1.2.1",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.28.0"
+      },
+      "run": {
+        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31618353807",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "linux-x86_64": {
+      "artifacts": {
+        "v2_int8": {
+          "closure_fingerprint": "d52f16e6505c8efc3e5a9178f597e2414814ae44e677ea0cd75b317a240effc0",
+          "reference": {
+            "artifact_id": "parakeet-v2",
+            "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "v3_int8": {
+          "closure_fingerprint": "9ec622539e4e11990aef699c7c43f4e9f05c0d5c0e8235abec04f0ced8bbb1e8",
+          "reference": {
+            "artifact_id": "parakeet-v3",
+            "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "vad": {
+          "artifact_id": "silero-vad",
+          "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+          "variant": "f32"
+        }
+      },
+      "checks": {
+        "batch_reuse": "passed",
+        "cancellation": "passed",
+        "long_form_vad": "passed",
+        "package_resolution": "passed",
+        "retry_wiring": "passed",
+        "runtime_probe": "passed",
+        "v2_int8_cpu": "passed",
+        "v3_int8_cpu": "passed"
+      },
+      "cleanup": "passed",
+      "durations_seconds": {
+        "acquisition": 22.357514219999985,
+        "long_form_vad": 1.1736567589999822,
+        "total": 34.23696878999999,
+        "v2_int8_cpu": 3.728967979999993,
+        "v3_int8_cpu": 3.4088478110001006
+      },
+      "evidence_label": "task602_native_parakeet",
+      "evidence_name": "linux-x86_64",
+      "execution_provider": "CPUExecutionProvider",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.13",
+        "system": "Linux"
+      },
+      "packages": {
+        "ctranslate2": "4.8.1",
+        "faster-whisper": "1.2.1",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.28.0"
+      },
+      "run": {
+        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31618353807",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "macos-arm64": {
+      "artifacts": {
+        "v2_int8": {
+          "closure_fingerprint": "d52f16e6505c8efc3e5a9178f597e2414814ae44e677ea0cd75b317a240effc0",
+          "reference": {
+            "artifact_id": "parakeet-v2",
+            "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "v3_int8": {
+          "closure_fingerprint": "9ec622539e4e11990aef699c7c43f4e9f05c0d5c0e8235abec04f0ced8bbb1e8",
+          "reference": {
+            "artifact_id": "parakeet-v3",
+            "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "vad": {
+          "artifact_id": "silero-vad",
+          "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+          "variant": "f32"
+        }
+      },
+      "checks": {
+        "batch_reuse": "passed",
+        "cancellation": "passed",
+        "long_form_vad": "passed",
+        "package_resolution": "passed",
+        "retry_wiring": "passed",
+        "runtime_probe": "passed",
+        "v2_int8_cpu": "passed",
+        "v3_int8_cpu": "passed"
+      },
+      "cleanup": "passed",
+      "durations_seconds": {
+        "acquisition": 30.383085125000008,
+        "long_form_vad": 0.6037286670000128,
+        "total": 39.34402750000001,
+        "v2_int8_cpu": 4.0980479589999845,
+        "v3_int8_cpu": 2.0388968329999955
+      },
+      "evidence_label": "task602_native_parakeet",
+      "evidence_name": "macos-arm64",
+      "execution_provider": "CPUExecutionProvider",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "arm64",
+        "python": "3.12.10",
+        "system": "Darwin"
+      },
+      "packages": {
+        "ctranslate2": "4.8.1",
+        "faster-whisper": "1.2.1",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.28.0"
+      },
+      "run": {
+        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31618353807",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "macos-x86_64": {
+      "artifacts": {
+        "v2_int8": {
+          "closure_fingerprint": "d52f16e6505c8efc3e5a9178f597e2414814ae44e677ea0cd75b317a240effc0",
+          "reference": {
+            "artifact_id": "parakeet-v2",
+            "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "v3_int8": {
+          "closure_fingerprint": "9ec622539e4e11990aef699c7c43f4e9f05c0d5c0e8235abec04f0ced8bbb1e8",
+          "reference": {
+            "artifact_id": "parakeet-v3",
+            "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "vad": {
+          "artifact_id": "silero-vad",
+          "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+          "variant": "f32"
+        }
+      },
+      "checks": {
+        "batch_reuse": "passed",
+        "cancellation": "passed",
+        "long_form_vad": "passed",
+        "package_resolution": "passed",
+        "retry_wiring": "passed",
+        "runtime_probe": "passed",
+        "v2_int8_cpu": "passed",
+        "v3_int8_cpu": "passed"
+      },
+      "cleanup": "passed",
+      "durations_seconds": {
+        "acquisition": 58.3456138319998,
+        "long_form_vad": 1.4119450739999593,
+        "total": 87.54755848899981,
+        "v2_int8_cpu": 10.551260514999967,
+        "v3_int8_cpu": 9.270355913000003
+      },
+      "evidence_label": "task602_native_parakeet",
+      "evidence_name": "macos-x86_64",
+      "execution_provider": "CPUExecutionProvider",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.10",
+        "system": "Darwin"
+      },
+      "packages": {
+        "ctranslate2": "4.8.1",
+        "faster-whisper": "1.2.1",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.23.2"
+      },
+      "run": {
+        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31618353807",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "windows-x86_64": {
+      "artifacts": {
+        "v2_int8": {
+          "closure_fingerprint": "d52f16e6505c8efc3e5a9178f597e2414814ae44e677ea0cd75b317a240effc0",
+          "reference": {
+            "artifact_id": "parakeet-v2",
+            "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "v3_int8": {
+          "closure_fingerprint": "9ec622539e4e11990aef699c7c43f4e9f05c0d5c0e8235abec04f0ced8bbb1e8",
+          "reference": {
+            "artifact_id": "parakeet-v3",
+            "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
+            "variant": "int8"
+          }
+        },
+        "vad": {
+          "artifact_id": "silero-vad",
+          "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+          "variant": "f32"
+        }
+      },
+      "checks": {
+        "batch_reuse": "passed",
+        "cancellation": "passed",
+        "long_form_vad": "passed",
+        "package_resolution": "passed",
+        "retry_wiring": "passed",
+        "runtime_probe": "passed",
+        "v2_int8_cpu": "passed",
+        "v3_int8_cpu": "passed"
+      },
+      "cleanup": "passed",
+      "durations_seconds": {
+        "acquisition": 64.54600000000005,
+        "long_form_vad": 0.9210000000000491,
+        "total": 80.70299999999997,
+        "v2_int8_cpu": 5.25,
+        "v3_int8_cpu": 4.8120000000001255
+      },
+      "evidence_label": "task602_native_parakeet",
+      "evidence_name": "windows-x86_64",
+      "execution_provider": "CPUExecutionProvider",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.10",
+        "system": "Windows"
+      },
+      "packages": {
+        "ctranslate2": "4.8.1",
+        "faster-whisper": "1.2.1",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.28.0"
+      },
+      "run": {
+        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31618353807",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    }
+  },
+  "schema_version": 1,
+  "status": "passed",
+  "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "31618353807",
+  "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+}

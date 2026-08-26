@@ -130,6 +130,7 @@ from ...Chat.console_voice_input import (
     VoiceDictationModelDefaulted,
     VoiceFailed,
     VoiceFinal,
+    VoiceLocalSTTBusy,
     VoiceModelPreparing,
     VoiceModelWarmupFailed,
     VoicePartial,
@@ -141,7 +142,9 @@ from ...Chat.console_voice_input import (
     default_service_factory,
 )
 from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
+from ...STT.dispatch_coordinator import DICTATION_MAX_SECONDS, pcm_byte_limit
 from ...Utils.persistent_diagnostics import persist_event
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console import ConsoleComposerBar
 from ...Widgets.glyph_fallback import resolve_glyph
 
@@ -150,7 +153,7 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="ChatScreen")
 
-CONSOLE_DICTATION_MAX_SECONDS = 60.0
+CONSOLE_DICTATION_MAX_SECONDS = DICTATION_MAX_SECONDS
 #: `AudioRecordingService`'s own capture defaults, restated rather than
 #: imported: `tldw_chatbook.Audio` pulls in the transcription stack at module
 #: scope, and this module must stay importable without it (see
@@ -158,20 +161,13 @@ CONSOLE_DICTATION_MAX_SECONDS = 60.0
 CONSOLE_DICTATION_SAMPLE_RATE = 16_000
 CONSOLE_DICTATION_CHANNELS = 1
 CONSOLE_DICTATION_SAMPLE_WIDTH = 2
-#: Slack over the wall-clock cap so the bound is a *memory* backstop and never
-#: the thing that ends an ordinary capture: the 60 s timer below should always
-#: win first, and only a recorder that outruns its own clock (a wedged timer, a
-#: device delivering faster than real time) should ever reach this.
-CONSOLE_DICTATION_BUFFER_HEADROOM = 1.5
 #: The PCM bound handed to the recorder. Without it `AudioRecordingService`
 #: retains every chunk for the whole capture -- and so do its undrained
 #: `audio_queue` and `LazyLiveDictationService.audio_buffer`, at ~32 KB/s each.
-CONSOLE_DICTATION_MAX_BYTES = int(
-    CONSOLE_DICTATION_SAMPLE_RATE
-    * CONSOLE_DICTATION_CHANNELS
-    * CONSOLE_DICTATION_SAMPLE_WIDTH
-    * CONSOLE_DICTATION_MAX_SECONDS
-    * CONSOLE_DICTATION_BUFFER_HEADROOM
+CONSOLE_DICTATION_MAX_BYTES = pcm_byte_limit(
+    sample_rate=CONSOLE_DICTATION_SAMPLE_RATE,
+    channels=CONSOLE_DICTATION_CHANNELS,
+    sample_width=CONSOLE_DICTATION_SAMPLE_WIDTH,
 )
 
 
@@ -608,6 +604,31 @@ class ConsoleStreamingDictationSession:
         heard = heard or bool(outcome.captured_bytes)
         raise RuntimeError(NO_SPEECH_MESSAGE if heard else NO_CAPTURE_MESSAGE)
 
+    @property
+    def retry_available(self) -> bool:
+        """Whether one bounded faster-whisper replay is retained."""
+
+        return self._controller.retry_available
+
+    def clear_retry(self) -> None:
+        """Release any retained retry PCM without replaying it."""
+
+        self._controller.clear_retry()
+
+    def retry_with_faster_whisper(self) -> str:
+        """Replay logical segments, classify them, and return the full capture."""
+
+        with self._lock:
+            generation = self._capture_generation
+        logical_texts = self._controller.retry_segments_with_faster_whisper()
+        for text in logical_texts:
+            self._handle_event(
+                console_voice_input.classify_segment(text),
+                generation,
+            )
+        with self._lock:
+            return _join_segments(self._segments)
+
     def discard(self) -> None:
         """Release the microphone without the blocking join.
 
@@ -653,6 +674,7 @@ class ConsoleDictationController:
         run_pending_voice_action: Callable[[str | None], Any],
         undo_histories_accessor: Callable[[], dict[str, Any]],
         visible_draft_session_id_accessor: Callable[[], str | None],
+        dictation_service_factory: Callable[..., Any] = default_service_factory,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -800,6 +822,7 @@ class ConsoleDictationController:
         self._run_pending_voice_action_fn = run_pending_voice_action
         self._undo_histories_accessor = undo_histories_accessor
         self._visible_draft_session_id_accessor = visible_draft_session_id_accessor
+        self._dictation_service_factory = dictation_service_factory
 
         # Dictation's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_dictation_session: Any | None = None
@@ -1335,6 +1358,13 @@ class ConsoleDictationController:
             if event.detail:
                 self.app_instance.notify(event.detail, severity="information")
             return
+        if isinstance(event, VoiceLocalSTTBusy):
+            if self._console_dictation_state != "starting":
+                return
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                composer.set_voice_preparing_message(event.message)
+            return
         if isinstance(event, VoiceModelWarmupFailed):
             # Advisory, not fatal: the capture is going ahead. Making this
             # fatal would mean one transient error permanently disables
@@ -1475,61 +1505,17 @@ class ConsoleDictationController:
         if self._console_dictation_state != "recording":
             return
         self.app_instance.notify(
-            "Dictation limit reached; transcribing the captured audio.",
+            "Limit reached — press Mic to continue.",
             severity="warning",
         )
         if self._console_hands_free is not None:
-            # `had_segments` must be read NOW, while the capture is still
-            # `recording` (the segments live on the session object that is
-            # about to be released).
-            had_segments = False
-            session = self._console_dictation_session
-            if session is not None:
-                with session._lock:
-                    had_segments = bool(session._segments)
-            if had_segments:
-                # WITH segments pending, `on_capture_ended` must fire
-                # synchronously, HERE, while still `recording` -- exactly
-                # like the original (pre-review) design: it emits
-                # `RequestStopAndSend`, which (via `_console_hands_free_
-                # request_stop_and_send`'s "recording" branch) drives the
-                # REAL stop-and-send itself, making the trailing, always-run
-                # `_request_console_dictation_stop()` call below a harmless
-                # no-op (state has already moved on to `transcribing`).
-                # Deferring this case the same way the empty case needs
-                # (see below) would let the trailing unconditional stop run
-                # FIRST and finish the capture on its own, ordinary
-                # (non-send) path -- by the time a deferred `on_capture_
-                # ended` then tried to retroactively queue a send,
-                # `_console_dictation_origin_session_id` would already be
-                # cleared to `None` and the draft could have moved on.
-                self._console_hands_free.controller.on_capture_ended(
-                    had_segments=True, limit_hit=True
-                )
-            else:
-                # Task-5 review B2: with NOTHING captured, `on_capture_
-                # ended` must NOT be delivered until the capture has
-                # actually reached `idle` (mic released). Delivering it
-                # synchronously here made an empty-capture `OpenCapture`
-                # reopen a same-tick no-op (`_console_hands_free_open_
-                # capture`'s own `state == "idle"` guard correctly refuses
-                # -- the mic is not free yet) while the FSM still recorded
-                # `capture_open = True` and burned the reopen-once ceiling
-                # regardless: permanently mic-dead, with no second
-                # `on_capture_ended` ever able to arrive to trigger the
-                # ceiling's own exit. See `_deliver_console_hands_free_
-                # capture_ended`, scheduled below instead of called
-                # directly -- unlike the had-segments branch above, there
-                # is no pending send whose session/draft state could go
-                # stale in the meantime, so deferring is safe here.
-                self.run_worker(
-                    self._deliver_console_hands_free_capture_ended(
-                        self._console_hands_free, False
-                    ),
-                    exclusive=False,
-                    group="console-hands-free-capture-ended",
-                    exit_on_error=False,
-                )
+            # A bounded ending is never a conversational turn boundary. Exit
+            # the loop through its existing close-capture path so retained
+            # text follows ordinary caret insertion without auto-send or the
+            # loop's historical one-time reopen. A later physical Mic press
+            # starts a fresh capture explicitly.
+            self._console_hands_free.controller.on_exit_request()
+            return
         self._request_console_dictation_stop()
 
     def _create_console_dictation_session(self) -> Any:
@@ -1540,6 +1526,12 @@ class ConsoleDictationController:
         """
         return ConsoleStreamingDictationSession(
             on_event=self._emit_console_dictation_event,
+            service_factory=self._dictation_service_factory,
+            max_buffer_bytes=pcm_byte_limit(
+                sample_rate=CONSOLE_DICTATION_SAMPLE_RATE,
+                channels=CONSOLE_DICTATION_CHANNELS,
+                sample_width=CONSOLE_DICTATION_SAMPLE_WIDTH,
+            ),
         )
 
 
@@ -1585,7 +1577,7 @@ class ConsoleDictationController:
             return
         self._set_console_dictation_state("recording")
         self._console_dictation_timer = self.set_timer(
-            CONSOLE_DICTATION_MAX_SECONDS,
+            DICTATION_MAX_SECONDS,
             self._handle_console_dictation_limit,
         )
         self._console_dictation_elapsed_timer = self.set_interval(
@@ -1713,10 +1705,85 @@ class ConsoleDictationController:
         try:
             transcript = await asyncio.to_thread(session.stop_and_transcribe)
         except Exception as exc:
-            await asyncio.to_thread(session.discard)
-            if self._console_dictation_session is session:
-                self._notify_console_dictation_error(exc)
+            if not session.retry_available:
+                await asyncio.to_thread(session.discard)
+                if self._console_dictation_session is session:
+                    self._notify_console_dictation_error(exc)
+                return
+            try:
+                confirmed = await self.run_worker(
+                    self.app_instance.push_screen_wait(
+                        ConfirmationDialog(
+                            title="Parakeet transcription failed",
+                            message=(
+                                "Parakeet failed. Retry this audio with "
+                                "faster-whisper?"
+                            ),
+                            confirm_label="Retry",
+                            cancel_label="Keep draft",
+                        )
+                    ),
+                    exclusive=False,
+                    exit_on_error=False,
+                ).wait()
+            except asyncio.CancelledError:
+                self._finish_failed_console_dictation(session)
+                raise
+            except Exception:  # noqa: BLE001 - modal teardown is best effort
+                logger.opt(exception=True).debug(
+                    "Console dictation retry prompt did not complete"
+                )
+                self._finish_failed_console_dictation(session)
+                return
+            if not confirmed:
+                self._finish_failed_console_dictation(session)
+                return
+            try:
+                transcript = await asyncio.to_thread(
+                    session.retry_with_faster_whisper
+                )
+            except Exception as retry_exc:
+                owns_session = self._console_dictation_session is session
+                self._finish_failed_console_dictation(session)
+                if owns_session and self.is_mounted:
+                    self._notify_console_dictation_error(retry_exc)
+                return
+        await self._finish_successful_console_dictation(
+            session,
+            origin_session_id=origin_session_id,
+            transcript=transcript,
+        )
+
+    def _finish_failed_console_dictation(self, session: Any) -> None:
+        """Clear one failed/rejected retry without mutating the draft."""
+
+        try:
+            session.clear_retry()
+        except Exception:  # noqa: BLE001 - cleanup must always reach idle
+            logger.opt(exception=True).debug(
+                "Console dictation retry state could not be cleared"
+            )
+        if self._console_dictation_session is not session:
             return
+        self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
+        self._console_dictation_session = None
+        self._console_dictation_origin_session_id = None
+        self._console_dictation_partial = ""
+        self._console_pending_voice_action = None
+        self._console_dictation_late_discard_ack = False
+        self._set_console_dictation_state("idle")
+
+    async def _finish_successful_console_dictation(
+        self,
+        session: Any,
+        *,
+        origin_session_id: str | None,
+        transcript: str,
+    ) -> None:
+        """Apply the single insertion/idle/action tail for success or retry."""
+
+        session.clear_retry()
         if not self.is_mounted:
             return
         if self._console_dictation_session is not session:

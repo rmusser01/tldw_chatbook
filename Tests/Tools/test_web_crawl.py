@@ -813,7 +813,7 @@ def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
     up to the 1 MiB page cap instead of aborting once the type is known
     from the sniff."""
     def guarded_chunks():
-        yield b"%PDF-"  # >= 5 bytes: resolves the sniff to is_pdf=True this chunk
+        yield b"%PDF-"  # 5 bytes: under the 12-byte sniff window, resolves NEXT chunk
         for i in range(3):
             yield f"filler chunk {i}".encode()
         raise AssertionError(
@@ -827,6 +827,49 @@ def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
     )
     out = web_crawl("http://example.com/")
     assert "[application/pdf]" in out
+
+
+def test_crawl_mislabeled_binary_declared_html_reads_full_body(crawl_env):
+    """Review fix round 1 (Important 2): a binary served AS text/html
+    during a crawl keeps today's full-read behavior (the binary design
+    doc's stated non-goal) — the html_only early-abort must key on
+    kind == "pdf" plus the DECLARED type, never a sniffed image/zip/audio
+    kind, which would cut the body at the 12-byte sniff window while
+    misreporting truncated=False. The ASCII tail marker survives the
+    UTF-8-replace decode, so its presence in the excerpt proves the body
+    was drained past the sniff window. CHUNKED delivery is load-bearing
+    (re-review): a single-chunk body is fully captured before the abort
+    check runs, so only a multi-chunk response lets the buggy predicate
+    actually cut the tail — verified red against the pre-fix code."""
+    def chunked():
+        yield b"\x89PNG\r\n\x1a\n" + b"\x00" * 8  # 16 bytes: sniff resolves kind=image here
+        yield b"TAILMARKER after the sniff window"
+    _site(crawl_env, {"http://example.com/": ("root", ["/masq"])})
+    crawl_env.routes["http://example.com/masq"] = httpx.Response(
+        200, content=chunked(), headers={"content-type": "text/html"}
+    )
+    out = web_crawl("http://example.com/")
+    assert "TAILMARKER" in out
+
+
+def test_crawl_warm_cache_does_not_mask_binary_metadata_for_later_fetch(crawl_env):
+    """task-3280 / Qodo PR #1442 (1): crawl's mojibake decode of a
+    MISLABELED binary must not warm the (url, FETCH_MAX_BYTES) cache key
+    web_fetch reads — otherwise the same URL returns different result
+    shapes depending on which tool touched it first, for the whole cache
+    TTL. Crawl-then-fetch must yield the binary metadata shape."""
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20 + b"tail bytes beyond the sniff window"
+    _site(crawl_env, {"http://example.com/": ("root", ["/pic"])})
+    crawl_env.routes["http://example.com/pic"] = httpx.Response(
+        200, content=png, headers={"content-type": "text/html"}
+    )
+    web_crawl("http://example.com/")
+    # The body is magic-only (not a valid PNG), so the metadata path
+    # refuses with [image-error] — the point is the SHAPE: web_fetch must
+    # take the binary path and raise, never return crawl's cached
+    # mojibake text (which would come back as a plain string).
+    with pytest.raises(LocalToolError, match=r"\[image-error\]"):
+        web_tool_impls.web_fetch("http://example.com/pic")
 
 
 def test_crawl_nonpdf_nonhtml_marker_uses_declared_type(crawl_env):

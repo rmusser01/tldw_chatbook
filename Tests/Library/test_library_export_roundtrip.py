@@ -31,6 +31,7 @@ from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportSt
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_export_scope import (
     ExportScope,
     resolve_export_selections,
@@ -41,6 +42,7 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 # EXACT string survives inside the zip and after re-import, not merely
 # that "a media item" (any count) made it across.
 _MEDIA_TRANSCRIPT = "EXACT TRANSCRIPT TEXT FOR THE F4 ROUNDTRIP PIN."
+_PROMPT_SYSTEM = "EXACT SYSTEM TEXT FOR THE TASK-197 ROUNDTRIP PIN."
 
 pytestmark = pytest.mark.integration
 
@@ -55,6 +57,7 @@ def _seed_source_dbs(tmp_path: Path) -> dict:
     }
     chachanotes_db = CharactersRAGDB(db_paths["ChaChaNotes"], "f4-roundtrip-source")
     media_db = MediaDatabase(db_paths["Media"], "f4-roundtrip-source")
+    prompts_db = PromptsDatabase(db_paths["Prompts"], "f4-roundtrip-source")
 
     char_id = chachanotes_db.add_character_card(
         {
@@ -88,15 +91,26 @@ def _seed_source_dbs(tmp_path: Path) -> dict:
         content=_MEDIA_TRANSCRIPT,
         keywords=["roundtrip"],
     )
+    prompt_id, _prompt_uuid, _prompt_message = prompts_db.add_prompt(
+        name="Roundtrip Prompt",
+        author="TASK-197",
+        details="Portable Prompt",
+        system_prompt=_PROMPT_SYSTEM,
+        user_prompt="Exact user lane",
+        keywords=["roundtrip", "prompt"],
+    )
+    assert prompt_id is not None
 
     return {
         "db_paths": db_paths,
         "chachanotes_db": chachanotes_db,
         "media_db": media_db,
+        "prompts_db": prompts_db,
         "char_id": char_id,
         "conv_id": conv_id,
         "note_id": note_id,
         "media_id": media_id,
+        "prompt_id": prompt_id,
     }
 
 
@@ -110,11 +124,15 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
 
     scope = ExportScope(kind="everything")
     selections = resolve_export_selections(
-        scope, seeded["media_db"], seeded["chachanotes_db"]
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
     )
     assert ContentType.MEDIA in selections
     assert ContentType.CONVERSATION in selections
     assert ContentType.NOTE in selections
+    assert ContentType.PROMPT in selections
 
     payload = LibraryScreen._build_library_export_payload(
         name="Roundtrip Export",
@@ -150,6 +168,7 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
         assert manifest["statistics"]["total_conversations"] == 1
         assert manifest["statistics"]["total_notes"] == 1
         assert manifest["statistics"]["total_media_items"] == 1
+        assert manifest["statistics"]["total_prompts"] == 1
         # The character is auto-included as the conversation's dependency.
         assert manifest["statistics"]["total_characters"] == 1
 
@@ -179,6 +198,15 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
         assert media_metadata["created_at"] is not None
         assert media_metadata["updated_at"] is not None
 
+        prompt_names = [
+            name
+            for name in namelist
+            if name.startswith("content/prompts/prompt_") and name.endswith(".json")
+        ]
+        assert len(prompt_names) == 1
+        prompt_payload = json.loads(zf.read(prompt_names[0]))
+        assert prompt_payload["system_prompt"] == _PROMPT_SYSTEM
+
     # Registry record was created (zip succeeded).
     listed = asyncio.run(service.list_chatbooks())
     assert any(record["file_path"] == str(export_path) for record in listed)
@@ -195,6 +223,9 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
         import_db_paths["ChaChaNotes"], "f4-roundtrip-import"
     )
     import_media_db = MediaDatabase(import_db_paths["Media"], "f4-roundtrip-import")
+    import_prompts_db = PromptsDatabase(
+        import_db_paths["Prompts"], "f4-roundtrip-import"
+    )
 
     importer = ChatbookImporter(import_db_paths)
     status = ImportStatus()
@@ -202,8 +233,8 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
 
     assert success is True, message
     assert status.errors == []
-    # conversation + note + character (auto-included dependency) + media.
-    assert status.successful_items == 4
+    # conversation + note + character (auto-included dependency) + media + Prompt.
+    assert status.successful_items == 5
 
     imported_convs = import_chachanotes_db.search_conversations_by_title(
         "Roundtrip Conversation"
@@ -221,6 +252,14 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
     assert imported_media["content"] == _MEDIA_TRANSCRIPT
     # The media type must survive the export -> import round-trip too.
     assert imported_media["type"] == "video"
+    imported_prompt_ids = import_prompts_db.get_all_active_prompt_ids()
+    assert len(imported_prompt_ids) == 1
+    imported_prompt = import_prompts_db.fetch_prompt_chatbook_snapshot(
+        imported_prompt_ids[0]
+    )
+    assert imported_prompt is not None
+    assert imported_prompt["name"] == "Roundtrip Prompt"
+    assert imported_prompt["system_prompt"] == _PROMPT_SYSTEM
 
 
 def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_notes(
@@ -234,11 +273,15 @@ def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_no
 
     scope = ExportScope(kind="conversations")
     selections = resolve_export_selections(
-        scope, seeded["media_db"], seeded["chachanotes_db"]
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
     )
     assert ContentType.CONVERSATION in selections
     assert ContentType.MEDIA not in selections
     assert ContentType.NOTE not in selections
+    assert ContentType.PROMPT not in selections
 
     payload = LibraryScreen._build_library_export_payload(
         name="Conversations Only",
@@ -262,12 +305,14 @@ def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_no
         assert manifest["statistics"]["total_conversations"] == 1
         assert manifest["statistics"]["total_notes"] == 0
         assert manifest["statistics"]["total_media_items"] == 0
+        assert manifest["statistics"]["total_prompts"] == 0
         # The character dependency auto-inclusion is per-conversation, not
         # scope-gated -- a narrower "conversations" scope must still pull
         # in the referenced character, exactly like the "everything" scope
         # does above.
         assert manifest["statistics"]["total_characters"] == 1
         assert not any(name.startswith("content/media/") for name in zf.namelist())
+        assert not any(name.startswith("content/prompts/") for name in zf.namelist())
 
 
 def test_library_export_roundtrip_media_ids_scope_exports_exactly_the_selected_items(
@@ -301,13 +346,14 @@ def test_library_export_roundtrip_media_ids_scope_exports_exactly_the_selected_i
 
     scope = ExportScope(kind="media", ids=(str(selected_a_id), str(selected_b_id)))
     selections = resolve_export_selections(
-        scope, seeded["media_db"], seeded["chachanotes_db"]
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
     )
     # Ids-scoped resolution never queries the whole source -- the ids ARE
     # the selection (Task 1's contract, pinned again here end to end).
-    assert selections == {
-        ContentType.MEDIA: [str(selected_a_id), str(selected_b_id)]
-    }
+    assert selections == {ContentType.MEDIA: [str(selected_a_id), str(selected_b_id)]}
 
     payload = LibraryScreen._build_library_export_payload(
         name="Selected Media",
@@ -334,6 +380,7 @@ def test_library_export_roundtrip_media_ids_scope_exports_exactly_the_selected_i
         assert manifest["statistics"]["total_media_items"] == 2
         assert manifest["statistics"]["total_conversations"] == 0
         assert manifest["statistics"]["total_notes"] == 0
+        assert manifest["statistics"]["total_prompts"] == 0
 
         media_content_names = sorted(
             name
@@ -341,9 +388,7 @@ def test_library_export_roundtrip_media_ids_scope_exports_exactly_the_selected_i
             if name.startswith("content/media/") and name.endswith(".txt")
         )
         assert len(media_content_names) == 2
-        exported_texts = {
-            zf.read(name).decode("utf-8") for name in media_content_names
-        }
+        exported_texts = {zf.read(name).decode("utf-8") for name in media_content_names}
         assert exported_texts == {"SELECTED A TRANSCRIPT", "SELECTED B TRANSCRIPT"}
         # The item left OUT of the selection genuinely never made it in.
         assert _MEDIA_TRANSCRIPT not in exported_texts
@@ -365,7 +410,10 @@ def test_library_export_roundtrip_unwritable_destination_fails_with_no_registry_
 
     scope = ExportScope(kind="notes")
     selections = resolve_export_selections(
-        scope, seeded["media_db"], seeded["chachanotes_db"]
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
     )
     payload = LibraryScreen._build_library_export_payload(
         name="Should Fail",
@@ -408,7 +456,10 @@ def test_library_export_success_records_a_durable_receipt_with_the_real_path(
 
     scope = ExportScope(kind="notes")
     selections = resolve_export_selections(
-        scope, seeded["media_db"], seeded["chachanotes_db"]
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
     )
     destination = tmp_path / "receipt.zip"
     payload = LibraryScreen._build_library_export_payload(

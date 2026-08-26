@@ -21,6 +21,17 @@ wraps every nested `_run_one` call in a caller-supplied context manager.
 snapshot `_stamped_decisions` on enter, restore (not merge) it on exit, so
 the child's mutations to the shared dict are fully undone the instant it
 returns control to the parent.
+
+PR2a Task 5 SUPERSEDED that mechanism without removing it. Snapshot/restore
+is sound only while the child is strictly nested and inline (LIFO); with N
+children on their own threads there is no LIFO, and one child's turn would
+still wipe a sibling's live verdict. Both gates now key their per-turn
+verdicts by `(run_id, name)`, so a run can only ever clear or overwrite its
+OWN slice. Every security assertion in this file is unchanged and still
+passes; the ONE test whose shape changed is the negative control at the
+bottom, which used to assert the clobber happens when the scope is unwired
+and now asserts the parent's approval survives anyway -- see its own
+docstring.
 """
 
 from __future__ import annotations
@@ -32,6 +43,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Agents.agent_service as agent_service
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     SPAWN_TOOL_NAME,
@@ -39,6 +51,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
+from tldw_chatbook.Agents.project_instruction_runtime import InstructionPreparation
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider, USER_DENY_REFUSAL
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
@@ -207,7 +220,7 @@ def _registry_with_mcp(provider: MCPToolProvider) -> ToolCatalogRegistry:
 
 
 def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(
-    db, running_loop
+    db, running_loop, inline_spawns
 ):
     """Parent batch = [spawn_subagent, mcp_X]. Parent denies mcp_X. The
     spawned child (dispatched INLINE, mid-parent-dispatch) approves its OWN
@@ -298,7 +311,7 @@ def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(
 
 
 def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(
-    db, running_loop
+    db, running_loop, inline_spawns
 ):
     """The child spawned this turn calls a NON-MCP tool (calculator) -- its
     OWN review-hook invocation resolves `pending=[]` and (routinely, every
@@ -378,7 +391,7 @@ def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(
 # ---------------------------------------------------------------------------
 
 
-def test_review_state_scope_defaults_to_none_and_spawn_still_works(db):
+def test_review_state_scope_defaults_to_none_and_spawn_still_works(db, inline_spawns):
     """Omitting `review_state_scope` (every caller before this task, and
     every non-MCP run today) must not change existing spawn behavior --
     `spawn` falls back to a no-op `contextlib.nullcontext()`."""
@@ -410,6 +423,85 @@ def test_review_state_scope_defaults_to_none_and_spawn_still_works(db):
 
     assert outcome.status == RUN_DONE
     assert outcome.subagents_spawned == 1
+
+
+def test_parent_and_inline_child_share_context_but_keep_distinct_chain_state(
+    db, monkeypatch
+):
+    original_setting = agent_service._setting
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
+
+    class ContextSpy:
+        def __init__(self):
+            self.initial: list[tuple[str, int]] = []
+            self.prepared: list[tuple[str, int, tuple[str, ...]]] = []
+
+        def initial_context_for_chain(self, chain_id, payload_state):
+            self.initial.append((chain_id, id(payload_state)))
+            return InstructionPreparation("proceed")
+
+        def prepare(self, calls, chain_id, registry, payload_state):
+            self.prepared.append(
+                (chain_id, id(payload_state), tuple(call.name for call in calls))
+            )
+            return InstructionPreparation("proceed")
+
+        def mark_payload_sent(self, receipt, rows):
+            raise AssertionError("proceed preparations have no receipt")
+
+    context = ContextSpy()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    spawn_call = ToolCall(
+        name=SPAWN_TOOL_NAME, args={"task": "use calculator"}, call_id="p-spawn"
+    )
+    child_call = ToolCall(
+        name="calculator", args={"expression": "1+1"}, call_id="c-calc"
+    )
+    chat = ScriptedChat(
+        parent_replies=[_native_turn([spawn_call]), "parent done"],
+        child_replies=[_native_turn([child_call]), "child done"],
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        project_instruction_context=context,
+    )
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME, "calculator"),
+        native_tools=True,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-chains",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert [chain for chain, _state in context.initial] == [
+        "primary",
+        "primary:child-1",
+    ]
+    assert len({state for _chain, state in context.initial}) == 2
+    assert [entry[0] for entry in context.prepared] == [
+        "primary",
+        "primary:child-1",
+    ]
+    assert context.prepared[0][1] == context.initial[0][1]
+    assert context.prepared[1][1] == context.initial[1][1]
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +569,7 @@ def _tool_result_collector():
     """
     results: dict = {}
 
-    def on_step(step, _agent_kind: str) -> None:
+    def on_step(step, _agent_kind: str, _run_id: str) -> None:
         if step.kind == "tool_result" and step.tool_name:
             results[step.tool_name] = step
 
@@ -507,7 +599,7 @@ def _registry_with_mutating_builtins(
 
 
 def test_child_spawned_mid_turn_resolves_a_mutating_builtin_tool_and_the_parents_own_stamp_survives(
-    db,
+    db, inline_spawns
 ):
     """AC#2 (task-628): a parent batch = [spawn_subagent, write_thing]. The
     parent's own review round trip approves ``write_thing`` for this turn.
@@ -609,16 +701,30 @@ def test_child_spawned_mid_turn_resolves_a_mutating_builtin_tool_and_the_parents
     assert not results["write_thing"].result.startswith("ERROR")
 
 
-def test_child_spawned_mid_turn_without_stamp_scope_clobbers_the_parents_approval(
-    db,
+def test_child_spawned_mid_turn_without_stamp_scope_keeps_the_parents_approval(
+    db, inline_spawns
 ):
     """Same interleave as the test above, with ``review_state_scope`` left
-    unwired -- proving the previous test is not passing trivially. Without
-    the scope the child's ``begin_turn()`` clears the WHOLE ``_stamps``
-    dict and is never restored, so the parent's own pre-child
-    ``write_thing`` approval is gone by the time the parent's own dispatch
-    loop reaches it -- it fails closed, even though a human already
-    approved it this very turn."""
+    unwired -- now proving PER-RUN KEYING, not the scope, is what protects
+    the parent.
+
+    **This test's assertion was inverted by PR2a Task 5, deliberately.**
+    It used to assert the clobber: without the scope, the child's
+    ``begin_turn()`` cleared the WHOLE name-keyed ``_stamps`` dict and
+    never restored it, so the parent's own pre-child ``write_thing``
+    approval was gone by the time the parent's dispatch loop reached it
+    and the approved call failed closed. That was a negative control for a
+    mechanism (snapshot/restore) that is sound ONLY for a strictly nested,
+    LIFO, inline child -- which is exactly what PR2a Task 6 stops being
+    true when N children run on their own threads.
+
+    Both gates now key every per-turn verdict by ``(run_id, tool_name)``,
+    so the child's ``begin_turn(child_run_id)`` cannot touch the parent's
+    slice whether or not a scope wraps it. The parent's approved call must
+    therefore still succeed here. Break per-run keying (make
+    ``begin_turn`` clear the whole dict again) and this test fails -- it
+    is the same defect it always detected, asserted from the other side.
+    """
     gate = BuiltinToolGate(service=None)
     registry, builtin_provider = _registry_with_mutating_builtins(
         gate, "write_thing", "write_other_thing"
@@ -669,15 +775,14 @@ def test_child_spawned_mid_turn_without_stamp_scope_clobbers_the_parents_approva
     assert outcome.status == RUN_DONE
     # The child's own call is unaffected either way.
     assert not results["write_other_thing"].result.startswith("ERROR")
-    # This is the clobber: the parent's own pre-child approval was wiped by
-    # the child's begin_turn() and never restored, so its remaining call
-    # fails closed despite having been approved this turn.
-    assert results["write_thing"].result.startswith("ERROR")
-    assert "approval" in results["write_thing"].result.lower()
+    # No clobber any more: the child's begin_turn() only cleared its OWN
+    # run's slice, so the parent's pre-child approval is still there for
+    # its own remaining call -- with no review_state_scope wired at all.
+    assert not results["write_thing"].result.startswith("ERROR")
 
 
 def test_child_run_with_no_approval_route_still_fails_closed_for_a_mutating_builtin_tool(
-    db,
+    db, inline_spawns
 ):
     """AC#4 (task-628): this task fixes ROUTING for a run that has an
     approval path; it must not weaken ``BuiltinToolGate``'s own fail-closed
@@ -732,3 +837,61 @@ def test_child_run_with_no_approval_route_still_fails_closed_for_a_mutating_buil
     assert "write_thing" in results
     assert results["write_thing"].result.startswith("ERROR")
     assert "approval" in results["write_thing"].result.lower()
+
+
+# ---------------------------------------------------------------------------
+# PR2a Task 6.5: the inline scope's own contract, now that an inline child
+# can run WHILE fleet siblings do
+# ---------------------------------------------------------------------------
+
+
+def test_stamp_scope_restore_touches_only_its_own_runs_slice(running_loop):
+    """`stamp_scope(parent)` must not disturb any OTHER run's verdicts.
+
+    Why this test exists, and why it is a direct one rather than an
+    end-to-end one: the six tests above are pinned INLINE so they exercise
+    the interleave their docstrings describe, but none of them can kill the
+    scope -- delete `review_state_scope` from the inline branch entirely
+    and they all still pass, because PR2a Task 5's per-run keying is what
+    actually protects the parent there (`MCPToolProvider.stamp_scope`'s own
+    docstring says as much: "belt-and-braces for that inline path").
+    Asserting the scope end-to-end would therefore be vacuous.
+
+    What is NOT vacuous, and is newly load-bearing since Task 6.5 made
+    SKILL calls run inline while the fleet is live, is the scope's
+    isolation: an inline child now enters `stamp_scope(parent_run_id)` at a
+    moment when threaded siblings are running and stamping. If the restore
+    rewrote anything outside the parent's own slice, it would silently wipe
+    a live sibling's verdict -- the exact failure Task 6 removed the scope
+    from the threaded path to avoid. This pins the property the inline
+    branch's comment relies on: the restore rewrites ONLY `key[0] ==
+    run_id`.
+    """
+    service = FakeMCPService()
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    asyncio.run(provider.compose_catalog())
+    tool_id = provider.list_catalog()[0].id
+
+    provider.apply_batch_decisions("parent-run", {tool_id: "approve_once"})
+    provider.apply_batch_decisions("sibling-run", {tool_id: "deny"})
+
+    with provider.stamp_scope("parent-run"):
+        # This provider SNAPSHOTS on entry without clearing (unlike
+        # `LocalToolProvider.stamp_scope`, which clears its own slice
+        # deliberately -- see its docstring). Either way the entry touches
+        # nobody else's slice.
+        assert provider.stamped_decision("parent-run", tool_id) == "approve_once"
+        assert provider.stamped_decision("sibling-run", tool_id) == "deny"
+        # A sibling stamping DURING the window is what a live fleet child
+        # does; it must survive the restore below.
+        provider.apply_batch_decisions("late-sibling-run", {tool_id: "approve_once"})
+        # The parent's own slice IS rolled back to the snapshot on exit,
+        # which is why holding this scope around CONCURRENT children (where
+        # the parent keeps stamping) would lose verdicts -- Task 6 removed
+        # it from the threaded path for exactly that reason.
+        provider.apply_batch_decisions("parent-run", {tool_id: "deny"})
+
+    # Restored for the parent, and neither sibling was rolled back.
+    assert provider.stamped_decision("parent-run", tool_id) == "approve_once"
+    assert provider.stamped_decision("sibling-run", tool_id) == "deny"
+    assert provider.stamped_decision("late-sibling-run", tool_id) == "approve_once"

@@ -20,6 +20,7 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.destination_workbench import DestinationModeStrip
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
@@ -49,7 +50,7 @@ SKILL_TEXT_LIMITS = {
 }
 
 
-class SkillTrustPassphraseModal(ModalScreen[str | None]):
+class SkillTrustPassphraseModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Prompt for the local skill trust passphrase without logging it."""
 
     DEFAULT_CSS = """
@@ -95,7 +96,8 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#skill-trust-passphrase-modal"
 
     def __init__(
         self,
@@ -153,13 +155,10 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
     def on_mount(self) -> None:
         self.query_one("#skill-trust-passphrase-input", Input).focus()
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
     @on(Button.Pressed, "#skill-trust-passphrase-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     @on(Button.Pressed, "#skill-trust-passphrase-submit")
     def _submit_button(self, event: Button.Pressed) -> None:
@@ -181,7 +180,7 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
         self.dismiss(passphrase)
 
 
-class SkillTrustBootstrapModal(ModalScreen[str | None]):
+class SkillTrustBootstrapModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Prompt for a brand-new local skill trust passphrase, twice, before bootstrap.
 
     Structural twin of ``SkillTrustPassphraseModal`` above (same CSS id/
@@ -243,7 +242,8 @@ class SkillTrustBootstrapModal(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#skill-trust-bootstrap-modal"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="skill-trust-bootstrap-modal"):
@@ -273,13 +273,10 @@ class SkillTrustBootstrapModal(ModalScreen[str | None]):
     def on_mount(self) -> None:
         self.query_one("#skill-trust-bootstrap-input", Input).focus()
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
     @on(Button.Pressed, "#skill-trust-bootstrap-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     @on(Button.Pressed, "#skill-trust-bootstrap-submit")
     def _submit_button(self, event: Button.Pressed) -> None:
@@ -322,7 +319,7 @@ class SkillsScreen(BaseAppScreen):
         # BaseAppScreen.on_mount separately for this Mount event.
         self._refresh_local_skills_context()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="skills-refresh-local-context")
     async def _refresh_local_skills_context(self) -> None:
         records, lookup_error, recovery_state = await self._list_local_skills()
         self._apply_local_skills_context(records, lookup_error, recovery_state)

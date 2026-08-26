@@ -1,5 +1,5 @@
 ---
-id: task-2211
+id: TASK-2211
 title: Staged strip and tray render 'stale' reference status differently
 status: To Do
 assignee: []

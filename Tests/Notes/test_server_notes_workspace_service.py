@@ -123,6 +123,33 @@ class FakeClient:
         return {"deleted": True, "edge_id": edge_id}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected_count", "expected_exact"),
+    [
+        ({"notes": [{"id": "page-only"}]}, 1, False),
+        ({"notes": [{"id": "exact"}], "count": 7}, 7, True),
+        ({"notes": [], "count": 0}, 0, True),
+        ({"notes": [{"id": "boolean"}], "count": True}, 1, False),
+        ({"notes": [{"id": "string"}], "count": "1"}, 1, False),
+        ({"notes": [], "count": -1}, -1, False),
+    ],
+)
+async def test_list_server_notes_marks_whether_raw_count_is_exact(
+    payload, expected_count, expected_exact
+):
+    class RawNotesClient:
+        async def list_server_notes(self, limit=100, offset=0, include_keywords=True):
+            return payload
+
+    result = await ServerNotesWorkspaceService(
+        client=RawNotesClient()
+    ).list_server_notes(limit=1, offset=0)
+
+    assert result["count"] == expected_count
+    assert result["count_exact"] is expected_exact
+
+
 class FakeClientProvider:
     def __init__(self, client):
         self.client = client
@@ -580,4 +607,177 @@ async def test_service_enforces_notes_graph_policy_actions():
         "notes.graph.detail.server",
         "notes.graph.create.server",
         "notes.graph.delete.server",
+    ]
+
+
+class SourceProjectionClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get_workspace_source_preview(self, workspace_id, source_id, **kwargs):
+        self.calls.append(("preview", workspace_id, source_id, kwargs))
+        return {
+            "workspace_id": workspace_id,
+            "source_id": source_id,
+            "media_id": 42,
+            "title": "Paper",
+            "source_type": "pdf",
+            "preview_mode": "available",
+            "content_available": True,
+            "text_preview": "Body",
+            "snippets": [],
+        }
+
+    async def get_workspace_source_status(self, workspace_id):
+        self.calls.append(("status", workspace_id))
+        return {"workspace_id": workspace_id, "sources": [], "summary": {}}
+
+    async def get_workspace_capabilities(self, workspace_id):
+        self.calls.append(("capabilities", workspace_id))
+        return {
+            "workspace_id": workspace_id,
+            "workspace_services": {},
+            "allowed_actions": {},
+        }
+
+    async def set_workspace_source_selection(self, workspace_id, request):
+        self.calls.append(("selection", workspace_id, request.selected_ids))
+        return [
+            {
+                "id": "source-1",
+                "workspace_id": workspace_id,
+                "media_id": 42,
+                "title": "Paper",
+                "source_type": "pdf",
+                "position": 0,
+                "selected": True,
+                "version": 5,
+            }
+        ]
+
+    async def reorder_workspace_sources(self, workspace_id, request):
+        self.calls.append(("reorder", workspace_id, request.ordered_ids))
+        return [
+            {
+                "id": source_id,
+                "workspace_id": workspace_id,
+                "media_id": index + 1,
+                "title": source_id,
+                "source_type": "pdf",
+                "position": index,
+                "selected": True,
+                "version": 8,
+            }
+            for index, source_id in enumerate(request.ordered_ids)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_service_exposes_preview_status_and_capability_read_projections():
+    client = SourceProjectionClient()
+    service = ServerNotesWorkspaceService(client=client)
+
+    preview = await service.preview_workspace_source(
+        "workspace-1", "source-1", max_chars=4000, chunk_limit=4
+    )
+    status = await service.get_workspace_source_status("workspace-1")
+    capabilities = await service.get_workspace_capabilities("workspace-1")
+
+    assert preview["source_id"] == "source-1"
+    assert status["workspace_id"] == "workspace-1"
+    assert capabilities["workspace_id"] == "workspace-1"
+    assert client.calls == [
+        (
+            "preview",
+            "workspace-1",
+            "source-1",
+            {"max_chars": 4000, "chunk_limit": 4},
+        ),
+        ("status", "workspace-1"),
+        ("capabilities", "workspace-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_service_preserves_actual_missing_media_zero_for_adapter_normalization():
+    client = SourceProjectionClient()
+
+    async def missing_preview(workspace_id, source_id, **kwargs):
+        return {
+            "workspace_id": workspace_id,
+            "source_id": source_id,
+            "media_id": 0,
+            "title": "Missing source",
+            "source_type": "document",
+            "url": None,
+            "state": "missing_media",
+            "status_reason": "media_id_missing",
+            "readiness": {
+                "metadata_ready": False,
+                "text_extracted": False,
+                "fts_ready": False,
+                "vector_ready": False,
+                "citation_ready": False,
+                "summary_ready": False,
+                "tool_accessible": False,
+            },
+            "content_available": False,
+            "preview_mode": "missing_media",
+            "unavailable_reason": "media_id_missing",
+            "text_preview": None,
+            "text_total_chars": None,
+            "text_truncated": False,
+            "snippets": [],
+            "generated_at": "2026-08-24T00:00:00Z",
+        }
+
+    client.get_workspace_source_preview = missing_preview
+    service = ServerNotesWorkspaceService(client=client)
+
+    preview = await service.preview_workspace_source("workspace-1", "source-1")
+
+    assert preview["media_id"] == 0
+
+
+@pytest.mark.asyncio
+async def test_service_retains_mismatched_status_identities_for_adapter_validation(
+):
+    client = SourceProjectionClient()
+
+    async def mismatched_status(_workspace_id):
+        return {
+            "workspace_id": "workspace-top-other",
+            "sources": [
+                {"id": "source-1", "workspace_id": "workspace-row-other"}
+            ],
+            "summary": {},
+        }
+
+    client.get_workspace_source_status = mismatched_status
+    service = ServerNotesWorkspaceService(client=client)
+
+    status = await service.get_workspace_source_status("workspace-1")
+
+    assert status["workspace_id"] == "workspace-top-other"
+    assert status["sources"][0]["workspace_id"] == "workspace-row-other"
+
+
+@pytest.mark.asyncio
+async def test_service_selection_and_reorder_return_post_write_refetched_versions():
+    client = SourceProjectionClient()
+    service = ServerNotesWorkspaceService(client=client)
+
+    selected = await service.set_workspace_source_selection(
+        "workspace-1", ["source-1"]
+    )
+    reordered = await service.reorder_workspace_sources(
+        "workspace-1", ["source-2", "source-1"]
+    )
+
+    assert selected[0]["version"] == 5
+    assert [row["id"] for row in reordered] == ["source-2", "source-1"]
+    assert [row["position"] for row in reordered] == [0, 1]
+    assert client.calls == [
+        ("selection", "workspace-1", ["source-1"]),
+        ("reorder", "workspace-1", ["source-2", "source-1"]),
     ]

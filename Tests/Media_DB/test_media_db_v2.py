@@ -29,6 +29,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError,
     MediaDatabase as Database,
 )
+from Tests.DB.historical_bootstrap_v6 import media_db_at_version
 #
 #######################################################################################################################
 #
@@ -581,23 +582,53 @@ class TestDatabaseCRUDAndSync:
         )
 
     def test_reading_progress_reopens_through_versioned_migration(self, temp_db_path):
-        first_db = Database(db_path=temp_db_path, client_id="schema_client")
-        media_id, _, _ = first_db.add_media_with_keywords(
-            title="Reading Progress Migration",
-            media_type="article",
-            content="Migration content for reading progress.",
-            keywords=["reading", "migration"],
-        )
-        first_db.close_connection()
+        # A genuinely historical v2 database, built by the real migration chain
+        # (base v1 + v1->v2), NOT by stamping "2" onto a current one. The old
+        # hand-degraded fixture had to be taught about every artifact each new
+        # migration added, and broke on the first one it had not been told about
+        # (v5->v6's chunk_engine_version). See TASK-21594.
+        with media_db_at_version(temp_db_path, 2, client_id="schema_client") as old_db:
+            assert get_schema_version(old_db) == 2
+            # The historical preconditions the migration under test depends on:
+            # neither local-only store exists yet at v2.
+            for absent_table in ("ReadingProgress", "MediaReadItLaterState"):
+                assert (
+                    old_db.execute_query(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'table' AND name = ?",
+                        (absent_table,),
+                    ).fetchone()
+                    is None
+                ), f"{absent_table} already exists at v2"
 
-        conn = sqlite3.connect(temp_db_path)
-        try:
-            conn.execute("DROP TABLE IF EXISTS ReadingProgress")
-            conn.execute("ALTER TABLE Media DROP COLUMN transcription_provenance_json")
-            conn.execute("UPDATE schema_version SET version = 2")
-            conn.commit()
-        finally:
-            conn.close()
+            # Seeded with the historical v1/v2 Media column set. The shipped
+            # writer cannot be used here: add_media_with_keywords() targets the
+            # current schema and fails with "no such column:
+            # transcription_provenance_json" (added at v4->v5) against a real
+            # v2 database -- the same reason this fixture needs a bootstrap
+            # module rather than production code.
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            with old_db.transaction():
+                cursor = old_db.execute_query(
+                    """
+                    INSERT INTO Media (
+                        title, type, content, content_hash, uuid,
+                        ingestion_date, last_modified, client_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "Reading Progress Migration",
+                        "article",
+                        "Migration content for reading progress.",
+                        "hash-reading-progress-migration",
+                        "11111111-2222-3333-4444-555555555555",
+                        now,
+                        now,
+                        "schema_client",
+                    ),
+                )
+                media_id = cursor.lastrowid
+            assert media_id is not None
 
         reopened_db = Database(db_path=temp_db_path, client_id="schema_client")
         try:
@@ -735,7 +766,13 @@ class TestDatabaseCRUDAndSync:
             assert (
                 conn.execute(
                     "SELECT COUNT(*) FROM ChunkingTemplates "
-                    "WHERE name = 'duplicate-seed'"
+                    # task-7 (v7 rebuild): the retry replays through the
+                    # ChunkingTemplates migration, and this seed's body
+                    # (name only — no chunk stage, no base_method) is
+                    # unconvertible, so it survives under its quarantined
+                    # name instead of the original.
+                    "WHERE name IN ('duplicate-seed', "
+                    "'duplicate-seed (needs review)')"
                 ).fetchone()[0]
                 == 1
             )
@@ -833,6 +870,942 @@ class TestDatabaseCRUDAndSync:
 
         ids = db_instance.list_read_it_later_media_ids()
         assert media_id not in ids
+
+
+@pytest.mark.integration
+class TestReimportAfterTrash:
+    """task-4022: re-importing a file whose Media row was moved to trash
+    must restore that row, not silently skip the write and leave the item
+    permanently un-importable.
+
+    Reproduced live at dev `4d0232358`: import a file -> Media (Select) ->
+    check it -> Delete selected -> confirm -> re-import the SAME file. The
+    ingest row reads "matched · short.txt / Already in Library -- matched
+    an existing item; nothing new was imported." while ``Media (1)`` and
+    the item is absent from every list -- the trashed row was never
+    excluded from the dedup match, so the write silently skipped
+    (media_id=None) and the row stayed trashed forever. Uses a real
+    file-backed DB (``file_db``), not an in-memory mock, per the task's
+    live-DB requirement.
+
+    task-4022 (review round 2): restore is now opt-in via
+    ``restore_trashed=True`` rather than unconditional for any trashed
+    match (see ``TestRestoreTrashedIsOptIn`` below for the contract test
+    itself). Every test in this class passes ``restore_trashed=True``
+    explicitly, mirroring what the real Library ingest writer
+    (``persist_parsed_media``) now does.
+    """
+
+    def test_reimport_by_url_restores_trashed_row_instead_of_skipping(self, file_db):
+        # Mirrors the real ingest writer's URL shape for a local file
+        # (``local_file_ingestion.py``: ``f"file://{file_path.absolute()}"``)
+        # and its actual call (no ``overwrite`` kwarg -- defaults to False;
+        # ``persist_parsed_media`` does pass ``restore_trashed=True``).
+        url = "file:///Users/example/short.txt"
+        media_id, media_uuid, msg1 = file_db.add_media_with_keywords(
+            title="short.txt",
+            media_type="document",
+            content="hello world",
+            keywords=[],
+            url=url,
+        )
+        assert media_id is not None, f"initial import failed: {msg1!r}"
+        assert file_db.mark_as_trash(media_id) is True
+
+        # Sanity check, not the bug under test: the trashed row is already
+        # excluded from the normal active lookup.
+        assert file_db.get_media_by_url(url) is None
+
+        reimported_id, reimported_uuid, msg2 = file_db.add_media_with_keywords(
+            title="short.txt",
+            media_type="document",
+            content="hello world",
+            keywords=[],
+            url=url,
+            restore_trashed=True,
+        )
+
+        # The observed bug: reimported_id was None and msg2 said "already
+        # exists. Overwrite not enabled." -- nothing new was ever written,
+        # and the row stayed trashed forever with no way to reach it.
+        assert reimported_id == media_id, (
+            f"expected the SAME row to be restored on re-import, got "
+            f"{reimported_id!r} (msg={msg2!r})"
+        )
+        assert reimported_uuid == media_uuid
+        assert "restored" in msg2.lower(), msg2
+
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["trash_date"] is None
+        assert row["deleted"] == 0
+
+        # The item is present exactly once (AC#1/AC#4): the normal active
+        # lookup finds it again, and there is exactly one Media row for
+        # this url -- re-importing never created a second row.
+        found = file_db.get_media_by_url(url)
+        assert found is not None and found["id"] == media_id
+        cursor = file_db.execute_query(
+            "SELECT COUNT(*) FROM Media WHERE url = ?", (url,)
+        )
+        assert cursor.fetchone()[0] == 1
+
+    def test_reimport_by_hash_restores_trashed_row_when_url_differs(self, file_db):
+        """Same bytes at a different path -- falls through to the
+        content_hash fallback match (the second SELECT in
+        ``_add_media_with_keywords_impl``), the other dedup leg named in
+        the task brief (``get_media_by_hash``)."""
+        content = "identical bytes, different path"
+        media_id, media_uuid, _ = file_db.add_media_with_keywords(
+            title="a.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url="file:///a/copy.txt",
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="a.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url="file:///b/copy.txt",
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id
+        assert reimported_uuid == media_uuid
+        assert "restored" in msg.lower(), msg
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["trash_date"] is None
+        # task-4022 review round 2 (I3): the existing url
+        # ("file:///a/copy.txt") is already a real, non-``local://`` url,
+        # so the restore-time canonicalization rule (auto-generated
+        # ``local://...`` -> a real url, never the reverse) must NOT fire
+        # here -- the row keeps its original url rather than being
+        # silently reassigned to whatever path this particular re-import
+        # happened to use. This is what actually makes the comment above
+        # ("never touches url") true; before the I3 fix this assertion
+        # failed (the row came back at "file:///b/copy.txt").
+        assert row["url"] == "file:///a/copy.txt"
+        # What matters most here is there's still exactly one row, not two.
+        cursor = file_db.execute_query("SELECT COUNT(*) FROM Media")
+        assert cursor.fetchone()[0] == 1
+
+    def test_reimport_of_active_duplicate_is_still_skipped(self, file_db):
+        """Guard rail: an ACTIVE (non-trashed) duplicate must still be
+        skipped exactly as before -- this fix only changes behavior for a
+        match that is sitting in trash."""
+        url = "file:///still/active.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="active.txt",
+            media_type="document",
+            content="hi",
+            keywords=[],
+            url=url,
+        )
+
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="active.txt",
+            media_type="document",
+            content="hi",
+            keywords=[],
+            url=url,
+        )
+
+        assert reimported_id is None
+        assert reimported_uuid is None
+        assert "already exists" in msg.lower()
+        cursor = file_db.execute_query(
+            "SELECT COUNT(*) FROM Media WHERE url = ?", (url,)
+        )
+        assert cursor.fetchone()[0] == 1
+
+    def test_reimport_identical_content_at_new_url_canonicalizes_url(
+        self, file_db
+    ):
+        """Review round 1 (Important #1): the identical-content restore path
+        (A.1.a, metadata-only update) must ALSO canonicalize ``url`` to the
+        just-imported path, not just reset ``is_trash``/``trash_date``.
+
+        Reproduced case: a row first created with no explicit url (so it
+        gets the auto-generated ``local://<type>/<hash>``), trashed, then
+        re-imported at a REAL path with byte-identical content -- the
+        content-hash match takes the metadata-only branch. Before this fix,
+        that branch restored the row (is_trash=0) but left its url at the
+        stale ``local://...`` value, so ``get_media_by_url`` on the real
+        path the user just imported returned ``None`` for a live, un-
+        trashed item -- confirmed reproduced against this exact fixture
+        before the fix landed.
+        """
+        content = "identical bytes for the canonicalization regression"
+        media_id, media_uuid, _ = file_db.add_media_with_keywords(
+            title="auto-url.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            # No explicit url -- add_media_with_keywords auto-generates
+            # "local://<type>/<hash>".
+        )
+        created = file_db.get_media_by_id(media_id)
+        assert created["url"].startswith("local://")
+        stale_url = created["url"]
+        assert file_db.mark_as_trash(media_id) is True
+
+        real_url = "file:///real/path.txt"
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="auto-url.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url=real_url,
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id
+        assert reimported_uuid == media_uuid
+        assert "restored" in msg.lower(), msg
+
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["trash_date"] is None
+        assert row["url"] == real_url
+
+        # The regression itself: a live item must be findable by the url it
+        # was just (re-)imported at.
+        found = file_db.get_media_by_url(real_url)
+        assert found is not None and found["id"] == media_id
+        # And the stale url must no longer resolve to it (it moved).
+        assert file_db.get_media_by_url(stale_url) is None
+
+        cursor = file_db.execute_query("SELECT COUNT(*) FROM Media")
+        assert cursor.fetchone()[0] == 1
+
+
+class TestRestoreTrashedIsOptIn:
+    """task-4022 review round 2 (I1): restoring a trashed match on
+    re-import must be opt-in (``restore_trashed=True``), not unconditional
+    for any caller that happens to hit a trashed row. Round 1 made restore
+    fire for EVERY trashed match regardless of ``overwrite``, which
+    silently resurrected rows for callers that never asked for it --
+    chatbook SKIP-conflict imports, reading-list bulk imports matching on
+    content hash, and Console "save message as media" (which dedups
+    purely by content hash, no url at all). This class pins the DB-layer
+    half of that contract directly; the per-caller regression tests live
+    in ``Tests/Chatbooks/test_chatbook_importer.py`` and
+    ``Tests/Media/test_local_media_reading_service.py``.
+    """
+
+    def test_default_restore_trashed_leaves_url_match_untouched(self, file_db):
+        url = "file:///opt-in/by-url.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="by-url.txt",
+            media_type="document",
+            content="hello",
+            keywords=[],
+            url=url,
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        # No restore_trashed kwarg at all -- defaults to False.
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="by-url.txt",
+            media_type="document",
+            content="hello",
+            keywords=[],
+            url=url,
+        )
+
+        assert reimported_id is None
+        assert reimported_uuid is None
+        # Pin rewritten by task-4026: the trashed skip used to reuse the
+        # generic "already exists. Overwrite not enabled." message, whose
+        # advice became a lie once overwrite=True stopped touching trashed
+        # rows -- the skip now names Trash and the actual remedy
+        # (restore_trashed=True). Live-row duplicate skips keep the old
+        # message unchanged.
+        assert "trash" in msg.lower(), msg
+        assert "restore_trashed" in msg, msg
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 1, "a non-opted-in caller must not restore the row"
+
+    def test_default_restore_trashed_leaves_content_hash_match_untouched(
+        self, file_db
+    ):
+        """Mirrors I1(b)/I1(c): a caller that only ever matches by content
+        hash (no url leg, or a url leg that missed) must not resurrect a
+        trashed row either, when it doesn't opt in."""
+        content = "opt-in by hash, not by url"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="by-hash.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url="file:///opt-in/hash-a.txt",
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="by-hash.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url="file:///opt-in/hash-b.txt",
+        )
+
+        assert reimported_id is None
+        assert reimported_uuid is None
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 1
+        # No second row was created for the new url either.
+        cursor = file_db.execute_query("SELECT COUNT(*) FROM Media")
+        assert cursor.fetchone()[0] == 1
+
+
+class TestOverwriteDoesNotTouchTrashedRows:
+    """task-4026: the ``overwrite=True`` trash contract, made explicit.
+
+    A trashed match is NEVER mutated by ``add_media_with_keywords`` unless
+    the caller also passes ``restore_trashed=True`` -- ``overwrite``
+    governs live rows only. ``overwrite=True, restore_trashed=False``
+    against a trashed row is a duplicate-style SKIP (``(None, None,
+    <message naming trash and the restore flag>)``), not a hidden
+    in-place update and not a resurrection. Both flags true =
+    restore-and-overwrite (task-4022's ``restoring_from_trash`` path).
+
+    Before this task the code was internally incoherent: an
+    identical-content ``overwrite=True`` left the row trashed but still
+    mutated its title/keywords/chunks in place (invisible to the user --
+    no Trash surface exists), while a different-content ``overwrite=True``
+    silently RESURRECTED the row via ``_media_payload``'s hardcoded
+    ``is_trash: 0`` with no restore decision anywhere in the chain.
+
+    Real file-backed DB per the programme's DB-layer requirement.
+    """
+
+    @staticmethod
+    def _keywords_for(file_db, media_id: int) -> list:
+        return sorted(
+            r["keyword"]
+            for r in file_db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+                "WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+
+    @staticmethod
+    def _chunk_texts(file_db, media_id: int) -> set:
+        return {
+            r["chunk_text"]
+            for r in file_db.execute_query(
+                "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ? AND deleted = 0",
+                (media_id,),
+            ).fetchall()
+        }
+
+    def test_overwrite_true_alone_skips_trashed_match_with_different_content(
+        self, file_db
+    ):
+        """The headline bug: different content + ``overwrite=True`` used to
+        resurrect the trashed row (full-update path writes ``is_trash=0``).
+        It must now skip, leaving trash state AND content untouched."""
+        url = "file:///task-4026/different-content.txt"
+        media_id, media_uuid, _ = file_db.add_media_with_keywords(
+            title="original.txt",
+            media_type="document",
+            content="original content",
+            keywords=[],
+            url=url,
+        )
+        assert file_db.mark_as_trash(media_id) is True
+        before = file_db.get_media_by_id(media_id, include_trash=True)
+        assert before["is_trash"] == 1 and before["trash_date"] is not None
+
+        result_id, result_uuid, msg = file_db.add_media_with_keywords(
+            title="rewritten.txt",
+            media_type="document",
+            content="completely different content",
+            keywords=[],
+            url=url,
+            overwrite=True,
+        )
+
+        assert result_id is None, (
+            f"overwrite=True alone must not touch a trashed row, got id={result_id!r} "
+            f"(msg={msg!r})"
+        )
+        assert result_uuid is None
+        assert "trash" in msg.lower(), msg
+        assert "restore_trashed" in msg, msg
+
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 1, "row must stay trashed"
+        assert after["trash_date"] == before["trash_date"]
+        assert after["content"] == "original content", "content must not change"
+        assert after["title"] == "original.txt"
+        assert after["version"] == before["version"], "no versioned write may occur"
+        cursor = file_db.execute_query(
+            "SELECT COUNT(*) FROM Media WHERE url = ?", (url,)
+        )
+        assert cursor.fetchone()[0] == 1, "no second row may be created"
+
+    def test_overwrite_true_alone_leaves_trashed_metadata_and_keywords_untouched(
+        self, file_db
+    ):
+        """The quieter half of the old incoherence: identical content +
+        ``overwrite=True`` left the row trashed but still rewrote its
+        title/keywords in place. A trashed row is now untouched entirely."""
+        url = "file:///task-4026/identical-content.txt"
+        content = "identical content"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="curated.txt",
+            media_type="document",
+            content=content,
+            keywords=["mine", "curated"],
+            url=url,
+        )
+        assert self._keywords_for(file_db, media_id) == ["curated", "mine"]
+        assert file_db.mark_as_trash(media_id) is True
+        before = file_db.get_media_by_id(media_id, include_trash=True)
+
+        result_id, _, msg = file_db.add_media_with_keywords(
+            title="renamed.txt",
+            media_type="document",
+            content=content,
+            keywords=["other"],
+            url=url,
+            overwrite=True,
+        )
+
+        assert result_id is None, msg
+        assert "trash" in msg.lower(), msg
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 1
+        assert after["title"] == "curated.txt", "metadata must not change"
+        assert after["version"] == before["version"]
+        assert self._keywords_for(file_db, media_id) == ["curated", "mine"], (
+            "keywords must not change on a trashed row"
+        )
+
+    def test_overwrite_true_alone_leaves_trashed_chunks_untouched(self, file_db):
+        """Chunked variant (per this batch's chunked-content requirement):
+        the skip must also leave the trashed row's stored chunk rows alone
+        -- the old code deleted and replaced them via ``_persist_chunks``
+        with ``replace_existing=overwrite``."""
+        url = "file:///task-4026/chunked-skip.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="chunked.txt",
+            media_type="document",
+            content="chunked original content",
+            keywords=[],
+            url=url,
+            chunks=[
+                {"text": "old chunk one", "chunk_type": "text"},
+                {"text": "old chunk two", "chunk_type": "text"},
+            ],
+        )
+        assert self._chunk_texts(file_db, media_id) == {
+            "old chunk one",
+            "old chunk two",
+        }
+        assert file_db.mark_as_trash(media_id) is True
+
+        result_id, _, msg = file_db.add_media_with_keywords(
+            title="chunked.txt",
+            media_type="document",
+            content="chunked replacement content",
+            keywords=[],
+            url=url,
+            chunks=[{"text": "new chunk", "chunk_type": "text"}],
+            overwrite=True,
+        )
+
+        assert result_id is None, msg
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 1
+        assert after["content"] == "chunked original content"
+        assert self._chunk_texts(file_db, media_id) == {
+            "old chunk one",
+            "old chunk two",
+        }, "stored chunks must not be replaced on a trashed skip"
+
+    def test_overwrite_plus_restore_trashed_restores_and_overwrites(self, file_db):
+        """The two flags compose: ``overwrite=True, restore_trashed=True``
+        is an explicit restore-and-overwrite. (Green before and after this
+        task -- pinned so the compose case can't regress while the
+        overwrite-alone case is locked down.)"""
+        url = "file:///task-4026/restore-and-overwrite.txt"
+        media_id, media_uuid, _ = file_db.add_media_with_keywords(
+            title="original.txt",
+            media_type="document",
+            content="original content",
+            keywords=[],
+            url=url,
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        result_id, result_uuid, msg = file_db.add_media_with_keywords(
+            title="restored.txt",
+            media_type="document",
+            content="fresh content",
+            keywords=[],
+            url=url,
+            overwrite=True,
+            restore_trashed=True,
+        )
+
+        assert result_id == media_id, msg
+        assert result_uuid == media_uuid
+        assert "restored" in msg.lower(), msg
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 0
+        assert after["trash_date"] is None
+        assert after["deleted"] == 0
+        assert after["content"] == "fresh content"
+        assert after["title"] == "restored.txt"
+
+    def test_overwrite_plus_restore_trashed_replaces_chunks(self, file_db):
+        """Chunked compose variant: an explicit restore-and-overwrite
+        replaces the stored chunks with the fresh set (no
+        ``UNIQUE(media_id, chunk_index, chunk_type)`` collision)."""
+        url = "file:///task-4026/chunked-restore.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="chunked.txt",
+            media_type="document",
+            content="chunked original content",
+            keywords=[],
+            url=url,
+            chunks=[
+                {"text": "old chunk one", "chunk_type": "text"},
+                {"text": "old chunk two", "chunk_type": "text"},
+            ],
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        result_id, _, msg = file_db.add_media_with_keywords(
+            title="chunked.txt",
+            media_type="document",
+            content="chunked replacement content",
+            keywords=[],
+            url=url,
+            chunks=[{"text": "new chunk", "chunk_type": "text"}],
+            overwrite=True,
+            restore_trashed=True,
+        )
+
+        assert result_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+        after = file_db.get_media_by_id(media_id, include_trash=True)
+        assert after["is_trash"] == 0
+        assert after["content"] == "chunked replacement content"
+        assert self._chunk_texts(file_db, media_id) == {"new chunk"}
+
+
+class TestReimportAfterTrashChunks:
+    """task-4022 review round 2 (C1, Critical): a chunked re-import of a
+    trashed row must not raise ``sqlite3.IntegrityError``. ``_persist_chunks``
+    used to gate its ``DELETE FROM UnvectorizedMediaChunks`` on the raw
+    ``overwrite`` flag; the restore path enters chunk-writing with
+    ``overwrite=False``/``restoring_from_trash=True`` (the real ingest
+    writer never passes ``overwrite=True``), so the old chunk rows
+    survived and the fresh INSERTs collided with
+    ``UNIQUE(media_id, chunk_index, chunk_type)``. Every existing
+    ``TestReimportAfterTrash`` test omits ``chunks`` entirely, so this
+    path was never exercised by that class (``_persist_chunks`` early-
+    returns on ``chunks is None``)."""
+
+    @staticmethod
+    def _chunk_count(file_db, media_id: int) -> int:
+        cursor = file_db.execute_query(
+            "SELECT COUNT(*) FROM UnvectorizedMediaChunks WHERE media_id = ? AND deleted = 0",
+            (media_id,),
+        )
+        return cursor.fetchone()[0]
+
+    def test_chunked_reimport_on_identical_content_restore_does_not_raise(
+        self, file_db
+    ):
+        url = "file:///chunks/identical.txt"
+        content = "identical content, chunked"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="identical.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url=url,
+            # ``chunk_type`` must be an explicit, shared value: SQLite's
+            # UNIQUE index treats NULL as always distinct from any other
+            # value (including another NULL), so an omitted chunk_type
+            # would never actually collide and this test would pass for
+            # the wrong reason. Real ingest chunks always carry a concrete
+            # chunk_type.
+            chunks=[
+                {"text": "old chunk one", "chunk_type": "text"},
+                {"text": "old chunk two", "chunk_type": "text"},
+            ],
+        )
+        assert self._chunk_count(file_db, media_id) == 2
+        assert file_db.mark_as_trash(media_id) is True
+
+        # Same content -> takes the metadata-only (A.1.a) restore branch,
+        # with a DIFFERENT set of chunks than what's already stored, at
+        # OVERLAPPING (chunk_index, chunk_type) pairs (0/1, both "text")
+        # so an un-deleted old row collides on
+        # UNIQUE(media_id, chunk_index, chunk_type) exactly as C1 describes.
+        reimported_id, _, msg = file_db.add_media_with_keywords(
+            title="identical.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url=url,
+            chunks=[
+                {"text": "new chunk one", "chunk_type": "text"},
+                {"text": "new chunk two", "chunk_type": "text"},
+                {"text": "new chunk three", "chunk_type": "text"},
+            ],
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        # The OLD chunk rows must have been replaced, not left to collide
+        # with the new ones.
+        assert self._chunk_count(file_db, media_id) == 3
+        texts = {
+            r["chunk_text"]
+            for r in file_db.execute_query(
+                "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ? AND deleted = 0",
+                (media_id,),
+            ).fetchall()
+        }
+        assert texts == {"new chunk one", "new chunk two", "new chunk three"}
+
+    def test_chunked_reimport_on_full_update_restore_does_not_raise(self, file_db):
+        url = "file:///chunks/full-update.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="full-update.txt",
+            media_type="document",
+            content="original content",
+            keywords=[],
+            url=url,
+            chunks=[
+                {"text": "old chunk one", "chunk_type": "text"},
+                {"text": "old chunk two", "chunk_type": "text"},
+            ],
+        )
+        assert self._chunk_count(file_db, media_id) == 2
+        assert file_db.mark_as_trash(media_id) is True
+
+        # DIFFERENT content this time -> the full-content-update (A.1.b)
+        # restore branch, the other sub-path C1 named. Same chunk_type at
+        # chunk_index=0 as the old row, so an un-deleted old row collides.
+        reimported_id, _, msg = file_db.add_media_with_keywords(
+            title="full-update.txt",
+            media_type="document",
+            content="brand new content",
+            keywords=[],
+            url=url,
+            chunks=[{"text": "fresh chunk", "chunk_type": "text"}],
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["content"] == "brand new content"
+        assert self._chunk_count(file_db, media_id) == 1
+        remaining = file_db.execute_query(
+            "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ? AND deleted = 0",
+            (media_id,),
+        ).fetchone()
+        assert remaining["chunk_text"] == "fresh chunk"
+
+
+class TestReimportAfterTrashKeywords:
+    """task-4022 review round 2 (I2, Important), corrected by the P1
+    re-critique (finding 2): restoring a trashed row must not silently wipe
+    the user's curated keywords just because the caller re-importing it
+    never supplied a ``keywords`` argument at all (``keywords=None``, the
+    default) -- most restore callers simply have no opinion on keywords.
+    An explicit ``keywords=[]`` is a different signal (the caller DOES want
+    them cleared) and must not be conflated with "not supplied" -- see
+    ``TestReimportAfterTrashKeywords.test_restore_with_overwrite_and_
+    explicit_empty_keywords_clears_them`` below for that contract. The I2
+    fix originally kept both signals indistinguishable (``keywords_norm``
+    is ``[]`` either way); this class now covers all three: not supplied
+    (preserve), non-empty (apply), and explicit empty (clear)."""
+
+    def test_restore_with_keywords_omitted_preserves_existing_keywords(
+        self, file_db
+    ):
+        url = "file:///keywords/preserve.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="preserve.txt",
+            media_type="document",
+            content="content with curated keywords",
+            keywords=["mine", "important"],
+            url=url,
+        )
+        before = sorted(
+            r["keyword"]
+            for r in file_db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+                "WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+        assert before == ["important", "mine"]
+        assert file_db.mark_as_trash(media_id) is True
+
+        # ``keywords`` is genuinely omitted here (defaults to ``None``) --
+        # NOT an explicit ``keywords=[]`` -- the two must no longer behave
+        # the same way (see finding 2).
+        reimported_id, _, msg = file_db.add_media_with_keywords(
+            title="preserve.txt",
+            media_type="document",
+            content="content with curated keywords",
+            url=url,
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+        after = sorted(
+            r["keyword"]
+            for r in file_db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+                "WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+        assert after == ["important", "mine"], (
+            "restore must not wipe curated keywords just because the "
+            "re-import call didn't supply a keywords argument at all"
+        )
+
+    def test_restore_with_nonempty_keywords_still_applies_them(self, file_db):
+        """Guard rail: the I2 fix must only skip the sync when the
+        INCOMING keyword list is empty -- a restore that DOES supply
+        keywords must still apply them normally (replace, not merge;
+        unchanged, pre-existing behavior)."""
+        url = "file:///keywords/replace.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="replace.txt",
+            media_type="document",
+            content="content",
+            keywords=["old-keyword"],
+            url=url,
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        reimported_id, _, msg = file_db.add_media_with_keywords(
+            title="replace.txt",
+            media_type="document",
+            content="content",
+            keywords=["new-keyword"],
+            url=url,
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id, msg
+        after = sorted(
+            r["keyword"]
+            for r in file_db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+                "WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+        assert after == ["new-keyword"]
+
+    def test_restore_with_overwrite_and_explicit_empty_keywords_clears_them(
+        self, file_db
+    ):
+        """P1 re-critique finding 2: the I2 guard above must not make an
+        explicit clear impossible. ``keywords_norm`` alone can't tell
+        "caller didn't pass keywords" (``None``) apart from "caller wants
+        them all gone" (``[]``) -- both normalise to the same empty list.
+        With ``overwrite=True`` and an explicit ``keywords=[]``, a restore
+        must still clear the row's existing keywords, exactly as a plain
+        (non-restore) ``overwrite=True`` + ``keywords=[]`` call already
+        does."""
+        url = "file:///keywords/explicit-clear.txt"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="explicit-clear.txt",
+            media_type="document",
+            content="content with keywords to be explicitly cleared",
+            keywords=["stale", "obsolete"],
+            url=url,
+        )
+        before = sorted(
+            r["keyword"]
+            for r in file_db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+                "WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+        assert before == ["obsolete", "stale"]
+        assert file_db.mark_as_trash(media_id) is True
+
+        reimported_id, _, msg = file_db.add_media_with_keywords(
+            title="explicit-clear.txt",
+            media_type="document",
+            content="content with keywords to be explicitly cleared",
+            keywords=[],
+            url=url,
+            overwrite=True,
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+        after = file_db.execute_query(
+            "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+            "WHERE mk.media_id = ? AND k.deleted = 0",
+            (media_id,),
+        ).fetchall()
+        assert after == [], (
+            "overwrite=True + an explicit keywords=[] must clear keywords "
+            "during a restore, exactly as it does outside a restore"
+        )
+
+
+class TestReimportAfterTrashUrlCanonicalization:
+    """task-4022 review round 2 (I3, Important): round 1's identical-
+    content restore branch wrote ``url`` unconditionally, reversing the
+    pre-existing ``is_canonicalisation`` rule's deliberate one direction
+    (auto-generated ``local://...`` -> a real url, never the reverse).
+    Reproduces the reviewer's own probe: a row imported from a real,
+    canonical source url, trashed, then re-imported from a local file path
+    with byte-identical content must NOT have its canonical source url
+    overwritten by the local path."""
+
+    def test_canonical_source_url_survives_restore_from_local_path(self, file_db):
+        canonical_url = "https://example.com/canonical-article"
+        content = "identical bytes, canonical source vs. local re-import"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="canonical-article",
+            media_type="article",
+            content=content,
+            keywords=[],
+            url=canonical_url,
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        local_url = "file:///Users/me/Downloads/article.txt"
+        reimported_id, _, msg = file_db.add_media_with_keywords(
+            title="canonical-article",
+            media_type="article",
+            content=content,
+            keywords=[],
+            url=local_url,
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["url"] == canonical_url, (
+            "the row's canonical source url must survive a restore "
+            "triggered by a less-canonical (local file) re-import"
+        )
+
+
+class TestReimportAfterTrashCombined:
+    """The reviewer's own suggestion for coverage: ONE real-DB test
+    exercising restore with ``chunks=[...]`` AND pre-existing keywords AND
+    a canonical existing url together -- this combination would have
+    caught C1 (chunk UNIQUE collision), I2 (keyword wipe), and I3 (url
+    reversal) all at once, where the per-finding tests above each isolate
+    a single dimension."""
+
+    def test_restore_with_chunks_keywords_and_canonical_url_all_at_once(
+        self, file_db
+    ):
+        canonical_url = "https://example.com/deep-dive"
+        content = "identical bytes for the combined C1+I2+I3 regression"
+        media_id, _, _ = file_db.add_media_with_keywords(
+            title="deep-dive",
+            media_type="article",
+            content=content,
+            keywords=["mine", "curated"],
+            url=canonical_url,
+            # Explicit chunk_type: SQLite treats a NULL chunk_type as
+            # always distinct, so an omitted chunk_type would never
+            # actually exercise the UNIQUE(media_id, chunk_index,
+            # chunk_type) collision C1 describes.
+            chunks=[
+                {"text": "stale chunk one", "chunk_type": "text"},
+                {"text": "stale chunk two", "chunk_type": "text"},
+            ],
+        )
+        assert file_db.mark_as_trash(media_id) is True
+
+        local_url = "file:///Users/me/Downloads/deep-dive.txt"
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="deep-dive",
+            media_type="article",
+            content=content,
+            # I2, corrected by the P1 re-critique (finding 2): ``keywords``
+            # is genuinely OMITTED here, not an explicit ``keywords=[]`` --
+            # only "no keywords argument at all" preserves the existing
+            # curated set; an explicit empty list now clears them (see
+            # ``TestReimportAfterTrashKeywords.test_restore_with_
+            # overwrite_and_explicit_empty_keywords_clears_them``).
+            url=local_url,  # I3: must not clobber the canonical https url
+            chunks=[  # C1: must not IntegrityError against the old chunks
+                {"text": "fresh chunk one", "chunk_type": "text"},
+                {"text": "fresh chunk two", "chunk_type": "text"},
+                {"text": "fresh chunk three", "chunk_type": "text"},
+            ],
+            restore_trashed=True,
+        )
+
+        assert reimported_id == media_id, msg
+        assert "restored" in msg.lower(), msg
+
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["trash_date"] is None
+        # I3: canonical url survives a restore from a less-canonical path.
+        assert row["url"] == canonical_url
+
+        # I2: pre-existing curated keywords survive an omitted keywords arg.
+        keywords = sorted(
+            r["keyword"]
+            for r in file_db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id "
+                "WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+        assert keywords == ["curated", "mine"]
+
+        # C1: the new chunks replaced the old ones without an
+        # IntegrityError, and there's exactly the new set, not a union.
+        chunk_texts = sorted(
+            r["chunk_text"]
+            for r in file_db.execute_query(
+                "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ? AND deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+        assert chunk_texts == [
+            "fresh chunk one",
+            "fresh chunk three",
+            "fresh chunk two",
+        ]
+
+        cursor = file_db.execute_query("SELECT COUNT(*) FROM Media")
+        assert cursor.fetchone()[0] == 1
 
 
 @pytest.mark.integration

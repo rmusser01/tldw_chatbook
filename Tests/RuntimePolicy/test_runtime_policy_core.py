@@ -121,6 +121,15 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
         },
     },
+    # task-1337 (plan Task 9): dedicated local-only list/detail resource for
+    # the Library Collections agent tools -- deliberately NOT folded into the
+    # reading-list capability.
+    "library_collections": {
+        "expected_domain_ids": {"library_collections"},
+        "expected_action_kinds_by_source": {
+            "local": _action_kinds("browse", "detail", "update", "launch"),
+        },
+    },
     "watchlists": {
         "expected_domain_ids": {"watchlists"},
         "expected_action_kinds_by_source": {
@@ -563,6 +572,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         collections.feeds.websub.delete.server
         collections.feeds.websub.detail.server
         collections.feeds.websub.launch.server
+    """),
+    "library_collections": _action_ids("""
+        library.collections.detail.local
+        library.collections.list.local
+        library.media.rechunk.local
+        library.notes.save.local
+        library.templates.save.local
     """),
     "external_connectors": _action_ids("""
         connectors.accounts.delete.server
@@ -1166,9 +1182,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         prompts.create.server
         prompts.bulk.delete.server
         prompts.bulk.update.server
+        prompts.collections.create.local
         prompts.collections.create.server
+        prompts.collections.detail.local
         prompts.collections.detail.server
+        prompts.collections.list.local
         prompts.collections.list.server
+        prompts.collections.update.local
         prompts.collections.update.server
         prompts.delete.local
         prompts.delete.server
@@ -1980,6 +2000,27 @@ def test_runtime_policy_registry_contains_full_audited_rows():
                 f"{capability_id} is missing audited action kinds for {source}: "
                 f"{sorted(expected_action_kinds.difference(actual_action_kinds_by_source[source]))}"
             )
+
+
+def test_library_collections_registers_dedicated_local_list_and_detail_actions():
+    """task-1337 (plan Task 9): the Library Collections agent tools resolve to
+    a dedicated local-only ``library.collections`` resource -- never the
+    reading-list capability's ``collections.reading_list.*`` actions."""
+    list_entry = CAPABILITY_REGISTRY["library.collections.list.local"]
+    detail_entry = CAPABILITY_REGISTRY["library.collections.detail.local"]
+
+    for entry in (list_entry, detail_entry):
+        assert entry.capability_id == "library_collections"
+        assert entry.domain_id == "library_collections"
+        assert entry.required_source == "local"
+        assert entry.authority_owner == "local"
+        assert entry.enabled is True
+    assert list_entry.action_kind == "browse"
+    assert detail_entry.action_kind == "detail"
+
+    # Local-only resource: no server variant and no write actions.
+    assert "library.collections.list.server" not in CAPABILITY_REGISTRY
+    assert "library.collections.create.local" not in CAPABILITY_REGISTRY
 
 
 def test_backend_exception_classifier_handles_authentication_errors():

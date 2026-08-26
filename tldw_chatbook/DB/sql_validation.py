@@ -34,17 +34,45 @@ from loguru import logger
 # removes a table fails the test immediately instead of surfacing as a user
 # hitting an unconditional ``ValueError`` the next time they touch the new
 # table through a generic CRUD helper.
+#
+# IF YOU ARE ADDING A TABLE IN A MIGRATION, ADD IT HERE IN THE SAME COMMIT.
+# NOTE (TASK-20971): that runtime test is correct and it *has* been repaired
+# twice. It is not enough on its own, because it only reports after someone
+# runs it, and the full suite has produced no CI verdict since 2026-06-26.
+# Timeline: TASK-864 found 9 of ~47 tables listed. TASK-19568 repaired the
+# entry at 2026-08-22 00:16 -0700. TASK-19057 added two Actor Pack tables and
+# broke it again at 14:51 the same day -- fourteen and a half hours. The
+# authoring-time guard is therefore
+# ``scripts/check_schema_table_allowlist.py``, run by ``scripts/preflight.sh``
+# and by the required ``derived-artifacts`` CI job: it statically scans the
+# ``CREATE TABLE`` statements in ``DB/migrations/chachanotes_*.sql`` and in the
+# SQL string literals of ``ChaChaNotes_DB.py``, and prints the exact lines to
+# paste below. It needs no database, no install, and ~milliseconds. Its
+# expectation comes from the migration SQL, never from this set (TASK-19045's
+# rule: a census that re-derives its expectation from what it guards is the
+# identity function on the defect it exists to catch).
 VALID_TABLES = {
     "chachanotes": {
+        # TASK-19057 (v44->v45): the two Actor Pack tables. Their absence here
+        # is what TASK-20971 was filed for.
+        "actor_pack_persona_intents",
+        "actor_portable_identities",
         "character_cards",
         "character_expression_images",
         "chat_dictionaries",
         "collection_keywords",
         "conversation_dictionaries",
+        "conversation_dictionary_attachments",
+        "conversation_dictionary_unresolved",
         "conversation_keywords",
         "conversation_local_marks",
         "conversation_world_books",
         "conversations",
+        "console_auxiliary_attempts",
+        "console_conversation_context_policy",
+        "console_conversation_library_policy",
+        "console_conversation_memories",
+        "console_dispatch_checkpoints",
         "db_schema_version",
         "decks",
         "flashcard_assets",
@@ -56,12 +84,25 @@ VALID_TABLES = {
         "keywords",
         "learning_paths",
         "message_attachments",
+        "message_exchanges",
         "message_generation_metadata",
+        "message_trajectory_metadata",
+        "transcript_annotations",
+        "visual_identity_assets",
+        "visual_identity_bindings",
+        "visual_identity_pack_versions",
+        "visual_identity_packs",
         "messages",
         "mindmap_nodes",
         "mindmaps",
+        "note_folder_memberships",
+        "note_folders",
         "note_keywords",
         "notes",
+        "persona_visual_assets",
+        "persona_visual_bindings",
+        "persona_visual_pack_versions",
+        "persona_visual_packs",
         "quiz_attempts",
         "quiz_questions",
         "quizzes",
@@ -77,6 +118,7 @@ VALID_TABLES = {
         "rag_payload_tombstones",
         "rag_source_observations",
         "rag_trace_evidence_refs",
+        "research_quick_note_owner_proofs",
         "review_history",
         "study_sessions",
         "sync_conflicts",
@@ -101,6 +143,10 @@ VALID_TABLES = {
         "MediaChunks",
         "MediaChunks_fts",
         "Transcripts",
+        # task-8 (spec §5.2.1/AC 27): without this row, any use of a
+        # generic helper for the new v7 columns would raise
+        # ``InputError: Invalid table name``.
+        "ChunkingTemplates",
     },
     "prompts": {
         "Prompts",
@@ -114,6 +160,29 @@ VALID_TABLES = {
 
 # Define valid columns for each table (for most commonly used tables)
 VALID_COLUMNS = {
+    # Research interop DB (task-16814: registered so engine-controlled
+    # UPDATE columns can be schema-validated rather than trusted)
+    "research_runs": {
+        "id",
+        "session_id",
+        "query",
+        "status",
+        "phase",
+        "control_state",
+        "progress_percent",
+        "progress_message",
+        "source_policy",
+        "autonomy_mode",
+        "limits_json",
+        "provider_overrides_json",
+        "chat_handoff_json",
+        "follow_up_json",
+        "created_at",
+        "updated_at",
+        "deleted",
+        "client_id",
+        "version",
+    },
     # ChaChaNotes DB
     "character_cards": {
         "id",
@@ -203,6 +272,64 @@ VALID_COLUMNS = {
         "deleted",
         "client_id",
         "version",
+    },
+    # task-19564: registered so ``CharactersRAGDB.prune_sync_log()`` can route
+    # its retention-scope identifiers through ``validate_column_name`` for the
+    # three ``sync_log`` writers v46 covers with the latest-only rule. Without
+    # an entry here that call fails CLOSED (see this function's TASK-864 note),
+    # so these three sets are load-bearing, not decorative. Columns verified
+    # against ``PRAGMA table_info`` on a live fully-migrated database and
+    # pinned there by
+    # ``Tests/DB/test_sql_validation.py::test_sync_log_latest_only_table_columns_are_live``.
+    "chat_dictionaries": {
+        "id",
+        "name",
+        "description",
+        "file_path",
+        "content",
+        "entries_json",
+        "strategy",
+        "max_tokens",
+        "enabled",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    },
+    "world_books": {
+        "id",
+        "name",
+        "description",
+        "scan_depth",
+        "token_budget",
+        "recursive_scanning",
+        "enabled",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    },
+    # Note there is deliberately no ``deleted``/``version``/``client_id`` here:
+    # ``world_book_entries`` is hard-delete-only and unversioned, which is why
+    # its retention rule cannot key on either (see the v45 migration header).
+    "world_book_entries": {
+        "id",
+        "world_book_id",
+        "keys",
+        "content",
+        "enabled",
+        "position",
+        "insertion_order",
+        "priority",
+        "selective",
+        "secondary_keys",
+        "case_sensitive",
+        "regex",
+        "extensions",
+        "created_at",
+        "last_modified",
     },
     # Media DB
     "Media": {
@@ -307,6 +434,23 @@ VALID_COLUMNS = {
         "deleted",
         "prev_version",
         "merge_parent_uuid",
+    },
+    # task-8 (spec §5.2.1/AC 27): the Media DB's v7 ChunkingTemplates column
+    # set (Client_Media_DB_v2 ``_CHUNKING_TEMPLATES_V7_CREATE_SQL``). Pinned
+    # against a live fresh database by
+    # ``Tests/DB/test_sql_validation.py::test_chunking_templates_columns_accepted_and_live``.
+    "ChunkingTemplates": {
+        "id",
+        "uuid",
+        "name",
+        "description",
+        "template_json",
+        "tags",
+        "is_builtin",
+        "version",
+        "deleted",
+        "created_at",
+        "updated_at",
     },
     # Prompts DB
     "Prompts": {

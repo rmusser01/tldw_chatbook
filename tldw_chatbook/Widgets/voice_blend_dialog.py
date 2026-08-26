@@ -63,7 +63,7 @@ class VoiceBlendEntry(Container):
 class VoiceBlendDialog(ModalScreen[Optional[Dict[str, Any]]]):
     """Dialog for creating/editing voice blends"""
 
-    CSS = """
+    BUNDLED_SCREEN_CSS = """
     VoiceBlendDialog {
         align: center middle;
     }

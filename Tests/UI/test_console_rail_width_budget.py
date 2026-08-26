@@ -10,9 +10,9 @@ Regression coverage for UX-review findings LY-01/LY-04/LY-05/LY-06/LY-07
   min-bound at 100-160 cols), the action rows no longer carry the spec's
   unaffordable 12-col left indent, and the trays no longer double the
   section-body indent.
-- LY-04: three empty groups stacked empty-state copy before any intent.
-  Empty Starred/Workspaces sections now default-collapse to quiet headers
-  (the default Chats already used).
+- LY-04: the retired grouped browser no longer stacks aggregate empty-state
+  copy before any intent; Workspaces uses the native Tree and Conversations
+  owns only Default/unassigned rows.
 - LY-05: `{title} - Chats` above the collapsible `Chats` group was two list
   metaphors for one thing; the synthetic bucket label left the summary.
 - LY-06: `Add another workspace before switching.` rendered as an always-on
@@ -32,7 +32,6 @@ from Tests.UI.test_destination_shells import _visible_text, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
@@ -49,19 +48,12 @@ def _static_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
-def _browser_group_toggle(screen, group_id: str) -> Button:
-    for button in screen.query(".console-workspace-conversations-toggle"):
-        if getattr(button, "group_id", None) == group_id:
-            return button
-    raise AssertionError(f"Browser group toggle {group_id!r} not found")
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(140, 42), (160, 48)])
 async def test_session_rows_fit_inside_the_rail(size: tuple[int, int]) -> None:
     """LY-01/LY-07: every Session-section row fits its container at 140 and
     160 cols -- no mid-word clipping of the Workspace value, and the
-    Switch/New/RAG Scope/New conversation buttons render inside the rail."""
+    Switch/New/RAG/New conversation buttons render inside the rail."""
     app = _build_test_app()
     host = StyledConsoleHarness(app)
 
@@ -73,12 +65,13 @@ async def test_session_rows_fit_inside_the_rail(size: tuple[int, int]) -> None:
 
         tray = console.query_one("#console-workspace-context")
 
-        # Workspace status pair: 12-col label + value with the spec's 10-cell
-        # floor (rail IA spec section 8), neither overflowing the row.
+        # Workspace status pair: 13-col label (12 visible characters plus the
+        # required gutter) + value with the spec's 10-cell floor, neither
+        # overflowing the row.
         pair = console.query_one("#console-active-workspace")
         label = console.query_one("#console-active-workspace-label")
         value = console.query_one("#console-active-workspace-value")
-        assert label.region.width == 12
+        assert label.region.width == 13
         assert value.region.width >= 10
         assert value.region.right <= pair.content_region.right, (
             f"Workspace value overflows its row at {size}: value right "
@@ -92,12 +85,15 @@ async def test_session_rows_fit_inside_the_rail(size: tuple[int, int]) -> None:
         checks = (
             ("#console-change-workspace", len("Switch")),
             ("#console-new-workspace", len("New")),
-            ("#console-workspace-rag-scope-open", len("RAG Scope")),
+            ("#console-workspace-rag-scope-open", len("RAG")),
             ("#console-new-workspace-conversation", len("New conversation")),
         )
         for selector, label_width in checks:
             button = console.query_one(selector, Button)
             assert button.display, f"{selector} must be displayed"
+            if selector == "#console-workspace-rag-scope-open":
+                assert str(button.label) == "RAG"
+                assert str(button.tooltip).startswith("RAG Scope:")
             assert button.region.width >= label_width, (
                 f"{selector} is {button.region.width} cells wide at {size} -- "
                 f"its {label_width}-cell label clips mid-word"
@@ -192,10 +188,8 @@ async def test_selected_summary_drops_the_synthetic_chats_suffix() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_sections_default_collapse_to_a_quiet_state() -> None:
-    """LY-04: empty Starred/Workspaces sections render as quiet collapsed
-    headers instead of stacking "No ... conversations." messages; expanding
-    one still shows its empty copy (intent-gated)."""
+async def test_retired_grouped_browser_stays_absent_from_empty_rail() -> None:
+    """LY-04: empty rails use native owners, not aggregate group chrome."""
     app = _build_test_app()
     host = StyledConsoleHarness(app)
 
@@ -207,15 +201,8 @@ async def test_empty_sections_default_collapse_to_a_quiet_state() -> None:
         visible_text = _visible_text(console)
         assert "No starred conversations." not in visible_text
         assert "No workspace conversations." not in visible_text
-        # The section headers still render -- collapsed, one quiet line each.
-        for section_id in ("starred", "workspaces"):
-            toggle = console.query_one(
-                f"#console-conversation-browser-section-toggle-{section_id}",
-                Button,
-            )
-            assert str(toggle.label) == GLYPH_COLLAPSED
-
-        # Expanding an empty section still reveals its empty copy.
-        _browser_group_toggle(console, "section:starred").press()
-        await pilot.pause(0.3)
-        assert "No starred conversations." in _visible_text(console)
+        assert len(console.query("#console-workspace-tree")) == 1
+        assert len(console.query("#console-conversation-browser-section-starred")) == 0
+        assert (
+            len(console.query("#console-conversation-browser-section-workspaces")) == 0
+        )

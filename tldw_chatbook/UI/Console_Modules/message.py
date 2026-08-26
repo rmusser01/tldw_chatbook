@@ -54,9 +54,9 @@ order between controllers never matters.
 **`handle_console_message_action` is the wave's risk centre** (294 lines,
 the largest constructor in this cluster as a direct consequence): it has NO
 DOM access of its own, so nothing blocks the move, but it dispatches across
-several clusters that stay screen-owned this wave (change-review, image-
-generation, citation) -- each of those reaches becomes exactly one more
-named callable here, never a back-door through `self.screen`.
+several clusters outside this controller (change-review, image-generation,
+citation) -- each of those reaches becomes exactly one more named callable
+here, never a back-door through `self.screen`.
 
 **Dead bodies / delegation table**: this cluster's pre-move test suite
 reaches an unusually large number of these methods directly by their
@@ -85,10 +85,9 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
   document the whole realtime engine as staying screen-owned this
   programme.
 - `_console_imagegen_inflight_message_ids` -- image-generation in-flight
-  bookkeeping keyed by message id, the message-id-keyed sibling of
-  `_console_imagegen_inflight_sessions`, which `session.py`'s own docstring
-  already calls out as a name-pattern false positive staying screen-owned
-  for the identical reason.
+  bookkeeping keyed by message id, now owned with its session-keyed sibling
+  by `ConsoleImageController`; it remains outside this message controller
+  despite the name match.
 - `_selected_console_message_inspector_rows` / `_clear_native_console_
   message_selection` -- real `query_one` DOM access.
 - `handle_console_send_message` / `_send_console_message_from_visible_
@@ -126,13 +125,20 @@ from ...Chat.console_chat_models import (
     MessageAttachment,
 )
 from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
 from ...Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
 )
+from ...Chat.console_roleplay_identity import ConsoleMessagePresentation
 from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
-from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
+from ...Chat.console_message_actions import (
+    ConsoleActionResult,
+    ConsoleMessageActionService,
+)
 from ...Chat.console_save_targets import (
     console_chatbook_artifact_payload,
     derive_console_save_title,
@@ -143,7 +149,11 @@ from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
-from ...Widgets.Console import ConsoleEditMessageModal, ConsoleEditResult, ConsoleSaveAsModal
+from ...Widgets.Console import (
+    ConsoleEditMessageModal,
+    ConsoleEditResult,
+    ConsoleSaveAsModal,
+)
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
@@ -217,13 +227,16 @@ class ConsoleMessageController:
         keep_console_generation_variant: Callable[[Any], None],
         handle_console_toggle_image_view: Callable[[str], None],
         invalidate_console_persisted_rows_cache: Callable[[], None],
+        play_console_video: Callable[[str], Any] | None = None,
+        save_console_video_copy: Callable[[str], Any] | None = None,
+        regenerate_console_video_message: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
-        Every one of the 36 method bodies below (29 of the pre-move
-        `*message*`-named cluster, plus 7 exclusively-owned helpers whose
+        Every one of the 35 method bodies below (29 of the pre-move
+        `*message*`-named cluster, plus 6 exclusively-owned helpers whose
         names don't match that pattern -- `_apply_console_message_
-        attachments`, `_batch_fetch_console_resume_attachments`,
+        attachments`,
         `_serialize_console_variants`, `_restore_console_variants`,
         `_console_save_as_destinations`, `_console_save_source_title`,
         `_clear_console_original_attempt_preview`) is a byte-for-byte copy
@@ -317,6 +330,12 @@ class ConsoleMessageController:
                 cluster's cache invalidator (already a named callable on
                 `session.py`), used only by `handle_console_message_
                 action`'s delete branch.
+            play_console_video: `ConsoleVideoController._play_console_video`,
+                used by the video play action.
+            save_console_video_copy: `ConsoleVideoController._save_console_
+                video_copy`, used by the video save action.
+            regenerate_console_video_message: `ConsoleVideoController._regenerate_
+                console_video_message`, used by the video regenerate action.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -351,6 +370,9 @@ class ConsoleMessageController:
         self._invalidate_console_persisted_rows_cache_fn = (
             invalidate_console_persisted_rows_cache
         )
+        self._play_console_video_fn = play_console_video
+        self._save_console_video_copy_fn = save_console_video_copy
+        self._regenerate_console_video_message_fn = regenerate_console_video_message
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -363,6 +385,11 @@ class ConsoleMessageController:
         self._pending_console_delete_message_id: str | None = None
         self._console_original_attempt_previews: Dict[str, str] = {}
         self._console_speaking_message_id: str | None = None
+        self._console_speech_states: dict[str, str] = {}
+        self._console_speech_request_generation = 0
+        self._console_speech_lifetime_generation = 0
+        self._console_speech_owner: Any | None = None
+        self._console_speech_pending_stop: tuple[str, int] | None = None
         self._pending_console_swipe_selection: str | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
@@ -463,6 +490,24 @@ class ConsoleMessageController:
     def _invalidate_console_persisted_rows_cache(self) -> Any:
         return self._invalidate_console_persisted_rows_cache_fn
 
+    @property
+    def _play_console_video(self) -> Any:
+        if self._play_console_video_fn is None:
+            raise RuntimeError("Console video play action is not wired")
+        return self._play_console_video_fn
+
+    @property
+    def _save_console_video_copy(self) -> Any:
+        if self._save_console_video_copy_fn is None:
+            raise RuntimeError("Console video save action is not wired")
+        return self._save_console_video_copy_fn
+
+    @property
+    def _regenerate_console_video_message(self) -> Any:
+        if self._regenerate_console_video_message_fn is None:
+            raise RuntimeError("Console video regenerate action is not wired")
+        return self._regenerate_console_video_message_fn
+
     # -- Moved cluster methods (byte-for-byte except as documented above) --
 
     def _recent_console_image_messages(self, messages) -> list[Any]:
@@ -509,6 +554,12 @@ class ConsoleMessageController:
     ) -> list[ConsoleChatMessage]:
         """Build native Console messages from a persisted conversation tree.
 
+        task-15860 Task 6: the walk itself moved to
+        `Chat/console_conversation_hydration.py` so the launch wake -- which
+        has to hydrate a conversation with no screen at all -- shares this
+        policy instead of copying it. This method keeps its name and
+        signature: eight test files call it directly.
+
         Task 8: flattens the ENTIRE tree (every node, all branches -- not just
         the ``children[-1]`` latest branch), each message carrying its
         ``persisted_message_id`` and persisted ``parent_message_id`` so the
@@ -523,129 +574,9 @@ class ConsoleMessageController:
         transparent to parenthood -- its children re-parent to the nearest kept
         ancestor -- so a skipped row never orphans a branch.
         """
-        messages: list[ConsoleChatMessage] = []
-
-        def _walk(node: Any, parent_persisted_id: str | None) -> None:
-            if not isinstance(node, dict):
-                return
-            content = str(node.get("content") or "")
-            raw_image = node.get("image_data")
-            image_data = (
-                bytes(raw_image) if isinstance(raw_image, (bytes, bytearray)) else None
-            )
-            raw_mime = node.get("image_mime_type")
-            image_mime_type = str(raw_mime) if raw_mime else None
-            usage = ProviderUsage.from_json(node.get("usage_json"))
-            raw_metadata_json = node.get("metadata_json")
-            # task-3401.4: a video generation row's metadata_json carries the
-            # namespaced video payload instead of turn provenance -- hydrate
-            # it into video_metadata and leave ``metadata`` None (the two
-            # shapes never co-write one row; persistence prefers the video
-            # payload so a later edit cannot clobber it).
-            video_metadata = VideoGenerationMetadata.from_json(raw_metadata_json)
-            metadata = (
-                None
-                if video_metadata is not None
-                else MessageMetadata.from_json(raw_metadata_json)
-            )
-            raw_id = node.get("id")
-            node_persisted_id = str(raw_id) if raw_id is not None else None
-            kept = bool(content) or image_data is not None
-            if kept:
-                # The tree only carries the legacy position-0 columns; positions
-                # >= 1 (multi-attachment table rows) are batch-fetched below,
-                # once for the whole resumed list.
-                attachments: tuple[MessageAttachment, ...] = (
-                    (
-                        MessageAttachment(
-                            data=image_data,
-                            mime_type=image_mime_type or "",
-                            display_name="",
-                            position=0,
-                        ),
-                    )
-                    if image_data is not None
-                    else ()
-                )
-                messages.append(
-                    ConsoleChatMessage(
-                        role=self._console_message_role_from_persisted(node),
-                        content=content,
-                        status="complete",
-                        persisted_message_id=node_persisted_id,
-                        parent_message_id=parent_persisted_id,
-                        image_data=image_data,
-                        image_mime_type=image_mime_type,
-                        attachments=attachments,
-                        usage=usage,
-                        metadata=metadata,
-                        video_metadata=video_metadata,
-                    )
-                )
-            # Children re-parent to this node when kept, else pass the nearest
-            # kept ancestor straight through (a dropped empty row is invisible
-            # to the tree linkage).
-            child_parent_id = node_persisted_id if kept else parent_persisted_id
-            children = node.get("children")
-            if isinstance(children, list):
-                for child in children:
-                    _walk(child, child_parent_id)
-
-        root_threads = tree.get("root_threads")
-        if isinstance(root_threads, list):
-            for root in root_threads:
-                _walk(root, None)
-        self._batch_fetch_console_resume_attachments(messages)
-        return messages
-
-    def _batch_fetch_console_resume_attachments(
-        self, messages: list[ConsoleChatMessage]
-    ) -> None:
-        """Fill positions >= 1 for resumed multi-attachment messages, once.
-
-        ``get_conversation_tree`` only returns the legacy image columns
-        (position 0); the ``message_attachments`` table (positions >= 1) is
-        fetched here in a SINGLE batched call covering every message this
-        resume produced, then folded into each message's attachments tuple
-        via ``_apply_console_message_attachments`` (see that helper for the
-        store mirror invariant it replicates by hand).
-        """
-        ids = [m.persisted_message_id for m in messages if m.persisted_message_id]
-        if not ids:
-            return
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        getter = getattr(db, "get_attachments_for_messages", None)
-        if not callable(getter):
-            return
-        try:
-            rows_by_id = getter(ids)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Console resume attachment batch fetch failed."
-            )
-            return
-        if not isinstance(rows_by_id, dict):
-            return
-        for message in messages:
-            extra_rows = (
-                rows_by_id.get(message.persisted_message_id)
-                if message.persisted_message_id
-                else None
-            )
-            if not extra_rows:
-                continue
-            extras = [
-                MessageAttachment(
-                    data=row.get("data"),
-                    mime_type=row.get("mime_type") or "",
-                    display_name=row.get("display_name") or "",
-                    position=int(row.get("position", 0)),
-                )
-                for row in extra_rows
-            ]
-            _apply_console_message_attachments(
-                message, list(message.attachments) + extras
-            )
+        return console_messages_from_conversation_tree(
+            tree, db=getattr(self.app_instance, "chachanotes_db", None)
+        )
 
     @staticmethod
     def _serialize_console_variants(
@@ -704,6 +635,9 @@ class ConsoleMessageController:
             "turn_id": message.turn_id,
             "status": message.status,
             "persisted_message_id": message.persisted_message_id,
+            "assistant_generation_state": getattr(
+                message, "assistant_generation_state", None
+            ),
             "feedback": message.feedback,
             "variants": cls._serialize_console_variants(message.variants),
             "image_mime_type": getattr(message, "image_mime_type", None),
@@ -737,7 +671,8 @@ class ConsoleMessageController:
             # is preferred here so the round trip cannot strand it either.
             "metadata_json": (
                 video_metadata.to_json()
-                if (video_metadata := getattr(message, "video_metadata", None)) is not None
+                if (video_metadata := getattr(message, "video_metadata", None))
+                is not None
                 else (
                     metadata.to_json()
                     if (metadata := getattr(message, "metadata", None)) is not None
@@ -802,6 +737,11 @@ class ConsoleMessageController:
             persisted_message_id=(
                 str(payload["persisted_message_id"])
                 if payload.get("persisted_message_id") is not None
+                else None
+            ),
+            assistant_generation_state=(
+                str(payload["assistant_generation_state"])
+                if payload.get("assistant_generation_state") is not None
                 else None
             ),
             variants=cls._restore_console_variants(payload.get("variants")),
@@ -1050,6 +990,333 @@ class ConsoleMessageController:
             )
         await self._sync_native_console_chat_ui()
 
+    async def request_console_message_speech(
+        self,
+        message_id: str,
+        outcome_callback: Callable[[bool], None] | None = None,
+        expected_destination_fingerprint: str | None = None,
+        retry_failed_auto: bool = False,
+    ) -> bool:
+        """Dispatch Manual Speak's exact trusted snapshot/event path."""
+        from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSMessageSpeechRequestEvent,
+            TTSPlaybackEvent,
+            TTSPlaybackLifecycle,
+        )
+
+        outcome_reported = False
+        playback_lifecycle: TTSPlaybackLifecycle | None = None
+
+        def report_outcome(ok: bool) -> None:
+            nonlocal outcome_reported
+            if outcome_reported:
+                return
+            outcome_reported = True
+            if outcome_callback is None:
+                return
+            try:
+                outcome_callback(ok is True)
+            except Exception:
+                return
+
+        store = self._ensure_console_chat_store()
+        try:
+            speech_snapshot = store.issue_tts_message_speech_snapshot(
+                message_id,
+                presentation_context=self._screen._console_presentation_context(),
+            )
+        except ConsoleSpeechSnapshotRejected as error:
+            self.app_instance.notify(str(error), severity="warning")
+            report_outcome(False)
+            return False
+        except Exception:
+            self.app_instance.notify(
+                "Speech could not be requested. Try again.",
+                severity="warning",
+            )
+            report_outcome(False)
+            return False
+
+        def validate_speech_snapshot(snapshot):
+            return store.validate_tts_message_speech_snapshot(
+                snapshot,
+                presentation_context=self._screen._console_presentation_context(),
+            )
+
+        prior_message_id = self._console_speaking_message_id
+        prior_owner = self._console_speech_owner
+        if prior_message_id is not None:
+            prior_generation = self._console_speech_request_generation
+            prior_stop_outcome: bool | None = None
+            self._console_speech_pending_stop = (
+                prior_message_id,
+                prior_generation,
+            )
+
+            def settle_prior_stop(accepted: bool) -> None:
+                nonlocal prior_stop_outcome
+                prior_stop_outcome = accepted is True
+                pending = (prior_message_id, prior_generation)
+                if self._console_speech_pending_stop != pending:
+                    return
+                self._console_speech_pending_stop = None
+                if accepted and self._console_speech_states.get(prior_message_id) in {
+                    "generating",
+                    "playing",
+                }:
+                    self._settle_console_speech_presentation(
+                        prior_message_id,
+                        prior_generation,
+                        state="stopped",
+                    )
+
+            stop_event = TTSPlaybackEvent(
+                action="stop",
+                message_id=prior_message_id,
+                playback_lifecycle=prior_owner,
+                outcome_callback=settle_prior_stop,
+            )
+            await self._dispatch_console_speech_stop_event(stop_event)
+            if prior_stop_outcome is not True:
+                self._console_speech_pending_stop = None
+                report_outcome(False)
+                return False
+
+        request_generation = self._begin_console_speech_presentation(message_id)
+        lifetime_generation = self._console_speech_lifetime_generation
+        active_session_epoch = store.active_session_epoch()
+
+        def playback_is_current() -> bool:
+            if self._console_speech_request_generation != request_generation:
+                return False
+            if self._console_speech_lifetime_generation != lifetime_generation:
+                return False
+            if store.active_session_id != speech_snapshot.session_id:
+                return False
+            if store.active_session_epoch() != active_session_epoch:
+                return False
+            try:
+                validate_speech_snapshot(speech_snapshot)
+            except Exception:
+                return False
+            return True
+
+        def report_playback(state: str) -> None:
+            if playback_is_current():
+                self._settle_console_speech_presentation(
+                    message_id,
+                    request_generation,
+                    state=state,
+                )
+            if state == "stopped":
+                report_outcome(True)
+            elif state == "failed":
+                report_outcome(False)
+
+        playback_lifecycle = TTSPlaybackLifecycle(
+            message_id=message_id,
+            request_id=request_generation,
+            validator=playback_is_current,
+            callback=report_playback,
+        )
+        self._console_speech_owner = playback_lifecycle
+
+        def report_generation_outcome(ok: bool) -> None:
+            if ok is True:
+                report_outcome(True)
+            elif playback_lifecycle is not None:
+                playback_lifecycle.report("failed")
+
+        event = TTSMessageSpeechRequestEvent(
+            speech_snapshot,
+            validate_speech_snapshot,
+            outcome_callback=report_generation_outcome,
+            expected_destination_fingerprint=expected_destination_fingerprint,
+            retry_failed_auto=retry_failed_auto,
+            playback_lifecycle=playback_lifecycle,
+        )
+        try:
+            posted = self.app_instance.post_message(event)
+        except Exception:
+            event.report_outcome(False)
+            return False
+        if posted is False:
+            event.report_outcome(False)
+            return False
+        await self._sync_native_console_chat_ui()
+        return True
+
+    async def _dispatch_console_speech_stop_event(
+        self,
+        event: Any,
+        *,
+        post_first: bool = False,
+    ) -> None:
+        """Deliver one stop through the app handler with synchronous ack."""
+        control = getattr(self.app_instance, "control_tts_playback", None)
+        if not post_first and inspect.iscoroutinefunction(control):
+            await control(event)
+            return
+        try:
+            posted = self.app_instance.post_message(event)
+        except Exception:
+            posted = False
+        if posted is not False:
+            return
+        handler = getattr(self.app_instance, "_tts_handler", None)
+        handle = getattr(handler, "handle_tts_playback", None)
+        if inspect.iscoroutinefunction(handle):
+            try:
+                await handle(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                event.report_outcome(False)
+            return
+        event.report_outcome(False)
+
+    def _begin_console_speech_presentation(self, message_id: str) -> int:
+        """Start one owned request and invalidate every older callback."""
+        prior_message_id = self._console_speaking_message_id
+        for other_id, state in tuple(self._console_speech_states.items()):
+            if other_id == message_id:
+                continue
+            if (
+                other_id != prior_message_id
+                or state in {"stopped", "failed"}
+            ):
+                self._console_speech_states.pop(other_id, None)
+        self._console_speech_request_generation += 1
+        self._console_speech_states[message_id] = "generating"
+        self._console_speaking_message_id = message_id
+        return self._console_speech_request_generation
+
+    def _settle_console_speech_presentation(
+        self,
+        message_id: str,
+        generation: int,
+        *,
+        state: str,
+    ) -> bool:
+        """Accept one playback-owner state for the current screen request."""
+        if self._console_speech_request_generation != generation:
+            return False
+        current = self._console_speech_states.get(message_id)
+        allowed = {
+            "generating": {"playing", "stopped", "failed"},
+            "playing": {"stopped", "failed"},
+        }
+        if state not in allowed.get(current, set()):
+            return False
+        self._console_speech_states[message_id] = state
+        if state == "playing":
+            self._console_speaking_message_id = message_id
+        elif self._console_speaking_message_id == message_id:
+            self._console_speaking_message_id = None
+            self._console_speech_owner = None
+        self._schedule_console_speech_state_sync()
+        return True
+
+    def invalidate_console_speech_context(self) -> asyncio.Task[None] | None:
+        """Fence callbacks while retaining audio ownership until stop ack."""
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSPlaybackEvent,
+        )
+
+        message_id = self._console_speaking_message_id
+        owner = self._console_speech_owner
+        self._console_speech_lifetime_generation += 1
+        if message_id is None:
+            self._console_speech_states.clear()
+            return None
+        generation = self._console_speech_request_generation
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        session_epoch = store.active_session_epoch()
+        lifetime_generation = self._console_speech_lifetime_generation
+        pending = (message_id, generation)
+        if self._console_speech_pending_stop == pending:
+            return None
+        self._console_speech_pending_stop = pending
+
+        def context_is_current() -> bool:
+            try:
+                return bool(
+                    self._ensure_console_chat_store() is store
+                    and self._console_speech_lifetime_generation
+                    == lifetime_generation
+                    and store.active_session_id == session_id
+                    and store.active_session_epoch() == session_epoch
+                )
+            except Exception:
+                return False
+
+        def settle_invalidation_stop(accepted: bool) -> None:
+            if self._console_speech_pending_stop != pending:
+                return
+            self._console_speech_pending_stop = None
+            if self._console_speech_request_generation != generation:
+                return
+            if accepted:
+                if context_is_current():
+                    self._console_speech_states = {message_id: "stopped"}
+                else:
+                    self._console_speech_states.pop(message_id, None)
+                if self._console_speech_owner is owner:
+                    self._console_speech_owner = None
+                if (
+                    self._console_speaking_message_id == message_id
+                    and self._console_speech_owner is None
+                ):
+                    self._console_speaking_message_id = None
+            else:
+                if context_is_current():
+                    self._console_speech_states = {message_id: "failed"}
+                else:
+                    self._console_speech_states.pop(message_id, None)
+                self._console_speech_owner = owner
+                self._console_speaking_message_id = message_id
+            self._schedule_console_speech_state_sync()
+
+        stop_event = TTSPlaybackEvent(
+            action="stop",
+            message_id=message_id,
+            playback_lifecycle=owner,
+            outcome_callback=settle_invalidation_stop,
+        )
+        try:
+            return asyncio.create_task(
+                self._dispatch_console_speech_stop_event(
+                    stop_event,
+                    post_first=True,
+                )
+            )
+        except RuntimeError:
+            stop_event.report_outcome(False)
+            return None
+
+    def reconcile_console_speech_context(self) -> None:
+        """Stop playback when the active store/screen owner became stale."""
+        owner = self._console_speech_owner
+        if owner is not None and not owner.is_current():
+            self.invalidate_console_speech_context()
+
+    def _schedule_console_speech_state_sync(self) -> None:
+        """Repaint a callback-driven state change without blocking its reporter."""
+        try:
+            task = asyncio.create_task(self._sync_native_console_chat_ui())
+        except RuntimeError:
+            return
+
+        def _consume_result(done: asyncio.Task) -> None:
+            try:
+                done.result()
+            except Exception:
+                logger.warning("Console speech-state repaint failed")
+
+        task.add_done_callback(_consume_result)
+
     async def handle_console_message_action(self, event: Button.Pressed) -> bool:
         """Route a transcript message action through the native action service.
 
@@ -1068,11 +1335,23 @@ class ConsoleMessageController:
                 message action, leaving the event to propagate.
         """
         button_id = event.button.id or ""
-        action_id, message_id = self._parse_console_message_action_button_id(button_id)
+        action_id = getattr(event.button, "console_action_id", None)
+        message_id = getattr(event.button, "console_message_id", None)
+        if not isinstance(action_id, str) or not isinstance(message_id, str):
+            action_id, message_id = self._parse_console_message_action_button_id(
+                button_id
+            )
         if action_id is None or message_id is None:
             return False
 
         event.stop()
+        failed_cleared = False
+        for failed_id, state in tuple(self._console_speech_states.items()):
+            if state == "failed":
+                self._console_speech_states.pop(failed_id, None)
+                failed_cleared = True
+        if failed_cleared:
+            self._schedule_console_speech_state_sync()
         store = self._ensure_console_chat_store()
 
         if action_id == "review-changes":
@@ -1139,7 +1418,15 @@ class ConsoleMessageController:
             )
             return True
 
+        presentation = self._console_message_presentation(message)
         result = self._console_message_action_service.dispatch(action_id, message)
+        if result.clipboard_text is not None:
+            result = replace(result, clipboard_text=presentation.content)
+        if (
+            action_id in {"edit", "continue", "speak"}
+            and result.target_content is not None
+        ):
+            result = replace(result, target_content=presentation.content)
         self._last_console_action = result
         if action_id == "view-original-attempt" and result.status == "completed":
             controller = self._ensure_console_chat_controller()
@@ -1156,32 +1443,12 @@ class ConsoleMessageController:
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(result.clipboard_text)
-        if action_id == "speak" and result.status == "completed":
-            from tldw_chatbook.Chat.console_speech import (
-                ConsoleSpeechSnapshotRejected,
-            )
-            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-                TTSMessageSpeechRequestEvent,
-            )
-
-            try:
-                speech_snapshot = store.issue_tts_message_speech_snapshot(message.id)
-            except ConsoleSpeechSnapshotRejected as error:
-                self.app_instance.notify(str(error), severity="warning")
-                return True
-            self.app_instance.post_message(
-                TTSMessageSpeechRequestEvent(
-                    speech_snapshot,
-                    store.validate_tts_message_speech_snapshot,
-                )
-            )
-            # task-559 unit 2: track this message as "speaking" so the
-            # action row swaps 🔊 -> ⏹ (a fresh speak always supersedes
-            # whatever was previously tracked -- the underlying player is a
-            # single-slot global singleton that stops any prior clip before
-            # starting a new one, so the tracked id and reality agree).
-            self._console_speaking_message_id = message.id
-            await self._sync_native_console_chat_ui()
+        if (
+            action_id == "speak"
+            and result.status == "completed"
+            and not await self.request_console_message_speech(message.id)
+        ):
+            return True
         if action_id == "speak-stop" and result.status == "completed":
             # Reuses the legacy stop-button's exact plumbing (spec: "do not
             # invent a parallel audio-control path") -- safe to post
@@ -1191,25 +1458,50 @@ class ConsoleMessageController:
                 TTSPlaybackEvent,
             )
 
-            was_speaking = (
-                getattr(self, "_console_speaking_message_id", None) == message.id
-            )
-            self.app_instance.post_message(
-                TTSPlaybackEvent(action="stop", message_id=message.id)
-            )
+            was_speaking = self._console_speaking_message_id == message.id
+            stop_generation = self._console_speech_request_generation
+            stop_owner = self._console_speech_owner
+            stop_pending = (message.id, stop_generation)
             if was_speaking:
-                # Only when the screen itself believed this message was
-                # driving TTS do we clear state / re-sync / give feedback
-                # (fix round 1). A speak-stop dispatched for a message the
-                # screen never tracked as speaking -- e.g. a directly
-                # crafted button id, or a stale press racing an already-
-                # cleared state -- is a genuinely idle no-op: the stop
-                # event above is still posted for safety, but claiming
-                # "Stopped speaking." or forcing a re-sync for nothing
-                # would be misleading UI feedback.
-                self._console_speaking_message_id = None
-                await self._sync_native_console_chat_ui()
-                self.app_instance.notify(result.visible_copy, severity="information")
+                self._console_speech_pending_stop = stop_pending
+
+            def settle_stop(accepted: bool) -> None:
+                if not was_speaking:
+                    return
+                if self._console_speech_pending_stop != stop_pending:
+                    return
+                self._console_speech_pending_stop = None
+                if self._console_speech_request_generation != stop_generation:
+                    return
+                retryable_owner = bool(
+                    not accepted
+                    and stop_owner is not None
+                    and stop_owner.state not in {"stopped", "failed"}
+                    and self._console_speech_owner is stop_owner
+                )
+                if not retryable_owner:
+                    self._console_speech_request_generation += 1
+                    if self._console_speech_owner is stop_owner:
+                        self._console_speech_owner = None
+                    if self._console_speaking_message_id == message.id:
+                        self._console_speaking_message_id = None
+                self._console_speech_states[message.id] = (
+                    "stopped" if accepted else "failed"
+                )
+                self._schedule_console_speech_state_sync()
+                if accepted:
+                    self.app_instance.notify(
+                        result.visible_copy,
+                        severity="information",
+                    )
+
+            stop_event = TTSPlaybackEvent(
+                action="stop",
+                message_id=message.id,
+                playback_lifecycle=stop_owner,
+                outcome_callback=settle_stop if was_speaking else None,
+            )
+            await self._dispatch_console_speech_stop_event(stop_event)
             return True
         if action_id == "edit" and result.status == "edit_requested":
             await self._open_console_message_edit_modal(
@@ -1384,30 +1676,28 @@ class ConsoleMessageController:
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
 
-    @staticmethod
-    def _console_message_role_label(message: ConsoleChatMessage) -> str:
+    def _console_message_presentation(
+        self, message: ConsoleChatMessage
+    ) -> ConsoleMessagePresentation:
+        """Delegate to the screen-owned active-session presentation resolver."""
+        return self._screen._console_message_presentation(message)
+
+    def _console_message_role_label(self, message: ConsoleChatMessage) -> str:
         """Return a user-facing role label for a Console transcript message."""
-        role = (
-            message.role.value if hasattr(message.role, "value") else str(message.role)
-        )
-        return role.title()
+        return self._console_message_presentation(message).speaker_label
 
-    @staticmethod
-    def _console_message_content(message: ConsoleChatMessage) -> str:
+    def _console_message_content(self, message: ConsoleChatMessage) -> str:
         """Return the currently visible content for a Console transcript message."""
-        if message.variants is not None:
-            return message.variants.current.content
-        return message.content
+        return self._console_message_presentation(message).content
 
-    @classmethod
     def _console_message_excerpt(
-        cls,
+        self,
         message: ConsoleChatMessage,
         *,
         max_length: int = 120,
     ) -> str:
         """Return a single-line excerpt for selected-message context surfaces."""
-        normalized = " ".join(cls._console_message_content(message).split())
+        normalized = " ".join(self._console_message_content(message).split())
         if len(normalized) <= max_length:
             return normalized
         return f"{normalized[: max(0, max_length - 1)].rstrip()}…"
@@ -1884,7 +2174,12 @@ class ConsoleMessageController:
         )
         self.app_instance.notify(
             "Saved message as a Chatbook artifact. It appears under Artifacts.",
-            severity="information",
+            # FB-07 (TASK-2154) moved every Save-as confirmation to "success";
+            # Chatbook was missed and kept "information" for four days because
+            # the test that pinned all four destinations called a seam
+            # decomposition wave 3 had already moved, so it never ran
+            # (task-14920).
+            severity="success",
         )
 
     def _clear_console_original_attempt_preview(self, message_id: str) -> None:
@@ -1976,6 +2271,8 @@ class ConsoleMessageController:
             ("console-message-action-review-changes-", "review-changes"),
             ("console-message-action-save-as-", "save-as"),
             ("console-message-action-save-image-", "save-image"),
+            ("console-message-action-video-play-", "video-play"),
+            ("console-message-action-video-save-copy-", "video-save-copy"),
             ("console-message-action-toggle-image-view-", "toggle-image-view"),
             ("console-message-action-regenerate-", "regenerate"),
             ("console-message-action-continue-", "continue"),

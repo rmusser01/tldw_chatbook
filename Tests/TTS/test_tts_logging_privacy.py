@@ -49,8 +49,16 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_supervisor import (
+    AudioCppSupervisor,
+    _AudioCppDiagnosticRing,
+)
+from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.base_backends import TTSBackendConnectionError
+from tldw_chatbook.TTS import audio_cpp_managed_config as managed_config_module
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_audio import canonicalize_reference_wav
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     TTSSettingsPublicationTicket,
@@ -58,6 +66,88 @@ from tldw_chatbook.TTS.TTS_Generation import (
 
 GUIDE_PATH = Path(__file__).parents[2] / "Docs/Development/TTS/TTS_MODULE_GUIDE.md"
 _TEST_WAIT_SECONDS = 2.0
+
+
+def test_clone_generation_diagnostics_discard_chunked_and_delayed_canaries(
+    tmp_path: Path,
+) -> None:
+    private_path = str(tmp_path / "PRIVATE_REFERENCE_PATH.wav")
+    private_text = "PRIVATE REFERENCE TRANSCRIPT"
+    ring = _AudioCppDiagnosticRing(home_directory=tmp_path)
+    ring.feed("stdout", b"ordinary startup line\n")
+
+    ring.suppress_content()
+    ring.feed("stdout", private_path[:11].encode())
+    ring.feed("stdout", private_path[11:].encode() + b"\n")
+    ring.feed("stderr", private_text[:9].encode())
+    ring.feed("stderr", private_text[9:].encode())
+    ring.finish("stdout")
+    ring.finish("stderr")
+
+    diagnostics, dropped = ring.snapshot()
+    assert diagnostics == ()
+    assert dropped == 0
+    rendered = repr(diagnostics)
+    assert private_path not in rendered
+    assert private_text not in rendered
+
+    ring.clear()
+    ring.feed("stdout", b"next generation safe line\n")
+    diagnostics, _dropped = ring.snapshot()
+    assert tuple(line.text for line in diagnostics) == ("next generation safe line",)
+
+
+def test_supervisor_suppresses_only_the_exact_live_clone_generation() -> None:
+    supervisor = AudioCppSupervisor(source_environment={})
+    process = SimpleNamespace(returncode=None)
+    supervisor._generation = SimpleNamespace(  # type: ignore[assignment]
+        generation=7,
+        owned=SimpleNamespace(process=process),
+    )
+    supervisor._state = "running"
+    supervisor._diagnostics.feed("stdout", b"safe startup\n")
+
+    assert supervisor.suppress_clone_diagnostics(6) is False
+    assert supervisor.snapshot().diagnostics
+    assert supervisor.suppress_clone_diagnostics(7) is True
+    supervisor._diagnostics.feed("stderr", b"PRIVATE delayed clone output\n")
+    assert supervisor.snapshot().diagnostics == ()
+
+    process.returncode = 1
+    assert supervisor.suppress_clone_diagnostics(7) is False
+
+
+def test_audio_cpp_child_environment_values_and_omissions_never_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    allowed_value = "SYNTHETIC_ALLOWED_ENV_VALUE"
+    omitted_name = "SYNTHETIC_APPLICATION_PRIVATE_NAME"
+    omitted_value = "SYNTHETIC_APPLICATION_PRIVATE_VALUE"
+    credential_value = "SYNTHETIC_PROVIDER_CREDENTIAL_VALUE"
+    loguru_messages: list[str] = []
+    caplog.set_level(logging.DEBUG)
+    sink_id = logger.add(loguru_messages.append, level="DEBUG", format="{message}")
+    try:
+        child = managed_config_module.build_audio_cpp_child_environment(
+            {
+                "LANG": allowed_value,
+                omitted_name: omitted_value,
+                "OPENAI_API_KEY": credential_value,
+            },
+            provider_credential_names=frozenset({"OPENAI_API_KEY"}),
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert child == {"LANG": allowed_value}
+    rendered_logs = caplog.text + "\n".join(loguru_messages)
+    for private_value in (
+        allowed_value,
+        omitted_name,
+        omitted_value,
+        credential_value,
+    ):
+        assert private_value not in rendered_logs
 
 
 class _PrivacyStream(httpx.AsyncByteStream):
@@ -154,7 +244,17 @@ async def _cleanup_audio_cpp_privacy_resources(
 def test_tts_package_exports_only_stable_adapter_service_api() -> None:
     expected = {
         "AssignedTTSProfileSnapshot",
+        "AudioCppCloneSetupProjection",
+        "AudioCppDiagnosticLine",
+        "AudioCppProcessAdmissionSnapshot",
+        "AudioCppProcessFailure",
+        "AudioCppProcessSnapshot",
+        "AudioCppProcessState",
+        "AudioCppReadyEndpoint",
+        "AudioCppRuntimeObservation",
+        "AudioCppTTSCapability",
         "CapabilitySnapshotState",
+        "CanonicalTTSCloneReference",
         "CharacterRef",
         "CharacterTTSRequestResolution",
         "CharacterTTSRequestResolver",
@@ -179,9 +279,16 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "ProgressSink",
         "ProviderHealth",
         "STTSGeneratedAudio",
+        "STTSPlaygroundCloneSnapshot",
+        "STTSPlaygroundProfilePreview",
         "STTSPlaygroundRequest",
+        "STTSPlaygroundResultProjection",
         "TTSAudioResponse",
         "TTSConfigMutation",
+        "TTSCloneReference",
+        "TTSCloneReferenceSummary",
+        "TTSCloneRecipeRequirement",
+        "TTSCloneVoiceBundle",
         "TTSGenerationProfile",
         "TTSModelInfo",
         "TTSNativeCapabilitySnapshot",
@@ -204,11 +311,20 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "TTSService",
         "TTSStructuredVoiceAdapter",
         "TTSVoiceDiscoveryResult",
+        "TTSVoiceBundleError",
+        "TTSVoiceBundleHandle",
+        "TTSVoiceBundleImportChoice",
+        "TTSVoiceBundleImportResult",
+        "TTSVoiceBundlePortabilityService",
+        "TTSVoiceBundleReview",
+        "TTSVoiceBundleSinks",
         "VoiceDiscoveryState",
         "bind_tts_service",
         "canonical_json_options",
         "close_tts_resources",
         "get_tts_service",
+        "encode_clone_voice_bundle",
+        "inspect_clone_voice_bundle",
         "reset_tts_service_binding",
     }
     forbidden = {
@@ -223,6 +339,33 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
     assert set(tts.__all__) == expected
     assert all(hasattr(tts, name) for name in expected)
     assert all(not hasattr(tts, name) for name in forbidden)
+
+
+def test_clone_reference_admission_error_and_log_hide_private_inputs(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "PRIVATE-speaker-reference.wav"
+    transcript = "PRIVATE exact reference transcript"
+    source_path.write_bytes(b"not a supported wav")
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+    caught: BaseException | None = None
+    try:
+        try:
+            canonicalize_reference_wav(source_path, transcript)
+        except BaseException as error:
+            caught = error
+            logger.warning("Clone reference admission failed: {}", error)
+    finally:
+        logger.remove(sink_id)
+
+    assert caught is not None
+    graph = _exception_graph(caught)
+    rendered = "\n".join(messages) + repr(graph)
+    assert graph == [caught]
+    assert str(source_path) not in rendered
+    assert transcript not in rendered
+    assert b"not a supported wav".hex() not in rendered
 
 
 def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
@@ -876,6 +1019,158 @@ async def test_openai_backend_never_logs_api_key_details(monkeypatch) -> None:
     assert secret[-10:] not in rendered
     assert hashlib.sha256(secret.encode()).hexdigest() not in rendered
     assert "API key length" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_hostile_error_response_is_not_exposed() -> None:
+    private_input = "PRIVATE_OPENAI_SYNTHESIS_INPUT_91f24d"
+    private_credential = "sk-PRIVATE_OPENAI_CREDENTIAL_2d8a71"
+    private_reason = "PRIVATE_OPENAI_REASON_74c31e"
+    messages: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = (
+            f'{{"error":{{"message":"echoed {private_input} {private_credential}"}}}}'
+        ).encode()
+        return httpx.Response(
+            422,
+            content=body,
+            extensions={"reason_phrase": private_reason.encode()},
+        )
+
+    backend = OpenAITTSBackend(
+        {
+            "OPENAI_BASE_URL": "https://speech.example.test/v1/audio/speech",
+            "OPENAI_AUTH_MODE": "none",
+            "OPENAI_API_KEY": private_credential,
+        }
+    )
+    await backend.client.aclose()
+    backend.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    caught: BaseException | None = None
+    try:
+        request = OpenAISpeechRequest(
+            model="pocket-tts",
+            input=private_input,
+            voice="alba",
+            response_format="wav",
+        )
+        try:
+            async for _chunk in backend.generate_speech_stream(request):
+                pass
+        except BaseException as error:
+            caught = error
+    finally:
+        logger.remove(sink_id)
+        await backend.close()
+
+    assert isinstance(caught, ValueError)
+    assert str(caught) == "TTS request was rejected by the service (HTTP 422)."
+    assert _exception_graph(caught) == [caught]
+    rendered = " ".join(
+        (
+            "\n".join(messages),
+            repr(_exception_graph(caught)),
+            "".join(traceback.format_exception(caught)),
+        )
+    )
+    assert "http_status=422" in rendered
+    assert "category=request_rejected" in rendered
+    for private_value in (private_input, private_credential, private_reason):
+        assert private_value not in rendered
+
+
+async def _capture_openai_stream_failure(
+    failure: BaseException,
+    *,
+    private_input: str,
+    private_credential: str,
+) -> tuple[BaseException, list[str]]:
+    class FailingStream:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            raise failure
+
+        async def __aexit__(self, *_args) -> bool:
+            return False
+
+    class StubClient:
+        stream = FailingStream
+
+        async def aclose(self) -> None:
+            pass
+
+    backend = OpenAITTSBackend(
+        {
+            "OPENAI_BASE_URL": "https://speech.example.test/v1/audio/speech",
+            "OPENAI_AUTH_MODE": "none",
+            "OPENAI_API_KEY": private_credential,
+        }
+    )
+    await backend.client.aclose()
+    backend.client = StubClient()
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    caught: BaseException | None = None
+    try:
+        request = OpenAISpeechRequest(
+            model="pocket-tts",
+            input=private_input,
+            voice="alba",
+            response_format="wav",
+        )
+        try:
+            async for _chunk in backend.generate_speech_stream(request):
+                pass
+        except BaseException as error:
+            caught = error
+    finally:
+        logger.remove(sink_id)
+        await backend.close()
+
+    assert caught is not None
+    return caught, messages
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_request_error_has_no_private_exception_context() -> None:
+    private_input = "PRIVATE_OPENAI_REQUEST_INPUT_50e4d7"
+    private_credential = "sk-PRIVATE_OPENAI_REQUEST_KEY_a2139c"
+    caught, messages = await _capture_openai_stream_failure(
+        httpx.ConnectError(f"connect failed: {private_input} {private_credential}"),
+        private_input=private_input,
+        private_credential=private_credential,
+    )
+
+    assert isinstance(caught, TTSBackendConnectionError)
+    assert caught.__context__ is None
+    assert caught.__cause__ is None
+    rendered = " ".join(("\n".join(messages), str(caught), repr(caught)))
+    for private_value in (private_input, private_credential):
+        assert private_value not in rendered
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_unexpected_error_has_no_private_exception_context() -> (
+    None
+):
+    private_input = "PRIVATE_OPENAI_UNEXPECTED_INPUT_4c290b"
+    private_credential = "sk-PRIVATE_OPENAI_UNEXPECTED_KEY_97eb31"
+    caught, messages = await _capture_openai_stream_failure(
+        RuntimeError(f"unexpected failure: {private_input} {private_credential}"),
+        private_input=private_input,
+        private_credential=private_credential,
+    )
+
+    assert type(caught) is ValueError
+    assert caught.__context__ is None
+    assert caught.__cause__ is None
+    rendered = " ".join(("\n".join(messages), str(caught), repr(caught)))
+    for private_value in (private_input, private_credential):
+        assert private_value not in rendered
 
 
 @pytest.mark.asyncio

@@ -45,6 +45,14 @@ from tldw_chatbook.LLM_Calls.Local_Summarization_Lib import (
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
+from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
+from tldw_chatbook.model_capabilities import (
+    anthropic_model_rejects_sampling_params,
+    anthropic_model_rejects_temperature_top_p_combination,
+    openai_model_rejects_sampling_params,
+    openai_model_requires_max_completion_tokens,
+)
 
 try:
     from tldw_chatbook.Chunking.Chunk_Lib import improved_chunking_process
@@ -80,7 +88,8 @@ def log_debug_data(data: Any, source_name: str) -> None:
         source_name: The name of the API/source (e.g., "AnthropicAI", "Cohere", etc.)
     """
     logging.debug(
-        f"{source_name}: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)"
+        "Summarization input loaded; source=%s",
+        safe_metadata_token(source_name),
     )
     logging.debug(f"{source_name}: Type of data: {type(data)}")
 
@@ -88,7 +97,7 @@ def log_debug_data(data: Any, source_name: str) -> None:
 # --- Keep existing helper functions ---
 def extract_text_from_segments(segments: List[Dict]) -> str:
     # (Keep existing implementation)
-    logging.debug(f"Segments received: {segments}")
+    logging.debug("Segments received")
     logging.debug(f"Type of segments: {type(segments)}")
     text = ""
     if isinstance(segments, list):
@@ -103,7 +112,7 @@ def extract_text_from_segments(segments: List[Dict]) -> str:
                 text += segment["text"] + " "
             else:
                 logging.warning(
-                    f"Skipping segment due to missing 'Text' key or wrong type: {segment}"
+                    "Skipping segment due to missing text key or wrong type"
                 )
     elif isinstance(segments, str):  # Allow passing a pre-joined string
         logging.debug("Segments received as a single string.")
@@ -172,7 +181,7 @@ def recursive_summarize_chunks(
 
             # Check if the processing function indicated an error
             if isinstance(step_result, str) and step_result.startswith("Error:"):
-                logging.error(f"Error during recursive step {i + 1}: {step_result}")
+                logging.error("Error during recursive step; step=%s", i + 1)
                 return step_result  # Propagate the error immediately
 
             if not isinstance(step_result, str):
@@ -188,9 +197,10 @@ def recursive_summarize_chunks(
             )
 
         except Exception as e:
-            logging.exception(
-                f"Unexpected error calling summarize_func during recursive step {i + 1}: {e}",
-                exc_info=True,
+            logging.error(
+                "Unexpected error calling summarize_func; step=%s exception_type=%s",
+                i + 1,
+                safe_metadata_token(type(e).__name__),
             )
             return f"Error: Unexpected failure during recursive step {i + 1}: {e}"
 
@@ -204,7 +214,7 @@ def extract_text_from_input(input_data: Any) -> str:
     if isinstance(input_data, str):
         # Check if it's a file path
         if os.path.isfile(input_data):
-            logging.debug(f"Input is a file path: {input_data}")
+            logging.debug("Input resolved as file path")
             try:
                 with open(input_data, "r", encoding="utf-8") as f:
                     content = f.read()
@@ -217,7 +227,10 @@ def extract_text_from_input(input_data: Any) -> str:
                     logging.debug("File content is not JSON, returning raw text.")
                     return content.strip()
             except Exception as e:
-                logging.error(f"Error reading file {input_data}: {e}")
+                logging.error(
+                    "Error reading input file; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return ""
         # Check if it's a JSON string
         elif input_data.strip().startswith("{") or input_data.strip().startswith("["):
@@ -272,6 +285,30 @@ def extract_text_from_input(input_data: Any) -> str:
 
 
 # --- Internal API Dispatcher ---
+# (task-3301 xhigh review round) Spellings used by `Chat/Chat_Functions.py`'s
+# `API_CALL_HANDLERS` dispatch table mapped onto this module's own provider
+# names. The Library ingest seam normalizes `[analysis_defaults] provider`
+# to the chat dispatcher's names; the pdf/ebook/audio processors then hand
+# that same name to `analyze()`, which previously rejected e.g.
+# "koboldcpp"/"oobabooga"/"mistralai" with "Error: Invalid API Name" even
+# though an implementation exists here under another spelling.
+_CHAT_DISPATCH_NAME_ALIASES = {
+    "koboldcpp": "kobold",
+    "oobabooga": "ooba",
+    "mistralai": "mistral",
+    "llama_cpp": "llama.cpp",
+    "local_llamacpp": "llama.cpp",
+    "local_llamafile": "llama.cpp",
+    "local_ollama": "ollama",
+    "local_vllm": "vllm",
+    "local_llm": "local-llm",
+}
+# NOT aliased (no summarize_with_* implementation here): aphrodite,
+# mlx_lm/local_mlx_lm, moonshot, zai. Callers see the in-band
+# "Error: Invalid API Name" for those, which the ingest payload boundary
+# now converts into a visible "analysis failed" warning.
+
+
 def _dispatch_to_api(
     text_to_summarize: str,
     custom_prompt_arg: Optional[str],
@@ -287,6 +324,9 @@ def _dispatch_to_api(
     """
     try:
         api_name_lower = api_name.lower()
+        api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(
+            api_name_lower, api_name_lower
+        )
         logging.debug(f"Dispatching to API: {api_name_lower}")
 
         # Ensure required args for specific functions are handled if needed
@@ -469,7 +509,9 @@ def _dispatch_to_api(
 
     except Exception as e:
         logging.error(
-            f"Error during dispatch to API '{api_name}': {str(e)}", exc_info=True
+            "Error during dispatch to API; provider=%s exception_type=%s",
+            safe_metadata_token(api_name),
+            safe_metadata_token(type(e).__name__),
         )
         return f"Error calling API {api_name}: {str(e)}"
 
@@ -535,9 +577,6 @@ def analyze(
             logging.error("Could not extract text content from input data.")
             return "Error: Could not extract text content."
         logging.info(f"Extracted text content length: {len(text_content)} characters.")
-        logging.debug(
-            f"Extracted text content (first 500 chars): {text_content[:500]}..."
-        )
 
         # --- Define helper to consume potential generators ---
         def consume_generator(gen):
@@ -556,7 +595,10 @@ def analyze(
                     logging.debug("Generator consumed.")
                     return final_string
                 except Exception as e:
-                    logging.error(f"Error consuming generator: {e}", exc_info=True)
+                    logging.error(
+                        "Error consuming generator; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
                     return f"Error consuming stream: {e}"
             return gen  # Return as is if not a generator
 
@@ -570,7 +612,26 @@ def analyze(
             chunk_options if isinstance(chunk_options, dict) else default_chunk_opts
         )
 
-        if CHUNKER_AVAILABLE:
+        # (task-3301 xhigh review round, F1) The direct-dispatch path below
+        # used to be the ``else`` of ``if CHUNKER_AVAILABLE:`` -- so with the
+        # chunk lib importable (every normal install) and NO chunking
+        # strategy requested, ``final_result`` was never assigned and this
+        # function returned 'Error: Summarization failed unexpectedly.'
+        # WITHOUT making any API call. Chunking strategies now gate on
+        # BOTH the request flag and chunker availability; everything else
+        # dispatches directly.
+        if recursive_summarization and not CHUNKER_AVAILABLE:
+            logging.warning(
+                "Recursive summarization requested but the chunk lib is "
+                "unavailable; falling back to direct summarization."
+            )
+        if chunked_summarization and not CHUNKER_AVAILABLE:
+            logging.warning(
+                "Chunked summarization requested but the chunk lib is "
+                "unavailable; falling back to direct summarization."
+            )
+
+        if CHUNKER_AVAILABLE and (recursive_summarization or chunked_summarization):
             if recursive_summarization:
                 logging.info("Performing recursive summarization.")
                 chunks_data = improved_chunking_process(
@@ -673,7 +734,8 @@ def analyze(
                             else "Unknown error"
                         )
                         logging.warning(
-                            f"Failed to summarize chunk {i + 1}: {error_detail}"
+                            "Failed to summarize chunk; chunk=%s",
+                            i + 1,
                         )
                         chunk_summaries.append(
                             f"[Error summarizing chunk {i + 1}: {error_detail}]"
@@ -724,14 +786,14 @@ def analyze(
             elif isinstance(
                 final_string_summary, str
             ) and final_string_summary.startswith("Error:"):
-                logging.error(f"Summarization failed: {final_string_summary}")
+                logging.error(
+                    "Summarization failed; provider=%s",
+                    safe_metadata_token(api_name),
+                )
                 return final_string_summary
             elif isinstance(final_string_summary, str):
                 logging.info(
                     f"Summarization completed successfully. Final Length: {len(final_string_summary)}"
-                )
-                logging.debug(
-                    f"Final Summary (first 500 chars): {final_string_summary[:500]}..."
                 )
                 return final_string_summary
             else:
@@ -742,7 +804,10 @@ def analyze(
                 return f"Error: Unexpected result type {type(final_string_summary)}"
 
     except Exception as e:
-        logging.error(f"Critical error in summarize function: {str(e)}", exc_info=True)
+        logging.error(
+            "Critical error in summarize function; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Error: An unexpected error occurred during summarization: {str(e)}"
 
 
@@ -770,9 +835,7 @@ def summarize_with_openai(
             logging.info("OpenAI Summarize: API key not provided as parameter")
             logging.info("OpenAI Summarize: Attempting to use API key from config file")
             api_key = get_cli_setting("openai_api", "api_key", "")
-            logging.debug(
-                f"OpenAI Summarize: Using API key from config file: {api_key[:5]}...{api_key[-5:]}"
-            )
+            logging.debug("OpenAI Summarize: Config credential lookup completed")
 
         if not api_key or not api_key.strip():
             logging.error(
@@ -790,19 +853,15 @@ def summarize_with_openai(
         text = str(input_data)  # Ensure it's a string
 
         logging.debug(f"OpenAI: Received text length: {len(text)}")
-        logging.debug(f"OpenAI: Custom prompt: {custom_prompt_arg}")
-        logging.debug(
-            f"OpenAI: Temperature: {temp}, System Message: {system_message}, Streaming: {streaming}"
-        )
+        logging.debug("OpenAI: Custom prompt configured")
+        logging.debug("OpenAI: Request options prepared")
 
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"OpenAI API Key: {api_key[:5]}...{api_key[-5:] if api_key else None}"
-        )
+        logging.debug("OpenAI: Credential configured")
         logging.debug("openai: Preparing data + prompt for submittal")
         openai_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         if temp is None:
@@ -821,14 +880,24 @@ def summarize_with_openai(
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": openai_prompt},
             ],
-            # FIXME - Set a Max tokens value in config file for each API
-            "max_tokens": 4096,
-            "temperature": temp,
             "stream": streaming,
         }
+        # TASK-18802: per-model request capabilities. Reasoning-family models
+        # (o-series, gpt-5) reject the classic `max_tokens` cap with
+        # 400 unsupported_parameter ("Use 'max_completion_tokens' instead")
+        # and reject non-default `temperature` with 400 unsupported_value, so
+        # both are gated on the model_capabilities predicates instead of being
+        # sent unconditionally.
+        # FIXME - Set a Max tokens value in config file for each API
+        if openai_model_requires_max_completion_tokens(openai_model):
+            payload["max_completion_tokens"] = 4096
+        else:
+            payload["max_tokens"] = 4096
+        if not openai_model_rejects_sampling_params(openai_model):
+            payload["temperature"] = temp
 
         # --- Retry Logic --- (Copied from original, seems reasonable)
-        session = requests.Session()
+        session = create_default_session()
         retry_count = int(get_cli_setting("openai_api", "api_retries", 3))
         retry_delay = int(
             get_cli_setting("openai_api", "api_retry_delay", 1)
@@ -847,7 +916,7 @@ def summarize_with_openai(
             + "/chat/completions"
         )
 
-        logging.debug(f"OpenAI: Posting request to {api_url}")
+        logging.debug("OpenAI: Endpoint configured")
         response = session.post(
             api_url,
             headers=headers,
@@ -877,19 +946,15 @@ def summarize_with_openai(
                                 )
                                 yield chunk
                             except json.JSONDecodeError:
-                                logging.error(
-                                    f"OpenAI Stream: Error decoding JSON: {data_str}"
-                                )
+                                logging.error("OpenAI Stream: Response event rejected")
                                 continue
-                            except (KeyError, IndexError) as e:
-                                logging.error(
-                                    f"OpenAI Stream: Unexpected structure: {data_str} - Error: {e}"
-                                )
+                            except (KeyError, IndexError):
+                                logging.error("OpenAI Stream: Response event rejected")
                                 continue
                 except Exception as stream_error:
                     logging.error(
-                        f"OpenAI Stream: Error during streaming: {stream_error}",
-                        exc_info=True,
+                        "OpenAI Stream: Streaming failed; exception_type=%s",
+                        safe_metadata_token(type(stream_error).__name__),
                     )
                     yield f"Error during streaming: {stream_error}"  # Yield error in stream
                 finally:
@@ -909,16 +974,20 @@ def summarize_with_openai(
                 logging.debug("OpenAI: Summarization successful (non-streaming).")
                 return summary
             else:
-                logging.warning(
-                    f"OpenAI: Summary not found in response: {response_data}"
-                )
+                logging.warning("OpenAI: Summary not found in response")
                 return "Error: OpenAI Summary not found in response."
 
     except requests.exceptions.RequestException as e:
-        logging.error(f"OpenAI: API request failed: {str(e)}", exc_info=True)
+        logging.error(
+            "OpenAI: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Error: OpenAI API request failed: {str(e)}"
     except Exception as e:
-        logging.error(f"OpenAI: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "OpenAI: Unexpected error; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Error: OpenAI unexpected error: {str(e)}"
 
 
@@ -951,10 +1020,6 @@ def summarize_with_anthropic(
         if not anthropic_api_key or not anthropic_api_key.strip():
             logging.error("Anthropic: No valid API key available")
             return "Anthropic: API Key Not Provided/Found in Config file or is empty"
-
-        logging.debug(
-            f"Anthropic: Using API Key: {anthropic_api_key[:5]}...{anthropic_api_key[-5:]}"
-        )
 
         logging.debug("AnthropicAI: Using provided string data for summarization")
         data = input_data
@@ -992,30 +1057,51 @@ def summarize_with_anthropic(
         }
 
         anthropic_prompt = custom_prompt_arg
-        logging.debug(f"Anthropic: Prompt is {anthropic_prompt}")
+        logging.debug("Anthropic: Prompt prepared")
         user_message = {"role": "user", "content": f"{text} \n\n\n\n{anthropic_prompt}"}
 
-        model = get_cli_setting("anthropic_api", "model", "claude-3-haiku-20240307")
+        # TASK-19020: the former fallback default claude-3-haiku-20240307 is
+        # retired server-side (404 not_found_error, req_011CeEDXZ8iS29MZCgyySwQa);
+        # claude-haiku-4-5 is its currently-served successor in the same
+        # cheap-fast-haiku lineage.
+        model = get_cli_setting("anthropic_api", "model", "claude-haiku-4-5")
 
         data = {
             "model": model,
             "max_tokens": 4096,  # max possible tokens to return
             "messages": [user_message],
             "stop_sequences": ["\n\nHuman:"],
-            "temperature": temp,
-            "top_k": 0,
-            "top_p": 1.0,
             "metadata": {
                 "user_id": "example_user_id",
             },
             "stream": streaming,
             "system": system_message,
         }
+        # TASK-18802: the Fable 5 / Mythos 5 / Opus 5 / Opus 4.8 / Opus 4.7 /
+        # Sonnet 5 families reject temperature/top_p/top_k with HTTP 400
+        # ("`temperature` is deprecated for this model."), so sampling params
+        # are gated on the same model_capabilities predicate the chat path
+        # consults (TASK-18414). This function sends no thinking config, so
+        # the fixed-thinking-budget predicate has nothing to gate here.
+        if not anthropic_model_rejects_sampling_params(model):
+            data["temperature"] = temp
+            data["top_k"] = 0
+            # TASK-19020: every served Claude 4.x rejects temperature and top_p
+            # together ("`temperature` and `top_p` cannot both be specified for
+            # this model."). Mirror the chat path's precedence (LLM_API_Calls
+            # chat_with_anthropic): send temperature and drop top_p; top_k is
+            # probe-verified compatible alongside temperature. No warning log
+            # here, deliberately: the diagnostic-privacy manifest
+            # (test_summarization_diagnostic_privacy.py) freezes this module's
+            # reviewed diagnostic set, and the drop is deterministic -- both
+            # values are this function's own constants, not caller input.
+            if not anthropic_model_rejects_temperature_top_p_combination(model):
+                data["top_p"] = 1.0
 
         for attempt in range(max_retries):
             try:
                 # Create a session
-                session = requests.Session()
+                session = create_default_session()
 
                 # Load config values
                 retry_count = int(get_cli_setting("anthropic_api", "api_retries", 3))
@@ -1042,7 +1128,52 @@ def summarize_with_anthropic(
                     headers=headers,
                     json=data,
                     stream=streaming,
+                    # task-19830: this bare module-level `requests.post`
+                    # had no timeout at all -- a stalled connection hung
+                    # forever with no way to cancel. task-19560 then gave it
+                    # this provider-specific value, which is kept in
+                    # preference to the session-wide default because
+                    # `anthropic_api.api_timeout` is a knob users can already
+                    # set. `requests` re-arms the read timeout per chunk, so
+                    # a slow-but-progressing stream (see `stream=streaming`
+                    # above) is only killed by a stall on one chunk, never by
+                    # total elapsed duration.
+                    timeout=int(
+                        get_cli_setting("anthropic_api", "api_timeout", 120)
+                    ),
+                    # task-19557: the API key travels in the custom
+                    # `x-api-key` header. `requests` strips `Authorization`
+                    # across a redirect host change but NOT custom headers,
+                    # so a 3xx here would re-send the key wherever
+                    # `Location` points. Refuse to follow rather than
+                    # silently forward credentials -- mirrors the
+                    # `x-goog-api-key` fix in LLM_API_Calls.py's
+                    # chat_with_google (task-686).
+                    allow_redirects=False,
                 )
+
+                if 300 <= response.status_code < 400:
+                    # No new logging call here, deliberately: this module's
+                    # diagnostic call sites are frozen and individually
+                    # reviewed by test_summarization_diagnostic_privacy.py's
+                    # ledger (see the sampling-params precedent a few lines
+                    # up in this same function). The returned string is the
+                    # caller-visible signal; it mirrors this function's own
+                    # "API Key Not Provided"/"Network error" convention of
+                    # reporting failure via a returned string rather than a
+                    # log line or a raised exception.
+                    #
+                    # task-19557 Qodo round 2: this branch returns without
+                    # consuming the body, so -- same as the chat_with_google
+                    # and chat_with_anthropic refusal sites -- the
+                    # connection must be explicitly released via close()
+                    # rather than left for GC to reclaim on an unconsumed
+                    # requests.Response.
+                    response.close()
+                    return (
+                        "Anthropic: API endpoint redirected unexpectedly -- "
+                        "refusing to follow with credentials."
+                    )
 
                 # Check if the status code indicates success
                 if response.status_code == 200:
@@ -1074,7 +1205,7 @@ def summarize_with_anthropic(
                                             yield text_delta
                                     except json.JSONDecodeError:
                                         logging.error(
-                                            f"Anthropic: Error decoding JSON from line: {line}"
+                                            "Anthropic: Stream JSON decode failed"
                                         )
                                         continue
                             # Optionally, return the full collected text at the end
@@ -1095,13 +1226,14 @@ def summarize_with_anthropic(
                             summary = summary.strip()
                             logging.debug("Anthropic: Summarization successful")
                             logging.debug(
-                                f"Anthropic: Summary (first 500 chars): {summary[:500]}..."
+                                "Anthropic: Summary prepared; character_count=%s",
+                                len(summary),
                             )
                             return summary
                         except Exception:
                             logging.debug("Anthropic: Unexpected data in response")
                             logging.error(
-                                f"Unexpected response format from Anthropic API: {response.text}"
+                                "Unexpected response format from Anthropic API"
                             )
                             return None
                 elif (
@@ -1113,30 +1245,35 @@ def summarize_with_anthropic(
                     )
                     time.sleep(retry_delay)
                 else:
-                    logging.debug(
-                        f"Anthropic: Failed to summarize, status code {response.status_code}: {response.text}"
-                    )
                     logging.error(
-                        f"Failed to process summary, status code {response.status_code}: {response.text}"
+                        "Failed to process summary; status_code=%s",
+                        response.status_code,
                     )
                     return None
 
             except requests.RequestException as e:
                 logging.error(
-                    f"Anthropic: Network error during attempt {attempt + 1}/{max_retries}: {str(e)}"
+                    "Anthropic: Network error during attempt; attempt=%s "
+                    "retry_count=%s exception_type=%s",
+                    attempt + 1,
+                    max_retries,
+                    safe_metadata_token(type(e).__name__),
                 )
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                 else:
                     return f"Anthropic: Network error: {str(e)}"
     except FileNotFoundError:
-        logging.error(f"Anthropic: File not found: {input_data}")
+        logging.error("Anthropic: File not found")
         return f"Anthropic: File not found: {input_data}"
     except json.JSONDecodeError:
-        logging.error(f"Anthropic: Invalid JSON format in file: {input_data}")
+        logging.error("Anthropic: Invalid JSON format in file")
         return f"Anthropic: Invalid JSON format in file: {input_data}"
     except Exception as e:
-        logging.error(f"Anthropic: Error in processing: {str(e)}")
+        logging.error(
+            "Anthropic: Error in processing; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Anthropic: Error occurred while processing summary with Anthropic: {str(e)}"
 
 
@@ -1175,9 +1312,7 @@ def summarize_with_cohere(
         if system_message is None:
             system_message = ""
 
-        logging.debug(
-            f"Cohere: Using API Key: {cohere_api_key[:5]}...{cohere_api_key[-5:] if cohere_api_key else None}"
-        )
+        logging.debug("Cohere: Credential configured")
 
         logging.debug("Cohere: Using provided string data for summarization")
         data = input_data
@@ -1214,7 +1349,10 @@ def summarize_with_cohere(
         }
 
         cohere_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        logging.debug(f"Cohere: Prompt being sent is {cohere_prompt}")
+        logging.debug(
+            "Cohere: Prompt prepared; character_count=%s",
+            len(cohere_prompt),
+        )
 
         # Cohere v2 /chat (task-297): the last v1 /chat caller in the repo --
         # chat_with_cohere migrated in task-267 (PR #690); v2 takes a
@@ -1233,7 +1371,7 @@ def summarize_with_cohere(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("cohere_api", "api_retries", 3))
@@ -1264,7 +1402,8 @@ def summarize_with_cohere(
                 # raise_for_status() surfaced a bodyless HTTPError through
                 # the outer except with a different string (task-297 review).
                 logging.error(
-                    f"Cohere: API request failed with status code {response.status_code}: {response.text}"
+                    "Cohere: API request failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"Cohere: API request failed: {response.text}"
 
@@ -1299,25 +1438,19 @@ def summarize_with_cohere(
                         # SSE transports may interleave metadata/comment lines
                         # (id:, retry:, ": keep-alive") -- harmless, so debug
                         # not warning (Qodo #698-3).
-                        logging.debug(
-                            f"Cohere: Skipping non-JSON stream line: {decoded_line[:120]}"
-                        )
+                        logging.debug("Cohere Stream: Non-JSON line skipped")
                         continue
                     if not decoded_line or decoded_line == "[DONE]":
                         continue
                     try:
                         event = json.loads(decoded_line)
                     except json.JSONDecodeError:
-                        logging.error(
-                            f"Cohere: Error decoding JSON from line: {decoded_line}"
-                        )
+                        logging.error("Cohere Stream: Response event rejected")
                         continue
                     if not isinstance(event, dict):
                         # A JSON list/primitive line would crash .get() and
                         # kill the generator (Gemini #698-1).
-                        logging.debug(
-                            f"Cohere: Skipping non-object stream event: {decoded_line[:120]}"
-                        )
+                        logging.debug("Cohere Stream: Non-object event skipped")
                         continue
                     if event.get("type") == "content-delta":
                         chunk = (
@@ -1329,14 +1462,12 @@ def summarize_with_cohere(
                         if chunk:
                             yield chunk
                     else:
-                        logging.debug(
-                            f"Cohere: Unhandled streaming event type: {event.get('type')}"
-                        )
+                        logging.debug("Cohere: Unhandled streaming event")
 
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("cohere_api", "api_retries", 3))
@@ -1365,7 +1496,7 @@ def summarize_with_cohere(
                 # HTML) would raise into the outer except and break the
                 # pinned failure format (Gemini/Qodo #698-2).
                 response_data = response.json()
-                logging.debug(f"API Response Data: {response_data}")
+                logging.debug("Cohere: API response received")
                 # v2 returns message.content as a parts array; concatenate
                 # the text parts (mirrors chat_with_cohere, task-267).
                 content_parts = (response_data.get("message") or {}).get(
@@ -1383,12 +1514,16 @@ def summarize_with_cohere(
                 return "Cohere: Expected data not found in API response."
             else:
                 logging.error(
-                    f"Cohere: API request failed with status code {response.status_code}: {response.text}"
+                    "Cohere: API request failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"Cohere: API request failed: {response.text}"
 
     except Exception as e:
-        logging.error(f"Cohere: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "Cohere: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Cohere: Error occurred while processing summary with Cohere: {str(e)}"
 
 
@@ -1421,16 +1556,14 @@ def summarize_with_groq(
             logging.error("Groq: No valid API key available")
             return "Groq: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(f"Groq: Using API Key: {groq_api_key[:5]}...{groq_api_key[-5:]}")
+        logging.debug("Groq: Credential configured")
 
         # Input data handling
         logging.debug("Groq: Using provided string data for summarization")
         data = input_data
 
         # Debug logging to identify sent data
-        logging.debug(
-            f"Groq: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)"
-        )
+        logging.debug("Groq: Input prepared; character_count=%s", len(str(data)))
         logging.debug(f"Groq: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -1463,7 +1596,10 @@ def summarize_with_groq(
         }
 
         groq_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        logging.debug(f"Groq: Prompt being sent is {groq_prompt}")
+        logging.debug(
+            "Groq: Prompt prepared; character_count=%s",
+            len(groq_prompt),
+        )
 
         data = {
             "messages": [
@@ -1484,7 +1620,7 @@ def summarize_with_groq(
         logging.debug("Groq: Submitting request to API endpoint")
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("groq_api", "api_retries", 3))
@@ -1529,9 +1665,7 @@ def summarize_with_groq(
                             collected_messages += chunk
                             yield chunk
                         except json.JSONDecodeError:
-                            logging.error(
-                                f"Groq: Error decoding JSON from line: {line}"
-                            )
+                            logging.error("Groq Stream: Response event rejected")
                             continue
                 # Optionally, you can return the full collected message at the end
                 # yield collected_messages
@@ -1539,7 +1673,7 @@ def summarize_with_groq(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("groq_api", "api_retries", 3))
@@ -1565,7 +1699,7 @@ def summarize_with_groq(
             )
 
             response_data = response.json()
-            logging.debug(f"API Response Data: {response_data}")
+            logging.debug("Groq: API response received")
 
             if response.status_code == 200:
                 if "choices" in response_data and len(response_data["choices"]) > 0:
@@ -1577,12 +1711,16 @@ def summarize_with_groq(
                     return "Groq: Expected data not found in API response."
             else:
                 logging.error(
-                    f"Groq: API request failed with status code {response.status_code}: {response.text}"
+                    "Groq: API request failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"Groq: API request failed: {response.text}"
 
     except Exception as e:
-        logging.error(f"Groq: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "Groq: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Groq: Error occurred while processing summary with Groq: {str(e)}"
 
 
@@ -1626,9 +1764,7 @@ def summarize_with_openrouter(
         logging.error("OpenRouter: Error in processing: {str(e)}")
         return f"OpenRouter: Error occurred while processing config file with OpenRouter: {str(e)}"
 
-    logging.debug(
-        f"OpenRouter: Using API Key: {openrouter_api_key[:5]}...{openrouter_api_key[-5:]}"
-    )
+    logging.debug("OpenRouter: Credential configured")
 
     logging.debug(f"OpenRouter: Using Model: {openrouter_model}")
 
@@ -1665,7 +1801,7 @@ def summarize_with_openrouter(
     if streaming:
         try:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("openrouter_api", "api_retries", 3))
@@ -1728,7 +1864,9 @@ def summarize_with_openrouter(
                                     delta = json_data["choices"][0].get("delta", {})
                                     if "content" in delta:
                                         content = delta["content"]
-                                        logging.info(content)
+                                        logging.info(
+                                            "OpenRouter Stream: Content received"
+                                        )
                                         full_response += content
                             except json.JSONDecodeError:
                                 continue
@@ -1737,17 +1875,23 @@ def summarize_with_openrouter(
                 return full_response.strip()
             else:
                 error_msg = f"openrouter: Streaming API request failed with status code {response.status_code}: {response.text}"
-                logging.error(error_msg)
+                logging.error(
+                    "OpenRouter Stream: API request failed; status_code=%s",
+                    response.status_code,
+                )
                 return error_msg
 
         except Exception as e:
             error_msg = f"openrouter: Error occurred while processing stream: {str(e)}"
-            logging.error(error_msg)
+            logging.error(
+                "OpenRouter Stream: Processing failed; exception_type=%s",
+                safe_metadata_token(type(e).__name__),
+            )
             return error_msg
     else:
         try:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("openrouter_api", "api_retries", 3))
@@ -1789,9 +1933,7 @@ def summarize_with_openrouter(
             )
 
             response_data = response.json()
-            logging.debug(
-                f"API Response Data: {response_data}",
-            )
+            logging.debug("OpenRouter: API response received")
 
             if response.status_code == 200:
                 if "choices" in response_data and len(response_data["choices"]) > 0:
@@ -1806,11 +1948,15 @@ def summarize_with_openrouter(
                     return "openrouter: Expected data not found in API response."
             else:
                 logging.error(
-                    f"openrouter:  API request failed with status code {response.status_code}: {response.text}"
+                    "OpenRouter: API request failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"openrouter: API request failed: {response.text}"
         except Exception as e:
-            logging.error(f"openrouter: Error in processing: {str(e)}")
+            logging.error(
+                "OpenRouter: Processing failed; exception_type=%s",
+                safe_metadata_token(type(e).__name__),
+            )
             return f"openrouter: Error occurred while processing summary with openrouter: {str(e)}"
 
 
@@ -1842,9 +1988,7 @@ def summarize_with_huggingface(
             logging.error("HuggingFace: No valid API key available")
             raise ValueError("No valid Anthropic API key available")
 
-        logging.debug(
-            f"HuggingFace: Using API Key: {huggingface_api_key[:5]}...{huggingface_api_key[-5:]}"
-        )
+        logging.debug("HuggingFace: Credential configured")
 
         logging.debug("HuggingFace: Using provided string data for summarization")
         data = input_data
@@ -1875,7 +2019,10 @@ def summarize_with_huggingface(
             temp = 0.1
         temp = float(temp)
         huggingface_prompt = f"{custom_prompt_arg}\n\n\n{text}"
-        logging.debug(f"HuggingFace: Prompt being sent is {huggingface_prompt}")
+        logging.debug(
+            "HuggingFace: Prompt prepared; character_count=%s",
+            len(huggingface_prompt),
+        )
         data_payload = {
             "inputs": huggingface_prompt,
             "max_tokens": 4096,
@@ -1886,7 +2033,7 @@ def summarize_with_huggingface(
         logging.debug("HuggingFace: Submitting request...")
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("huggingface_api", "api_retries", 3))
@@ -1929,12 +2076,10 @@ def summarize_with_huggingface(
                                     yield generated_text
                                 else:
                                     logging.debug(
-                                        f"HuggingFace: Unhandled streaming data: {data_json}"
+                                        "HuggingFace Stream: Response event rejected"
                                     )
                             except json.JSONDecodeError:
-                                logging.error(
-                                    f"HuggingFace: Error decoding JSON from line: {decoded_line}"
-                                )
+                                logging.error("HuggingFace Stream: JSON decode failed")
                                 continue
                 # Optionally, yield the final collected text
                 # yield collected_text
@@ -1942,7 +2087,7 @@ def summarize_with_huggingface(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("huggingface_api", "api_retries", 3))
@@ -1965,7 +2110,7 @@ def summarize_with_huggingface(
 
             if response.status_code == 200:
                 response_json = response.json()
-                logging.debug(f"HuggingFace: Response JSON: {response_json}")
+                logging.debug("HuggingFace: API response received")
                 if (
                     isinstance(response_json, dict)
                     and "generated_text" in response_json
@@ -1985,12 +2130,16 @@ def summarize_with_huggingface(
                 return chat_response
             else:
                 logging.error(
-                    f"HuggingFace: Summarization failed with status code {response.status_code}: {response.text}"
+                    "HuggingFace: Summarization failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"HuggingFace: Failed to process summary. Status code: {response.status_code}"
 
     except Exception as e:
-        logging.error(f"HuggingFace: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "HuggingFace: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"HuggingFace: Error occurred while processing summary with HuggingFace: {str(e)}"
 
 
@@ -2022,9 +2171,7 @@ def summarize_with_deepseek(
             logging.error("DeepSeek: No valid API key available")
             return "DeepSeek: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(
-            f"DeepSeek: Using API Key: {deepseek_api_key[:5]}...{deepseek_api_key[-5:]}"
-        )
+        logging.debug("DeepSeek: Credential configured")
 
         # Input data handling
         logging.debug("DeepSeek: Using provided string data for summarization")
@@ -2061,9 +2208,6 @@ def summarize_with_deepseek(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"DeepSeek API Key: {deepseek_api_key[:5]}...{deepseek_api_key[-5:] if deepseek_api_key else None}"
-        )
         logging.debug("DeepSeek: Preparing data + prompt for submission")
         deepseek_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         data = {
@@ -2078,7 +2222,7 @@ def summarize_with_deepseek(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("deepseek_api", "api_retries", 3))
@@ -2125,13 +2269,11 @@ def summarize_with_deepseek(
                                 collected_text += delta_content
                                 yield delta_content
                             except json.JSONDecodeError:
-                                logging.error(
-                                    f"DeepSeek: Error decoding JSON from line: {decoded_line}"
-                                )
+                                logging.error("DeepSeek Stream: JSON decode failed")
                                 continue
-                            except KeyError as e:
+                            except KeyError:
                                 logging.error(
-                                    f"DeepSeek: Key error: {str(e)} in line: {decoded_line}"
+                                    "DeepSeek Stream: Response event missing required field"
                                 )
                                 continue
                 yield collected_text
@@ -2139,7 +2281,7 @@ def summarize_with_deepseek(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("deepseek_api", "api_retries", 3))
@@ -2176,10 +2318,12 @@ def summarize_with_deepseek(
                 logging.error(
                     f"DeepSeek: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"DeepSeek: Error response: {response.text}")
                 return f"DeepSeek: Failed to process summary. Status code: {response.status_code}"
     except Exception as e:
-        logging.error(f"DeepSeek: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "DeepSeek: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"DeepSeek: Error occurred while processing summary: {str(e)}"
 
 
@@ -2211,9 +2355,7 @@ def summarize_with_mistral(
             logging.error("Mistral: No valid API key available")
             return "Mistral: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(
-            f"Mistral: Using API Key: {mistral_api_key[:5]}...{mistral_api_key[-5:]}"
-        )
+        logging.debug("Mistral: Credential configured")
 
         # Input data handling
         logging.debug("Mistral: Using provided string data for summarization")
@@ -2250,9 +2392,6 @@ def summarize_with_mistral(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"Mistral API Key: {mistral_api_key[:5]}...{mistral_api_key[-5:] if mistral_api_key else None}"
-        )
         logging.debug("Mistral: Preparing data + prompt for submission")
         mistral_prompt = f"{custom_prompt_arg}\n\n\n\n{text} "
         data = {
@@ -2270,7 +2409,7 @@ def summarize_with_mistral(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("mistral_api", "api_retries", 3))
@@ -2323,20 +2462,18 @@ def summarize_with_mistral(
                                     yield delta_content
                                 else:
                                     logging.error(
-                                        f"Mistral: Unexpected data format: {data_json}"
+                                        "Mistral Stream: Response event rejected"
                                     )
                                     continue
                             else:
                                 # Handle other event types if necessary
                                 continue
                         except json.JSONDecodeError:
-                            logging.error(
-                                f"Mistral: Error decoding JSON from line: {decoded_line}"
-                            )
+                            logging.error("Mistral Stream: JSON decode failed")
                             continue
-                        except KeyError as e:
+                        except KeyError:
                             logging.error(
-                                f"Mistral: Key error: {str(e)} in line: {decoded_line}"
+                                "Mistral Stream: Response event missing required field"
                             )
                             continue
                 # Optionally, you can return the full collected text at the end
@@ -2345,7 +2482,7 @@ def summarize_with_mistral(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("mistral_api", "api_retries", 3))
@@ -2382,10 +2519,12 @@ def summarize_with_mistral(
                 logging.error(
                     f"Mistral: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"Mistral: Error response: {response.text}")
                 return f"Mistral: Failed to process summary. Status code: {response.status_code}"
     except Exception as e:
-        logging.error(f"Mistral: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "Mistral: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Mistral: Error occurred while processing summary: {str(e)}"
 
 
@@ -2410,13 +2549,11 @@ def summarize_with_google(
             return "Google: API Key Not Provided/Found in Config file or is empty"
 
         google_api_key = api_key
-        logging.debug(f"Google: Using API Key: {api_key[:5]}...{api_key[-5:]}")
+        logging.debug("Google: Credential configured")
 
         # Input data handling
         logging.debug(f"Google: Raw input data type: {type(input_data)}")
-        logging.debug(
-            f"Google: Raw input data (first 500 chars): {str(input_data)[:500]}..."
-        )
+        logging.debug("Google: Raw input received")
 
         if isinstance(input_data, str):
             if input_data.strip().startswith("{"):
@@ -2427,7 +2564,10 @@ def summarize_with_google(
                 try:
                     data = json.loads(input_data)
                 except json.JSONDecodeError as e:
-                    logging.error(f"Google: Error parsing JSON string: {str(e)}")
+                    logging.error(
+                        "Google: JSON input parsing failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
                     return f"Google: Error parsing JSON input: {str(e)}"
             else:
                 logging.debug("Google: Using provided string data for summarization")
@@ -2436,7 +2576,7 @@ def summarize_with_google(
             data = input_data
 
         logging.debug(f"Google: Processed data type: {type(data)}")
-        logging.debug(f"Google: Processed data (first 500 chars): {str(data)[:500]}...")
+        logging.debug("Google: Processed input ready")
 
         # Text extraction
         if isinstance(data, dict):
@@ -2454,8 +2594,7 @@ def summarize_with_google(
         else:
             raise ValueError(f"Google: Invalid input data format: {type(data)}")
 
-        logging.debug(f"Google: Extracted text (first 500 chars): {text[:500]}...")
-        logging.debug(f"Google: Custom prompt: {custom_prompt_arg}")
+        logging.debug("Google: Input prepared; character_count=%s", len(text))
 
         google_model = get_cli_setting("google_api", "model", "gemini-1.5-pro")
         logging.debug(f"Google: Using model: {google_model}")
@@ -2465,11 +2604,12 @@ def summarize_with_google(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"Google API Key: {google_api_key[:5]}...{google_api_key[-5:] if google_api_key else None}"
-        )
         logging.debug("openai: Preparing data + prompt for submittal")
         google_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
+        logging.debug(
+            "Google: Prompt prepared; character_count=%s",
+            len(google_prompt),
+        )
         # if temp is None:
         #    temp = 0.7
         if system_message is None:
@@ -2490,7 +2630,7 @@ def summarize_with_google(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("google_api", "api_retries", 3))
@@ -2535,20 +2675,18 @@ def summarize_with_google(
                                 )
                                 yield chunk
                             except json.JSONDecodeError:
-                                logging.error(
-                                    f"Google: Error decoding JSON from line: {decoded_line}"
-                                )
+                                logging.error("Google Stream: JSON decode failed")
                                 continue
-                            except KeyError as e:
+                            except KeyError:
                                 logging.error(
-                                    f"Google: Key error: {str(e)} in line: {decoded_line}"
+                                    "Google Stream: Response event missing required field"
                                 )
                                 continue
 
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("google_api", "api_retries", 3))
@@ -2580,7 +2718,8 @@ def summarize_with_google(
                     summary = response_data["choices"][0]["message"]["content"].strip()
                     logging.debug("Google: Summarization successful")
                     logging.debug(
-                        f"Google: Summary (first 500 chars): {summary[:500]}..."
+                        "Google: Summary generated; character_count=%s",
+                        len(summary),
                     )
                     return summary
                 else:
@@ -2590,16 +2729,24 @@ def summarize_with_google(
                 logging.error(
                     f"Google: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"Google: Error response: {response.text}")
                 return f"Google: Failed to process summary. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
-        logging.error(f"Google: Error decoding JSON: {str(e)}", exc_info=True)
+        logging.error(
+            "Google: JSON decoding failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Google: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
-        logging.error(f"Google: Error making API request: {str(e)}", exc_info=True)
+        logging.error(
+            "Google: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Google: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"Google: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "Google: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Google: Unexpected error occurred: {str(e)}"
 
 
@@ -2623,10 +2770,8 @@ def summarize_with_mock_llm(
         logging.debug(
             f"MOCK-LLM (MOCK): Received text length: {len(str(text_to_summarize))}"
         )
-        logging.debug(f"MOCK-LLM (MOCK): Custom prompt: {custom_prompt_arg}")
-        logging.debug(
-            f"MOCK-LLM (MOCK): Temperature: {temp}, System Message: {system_message}, Streaming: {streaming}"
-        )
+        logging.debug("MOCK-LLM (MOCK): Custom prompt received")
+        logging.debug("MOCK-LLM (MOCK): Request options prepared")
 
         # Extract a sample of text to include in mock response
         sample_text = (
@@ -2661,7 +2806,10 @@ def summarize_with_mock_llm(
             return mock_summary
 
     except Exception as e:
-        logging.error(f"OpenAI (MOCK): Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "OpenAI (MOCK): Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Error: OpenAI mock function unexpected error: {str(e)}"
 
 
@@ -2690,7 +2838,10 @@ def summarize_chunk(
             for chunk in result:
                 # Check for error chunks first
                 if isinstance(chunk, str) and chunk.startswith("Error:"):
-                    logging.warning(f"Streaming error from {api_name}: {chunk}")
+                    logging.warning(
+                        "Streaming summarization failed; provider=%s",
+                        safe_metadata_token(api_name),
+                    )
                     return chunk
                 collected_chunks.append(chunk)
             final_result = "".join(collected_chunks)
@@ -2700,7 +2851,10 @@ def summarize_chunk(
         # Handle regular string responses
         elif isinstance(result, str):
             if result.startswith("Error:"):
-                logging.warning(f"Summarization with {api_name} failed: {result}")
+                logging.warning(
+                    "Summarization failed; provider=%s",
+                    safe_metadata_token(api_name),
+                )
                 return None
             logging.info(f"Summarization with {api_name} successful")
             return result
@@ -2712,7 +2866,9 @@ def summarize_chunk(
 
     except Exception as e:
         logging.error(
-            f"Error in summarize_chunk with {api_name}: {str(e)}", exc_info=True
+            "Error in summarize_chunk; provider=%s exception_type=%s",
+            safe_metadata_token(api_name),
+            safe_metadata_token(type(e).__name__),
         )
         return None
 

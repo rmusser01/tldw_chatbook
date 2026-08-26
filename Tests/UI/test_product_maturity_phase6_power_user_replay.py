@@ -156,6 +156,10 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                     and len(app.screen.query("#nav-overflow-hint")) == 1
                 ),
             )
+            await _wait_until(
+                pilot,
+                lambda: "Ctrl+P" in _screen_text(app),
+            )
             home_text = _screen_text(app)
             assert "Start in Console" in home_text
             assert "Ctrl+P" in home_text
@@ -202,7 +206,7 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                 pilot,
                 lambda: (
                     app.current_tab == "library"
-                    and "Library Search/RAG" in _screen_text(app)
+                    and bool(app.screen.query("#library-search-rag-panel"))
                 ),
             )
 
@@ -213,6 +217,10 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                     app.current_tab == "library"
                     and app.screen.__class__.__name__ == "LibraryScreen"
                 ),
+            )
+            await _wait_until(
+                pilot,
+                lambda: bool(app.screen.query("#library-row-ingest-import-media")),
             )
             # Import media is now a first-class canvas row (not a deep-link
             # to the standalone Ingest screen): pressing it mounts the real

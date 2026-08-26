@@ -1,11 +1,11 @@
 ---
 id: TASK-600
 title: Persist STT provenance and retry lineage
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-07-28 20:04'
+updated_date: '2026-08-12 14:53'
 labels:
   - stt
   - database
@@ -51,4 +51,6 @@ Added Library ingest-job schema v5 retry navigation, own-failure provenance, and
 PR review follow-up moved ingest-job upserts onto the shared transaction context and made retry creation a single durable source-plus-retry transaction. A failed pair write now leaves the source visible and retryable, exposes no in-memory retry, and does not consume a job id. Public provenance DTO/build/load/dump APIs now carry complete Google-style documentation. The dependency-free strict validator and each database class's existing self-versioned inline migration convention remain intentional; production audio/video coordinator provenance and failure capture remain owned by TASK-602 AC6.
 
 ADR check: existing [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md) applies; no new ADR was required. Post-review verification against the latest `dev`: 841 affected tests passed and 6 environment-dependent sync integration cases skipped; Ruff, focused mypy, compileall, and `git diff --check` passed. Repository-wide collection remains blocked on current `dev` by two unrelated existing imports: removed `StreamDone` in `Tests/Event_Handlers/test_worker_events_contract.py` and removed `TabState` in `Tests/UI/test_chat_shell_bar.py` (21,960 tests otherwise collected). Task status remains In Progress until that mandatory repository-wide gate is green.
+
+Closeout verification on current dev resolved the sole remaining blocker: repository-wide pytest collection completed with 39,685 tests collected and one intentional unavailable-server skip. The nine directly changed TASK-600 test files passed 246 tests; Ruff passed across all TASK-600 production and test files, the new STT persistence module passed mypy, affected production modules compiled, and git diff checks were clean. A deliberately broader Media gate exposed two stale server-only expectations already present on origin/dev after task-3309 stopped sending an unsupported field; they are outside TASK-600's local provenance boundary and do not represent a regression from this metadata-only closeout.
 <!-- SECTION:NOTES:END -->

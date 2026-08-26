@@ -96,15 +96,20 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "prompt",
         "system",
         "skills",
+        "fewer-permission-prompts",
         "prefill",
         "generate-image",
         "generate-video",
         "stream-video",
         "rewind",
+        "research",
     )
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")
     assert registry.parse("/skills") == CommandParse("command", "skills", "")
+    assert registry.parse("/fewer-permission-prompts") == CommandParse(
+        "command", "fewer-permission-prompts", ""
+    )
     assert registry.parse("/generate-image") == CommandParse(
         "command", "generate-image", ""
     )

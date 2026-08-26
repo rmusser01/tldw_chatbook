@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# task-4023 AC#7: no "on the left" -- at ≤100 columns the shell shows one
+# pane at a time (the rail fills the width and this canvas is hidden), so
+# spatial copy was width-dependent nonsense. The copy now holds at every
+# width the layout can take.
 LIBRARY_CANVAS_LANDING_COPY = (
-    "Search everything, pick a section on the left, or add something new."
+    "Search everything, pick a section, or add something new."
 )
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
@@ -25,6 +29,13 @@ LIBRARY_ROW_BROWSE_SKILLS = "browse-skills"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+LIBRARY_CANVAS_KIND_NOTES_CREATE = "notes-create"
+# The three Study staging (handoff) rows -- consumers that need "is this a
+# study handoff row" import these rather than repeating the literals
+# (Qodo PR-1488 #2; the study_rows definitions below are the canonical use).
+LIBRARY_ROW_CREATE_STUDY = "create-study"
+LIBRARY_ROW_CREATE_FLASHCARDS = "create-flashcards"
+LIBRARY_ROW_CREATE_QUIZZES = "create-quizzes"
 # Task 8b D1: "New prompt" -- unlike LIBRARY_ROW_CREATE_NOTE (its own
 # "notes-create" canvas kind, a landing chooser of Blank/template rows),
 # this row's target_id is "prompts" itself: it reuses the SAME canvas kind
@@ -63,6 +74,127 @@ LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
 # same disabled/enabled tooltip pair as "Export selected" above.
 LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete them."
 LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
+
+# task-4023 AC#1 (RC-07): disabled state finally joins the product's
+# non-colour vocabulary. Every disabled Library action label carries a
+# leading "○" -- the existing ✓/○ pair's neutral glyph (ingest option
+# toggles, sync status, RAG scope chips), extended rather than a new
+# invention -- so the state survives monochrome rendering, colour-blind
+# users, and low-contrast themes. The colour half of the fix (the 3:1
+# Legible Disabled floor) is app-tier CSS in css/components/
+# _agentic_terminal.tcss; this marker is the structural half.
+LIBRARY_DISABLED_ACTION_MARKER = "○"
+
+# F-018 reason for the list canvases' Select toggle while the rendered
+# list is empty -- previously the only disabled Library action with no
+# reason anywhere at the control ("click does nothing, says nothing",
+# re-critique RC-07).
+LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP = "Nothing here to select yet."
+
+
+def library_disabled_action_label(label: str, disabled: bool) -> str:
+    """Prefix ``label`` with the non-colour disabled marker when disabled.
+
+    Args:
+        label: The action's plain enabled label.
+        disabled: Whether the control renders disabled.
+
+    Returns:
+        ``"○ <label>"`` while disabled, ``label`` unchanged otherwise.
+    """
+    return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}" if disabled else label
+
+
+# task-4023 AC#5: "▸" carried three meanings on one screen -- selected-row
+# prefix ("▸ Media"), collapsed-disclosure suffix ("Details ▸"), AND the
+# silent value-cycler suffix ("type: All ▸"), where it looked like a
+# disclosure but silently advanced a hidden option set. Convention after
+# that task, extended by task-14902: leading "▸ " marks the selected row
+# of a list; a trailing "▸/▾" pair on a section HEADER is disclosure
+# state; "⇄" is a cycle control (press to advance -- since task-14902 the
+# only surviving cyclers are genuine two-option TOGGLES, and the glyph
+# sits BETWEEN the two options with the "✓" marker on the active one:
+# "mode: ✓ Search ⇄ RAG Answer"); a plain "name: value" Button with no
+# glyph is a CHOOSER-OPENER (the Notes Sort precedent -- press swaps in a
+# one-row choice strip, "✓ " prefixing the active option, Escape/second
+# press cancels).
+LIBRARY_CYCLE_MARKER = "⇄"
+
+#: The non-colour active-option marker shared by every choice strip and
+#: kept toggle (extends the product's existing ``✓/○`` vocabulary -- the
+#: Notes Sort strip and the sync panel's direction/conflict groups used
+#: it first; task-14902 makes it the one marker for "this option is the
+#: active one").
+LIBRARY_CHOICE_ACTIVE_MARKER = "✓"
+
+
+def library_choice_label(name: str, value: str) -> str:
+    """Build a chooser-opener Button label: ``"{name}: {value}"``.
+
+    task-14902: one source for every Library control whose press OPENS a
+    direct-pick surface (the choice strips on media type / prompts sort /
+    skills sort / export quality, and the prompt-collection manager
+    modal). Deliberately glyph-free: ``⇄`` means "press to advance", and
+    these controls no longer advance.
+
+    Args:
+        name: The control's subject (e.g. ``"type"``).
+        value: The currently active option, already display-safe.
+
+    Returns:
+        The chooser Button's label text.
+    """
+    return f"{name}: {value}"
+
+
+def library_choice_tooltip(subject: str, options: "tuple[str, ...] | list[str]") -> str:
+    """Build a chooser-opener's tooltip naming the pick interaction.
+
+    Replaces ``library_cycle_tooltip``'s "Cycles ..." copy on the
+    converged controls -- a press shows the options to pick from, it does
+    not cycle, so the tooltip must not claim it does.
+
+    Args:
+        subject: What is being picked, e.g. ``"media type"``.
+        options: The full option set, in display order.
+
+    Returns:
+        ``"Press to pick {subject}: A · B · C."`` (or the generic line
+        when the option set is empty/dynamic).
+    """
+    listing = " · ".join(str(option) for option in options if str(option))
+    if not listing:
+        return f"Press to pick {subject}."
+    return f"Press to pick {subject}: {listing}."
+
+
+def library_toggle_label(
+    name: str, options: "tuple[str, str]", active_index: int
+) -> str:
+    """Build a kept one-press toggle's label with the FULL option set.
+
+    task-14902 AC#1: the surviving cyclers are genuine two-option toggles
+    (Search/RAG mode, the skill editor's yes/no + inline/fork switches) --
+    a choice strip would add a press to the most common action for zero
+    information, so instead the whole option space moves onto the label:
+    both options in stable order, ``✓`` on the active one, ``⇄`` between
+    them keeping its press-advances meaning. One press IS a direct pick
+    of the only other option.
+
+    Args:
+        name: The control's subject (e.g. ``"mode"``).
+        options: Both options in canonical order (never reordered by
+            activation, so the label stays spatially stable).
+        active_index: Index (0 or 1) of the currently active option.
+
+    Returns:
+        e.g. ``"mode: ✓ Search ⇄ RAG Answer"``.
+    """
+    rendered = tuple(
+        f"{LIBRARY_CHOICE_ACTIVE_MARKER} {option}" if index == active_index else option
+        for index, option in enumerate(options)
+    )
+    return f"{name}: {rendered[0]} {LIBRARY_CYCLE_MARKER} {rendered[1]}"
 
 
 @dataclass(frozen=True)
@@ -241,7 +373,18 @@ def build_library_shell_state(
             target_id="prompts",
             count=state.prompts_count,
             count_known=state.prompts_known,
-            subtitle="AI asks",
+            # task-2859 item 2: "AI asks" (jargon noun for "the things you
+            # ask the AI") read as cryptic in UAT -- "reuse" is plain
+            # language. Live-verified at 170x50 (the plan's required
+            # verification width): two longer drafts ("saved
+            # instructions", then "reuse text") both silently dropped at
+            # this exact width even though a hand-computed budget check
+            # said they should fit -- "Prompts" is one cell longer than
+            # "Skills", and the F-015 "gloss renders whole or not at all"
+            # rule is unforgiving of being even one cell over. Kept short
+            # with margin rather than re-deriving the rail's exact
+            # available width precisely.
+            subtitle="reuse",
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
@@ -299,7 +442,7 @@ def build_library_shell_state(
             section_id="create",
             title="New note",
             target_kind="canvas",
-            target_id="notes-create",
+            target_id=LIBRARY_CANVAS_KIND_NOTES_CREATE,
             count=None,
             count_known=True,
         ),
@@ -331,7 +474,7 @@ def build_library_shell_state(
     # press them); the section_id carries the regrouping.
     study_rows = (
         LibraryRailRow(
-            row_id="create-study",
+            row_id=LIBRARY_ROW_CREATE_STUDY,
             section_id="study",
             title="Study decks",
             target_kind="handoff",
@@ -341,7 +484,7 @@ def build_library_shell_state(
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
-            row_id="create-flashcards",
+            row_id=LIBRARY_ROW_CREATE_FLASHCARDS,
             section_id="study",
             title="Flashcards",
             target_kind="handoff",
@@ -367,7 +510,7 @@ def build_library_shell_state(
             short_title="Cards",
         ),
         LibraryRailRow(
-            row_id="create-quizzes",
+            row_id=LIBRARY_ROW_CREATE_QUIZZES,
             section_id="study",
             title="Quizzes",
             target_kind="handoff",

@@ -24,7 +24,7 @@ from tldw_chatbook.Utils.optional_deps import OPTIONAL_FEATURES
 #: PyPI name -> the module name actually imported, where they differ.
 _PYPI_TO_IMPORT = {
     "beautifulsoup4": "bs4",
-    "mcp[cli]": "mcp",
+    "mcp-unified": "mcp_unified",
 }
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"

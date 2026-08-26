@@ -18,6 +18,7 @@ from textual.screen import Screen
 from textual.containers import Container, Horizontal, VerticalScroll, Grid
 from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
+from textual.timer import Timer
 from loguru import logger
 
 from ..Chatbooks.database_paths import (
@@ -228,11 +229,6 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     ]
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-input-focus-accent: $primary;
-    $ds-input-focus-bg: $surface;
-    $ds-input-focus-border: $primary;
-    $ds-text-primary: $text;
 
     ChatbooksWindowImproved {
         layout: vertical;
@@ -310,12 +306,10 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         padding: 0 1;
     }
 
-    .search-input:focus {
-        border: solid $ds-input-focus-border;
-        border-bottom: solid $ds-input-focus-accent;
-        background: $ds-input-focus-bg;
-        color: $ds-text-primary;
-    }
+    /* .search-input:focus styling lives in css/components/_widgets.tcss,
+       scoped to this window (needs the bundle's $ds-input-focus-* tokens;
+       TASK-16811). NOTE: css/features/_chatbooks_improved.tcss carries a
+       diverged copy of these styles but is NOT in the build manifest. */
     
     .content-area {
         height: 1fr;
@@ -378,9 +372,16 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     # `#chatbooks-container` imperatively via `_update_content()` instead
     # (task-671; see the class docstring for why `recompose=True` on
     # `chatbooks` was actively harmful here).
-    chatbooks = reactive([])
+    chatbooks = reactive(list)
     view_mode = reactive("grid")
     search_query = reactive("")
+
+    #: Debounce for the search `Input` -- mirrors the console picker
+    #: family's 0.2 s shape (`console_prompt_picker_modal.py`). Setting
+    #: `search_query` synchronously runs `_update_content()`, which tears
+    #: down and remounts a card/list item per chatbook; that must not
+    #: happen on every keystroke (task-15476).
+    SEARCH_DEBOUNCE_SECONDS = 0.2
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         """Store the owning app and resolve the default export directory.
@@ -394,6 +395,7 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         # the hardcoded ~/Documents/Chatbooks literal (task-984). Pre-existing
         # exports at the old location are not moved by this change.
         self._export_path = get_private_chatbooks_dir()
+        self._search_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         # Header
@@ -708,10 +710,20 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
             elif element.id == "manage-action":
                 await self.action_manage_exports()
 
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle search input changes."""
-        if event.input.id == "chatbook-search":
-            self.search_query = event.value
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle search input changes (debounced -- task-15476)."""
+        if event.input.id != "chatbook-search":
+            return
+        query = event.value
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+        self._search_debounce_timer = self.set_timer(
+            self.SEARCH_DEBOUNCE_SECONDS, lambda: self._apply_search_query(query)
+        )
+
+    def _apply_search_query(self, query: str) -> None:
+        self._search_debounce_timer = None
+        self.search_query = query
 
     async def action_create_chatbook(self, execution_mode: str = "local") -> None:
         """Launch the chatbook creation wizard."""

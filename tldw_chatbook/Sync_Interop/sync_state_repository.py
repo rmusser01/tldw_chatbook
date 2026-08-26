@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,7 +49,7 @@ _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "defer-later",
 }
 SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
-SYNC_STATE_SCHEMA_VERSION = 3
+SYNC_STATE_SCHEMA_VERSION = 4
 _FILTER_UNSET = object()
 
 
@@ -85,9 +88,44 @@ class SyncStateRepository(BaseDB):
 
     def __init__(self, db_path: str | Path, client_id: str = "default") -> None:
         self._memory_conn: sqlite3.Connection | None = None
-        super().__init__(db_path, client_id)
+        # TASK-21105: file-backed schema creation (16 DDL statements) is
+        # deferred to the first connection (initialize_schema=False below);
+        # a local-only user who never reaches a sync surface pays nothing
+        # at boot. ``:memory:`` (the app's parity-build fallback) stays
+        # eager so its single cached connection binds to the constructing
+        # thread, exactly as before.
+        self._schema_ready = False
+        self._schema_lock = threading.Lock()
+        super().__init__(db_path, client_id, initialize_schema=False)
+        if self.is_memory_db:
+            self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        """Create the schema exactly once, on first connection (TASK-21105).
+
+        Single-flight under a lock: sync/mirror reads run from thread
+        workers. A failed attempt leaves ``_schema_ready`` False so the
+        next operation retries.
+        """
+        if self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            self._initialize_schema()
+            self._schema_ready = True
 
     def _get_connection(self) -> sqlite3.Connection:
+        self._ensure_schema()
+        return self._open_connection()
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open a raw connection without the first-use schema ensure.
+
+        ``_initialize_schema`` must use this directly: it runs inside
+        ``_ensure_schema``'s lock, and going through ``_get_connection``
+        there would deadlock on the non-reentrant lock.
+        """
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
@@ -95,24 +133,55 @@ class SyncStateRepository(BaseDB):
                     ":memory:",
                 )
                 self._memory_conn.row_factory = sqlite3.Row
+                self._memory_conn.execute("PRAGMA foreign_keys = ON")
+                # synchronous is harmless (and a no-op performance-wise) on an
+                # in-memory database; set for uniformity with the file-backed
+                # branch below (task-15465).
+                self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        return super()._get_connection()
+        conn = super()._get_connection()
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local dry-run sync/mirror
+        # store) and avoids an fsync per commit (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
 
     def close(self) -> None:
         if self._memory_conn is not None:
             self._memory_conn.close()
             self._memory_conn = None
 
-    def _initialize_schema(self) -> None:
+    @property
+    def is_durable(self) -> bool:
+        """Whether committed rows survive process exit."""
+        return not self.is_memory_db
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Yield an atomic repository connection with commit/rollback handling."""
         with self._get_connection() as conn:
-            conn.executescript(
-                """
+            yield conn
+
+    def _initialize_schema(self) -> None:
+        # Raw connection: runs under _ensure_schema's lock (TASK-21105).
+        # File-backed: one short-lived connection, closed below (:memory:
+        # keeps its shared cached connection open). The inner ``with conn``
+        # transaction block is load-bearing: _record_schema_version runs
+        # bare DML whose implicit transaction it commits -- closing without
+        # it would roll the version stamp back.
+        conn = self._open_connection()
+        try:
+            with conn:
+                conn.executescript(
+                    """
                 PRAGMA foreign_keys = ON;
 
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY NOT NULL
                 );
-                INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+                INSERT OR IGNORE INTO schema_version (version) VALUES (4);
 
                 CREATE TABLE IF NOT EXISTS sync_identity_mappings (
                     mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,6 +308,33 @@ class SyncStateRepository(BaseDB):
                 CREATE INDEX IF NOT EXISTS idx_sync_v2_outbox_scope_status
                     ON sync_v2_local_outbox(source_scope_key, dataset_id, status, outbox_id);
 
+                CREATE TABLE IF NOT EXISTS sync_v2_source_projection_receipts (
+                    source_scope_key TEXT NOT NULL,
+                    server_profile_id TEXT NOT NULL,
+                    authenticated_principal_id TEXT NOT NULL,
+                    workspace_scope TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    domain TEXT NOT NULL,
+                    source_entity_id TEXT NOT NULL,
+                    source_version INTEGER NOT NULL,
+                    source_payload_hash TEXT NOT NULL,
+                    client_envelope_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (
+                        source_scope_key,
+                        dataset_id,
+                        domain,
+                        source_entity_id,
+                        source_version,
+                        source_payload_hash
+                    ),
+                    FOREIGN KEY (
+                        source_scope_key, dataset_id, client_envelope_id
+                    ) REFERENCES sync_v2_local_outbox (
+                        source_scope_key, dataset_id, client_envelope_id
+                    ) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS sync_v2_conflict_reviews (
                     conflict_review_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_scope_key TEXT NOT NULL,
@@ -265,9 +361,12 @@ class SyncStateRepository(BaseDB):
                 CREATE INDEX IF NOT EXISTS idx_sync_v2_conflict_reviews_scope
                     ON sync_v2_conflict_reviews(source_scope_key, dataset_id, resolution_status, conflict_review_id);
                 """
-            )
-            self._ensure_sync_v2_profile_columns(conn)
-            self._record_schema_version(conn)
+                )
+                self._ensure_sync_v2_profile_columns(conn)
+                self._record_schema_version(conn)
+        finally:
+            if not getattr(self, "is_memory_db", False):
+                conn.close()
 
     def record_identity_mapping(
         self,
@@ -792,6 +891,18 @@ class SyncStateRepository(BaseDB):
             )
             conn.execute(
                 """
+                DELETE FROM sync_v2_source_projection_receipts
+                WHERE server_profile_id = ?
+                  AND (? IS NULL OR authenticated_principal_id = ?)
+                """,
+                (
+                    _scope_value(server_profile_id),
+                    authenticated_principal_id,
+                    _scope_value(authenticated_principal_id),
+                ),
+            )
+            conn.execute(
+                """
                 DELETE FROM sync_v2_local_outbox
                 WHERE server_profile_id = ?
                   AND (? IS NULL OR authenticated_principal_id = ?)
@@ -826,14 +937,7 @@ class SyncStateRepository(BaseDB):
         envelope: SyncV2Envelope | Mapping[str, Any],
     ) -> dict[str, Any]:
         """Persist a client envelope until a local-first sync push accepts it."""
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api import SyncV2Envelope
-
-        parsed = (
-            envelope
-            if isinstance(envelope, SyncV2Envelope)
-            else SyncV2Envelope.model_validate(envelope)
-        )
+        parsed = self._parse_outbox_envelope(envelope)
         if parsed.dataset_id != dataset_id:
             raise ValueError("outbox envelope dataset_id must match dataset_id")
         source_scope_key = _sync_v2_outbox_scope_key(
@@ -841,35 +945,68 @@ class SyncStateRepository(BaseDB):
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
+        with self.transaction() as conn:
+            return self._enqueue_sync_v2_outbox_in_transaction(
+                conn,
+                source_scope_key=source_scope_key,
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                dataset_id=dataset_id,
+                parsed=parsed,
+            )
+
+    def enqueue_sync_v2_outbox_envelope_with_source_receipt(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        envelope: SyncV2Envelope | Mapping[str, Any],
+        source_entity_id: str,
+        source_version: int,
+        source_payload_hash: str,
+    ) -> dict[str, Any]:
+        """Atomically persist an envelope and its exact source projection receipt."""
+        parsed = self._parse_outbox_envelope(envelope)
+        if parsed.dataset_id != dataset_id:
+            raise ValueError("outbox envelope dataset_id must match dataset_id")
+        if (
+            parsed.payload_hash != source_payload_hash
+            or parsed.object_id != source_entity_id
+            or type(source_version) is not int
+            or source_version < 1
+        ):
+            raise ValueError("source projection proof does not match envelope")
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
+            outbox_entry = self._enqueue_sync_v2_outbox_in_transaction(
+                conn,
+                source_scope_key=source_scope_key,
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                dataset_id=dataset_id,
+                parsed=parsed,
+            )
             conn.execute(
                 """
-                INSERT INTO sync_v2_local_outbox (
-                    source_scope_key,
-                    server_profile_id,
-                    authenticated_principal_id,
-                    workspace_scope,
-                    dataset_id,
-                    domain,
-                    client_envelope_id,
-                    envelope,
-                    status,
-                    attempt_count,
-                    last_error,
-                    created_at,
-                    updated_at,
-                    dispatched_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)
-                ON CONFLICT(source_scope_key, dataset_id, client_envelope_id)
-                DO UPDATE SET
-                    envelope = excluded.envelope,
-                    domain = excluded.domain,
-                    status = 'pending',
-                    last_error = NULL,
-                    updated_at = excluded.updated_at,
-                    dispatched_at = NULL
+                INSERT INTO sync_v2_source_projection_receipts (
+                    source_scope_key, server_profile_id,
+                    authenticated_principal_id, workspace_scope, dataset_id,
+                    domain, source_entity_id, source_version,
+                    source_payload_hash, client_envelope_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (
+                    source_scope_key, dataset_id, domain, source_entity_id,
+                    source_version, source_payload_hash
+                ) DO NOTHING
                 """,
                 (
                     source_scope_key,
@@ -878,23 +1015,84 @@ class SyncStateRepository(BaseDB):
                     _scope_value(workspace_scope),
                     dataset_id,
                     parsed.domain,
+                    source_entity_id,
+                    source_version,
+                    source_payload_hash,
                     parsed.client_envelope_id,
-                    parsed.model_dump_json(),
-                    now,
                     now,
                 ),
             )
-            conn.commit()
-        entries = self.list_sync_v2_outbox_entries(
+            row = conn.execute(
+                """
+                SELECT * FROM sync_v2_source_projection_receipts
+                WHERE source_scope_key = ? AND dataset_id = ? AND domain = ?
+                  AND source_entity_id = ? AND source_version = ?
+                  AND source_payload_hash = ?
+                """,
+                (
+                    source_scope_key,
+                    dataset_id,
+                    parsed.domain,
+                    source_entity_id,
+                    source_version,
+                    source_payload_hash,
+                ),
+            ).fetchone()
+            if row is None or row["client_envelope_id"] != parsed.client_envelope_id:
+                raise RuntimeError("source projection receipt conflict")
+            receipt = self._source_projection_receipt_from_row(row)
+        return {"outbox_entry": outbox_entry, "receipt": receipt}
+
+    def get_sync_v2_source_projection_receipt(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        domain: str,
+        source_entity_id: str,
+        source_version: int,
+        source_payload_hash: str,
+    ) -> dict[str, Any] | None:
+        """Return a scoped receipt only while its exact outbox row exists."""
+        source_scope_key = _sync_v2_outbox_scope_key(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
-            dataset_id=dataset_id,
-            client_envelope_ids=[parsed.client_envelope_id],
         )
-        if not entries:
-            raise RuntimeError("failed to persist Sync v2 outbox envelope")
-        return entries[0]
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT receipt.*
+                  FROM sync_v2_source_projection_receipts AS receipt
+                  JOIN sync_v2_local_outbox AS outbox
+                    ON outbox.source_scope_key = receipt.source_scope_key
+                   AND outbox.dataset_id = receipt.dataset_id
+                   AND outbox.client_envelope_id = receipt.client_envelope_id
+                   AND outbox.domain = receipt.domain
+                 WHERE receipt.source_scope_key = ?
+                   AND receipt.server_profile_id = ?
+                   AND receipt.authenticated_principal_id = ?
+                   AND receipt.workspace_scope = ?
+                   AND receipt.dataset_id = ? AND receipt.domain = ?
+                   AND receipt.source_entity_id = ?
+                   AND receipt.source_version = ?
+                   AND receipt.source_payload_hash = ?
+                """,
+                (
+                    source_scope_key,
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    dataset_id,
+                    domain,
+                    source_entity_id,
+                    source_version,
+                    source_payload_hash,
+                ),
+            ).fetchone()
+        return None if row is None else self._source_projection_receipt_from_row(row)
 
     def list_pending_sync_v2_outbox_envelopes(
         self,
@@ -1812,6 +2010,85 @@ class SyncStateRepository(BaseDB):
         )
 
     @staticmethod
+    def _parse_outbox_envelope(
+        envelope: SyncV2Envelope | Mapping[str, Any],
+    ) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
+        return (
+            envelope
+            if isinstance(envelope, SyncV2Envelope)
+            else SyncV2Envelope.model_validate(envelope)
+        )
+
+    def _enqueue_sync_v2_outbox_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_scope_key: str,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        parsed: SyncV2Envelope,
+    ) -> dict[str, Any]:
+        now = _utc_now()
+        conn.execute(
+            """
+            INSERT INTO sync_v2_local_outbox (
+                source_scope_key, server_profile_id,
+                authenticated_principal_id, workspace_scope, dataset_id,
+                domain, client_envelope_id, envelope, status, attempt_count,
+                last_error, created_at, updated_at, dispatched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)
+            ON CONFLICT(source_scope_key, dataset_id, client_envelope_id)
+            DO UPDATE SET
+                envelope = excluded.envelope,
+                domain = excluded.domain,
+                status = CASE
+                    WHEN sync_v2_local_outbox.status = 'dispatched'
+                     AND json_extract(sync_v2_local_outbox.envelope, '$.payload_hash')
+                         = json_extract(excluded.envelope, '$.payload_hash')
+                    THEN 'dispatched'
+                    ELSE 'pending'
+                END,
+                last_error = NULL,
+                updated_at = excluded.updated_at,
+                dispatched_at = CASE
+                    WHEN sync_v2_local_outbox.status = 'dispatched'
+                     AND json_extract(sync_v2_local_outbox.envelope, '$.payload_hash')
+                         = json_extract(excluded.envelope, '$.payload_hash')
+                    THEN sync_v2_local_outbox.dispatched_at
+                    ELSE NULL
+                END
+            """,
+            (
+                source_scope_key,
+                _scope_value(server_profile_id),
+                _scope_value(authenticated_principal_id),
+                _scope_value(workspace_scope),
+                dataset_id,
+                parsed.domain,
+                parsed.client_envelope_id,
+                parsed.model_dump_json(),
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            """
+            SELECT * FROM sync_v2_local_outbox
+            WHERE source_scope_key = ? AND dataset_id = ?
+              AND client_envelope_id = ?
+            """,
+            (source_scope_key, dataset_id, parsed.client_envelope_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("failed to persist Sync v2 outbox envelope")
+        return self._outbox_from_row(row)
+
+    @staticmethod
     def _outbox_from_row(row: sqlite3.Row) -> dict[str, Any]:
         last_error = row["last_error"]
         return {
@@ -1832,6 +2109,26 @@ class SyncStateRepository(BaseDB):
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "dispatched_at": row["dispatched_at"],
+        }
+
+    @staticmethod
+    def _source_projection_receipt_from_row(
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        return {
+            "source_scope_key": row["source_scope_key"],
+            "server_profile_id": _restore_scope_value(row["server_profile_id"]),
+            "authenticated_principal_id": _restore_scope_value(
+                row["authenticated_principal_id"]
+            ),
+            "workspace_scope": _restore_scope_value(row["workspace_scope"]),
+            "dataset_id": row["dataset_id"],
+            "domain": row["domain"],
+            "source_entity_id": row["source_entity_id"],
+            "source_version": int(row["source_version"]),
+            "source_payload_hash": row["source_payload_hash"],
+            "client_envelope_id": row["client_envelope_id"],
+            "created_at": row["created_at"],
         }
 
     @staticmethod

@@ -184,6 +184,39 @@ def _resolve_lineage(metadata: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _reliable_rrf(metadata: Mapping[str, Any], score: float) -> bool:
+    """Whether `score` is verifiably the RRF blend `fusion` describes.
+
+    The claim this gates (`RetrievalScoreKind.RRF` on a `NON_NEGATIVE`
+    scale) is never taken on the producer's word: every required field is
+    type-checked and the score is RE-DERIVED from the recorded ranks and
+    then compared exactly. That arithmetic is the whole defense -- a block
+    that cannot reproduce its own score degrades to `LEGACY`.
+
+    Required fields must all be present; ADDITIONAL fields are tolerated.
+    This was an exact-set equality (`set(fusion) != required`) until
+    task-3170 P0, when `_fuse_hybrid_results` began also preserving the
+    per-leg `fts_score`/`vector_score` for the UI's score-kind-aware match
+    bands -- eight keys instead of six, so every real hybrid row silently
+    degraded to `LEGACY`/`UNBOUNDED` here. The regression was invisible to
+    this module's own tests, which hand-build fusion metadata; it is now
+    pinned end-to-end by piping real `_fuse_hybrid_results` output through
+    `normalize_local_result` (see
+    `Tests/RAG_Search/test_hybrid_fusion_metadata.py`).
+
+    A subset check rather than a widened exact set, so the next additive
+    provenance field does not re-break it. Nothing is given away: an
+    unrecognized extra key cannot make the re-derivation below hold
+    spuriously, and a key that signalled a post-fusion transformation of
+    the score would break that equality and be rejected anyway.
+
+    Args:
+        metadata: The result's engine metadata.
+        score: The result's final score.
+
+    Returns:
+        Whether the fusion block is complete, well-typed, and arithmetically
+        consistent with `score`.
+    """
     fusion = metadata.get("hybrid_fusion")
     if not isinstance(fusion, Mapping):
         return False
@@ -195,7 +228,7 @@ def _reliable_rrf(metadata: Mapping[str, Any], score: float) -> bool:
         "alpha",
         "rrf_k",
     }
-    if set(fusion) != required:
+    if not required.issubset(set(fusion)):
         return False
     alpha = fusion["alpha"]
     rrf_k = fusion["rrf_k"]

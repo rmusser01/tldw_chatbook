@@ -36,6 +36,33 @@ from ..safe_tests import is_dir, is_file, is_symlink
 
 
 ##############################################################################
+def _human_readable_size(size_bytes: int) -> str:
+    """Format a byte count as bytes/KB/MB/GB.
+
+    tldw_chatbook task-2859 item 6: kept local to this vendored module
+    (no import from the host app's ``Utils`` package) so this fork stays
+    a self-contained, easily-diffable copy of upstream textual-fspicker.
+
+    Args:
+        size_bytes: The raw byte count.
+
+    Returns:
+        A short human-readable string, e.g. ``"512 B"``, ``"29.9 KB"``,
+        ``"4.2 MB"``.
+    """
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    size_kb = size_bytes / 1024
+    if size_kb < 1024:
+        return f"{size_kb:.1f} KB"
+    size_mb = size_kb / 1024
+    if size_mb < 1024:
+        return f"{size_mb:.1f} MB"
+    size_gb = size_mb / 1024
+    return f"{size_gb:.1f} GB"
+
+
+##############################################################################
 class DirectoryEntryStyling(NamedTuple):
     """Styling for directory entries."""
 
@@ -93,7 +120,10 @@ class DirectoryEntry(Option):
             location: The location to get the modification time for.
 
         Returns:
-            The formatted modification time, to the nearest second.
+            The formatted modification time, to the nearest minute
+            (tldw_chatbook task-2859 item 6: second-precision timestamps
+            were noise no file browser needs; the picker's own 20-cell
+            column has room to spare either way).
         """
         try:
             mtime = location.stat().st_mtime
@@ -108,24 +138,33 @@ class DirectoryEntry(Option):
             #
             # https://github.com/davep/textual-fspicker/issues/6#issuecomment-2669234263
             mdatetime = datetime.fromtimestamp(0)
-        return mdatetime.isoformat().replace("T", " ")
+        return mdatetime.strftime("%Y-%m-%d %H:%M")
 
     @staticmethod
     def _size(location: Path) -> str:
-        """Get a formatted size for the given location.
+        """Get a human-readable size for the given location.
+
+        (task-3304, MI-15) Humanized -- the raw ``st_size`` integer rendered
+        with no unit, so "512" read as a mystery number (and, on directory
+        rows, as a fake size). Directories return no size at all: their
+        ``st_size`` is filesystem bookkeeping, not content.
 
         Args:
             location: The location to get the size for.
 
         Returns:
-            The formatted size.
+            The size formatted as bytes/KB/MB/GB (tldw_chatbook task-2859
+            item 6: a raw byte count like "30624" forced every reader to
+            do their own division; the fixed-width size column (10 cells,
+            right-justified) has room for any of these).
         """
+        if is_dir(location):
+            return ""
         try:
             entry_size = location.stat().st_size
         except FileNotFoundError:
             entry_size = 0
-        # TODO: format well for a file browser.
-        return str(entry_size)
+        return _human_readable_size(entry_size)
 
     def _style(self, base: Style, location: Path) -> Style:
         """Decide the best style to use.

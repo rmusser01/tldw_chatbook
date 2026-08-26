@@ -24,9 +24,11 @@ rows and already have coverage in their owning feature's test file.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
@@ -39,6 +41,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_prompt_queue import PromptQueuePauseReason
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
@@ -75,11 +78,48 @@ async def _mounted_console(host, pilot, selector: str = "#console-workspace-cont
     return console
 
 
+async def _wait_for_confirmation(
+    host, *, previous: ConfirmationDialog | None = None
+) -> ConfirmationDialog:
+    """Wait for a close worker to mount its confirmation without fixed sleeps."""
+
+    for _ in range(200):
+        candidate = host.screen_stack[-1]
+        if isinstance(candidate, ConfirmationDialog) and candidate is not previous:
+            try:
+                candidate.query_one("#confirm-button", Button)
+            except NoMatches:
+                pass
+            else:
+                return candidate
+        await asyncio.sleep(0.01)
+    raise AssertionError("Console close confirmation did not mount")
+
+
 async def _sync_tray(console, pilot, state) -> ConsoleWorkspaceContextTray:
     tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
     tray.sync_state(state)
     await pilot.pause()
     return tray
+
+
+def _section_collapsed(console, group_id: str) -> bool:
+    """Whether a browser SECTION is collapsed in the state the toggle reads.
+
+    Deliberately `_build_console_workspace_context_state()` and not the tray
+    the test synced: that is the exact source
+    `_toggle_console_conversation_browser_section` consults to decide which
+    way to flip.
+    """
+    section_id = group_id.removeprefix("section:")
+    browser = console._workspace._build_console_workspace_context_state()
+    assert browser.conversation_browser is not None
+    section = next(
+        candidate
+        for candidate in browser.conversation_browser.sections
+        if candidate.section_id == section_id
+    )
+    return bool(section.collapsed)
 
 
 def _browser_config(app) -> dict:
@@ -109,7 +149,15 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
     """
     app = _build_test_app()
     marks = _install_real_marks_service(app, tmp_path)
-    rows = (_browser_row("conv-star-1", "Planning notes"),)
+    rows = (
+        _browser_row(
+            "conv-star-1",
+            "Planning notes",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+        ),
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
@@ -122,6 +170,9 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
 
         star.press()
         await pilot.pause()
+        # task-15471: the durable write runs on a worker now -- wait for it
+        # rather than racing the pool thread with the assertion.
+        await console.workers.wait_for_complete()
         assert marks.is_starred("conv-star-1") is True
 
         # A second press unstars: the branch reads current truth from the
@@ -129,6 +180,7 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
         console.query_one("#console-conversation-star-0", Button).press()
         await pilot.pause()
+        await console.workers.wait_for_complete()
         assert marks.is_starred("conv-star-1") is False
 
 
@@ -137,7 +189,15 @@ async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
     """No service is a warning, not a crash and not a half-write."""
     app = _build_test_app()
     app.conversation_local_marks_service = None
-    rows = (_browser_row("conv-star-2", "Unbacked row"),)
+    rows = (
+        _browser_row(
+            "conv-star-2",
+            "Unbacked row",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+        ),
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
@@ -166,26 +226,52 @@ async def test_browser_section_toggle_persists_its_collapse_preference():
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state())
 
-        toggles = [
-            button
-            for button in console.query(Button)
-            if str(getattr(button, "id", "") or "").startswith(
-                "console-conversation-browser-section-toggle-"
-            )
-        ]
-        assert toggles, "the grouped browser must render section toggles"
-        toggle = toggles[0]
-        group_id = toggle.group_id
+        def _section_toggles() -> list[Button]:
+            # Re-queried before EVERY press: `_toggle_console_conversation_
+            # browser_section` ends in `_sync_console_workspace_context()`,
+            # which rebuilds the tray with NEW Button instances. The old
+            # object still answers `is_mounted` True but is no longer in the
+            # DOM, and pressing it is a silent no-op.
+            return [
+                button
+                for button in console.query(Button)
+                if str(getattr(button, "id", "") or "").startswith(
+                    "console-conversation-browser-section-toggle-"
+                )
+            ]
+
+        assert _section_toggles(), "the grouped browser must render section toggles"
+        group_id = _section_toggles()[0].group_id
         assert group_id.startswith("section:")
 
-        toggle.press()
-        await pilot.pause()
+        def _press_section_toggle() -> None:
+            # By group_id, not by position: a rebuild is free to reorder.
+            next(
+                button for button in _section_toggles() if button.group_id == group_id
+            ).press()
 
-        assert _browser_config(app).get(group_id) is True
+        # The polarity is NOT a constant. The handler flips the section's
+        # CURRENT collapsed state, taken from the screen's own rebuilt
+        # context -- not from the fabricated tray state `_sync_tray` painted
+        # above. Starred default-collapses while it holds no rows
+        # (TASK-2154.3 LY-04, commit 7dbbc401b), which is the screen's real
+        # situation here, so the first press EXPANDS and persists False.
+        # `is True` pinned the pre-2154.3 default; what this test claims is
+        # that a press persists a preference under the toggle's own key and
+        # that the preference is a genuine flip, so assert that instead.
+        before = _section_collapsed(console, group_id)
+
+        _press_section_toggle()
+        await pilot.pause()
+        assert _browser_config(app).get(group_id) is (not before)
+
+        _press_section_toggle()
+        await pilot.pause()
+        assert _browser_config(app).get(group_id) is before
 
 
 @pytest.mark.asyncio
-async def test_browser_group_toggle_persists_its_collapse_preference():
+async def test_flat_browser_has_no_retired_workspace_group_toggles():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -200,15 +286,7 @@ async def test_browser_group_toggle_persists_its_collapse_preference():
                 "console-conversation-browser-group-toggle-"
             )
         ]
-        assert toggles, "the grouped browser must render group toggles"
-        toggle = toggles[0]
-        group_id = toggle.group_id
-        assert group_id and not group_id.startswith("section:")
-
-        toggle.press()
-        await pilot.pause()
-
-        assert _browser_config(app).get(group_id) is True
+        assert toggles == []
 
 
 # --------------------------------------------------------------------------
@@ -286,6 +364,9 @@ async def test_workspace_conversation_row_switches_to_its_already_open_session()
                 conversation_id=f"native:{second.id}",
                 native_session_id=second.id,
                 source_kind="native",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
             ),
         )
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
@@ -354,17 +435,102 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 
         close = console.query_one(f"#console-close-session-tab-{doomed.id}", Button)
         close.press()
-        await pilot.pause()
+        dialog = await _wait_for_confirmation(host)
 
-        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert dialog.message.startswith("Closing this session will discard or cancel:")
+        assert "Transcript messages: 1" in dialog.message
+        assert "Live agent turns: 0" in dialog.message
+        assert "Unsent queued prompts: 0" in dialog.message
         # Still open: the confirmation is a gate, not a notification.
         assert doomed.id in {session.id for session in store.sessions()}
 
-        host.screen_stack[-1].query_one("#confirm-button", Button).press()
+        dialog.query_one("#confirm-button", Button).press()
         await pilot.pause()
         await pilot.pause()
 
         assert doomed.id not in {session.id for session in store.sessions()}
+
+
+@pytest.mark.asyncio
+async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        keeper_id = store.active_session_id
+        doomed = store.create_session()
+        store.switch_session(keeper_id)
+
+        registry = controller.prompt_queue_registry
+        snapshot = registry.snapshot(doomed.id)
+        started = registry.begin_chain(
+            doomed.id,
+            context_epoch=store.conversation_context_epoch(doomed.id),
+            expected_revision=snapshot.revision,
+        )
+        assert started.applied
+        controller.prompt_queue_coordinator._changed(doomed.id)
+        queued = controller.queue_prompt(
+            doomed.id,
+            text="secret queued close text",
+            expected_revision=started.snapshot.revision,
+        )
+        assert queued.applied
+        paused = registry.pause(
+            doomed.id,
+            reason=PromptQueuePauseReason.MANUAL,
+            expected_revision=queued.snapshot.revision,
+        )
+        assert paused.applied
+        controller.prompt_queue_coordinator._changed(doomed.id)
+
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+
+        assert "Transcript messages: 0" in dialog.message
+        assert "Live agent turns: 0" in dialog.message
+        assert "Unsent queued prompts: 1" in dialog.message
+        assert "secret queued close text" not in dialog.message
+
+        dialog.query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        assert doomed.id in {session.id for session in store.sessions()}
+        assert registry.snapshot(doomed.id).total_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_revalidates_changed_impact_and_presents_updated_dialog():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper_id = store.active_session_id
+        doomed = store.create_session()
+        store.switch_session(keeper_id)
+        store.append_message(doomed.id, role=ConsoleMessageRole.USER, content="one")
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
+        first = await _wait_for_confirmation(host)
+        assert "Transcript messages: 1" in first.message
+
+        store.append_message(doomed.id, role=ConsoleMessageRole.USER, content="two")
+        first.query_one("#confirm-button", Button).press()
+        second = await _wait_for_confirmation(host, previous=first)
+
+        assert "Transcript messages: 2" in second.message
+        assert doomed.id in {session.id for session in store.sessions()}
+        second.query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        assert doomed.id in {session.id for session in store.sessions()}
 
 
 @pytest.mark.asyncio

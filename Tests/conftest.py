@@ -16,6 +16,9 @@ _SANDBOXED_ENV_NAMES = (
     "XDG_DATA_HOME",
     "XDG_CONFIG_HOME",
     "TLDW_CONFIG_PATH",
+    "PYTHON_KEYRING_BACKEND",
+    "HF_HUB_OFFLINE",
+    "TIKTOKEN_CACHE_DIR",
     _TEST_CONFIG_ROOT_ENV,
     _TEST_CONFIG_OWNER_ENV,
 )
@@ -59,6 +62,78 @@ os.environ["USERPROFILE"] = str(_BOOTSTRAP_HOME)
 os.environ["XDG_DATA_HOME"] = str(_BOOTSTRAP_DATA_HOME)
 os.environ["XDG_CONFIG_HOME"] = str(_BOOTSTRAP_CONFIG_PATH.parent)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
+# TASK-19570 finding A: every mounted-app test reaches the real OS credential
+# subsystem. `TldwCli.__init__` calls `_wire_server_context_provider()` ->
+# `build_default_server_credential_store()` -> `keyring.get_keyring()`
+# (app.py:5811, runtime_policy/server_credentials.py:296-298), unconditionally
+# and with no test seam -- `Tests/UI/app_factory.py` contains no `keyring`
+# string at all. On macOS the first read can raise a Keychain consent dialog or
+# block on a locked keychain, which under `timeout_method="thread"` kills the
+# whole run rather than one test. The risk was already known here:
+# `Tests/Packaging/` sets exactly this backend for the subprocesses it spawns,
+# but the awareness never reached the shared in-process app-construction seam.
+#
+# Set unconditionally rather than only when unset: an ambient value pointing at
+# a real backend is precisely the case this must override. No test needs a live
+# backend -- the one suite that is *about* keyring
+# (`Tests/Skills/test_skill_trust_keyring_autounlock.py`) injects its own
+# `FakeSecureKeyring()`, and no test calls `keyring.get_password`/`set_password`
+# unpatched. `TLDW_TEST_REAL_KEYRING=1` is the deliberate opt-out.
+if os.environ.get("TLDW_TEST_REAL_KEYRING") != "1":
+    os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
+
+# TASK-21562: no test downloads a model. `huggingface_hub` freezes
+# `constants.HF_HUB_OFFLINE` at ITS import time, so this has to be written here
+# -- in the pre-import bootstrap -- to be read at all; an env var set from a
+# fixture arrives far too late (the measurement is in
+# `Tests/RAG_Eval/conftest.py`'s offline-latch comment).
+#
+# Why globally, when two sub-conftests already do it for their own scope: the
+# HF cache resolves INTO this sandbox (`.../home/.cache/huggingface/hub`), which
+# never exists, so any code path reaching the hub attempts a real download. That
+# is invisible on a developer machine -- whatever triggers it locally is not
+# triggered -- and very visible in CI, where one core shard alone recorded 188
+# egress-blocked errors against `huggingface.co:443` and a CDN address, each one
+# `huggingface_hub` retrying five times before the guard's record failed the
+# test at teardown. Offline turns that into an immediate, deterministic, local
+# failure instead of a slow CI-only one.
+#
+# `TLDW_TEST_ALLOW_HF_DOWNLOADS=1` opts out, for a test that genuinely needs a
+# live fetch.
+# Truthy, not `== "1"`. `Tests/RAG_Search/conftest.py` already reads this same
+# flag as `.strip().lower() in {"1","true","yes","on"}`, so an exact-match test
+# here meant `TLDW_TEST_ALLOW_HF_DOWNLOADS=true` opted out there and stayed
+# offline here -- one flag, two answers (TASK-21562.1).
+_HF_DOWNLOAD_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _hf_downloads_allowed() -> bool:
+    """Whether this session opted into real HuggingFace downloads."""
+    raw = os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS", "")
+    return raw.strip().lower() in _HF_DOWNLOAD_TRUTHY
+
+
+if not _hf_downloads_allowed():
+    os.environ["HF_HUB_OFFLINE"] = "1"
+# TASK-21968: tiktoken fetches its BPE table on first use and caches it outside
+# anything this sandbox controls, so it is warm on any machine that has run the
+# suite before and cold on every CI run. `Utils/token_counter` wraps the lookup
+# in a broad `except` and returns None, so the refusal is swallowed -- the only
+# reason it is visible at all is that the egress guard records the attempt, and
+# the test then fails at teardown pointing at a network address rather than at
+# token counting. One core shard recorded 1,156 such attempts.
+#
+# The table is vendored under `Tests/fixtures/tiktoken_cache/` and pointed at
+# here, so the encoding is read from disk and no test needs the network for it.
+# The filename is tiktoken's own cache key, `sha1(<blob url>)` -- not a name we
+# chose -- which is why the directory looks opaque. See that directory's README.
+#
+# Only the tests are pointed here. Production keeps its normal download-and-
+# cache behaviour, which is correct for a real user and is not this file's
+# business.
+_VENDORED_TIKTOKEN_CACHE = Path(__file__).resolve().parent / "fixtures" / "tiktoken_cache"
+if _VENDORED_TIKTOKEN_CACHE.is_dir():
+    os.environ["TIKTOKEN_CACHE_DIR"] = str(_VENDORED_TIKTOKEN_CACHE)
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
@@ -67,6 +142,7 @@ import asyncio  # noqa: E402
 import sqlite3  # noqa: E402
 import sys  # noqa: E402
 import gc  # noqa: E402
+import time  # noqa: E402
 from typing import Iterator  # noqa: E402
 import warnings  # noqa: E402
 
@@ -74,6 +150,16 @@ import warnings  # noqa: E402
 PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Network egress is denied for the whole session from this point on (task-15111).
+# Installed at conftest IMPORT time, not from a fixture, so module import,
+# collection, fixture teardown and worker threads that outlive a test are all
+# covered. Opt in per test with @pytest.mark.allow_network; see
+# Tests/network_guard.py for the incident that motivated it.
+from Tests import network_guard  # noqa: E402
+
+network_guard.install()
+
 
 # Hypothesis: no per-example deadline (TASK-1260).
 #
@@ -274,6 +360,34 @@ def drain_test_app_user_data_dirs() -> "Iterator[None]":
 
 
 @pytest.fixture(autouse=True)
+def required_doubles_are_called(request) -> "Iterator[None]":
+    """Fail a test that never called a double it declared it must call.
+
+    task-15270. A test whose subject is "X still works when Y fails" passes
+    for the wrong reason the moment Y stops being reached -- which is exactly
+    how `test_send_proceeds_when_auto_retrieve_fails` stayed green for two
+    months without ever calling its exploding backend (task-15210). Doubles
+    built through ``Tests.fixtures.required_doubles`` register themselves, so
+    the check cannot be forgotten at the assertion site; see that module for
+    why the detection of UNregistered ones is a separate, reporting-only
+    audit.
+
+    Yields:
+        None. The check runs in teardown, after the test's own assertions.
+    """
+    from Tests.fixtures import required_doubles
+
+    required_doubles.reset_required_doubles()
+    yield
+    unmet = required_doubles.uncalled_required_doubles()
+    audited = required_doubles.audited_uncalled_doubles()
+    required_doubles.write_audit_report(request.node.nodeid, audited)
+    required_doubles.reset_required_doubles()
+    if unmet:
+        pytest.fail("\n".join(unmet), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
 def restore_sys_path():
     """Automatically restore sys.path after each test."""
     original_path = sys.path.copy()
@@ -436,6 +550,56 @@ def fd_leak_sentinel() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Close the other half of the offline latch (TASK-21562).
+
+    The bootstrap above sets ``HF_HUB_OFFLINE`` before anything imports
+    ``huggingface_hub``, which is the case that matters and the cheap one. This
+    covers the case where the module was somehow imported first: its
+    ``constants.HF_HUB_OFFLINE`` is frozen at import, so the env var would have
+    been read before we wrote it, while ``is_offline_mode()`` consults the
+    constant on every request and therefore still honours a write here.
+
+    Looked up through ``sys.modules`` rather than imported. Importing
+    ``huggingface_hub`` in every test session to assert a property of sessions
+    that never touch it would cost more than the guard is worth, and would drag
+    the whole hub stack into the import closure of the entire suite.
+
+    ``monkeypatch.setattr`` rather than assignment, so a session that opted out
+    per-test is restored -- the same reasoning as
+    ``Tests/RAG_Eval/conftest.py``'s fixture, which does this for its own scope.
+
+    TASK-21592: the latch is also re-asserted at teardown. It is the single
+    condition standing between the suite and the failure class this fixture was
+    written for -- a real hub fetch, five blocked retries on a worker thread,
+    and teardown errors landing on unrelated passing tests. A test that turns
+    the latch back off (directly, or by reloading ``huggingface_hub.constants``)
+    would otherwise re-arm that class silently for everything that follows it in
+    the process.
+
+    Yields:
+        None. The offline latch is re-asserted at teardown.
+    """
+    if _hf_downloads_allowed():
+        yield
+        return
+    constants = sys.modules.get("huggingface_hub.constants")
+    if constants is not None:
+        monkeypatch.setattr(constants, "HF_HUB_OFFLINE", True, raising=False)
+    yield
+    # Looked up again rather than reusing `constants`: a test that imports the
+    # hub for the first time is exactly the case where setup found nothing and
+    # teardown is the only place the latch can be checked at all.
+    still_loaded = sys.modules.get("huggingface_hub.constants")
+    assert still_loaded is None or getattr(still_loaded, "HF_HUB_OFFLINE", False), (
+        "huggingface_hub's offline latch was turned off during this test; the "
+        "next test to reach the hub will make a real request, retry it five "
+        "times on a worker thread, and fail an unrelated later test at teardown "
+        "(TASK-21592). Set TLDW_TEST_ALLOW_HF_DOWNLOADS=1 to opt the session out."
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """No test opens real audio hardware unless it explicitly opts in.
 
@@ -466,6 +630,172 @@ def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.Mo
     import tldw_chatbook.Audio.streaming_sink as streaming_sink
 
     monkeypatch.setattr(streaming_sink, "_import_sounddevice", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_network_io(request: pytest.FixtureRequest) -> Iterator[None]:
+    """No test reaches a live endpoint unless it explicitly opts in (task-15111).
+
+    The socket patch itself is installed once at conftest import time and is
+    denied by default; this fixture selects blocked, numeric-loopback-only, or
+    unrestricted mode and turns a *swallowed* block into a failure.
+
+    (b) is the load-bearing half. `BlockedNetworkAccess` is an `OSError`, so
+    `local_server_discovery._get_models_payload`'s `except Exception` absorbs
+    it and discovery simply reports "no models endpoint" -- exactly what a
+    green run looks like today with nothing listening. Without the recorded
+    attempts a future regression would reintroduce the escape silently, which
+    is the whole defect. Failing on a non-empty record makes the guard
+    unswallowable.
+
+    Use `@pytest.mark.loopback_network` for an owned loopback listener or
+    `@pytest.mark.allow_network` for unrestricted sockets. `live` (real paid
+    external APIs, already gated behind `--run-live`) counts as unrestricted.
+
+    Yields:
+        None. The blocked-attempt record is asserted empty at teardown.
+    """
+    allow_all = bool(
+        request.node.get_closest_marker("allow_network")
+        or request.node.get_closest_marker("live")
+    )
+    loopback_only = bool(request.node.get_closest_marker("loopback_network"))
+    try:
+        mode = network_guard.resolve_mode(
+            allow_all=allow_all,
+            loopback_only=loopback_only,
+        )
+    except ValueError as exc:
+        pytest.fail(f"conflicting network markers: {exc}", pytrace=False)
+    network_guard.drain_blocked_attempts()  # also clears the thread record
+    network_guard.set_mode(mode)
+    try:
+        yield
+    finally:
+        network_guard.set_mode(network_guard.NetworkMode.BLOCKED)
+        # Threads first: draining the attempts clears both records.
+        threads = network_guard.drain_blocked_attempt_threads()
+        attempts = network_guard.drain_blocked_attempts()
+    if attempts:
+        raise AssertionError(
+            "test attempted network egress (blocked): "
+            + network_guard.describe_blocked_attempts(attempts, threads)
+            + " — stub the client seam, use @pytest.mark.loopback_network for "
+            "an owned numeric loopback listener, or use "
+            "@pytest.mark.allow_network for unrestricted sockets."
+        )
+
+
+@pytest.fixture(autouse=True)
+def _no_local_server_probes(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neutralize the local-server discovery probe's one network chokepoint.
+
+    The mechanism behind task-15111: mounting the Console chat screen with an
+    unconfigured provider blocks the setup card, which starts
+    `_maybe_start_console_local_discovery` -> `discover_local_servers`. That
+    candidate list ALWAYS leads with `http://127.0.0.1:8080` and
+    `http://127.0.0.1:11434` regardless of config, and `probe_models_endpoint`
+    builds a real `httpx.AsyncClient` when none is injected -- so every such
+    test made two live TCP connections, and on a machine with a server on 8080
+    the setup card grew a "detected server" affordance CI never sees.
+
+    `_get_models_payload` is the single chokepoint: all three production
+    import sites (`chat_screen`, `FirstRunSetupWizard`, `console_settings_modal`)
+    funnel through `probe_models_endpoint`, which resolves it as a module
+    global at call time, so patching it here covers callers that imported
+    `probe_models_endpoint`/`discover_local_servers` by name. Returning the
+    ordinary "no models endpoint" failure drives the already-tested
+    nothing-listening path, so no test's LOGICAL coverage changes -- only its
+    network access. `Tests/network_guard.py` is the backstop that proves it.
+
+    A test that exercises the real probe implementation against an injected
+    `httpx.MockTransport` client marks itself `@pytest.mark.local_server_probe`
+    to opt out (see `Tests/Chat/test_local_server_discovery.py`).
+    """
+    if request.node.get_closest_marker("local_server_probe"):
+        return
+    from tldw_chatbook.Chat import local_server_discovery
+
+    async def _no_endpoint(http_client, url, timeout, display):
+        return None, f"No models endpoint at {display}."
+
+    monkeypatch.setattr(local_server_discovery, "_get_models_payload", _no_endpoint)
+
+    # task-15211 (sweep catch): the Models/Lab screen has its own parallel
+    # chokepoint -- `llm_screen._probe_local_server`, a real TCP connect to
+    # 127.0.0.1:11434, scheduled from a 3s interval AND a deferred-mount
+    # one-shot. The one-shot flushes while `run_test` is tearing down, so
+    # widget-lifetime cancellation cannot fully close it: seven Lab/LLM
+    # tests hit the network guard AT TEARDOWN, and the probe (plus lab
+    # status polling) is the prime suspect for a full-suite chunk whose
+    # pytest printed its summary and then never exited. Same shape, same
+    # remedy, same opt-out marker as `_get_models_payload` above. The
+    # production caller resolves this at call time via a local import, so
+    # the module-attribute patch covers it; the probe's own unit test
+    # (`test_llm_screen_ollama_probe_nonblocking`) binds the real function
+    # by name at import and is deliberately unaffected.
+    from tldw_chatbook.UI.Screens import llm_screen
+
+    async def _no_ollama(host="127.0.0.1", port=11434):
+        return False
+
+    monkeypatch.setattr(llm_screen, "_probe_local_server", _no_ollama)
+
+
+@pytest.fixture(autouse=True)
+def _console_gateway_http_client_is_offline(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Console provider gateway never owns a network-capable client in tests.
+
+    Sharper half of task-15111. `Tests/UI`'s send-path tests configure a
+    "ready" llama.cpp Console at `http://127.0.0.1:9099`
+    (`_configure_native_ready_console`) and then drive a REAL send through
+    `ConsoleProviderGateway`. On CI nothing listens there, `_is_reachable`'s
+    GET `/health` fails, and the send stops. Measured against a stand-in
+    server bound to 9099,
+    `test_console_command_popup::test_enter_with_popup_closed_sends_normally`
+    went on to send **two POSTs to `/v1/chat/completions`** (streaming, then
+    the non-streaming fallback) carrying the test's prompt. So the escape was
+    never merely a stray GET: with a llama.cpp on that port a test run would
+    have driven real inference on the developer's server.
+
+    `_new_owned_http_client` is the single construction site for every client
+    the gateway owns (`__init__` and the per-loop cache both call it), and
+    injected clients set `_owns_http_client = False` and are left alone -- so
+    MockTransport-based gateway tests are unaffected. Substituting a transport
+    that raises `httpx.ConnectError` reproduces the CI "nothing is listening"
+    outcome deterministically, on every machine, with no socket: `_is_reachable`
+    and `resolve_llamacpp` already catch `httpx.HTTPError`.
+
+    A test that is ABOUT the owned client itself (its timeouts, its per-loop
+    cache) marks itself `@pytest.mark.owned_http_client` to opt out;
+    `allow_network` and `loopback_network` imply the same, since either marker
+    plainly requests the real owned client.
+    """
+    if (
+        request.node.get_closest_marker("owned_http_client")
+        or request.node.get_closest_marker("allow_network")
+        or request.node.get_closest_marker("loopback_network")
+    ):
+        return
+    import httpx
+
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    def _refuse(http_request: "httpx.Request") -> "httpx.Response":
+        raise httpx.ConnectError(
+            "network access blocked in tests (Tests/conftest.py, task-15111)",
+            request=http_request,
+        )
+
+    monkeypatch.setattr(
+        ConsoleProviderGateway,
+        "_new_owned_http_client",
+        staticmethod(lambda: httpx.AsyncClient(transport=httpx.MockTransport(_refuse))),
+    )
 
 
 # ========== Async Cleanup Fixtures ==========
@@ -606,6 +936,10 @@ def pytest_configure(config):
         "markers", "requires_cleanup: Tests that need special cleanup"
     )
     config.addinivalue_line("markers", "asyncio: Async tests using asyncio")
+    # Off unless TLDW_AUDIT_UNCALLED_DOUBLES names a report file (task-15270).
+    from Tests.fixtures import required_doubles
+
+    required_doubles.install_uncalled_double_audit()
 
 
 @pytest.hookimpl(trylast=True)
@@ -982,3 +1316,55 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "live" in item.keywords:
                 item.add_marker(skip_live)
+
+
+@pytest.fixture(autouse=True)
+def _fleet_chat_scripts_fully_consumed():
+    """Fail any test that mis-scripted a `FleetChat` (PR2a Task 6.5 review).
+
+    `Tests/Agents/test_agent_service.FleetChat` addresses provider replies
+    per agent, and is the load-bearing harness for every suite that spawns
+    a sub-agent. Two of its failure modes are otherwise SILENT:
+
+    * a fault raised on a CHILD's thread is swallowed by `AgentService`'s
+      `run_child` (BaseException by design) into `status=error`, so a test
+      that does not assert the child's own result still passes;
+    * a scripted turn nobody ever asks for -- e.g. after a task-text
+      rename leaves the key stale -- simply goes unused, and the test
+      passes while exercising nothing it claims to.
+
+    Autouse and repo-wide on purpose: this must not be something a future
+    test can forget to opt into. It is a no-op (one empty list check) for
+    the thousands of tests that never touch `FleetChat`, and it never
+    imports it -- the class registers its own instances.
+    """
+    # Looked up through sys.modules rather than imported: a test that
+    # never pulled the harness in must not pay to import the whole agent
+    # stack, nor gain its import side effects. No module -> nothing to check.
+    module = sys.modules.get("Tests.Agents.test_agent_service")
+    fleet_chat = getattr(module, "FleetChat", None) if module else None
+    if fleet_chat is None:
+        yield
+        return
+
+    fleet_chat._live_instances.clear()
+    yield
+    instances = list(fleet_chat._live_instances)
+    fleet_chat._live_instances.clear()
+    # PR3a-1 Task 2: a sub-agent now outlives the turn that spawned it by
+    # default, so a child can still be on its way to its FIRST scripted
+    # reply when the test body ends -- "unused turn" and "not used YET"
+    # look identical at this instant. Wait for the difference rather than
+    # guessing at it: a script that is merely late is consumed within
+    # milliseconds, while a genuinely mis-keyed one costs this bounded
+    # wait once, on a test that is failing anyway.
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and any(
+        chat.unconsumed() for chat in instances
+    ):
+        time.sleep(0.02)
+    problems = []
+    for chat in instances:
+        problems.extend(chat.harness_errors)
+        problems.extend(chat.unconsumed())
+    assert not problems, "FleetChat scripting fault(s): " + "; ".join(problems)

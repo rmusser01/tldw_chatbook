@@ -11,7 +11,11 @@ from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.citation_repair import CitationRepairContract
 from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -19,6 +23,8 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_models import (
     AgentStep,
@@ -29,15 +35,99 @@ from tldw_chatbook.Agents.agent_models import (
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_TOOL_RESULT,
+    ToolCall,
+    WAIT_AGENTS_TOOL_NAME,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
+from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Agents.test_mcp_tool_provider import (
     FakeMCPService,
     _catalog_record,
     _tool_dict,
 )
+from Tests.console_provider_doubles import provider_resolution, with_destination
+from Tests.console_provider_doubles import persisted_console_store
+
+
+def _assert_durable_row(store, message_id: str) -> None:
+    """Assert ``message_id`` addresses a live row in ChaChaNotes.
+
+    Args:
+        store: The Console store whose persistence owns the durable rows.
+        message_id: Durable id a run recorded.
+    """
+    row = store.persistence.db.get_connection().execute(
+        "SELECT id, deleted FROM messages WHERE id = ?", (message_id,)
+    ).fetchone()
+    assert row is not None, f"run points at {message_id!r}, absent from messages"
+    assert not row["deleted"], f"run points at soft-deleted row {message_id!r}"
+
+
+
+def _first(matches, *, what: str):
+    """First match, or an assertion that names what never arrived.
+
+    A bare `next(<genexpr>)` here raised StopIteration out of the calling
+    coroutine, and Python re-raises that as `RuntimeError: coroutine raised
+    StopIteration` -- a message naming neither the missing row nor the send
+    that failed to produce it. Thirty-odd assertions in this module reported
+    every "the turn produced nothing" failure that way.
+    """
+    value = next(iter(matches), None)
+    assert value is not None, f"no {what} was produced by the turn under test"
+    return value
+
+
+
+def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
+    events: list[str] = []
+
+    class RecordingStore(ConsoleChatStore):
+        def close_session(self, session_id):
+            events.append("store-close")
+            return super().close_session(session_id)
+
+    class RecordingScratchSpaces(ConsoleScratchSpaceManager):
+        def close(self, session_id):
+            events.append("scratch-close")
+            return super().close(session_id)
+
+    class RecordingBridge:
+        def forget_session_file_authority(self, _session_id):
+            events.append("authority-forget")
+
+    store = RecordingStore()
+    session = store.create_session()
+    scratch_spaces = RecordingScratchSpaces(temp_parent=tmp_path)
+    scratch_spaces.snapshot(session.id)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_Gateway([]),
+        scratch_spaces=scratch_spaces,
+        agent_bridge=RecordingBridge(),
+    )
+
+    controller.close_session(session.id)
+
+    assert events[:3] == ["scratch-close", "authority-forget", "store-close"]
+    assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
+
+
+@pytest.fixture(autouse=True)
+def _disable_project_instructions_for_legacy_agent_swap_tests(monkeypatch):
+    """Keep pre-AGENTS agent-loop fixtures focused on their original boundary."""
+    create_session = ConsoleChatStore.create_session
+
+    def create_legacy_session(store, *args, **kwargs):
+        kwargs.setdefault(
+            "project_instruction_state",
+            ProjectInstructionControlState.legacy_disabled(),
+        )
+        return create_session(store, *args, **kwargs)
+
+    monkeypatch.setattr(ConsoleChatStore, "create_session", create_legacy_session)
 
 
 def _fence(name, args):
@@ -45,31 +135,72 @@ def _fence(name, args):
 
 
 class _Gateway:
-    def __init__(self, scripts):
+    """Scripted gateway, addressed by AGENT rather than arrival order.
+
+    PR2a Task 6.5: `child_scripts` holds the spawned child's own turns.
+    With the fleet ON by default the child runs on its own thread, so a
+    single call-indexed queue would hand the child's scripted turn to
+    whichever agent happened to call second.
+    """
+
+    def __init__(self, scripts, child_scripts=()):
         self._scripts = list(scripts)
+        self._child_scripts = list(child_scripts)
         self.calls = 0
+        self.parent_calls = 0
+        self.child_calls = 0
 
     async def resolve_for_send(self, selection):
-        class _R:
-            ready = True
-            provider = "llama_cpp"
-            visible_copy = ""
-
-        return _R()
+        return with_destination(ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="",
+            model="test-model",
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+            max_tokens=128,
+        ))
 
     async def stream_chat(self, resolution, messages, **kwargs):
-        chunks = self._scripts[self.calls]
+        system = str(messages[0].get("content", "")) if messages else ""
+        if system.startswith(SUBAGENT_PROMPT_PREFIX):
+            chunks = self._child_scripts[self.child_calls]
+            self.child_calls += 1
+        else:
+            chunks = self._scripts[self.parent_calls]
+            self.parent_calls += 1
         self.calls += 1
         for chunk in chunks:
             yield chunk
 
 
 class _SignalGateway:
-    def __init__(self, scripts, *, mark_fallback_calls=frozenset()):
+    """Scripted gateway that records the shared out-of-band signal.
+
+    PR2a Task 6.5: scripts are addressed by AGENT rather than by arrival
+    order. With the fleet ON by default a spawned child runs on its own
+    thread, so "the second call overall" is no longer reliably the child's
+    turn -- and marking the synthetic fallback on the wrong turn is exactly
+    the kind of silent mis-aim that would leave a test green while testing
+    nothing. `mark_fallback_calls` therefore holds ``(who, index)`` pairs,
+    where `who` is ``"parent"`` or ``"child"`` and `index` counts THAT
+    agent's own turns, which are strictly sequential.
+
+    Args:
+        scripts: turns for the primary agent, in order.
+        child_scripts: turns for the child, in order.
+        mark_fallback_calls: ``(who, index)`` pairs whose turn marks the
+            shared synthetic-fallback signal.
+    """
+
+    def __init__(self, scripts, *, child_scripts=(), mark_fallback_calls=frozenset()):
         self._scripts = list(scripts)
+        self._child_scripts = list(child_scripts)
         self._mark_fallback_calls = mark_fallback_calls
         self.calls = []
-        self.resolution = ConsoleProviderResolution(
+        self.parent_calls = 0
+        self.child_calls = 0
+        self.resolution = with_destination(ConsoleProviderResolution(
             provider="openai",
             base_url="https://provider.invalid/v1",
             model="repair-model",
@@ -91,13 +222,14 @@ class _SignalGateway:
             thinking_effort=None,
             thinking_budget_tokens=None,
             streaming=True,
-        )
+        ))
 
     async def resolve_for_send(self, _selection):
         return self.resolution
 
     async def stream_chat(self, resolution, messages, tools=None, signals=None):
-        call_index = len(self.calls)
+        system = str(messages[0].get("content", "")) if messages else ""
+        is_child = system.startswith(SUBAGENT_PROMPT_PREFIX)
         self.calls.append(
             {
                 "resolution": resolution,
@@ -106,9 +238,17 @@ class _SignalGateway:
                 "signals": signals,
             }
         )
-        if call_index in self._mark_fallback_calls:
+        if is_child:
+            who, index = "child", self.child_calls
+            self.child_calls += 1
+            chunks = self._child_scripts[index]
+        else:
+            who, index = "parent", self.parent_calls
+            self.parent_calls += 1
+            chunks = self._scripts[index]
+        if (who, index) in self._mark_fallback_calls:
             signals.mark_synthetic_fallback()
-        for chunk in self._scripts[call_index]:
+        for chunk in chunks:
             yield chunk
 
 
@@ -125,13 +265,18 @@ async def _real_agent_citation_controller(
     tmp_path,
     scripts,
     *,
+    child_scripts=(),
     mark_fallback_calls=frozenset(),
 ):
     gateway = _SignalGateway(
         scripts,
+        child_scripts=child_scripts,
         mark_fallback_calls=mark_fallback_calls,
     )
-    store = ConsoleChatStore()
+    # Real persistence: this rig drives a full agent turn through
+    # `submit_draft`, which refuses a non-ephemeral MANUAL send whose
+    # adapter cannot `commit_durable_turn`.
+    store = persisted_console_store()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
@@ -161,9 +306,51 @@ async def _real_agent_citation_controller(
     return result, controller, store, gateway
 
 
-def _controller(tmp_path, scripts, *, enabled=True):
-    gateway = _Gateway(scripts)
-    store = ConsoleChatStore()
+@pytest.fixture(autouse=True)
+def _mcp_tests_keep_a_small_catalog(monkeypatch):
+    """Keep local tools out of these tests' catalog.
+
+    These tests exercise the MCP *permission* gate, not tool disclosure.
+    PR #1474 flipped ``[console] local_tools_enabled`` to default-true,
+    which put 16 local tools into every run's catalog and pushed it from 3
+    to 19 -- past ``DIRECT_DISCLOSE_THRESHOLD`` (16). Past that threshold
+    ``initial_disclosure`` returns no schemas and offers find_tools/
+    load_tools instead, so a scripted model that calls its tool directly
+    is refused at the disclosure gate before the permission gate is ever
+    consulted, and all five MCP tests failed for a reason none of them is
+    about. (It fails CLOSED -- ``allowed_tools`` was always correct.)
+
+    Restoring the pre-#1474 catalog size is the honest fix: it lets these
+    tests keep asserting exactly what they were written to assert, rather
+    than rewriting them to route through find/load. Production disclosure
+    behaviour is deliberately untouched -- see task-15261 for the coverage
+    gap that nothing pins an MCP tool as reachable under the shipped
+    default catalog, which is find/load-shaped and has been since before
+    #1474.
+    """
+    real_get_cli_setting = controller_module.get_cli_setting
+
+    def _small_catalog(section, key, default=None, *args, **kwargs):
+        if section == "console" and key == "local_tools_enabled":
+            return False
+        return real_get_cli_setting(section, key, default, *args, **kwargs)
+
+    monkeypatch.setattr(controller_module, "get_cli_setting", _small_catalog)
+
+
+def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
+    gateway = _Gateway(scripts, child_scripts)
+    # A real persistence, as production always wires one when the DB opens
+    # (`ConsoleRuntime.ensure_chat_store`). A bare `ConsoleChatStore()` has
+    # `persistence is None`, and since `a26cdafd8` a MANUAL or QUEUED send on a
+    # non-ephemeral session requires `commit_durable_turn` -- so every send here
+    # was refused with "Durable turn acceptance is unavailable; the provider was
+    # not called." before reaching the agent swap these tests are about.
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(
+            CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
+        )
+    )
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -177,8 +364,41 @@ def _controller(tmp_path, scripts, *, enabled=True):
     return controller, store, db
 
 
+def _persistence_free_controller(tmp_path, scripts):
+    """A controller with genuinely NO persistence, on an EPHEMERAL session.
+
+    The "without persistence" tests need a store whose `persistence` is None --
+    that is their whole subject -- so they cannot use `_controller`, which now
+    wires a real one so ordinary sends are accepted at all. See the note in
+    `test_stopped_via_cancel_without_persistence_stays_null` for why the
+    session must be ephemeral.
+
+    Args:
+        tmp_path: pytest tmp dir for the runs DB.
+        scripts: Provider scripts for the parent turn.
+
+    Returns:
+        ``(controller, store, runs_db)``.
+    """
+    gateway = _Gateway(scripts, ())
+    store = ConsoleChatStore()
+    store.create_session(title="Ephemeral", ephemeral=True)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    return controller, store, db
+
+
+
 @pytest.mark.parametrize(
-    ("scripts", "fallback_call"),
+    ("scripts", "child_scripts", "fallback_call", "expected_calls"),
     (
         (
             [
@@ -189,7 +409,9 @@ def _controller(tmp_path, scripts, *, enabled=True):
                 ["Primary final answer"],
                 ["Primary final answer [S1]"],
             ],
-            0,
+            (),
+            ("parent", 0),
+            2,
         ),
         (
             [
@@ -201,16 +423,24 @@ def _controller(tmp_path, scripts, *, enabled=True):
                 ["Primary final answer"],
                 ["Primary final answer [S1]"],
             ],
-            1,
+            (),
+            ("parent", 1),
+            3,
         ),
+        # PR2a Task 6.5: the sub-agent's turn is now the CHILD's own first
+        # turn on its own thread, not "the second call overall". Same
+        # scenario, addressed rather than counted -- and the parent gains a
+        # wait_agents round, since a threaded spawn returns a handle.
         (
             [
                 [_fence(SPAWN_TOOL_NAME, {"task": "answer briefly"})],
-                [NO_PROVIDER_CONTENT_COPY],
+                [_fence(WAIT_AGENTS_TOOL_NAME, {})],
                 ["Primary final answer"],
                 ["Primary final answer [S1]"],
             ],
-            1,
+            ([NO_PROVIDER_CONTENT_COPY],),
+            ("child", 0),
+            4,
         ),
     ),
     ids=("first-tool-turn", "intermediate-tool-turn", "subagent-turn"),
@@ -219,21 +449,26 @@ def _controller(tmp_path, scripts, *, enabled=True):
 async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_earlier_turn(
     tmp_path,
     scripts,
+    child_scripts,
     fallback_call,
+    expected_calls,
 ):
     result, _controller, store, gateway = await _real_agent_citation_controller(
         tmp_path,
         scripts,
+        child_scripts=child_scripts,
         mark_fallback_calls=frozenset({fallback_call}),
     )
 
-    assistant = next(
+    assistant = _first((
         message
         for message in store.messages_for_session(store.active_session_id)
         if message.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert result.visible_copy == assistant.content == "Primary final answer"
-    assert len(gateway.calls) == len(scripts) - 1
+    # The repair turn (the last parent script) is bypassed, which is the
+    # whole point -- so the run stops one parent turn short.
+    assert len(gateway.calls) == expected_calls
     signals = [call["signals"] for call in gateway.calls]
     assert signals[0] is not None
     assert all(signal is signals[0] for signal in signals)
@@ -250,11 +485,11 @@ async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
         [[NO_PROVIDER_CONTENT_COPY], [repaired]],
     )
 
-    assistant = next(
+    assistant = _first((
         message
         for message in store.messages_for_session(store.active_session_id)
         if message.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert result.visible_copy == assistant.content == repaired
     assert len(gateway.calls) == 2
     assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
@@ -262,9 +497,43 @@ async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
 
 
 def _all_runs(db):
-    """Read every persisted run record directly (AgentRunsDB has no list-all)."""
+    """Read every persisted run record directly (AgentRunsDB has no list-all).
+
+    task-18601 part A: ``append_steps`` now inserts into the
+    ``agent_run_steps`` child table instead of rewriting the
+    ``agent_runs.steps`` blob, so a raw ``SELECT * FROM agent_runs``
+    alone under-reports a run's steps for any run appended to after
+    that change. Reproduces ``AgentRunsDB``'s own dual-read (blob steps
+    first, then child rows in ``seq`` order) so ``row["steps"]`` stays a
+    JSON string of the FULL step list, exactly as callers here already
+    expect from ``json.loads(row["steps"])``.
+    """
     with db.connection() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM agent_runs").fetchall()]
+        rows = [dict(r) for r in conn.execute("SELECT * FROM agent_runs").fetchall()]
+        for row in rows:
+            blob_steps = json.loads(row["steps"] or "[]")
+            child_rows = conn.execute(
+                "SELECT payload FROM agent_run_steps WHERE run_id = ? ORDER BY seq",
+                (row["id"],),
+            ).fetchall()
+            row["steps"] = json.dumps(
+                blob_steps + [json.loads(c["payload"]) for c in child_rows]
+            )
+        return rows
+
+
+def _join_fleet_threads(timeout=5.0):
+    """Block until every live fleet child thread has fully finished.
+
+    `AgentService` names them ``fleet-<handle>``. Needed since PR3a-1
+    Task 2: a child outlives the turn that spawned it by default, so a
+    test asserting on the CHILD's persisted run must say when it expects
+    that row to exist. Twin of the identical helper in
+    ``Tests/Chat/test_console_agent_bridge.py``.
+    """
+    for thread in list(threading.enumerate()):
+        if thread.name.startswith("fleet-"):
+            thread.join(timeout)
 
 
 @pytest.mark.asyncio
@@ -287,13 +556,15 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     """
     from Tests.Chat.test_console_chat_store import FakePersistence
 
-    persistence = FakePersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
+    # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
+    # every send through it was refused before reaching the agent swap under
+    # test. These tests never assert on the double itself -- only on persisted
+    # ids, which a real service supplies.
+    store = persisted_console_store()
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
@@ -307,18 +578,25 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "complete"
     assert assistant.persisted_message_id is not None
 
-    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    # The native id create_run stored was corrected to the persisted id.
-    assert primary["assistant_message_id"] != assistant.id
+    # The run must point at a row that DURABLY EXISTS -- the property the old
+    # `!= assistant.id` assertion was standing in for. `a26cdafd8`'s durable
+    # dispatch checkpoint made that inequality false on purpose:
+    # `insert_with_messages` inserts the row with
+    # `acceptance.assistant_message_id`, so for a checkpointed turn the durable
+    # id IS the native id. Asserting they differ tested an implementation
+    # detail production deliberately reversed; asserting the row resolves
+    # tests what the run actually needs.
+    _assert_durable_row(store, primary["assistant_message_id"])
 
 
 @pytest.mark.asyncio
@@ -342,8 +620,12 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     """
     from Tests.Chat.test_console_chat_store import FakePersistence
 
-    persistence = FakePersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
+    # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
+    # every send through it was refused before reaching the agent swap under
+    # test. These tests never assert on the double itself -- only on persisted
+    # ids, which a real service supplies.
+    store = persisted_console_store()
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -372,17 +654,18 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is not None
 
-    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    assert primary["assistant_message_id"] != assistant.id
+    # See the note above: a checkpointed turn's durable id IS its native id.
+    _assert_durable_row(store, primary["assistant_message_id"])
 
 
 @pytest.mark.asyncio
@@ -394,8 +677,12 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     """
     from Tests.Chat.test_console_chat_store import FakePersistence
 
-    persistence = FakePersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
+    # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
+    # every send through it was refused before reaching the agent swap under
+    # test. These tests never assert on the double itself -- only on persisted
+    # ids, which a real service supplies.
+    store = persisted_console_store()
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -424,15 +711,15 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "failed"
     assert assistant.persisted_message_id is not None
 
-    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
 
 
@@ -444,7 +731,7 @@ async def test_stopped_run_without_persistence_stays_null_not_stale(tmp_path):
     store the native id at create): the row is NULL both at create and after
     the null-persisted-id stop.
     """
-    controller, store, db = _controller(tmp_path, [["Tok", "yo."]])
+    controller, store, db = _persistence_free_controller(tmp_path, [["Tok", "yo."]])
 
     original = controller._agent_bridge.run_reply
 
@@ -458,15 +745,15 @@ async def test_stopped_run_without_persistence_stays_null_not_stale(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is None
 
-    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] is None
 
 
@@ -521,7 +808,13 @@ class _ParkingGateway:
         self.release = threading.Event()
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+        return with_destination(ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="",
+            model="test-model",
+            ready=True,
+            execution_key="llama_cpp",
+        ))
 
     async def stream_chat(self, _resolution, _messages, **kwargs):
         self.started.set()
@@ -587,11 +880,11 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.content == ""
     # The controller-side bookkeeping has already been reset by
@@ -645,11 +938,11 @@ async def test_finalize_after_already_stopped_is_a_benign_noop(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.content == ""
     assert "late done text" not in assistant.content
@@ -678,11 +971,11 @@ async def test_finalize_after_already_stopped_regenerate_no_phantom_variant(tmp_
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "complete"
     assert assistant.content == "original answer."
     assert assistant.variants is None
@@ -732,11 +1025,11 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "complete"
 
     def parked_regenerate_error_reply(*, assistant_message_id, **_kwargs):
@@ -806,11 +1099,11 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
         # a chunk into the store -- simulating Stop landing while the
         # (slow) provider is still silent.
         session_id = store.active_session_id
-        assistant_message_id = next(
+        assistant_message_id = _first((
             m.id
             for m in reversed(store.messages_for_session(session_id))
             if m.role is ConsoleMessageRole.ASSISTANT
-        )
+        ), what="ASSISTANT message")
         store.mark_message_stopped(assistant_message_id)
         # Fix round 1 (Critical 1): should_cancel now reads only its own
         # run's per-session cancel_event, never the shared `_stop_requested`
@@ -825,7 +1118,7 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
 
     session_id = store.active_session_id
     messages = store.messages_for_session(session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     # The late "late answer." chunks were dropped, not leaked into content.
     assert assistant.status == "stopped"
     assert assistant.content == ""
@@ -871,7 +1164,7 @@ async def test_bridge_exception_fails_message_and_unwedges_controller(tmp_path):
 
     first_session_id = store.active_session_id
     messages = store.messages_for_session(first_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.status == "failed"
     assert any(m.role is ConsoleMessageRole.SYSTEM for m in messages)
     assert controller.run_state.status is ConsoleRunStatus.FAILED
@@ -910,11 +1203,11 @@ async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_contex
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "failed"
     assert assistant.content == "partial answer before erroring"
     assert "[agent error]" not in assistant.content
@@ -956,7 +1249,7 @@ async def test_run_stuck_outcome_is_visibly_failed_not_silent_complete(tmp_path)
 
     session_id = store.active_session_id
     messages = store.messages_for_session(session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.status == "failed"
     assert assistant.content == "still thinking about it"
     system_rows = [m for m in messages if m.role is ConsoleMessageRole.SYSTEM]
@@ -980,11 +1273,11 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.content == "good original answer."
     assert assistant.status == "complete"
 
@@ -1030,11 +1323,11 @@ async def test_retry_through_agent_path_uses_bridge_and_completes(tmp_path):
     first = await controller.submit_draft("please answer")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "failed"
 
     calls = {"n": 0}
@@ -1061,11 +1354,11 @@ async def test_continue_through_agent_path_uses_bridge_and_appends_new_message(
     )
     await controller.submit_draft("tell me about France")
     session_id = store.active_session_id
-    first_assistant = next(
+    first_assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert first_assistant.content == "Paris is the capital."
 
     real_run_reply = controller._agent_bridge.run_reply
@@ -1099,11 +1392,11 @@ async def test_regenerate_through_agent_path_uses_bridge_and_forks_sibling(
     )
     await controller.submit_draft("hi")
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.content == "first answer."
 
     real_run_reply = controller._agent_bridge.run_reply
@@ -1174,7 +1467,7 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
     class _FakeGateway:
         async def resolve_for_send(self, _selection):
-            return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+            return provider_resolution(ready=True, provider="llama_cpp", visible_copy="")
 
         async def stream_chat(self, _resolution, _messages, **kwargs):
             for chunk in ["legacy answer."]:
@@ -1211,9 +1504,7 @@ def _fake_app(service=None):
 def _capturing_run_reply(captured, *, final_text="ok."):
     def run_reply(**kwargs):
         captured.append(kwargs)
-        return "run-test", RunOutcome(
-            status=RUN_DONE, steps=[], final_text=final_text
-        )
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text=final_text)
 
     return run_reply
 
@@ -1306,7 +1597,7 @@ class _SentinelBuiltinGate:
     def __init__(self) -> None:
         self.begin_turn_calls = 0
 
-    def begin_turn(self) -> None:
+    def begin_turn(self, run_id: str) -> None:
         self.begin_turn_calls += 1
 
 
@@ -1340,8 +1631,88 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
 
     review_hook = captured[0]["review_tool_calls"]
     assert sentinel.begin_turn_calls == 0
-    review_hook([])  # empty batch: nothing to resolve, only begin_turn() matters
+    # PR2a Task 5: the hook takes the reviewing run's id (unused here --
+    # this test is purely about gate IDENTITY, and an empty batch resolves
+    # nothing either way).
+    review_hook([], "run-1")  # empty batch: only begin_turn() matters
     assert sentinel.begin_turn_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_review_precheck_and_dispatch_share_captured_scratch(
+    tmp_path,
+    monkeypatch,
+):
+    """Approval precheck and worker dispatch receive one immutable authority."""
+    import tldw_chatbook.config as config
+
+    class ScratchReviewGate:
+        def __init__(self):
+            self.stamps = []
+
+        def begin_turn(self, _run_id):
+            return None
+
+        def resolve(self, _tool):
+            return EffectiveToolState(state="ask", origin="builtin_default")
+
+        def stamp(self, run_id, name, decision):
+            self.stamps.append((run_id, name, decision))
+
+        def is_session_approved(self, _name):
+            return False
+
+    real_setting = config.get_cli_setting
+
+    def enable_read_file(section, key, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return real_setting(section, key, default)
+
+    observed = {}
+
+    def record_precheck(_name, _args, **kwargs):
+        observed.update(kwargs)
+        return False
+
+    controller, store, _db = _controller(tmp_path, [["ok."]])
+    captured = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    controller.app = _fake_app()
+    controller.request_mcp_approvals = lambda pending, **_kwargs: {
+        row.call_id or row.llm_name: "approve_once" for row in pending
+    }
+    gate = ScratchReviewGate()
+    monkeypatch.setattr(config, "get_cli_setting", enable_read_file)
+    monkeypatch.setattr(controller_module, "build_builtin_gate", lambda _=None: gate)
+    monkeypatch.setattr(controller_module, "path_precheck_failed", record_precheck)
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    dispatch_root = captured[0]["scratch_root"]
+    dispatch_lease = captured[0]["scratch_lease"]
+    with dispatch_lease() as leased_root:
+        assert leased_root == dispatch_root
+
+    review_hook = captured[0]["review_tool_calls"]
+    review_hook(
+        [
+            ToolCall(
+                name="read_file",
+                args={"file_path": str(dispatch_root / "input.txt")},
+                call_id="read-1",
+            )
+        ],
+        "run-1",
+    )
+
+    assert observed["sandbox_root"] == dispatch_root
+    assert observed["sandbox_lease"] is dispatch_lease
+    assert observed["workspace_id"] == store.session_workspace_id(
+        store.active_session_id
+    )
+    assert controller._scratch_spaces.dispose()
 
 
 @pytest.mark.asyncio
@@ -1364,7 +1735,7 @@ async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "done with mcp."
     assert service.execute_calls == [("local:srv", "run", {"x": 1}, "agent", "allowed")]
 
@@ -1405,7 +1776,7 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "approved and done."
     assert service.execute_calls == [
         ("local:srv", "run", {"x": 1}, "agent", "approved")
@@ -1446,7 +1817,9 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     llm_name = received[-1]["calls"][0]["llm_name"]
     assert llm_name == "mcp__srv__run"
     round_id = received[-1]["round_id"]
-    controller.resolve_pending_approval({llm_name: "approve_session"}, round_id=round_id)
+    controller.resolve_pending_approval(
+        {llm_name: "approve_session"}, round_id=round_id
+    )
     result1 = await send_task
     assert result1.accepted is True
     cards_pushed_after_turn1 = len(received)
@@ -1464,9 +1837,16 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     # Both calls executed under the "approved" decision (a session
     # approval, not a persistent "allowed" server default -- the
     # vocabulary fix half of Finding I1).
+    # Turn 2's decision is "approved-session", NOT "approved": that is the
+    # whole subject of this test. `MCPToolProvider.execute` documents it --
+    # "a live session approval short-circuits an `ask` state to execute
+    # (decision='approved-session')". Expecting "approved" on turn 2 asserted
+    # that the session approval was NOT consulted, which is the opposite of
+    # what the test's name claims, so this expectation now distinguishes
+    # approved-by-card from approved-by-session instead of conflating them.
     assert service.execute_calls == [
         ("local:srv", "run", {"x": 1}, "agent", "approved"),
-        ("local:srv", "run", {"x": 2}, "agent", "approved"),
+        ("local:srv", "run", {"x": 2}, "agent", "approved-session"),
     ]
 
 
@@ -1489,7 +1869,7 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "it was refused."
     tool_rows = [m for m in messages if m.role is ConsoleMessageRole.TOOL]
     assert any(
@@ -1609,13 +1989,16 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     `AgentService._run_one`'s `spawn` closure threads the SAME ctor-level
     `review_tool_calls` hook (and the same `self.registry`) into the
     child's own `LoopDeps`/`invoke_tool`, not a bespoke unwired path."""
+    # PR2a Task 6.5: addressed per agent -- the child is on its own thread.
     scripts = [
         [_fence(SPAWN_TOOL_NAME, {"task": "please run it"})],  # primary: spawn a child
-        [_fence("mcp__srv__run", {"x": 1})],  # child: call the MCP tool
-        ["child refused."],  # child: final answer
         ["primary done."],  # primary: final answer
     ]
-    controller, store, db = _controller(tmp_path, scripts)
+    child_scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],  # child: call the MCP tool
+        ["child refused."],  # child: final answer
+    ]
+    controller, store, db = _controller(tmp_path, scripts, child_scripts=child_scripts)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
@@ -1625,6 +2008,12 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     result = await controller.submit_draft("please delegate it")
 
     assert result.accepted is True
+
+    # PR3a-1 Task 2: the child outlives the turn by default, so its run
+    # row (and its gated tool call) may still be in flight when the turn
+    # returns. The subject here is that the child is gated like the
+    # primary, not when it finishes -- so wait for it explicitly.
+    _join_fleet_threads()
     assert service.execute_calls == []  # never invoked -- refused before dispatch
 
     subagent_runs = [r for r in _all_runs(db) if r["agent_kind"] == "subagent"]
@@ -1637,7 +2026,7 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     )
 
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "primary done."
 
 
@@ -1670,7 +2059,7 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "it was refused too."
     assert (
         service.execute_calls == []
@@ -1702,8 +2091,12 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
             yield "answered anyway."
 
     gateway = _YieldThenParkGateway()
-    persistence = FakePersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
+    # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
+    # every send through it was refused before reaching the agent swap under
+    # test. These tests never assert on the double itself -- only on persisted
+    # ids, which a real service supplies.
+    store = persisted_console_store()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -1730,11 +2123,11 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is not None
 
@@ -1749,7 +2142,8 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
 
     assert primary is not None, "primary run never settled"
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    assert primary["assistant_message_id"] != assistant.id
+    # See the note above: a checkpointed turn's durable id IS its native id.
+    _assert_durable_row(store, primary["assistant_message_id"])
 
 
 @pytest.mark.asyncio
@@ -1759,6 +2153,15 @@ async def test_stopped_via_cancel_without_persistence_stays_null(tmp_path):
     must stay NULL (ordinal fallback) -- never a stale/native id."""
     gateway = _ParkingGateway()
     store = ConsoleChatStore()
+    # An EPHEMERAL session, and that is production's rule rather than a harness
+    # dodge: `submit_draft` computes
+    # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`
+    # and refuses a durable turn whose adapter cannot `commit_durable_turn`.
+    # An ephemeral session is exactly the shape in which a persistence-free
+    # send is still legitimate, so this preserves what this test asserts --
+    # no persistence, therefore no persisted id -- on the path production
+    # still supports.
+    store.create_session(title="Ephemeral", ephemeral=True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(

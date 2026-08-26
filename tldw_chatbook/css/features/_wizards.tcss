@@ -917,12 +917,52 @@ ImportProgressStep .status-item.error {
     color: $error;
 }
 
+/* A type that imported nothing (all skipped) or only partly imported is not
+ * green -- the colour is part of the claim (task-19734). */
+ImportProgressStep .status-item.warning {
+    color: $warning;
+}
+
+/* The completion banner is coloured by the outcome it reports, so a run that
+ * imported nothing cannot be framed in the success palette (task-19734). */
 ImportProgressStep .completion-message {
     text-align: center;
     padding: 2;
     margin-top: 2;
+    background: $panel;
+    border: round $background-darken-1;
+}
+
+ImportProgressStep .completion-message.outcome-imported {
     background: $success 20%;
     border: round $success;
+}
+
+ImportProgressStep .completion-message.outcome-partial {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-skipped {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-empty {
+    background: $panel;
+    border: round $background-darken-1;
+}
+
+/* A chatbook that HAD items none of which were attempted is not the same as
+ * an empty one, and it is not a success either (task-19734). */
+ImportProgressStep .completion-message.outcome-excluded {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-failed {
+    background: $error 20%;
+    border: round $error;
 }
 
 ImportProgressStep .completion-stats {
@@ -1035,10 +1075,17 @@ SmartContentTree Tree > .selected-node {
  * (now-capped, see ".setup-choice-list" below) provider list -- see that
  * rule's own comment for the full row-budget accounting. */
 .setup-welcome { padding: 1 4; }
-.setup-provider { padding: 1 4; }
+.setup-provider { padding: 0 2; }
 .setup-title { text-style: bold; text-align: center; margin-bottom: 1; }
 .setup-subtitle { color: $text-muted; margin-bottom: 1; }
-.setup-step-error { color: $error; margin-top: 1; }
+.setup-provider .setup-title,
+.setup-provider .setup-subtitle { margin-bottom: 0; }
+.setup-step-error {
+    color: $error;
+    background: $error 15%;
+    text-style: bold;
+    margin-top: 1;
+}
 .setup-field-label { margin-top: 1; }
 .setup-probe-status { color: $text-muted; margin-top: 1; }
 .setup-summary-row { height: 1; }
@@ -1072,6 +1119,7 @@ SmartContentTree Tree > .selected-node {
 .setup-welcome,
 .setup-provider,
 .setup-model,
+.setup-voice,
 .setup-rag,
 .setup-speech,
 .setup-tools,
@@ -1085,6 +1133,57 @@ SmartContentTree Tree > .selected-node {
     height: auto;
 }
 
+/* Task 2.7: Voice keeps a stable compact control rhythm while the shared
+ * setup-step viewport owns scrolling at narrow and short terminal sizes. */
+.setup-voice {
+    padding: 0 2 1 2;
+}
+
+.setup-voice-segmented {
+    layout: horizontal;
+    height: 3;
+    min-height: 3;
+    border: solid $primary;
+    overflow: hidden hidden;
+}
+
+.setup-voice-segmented SetupRadioButton {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+}
+
+.setup-voice-segmented SetupRadioButton.-on {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.setup-voice-output-row {
+    height: 5;
+}
+
+.setup-voice-output-row > Vertical {
+    width: 1fr;
+    height: 5;
+}
+
+#setup-voice-sample-count {
+    height: 1;
+    text-align: right;
+    color: $text-muted;
+}
+
+#setup-voice-test {
+    margin-top: 1;
+}
+
+#setup-voice-status {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}
+
 /* Design intent #2/#3: a step's internal choice list (Provider's ~27-row
  * catalog; Model's up-to-20 discovered models; Appearance's 20+ themes) must
  * not by itself consume the whole step's visible height and push the rest
@@ -1093,19 +1192,21 @@ SmartContentTree Tree > .selected-node {
  * capping it here gives it its OWN scrollbar so the step's remaining
  * content stays on screen without any manual scrolling.
  *
- * max-height: 5 (2 border rows + 3 visible entries) is deliberately tighter
- * than the 8-10 rows floated as a starting point: live-measured at 120x40
- * (Tests/UI/test_first_run_wizard_live_contract.py), the Provider step's
- * fixed .setup-step viewport is 15 rows, and padding(1) + title(2) +
- * subtitle(2) + label(2) + Input(3, Textual's own bordered default height)
- * already claim all but 5 of those non-negotiably -- leaving exactly 5 for
- * the choice list itself if the Input (all 3 of its rows, border included)
- * is to be visible with NO scrolling (task-1495 AC #1), not just reachable
- * by scrolling the step (AC #2/#3, which the ".setup-step" rule above
- * covers independently for any step/size where content doesn't fit even
- * after this cap). */
+ * A five-row minimum keeps the control from collapsing as asynchronous
+ * labels/statuses change; the seven-row cap exposes more choices when space
+ * is available without letting the catalog displace the key field or footer.
+ * At supported narrow sizes the containing .setup-step remains the scroll
+ * viewport, while the fixed progress/navigation regions stay on screen. */
 .setup-choice-list {
-    max-height: 5;
+    min-height: 5;
+    max-height: 7;
+    border: solid $primary;
+}
+
+.setup-choice-list:focus {
+    border: solid $ds-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
 }
 
 /* TASK-1495 AC #3: the Summary's exit actions are docked to the step
@@ -1125,7 +1226,10 @@ SmartContentTree Tree > .selected-node {
 /* TASK-1497: second structural cue for the selected radio row (the first is
  * the ●/○ glyph swap in SetupRadioButton) — bold survives monochrome. */
 .setup-choice-list SetupRadioButton.-on {
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border-left: thick $ds-focus-accent;
+    text-style: bold underline;
 }
 
 /* TASK-1501: aligned tool rows. Switch is 3 rows tall (bordered); without an
@@ -1182,6 +1286,59 @@ SmartContentTree Tree > .selected-node {
     margin-bottom: 1;
 }
 
+#setup-provider-connection {
+    height: auto;
+    min-height: 7;
+}
+
+#setup-provider-endpoint {
+    width: 100%;
+    min-height: 3;
+}
+
+.setup-endpoint-value {
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+    color: $text-muted;
+}
+
+.setup-provider-connection-actions {
+    height: 3;
+    min-height: 3;
+    margin-top: 1;
+}
+
+.setup-provider-connection-actions Button {
+    min-width: 12;
+    margin-right: 1;
+}
+
+#setup-provider-auth-toggle {
+    height: auto;
+    min-height: 3;
+    margin-top: 1;
+}
+
+#setup-provider-api-key {
+    width: 100%;
+    min-height: 3;
+}
+
+.setup-detection-results {
+    height: auto;
+    min-height: 3;
+    max-height: 8;
+    border: solid $primary;
+    margin-top: 1;
+}
+
+.setup-detection-results:focus {
+    border: solid $ds-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
 /* TASK-1498: the wizard's own show/hide toggles (discovery banner + button,
  * Keep/Replace/Clear row) — the repo's ".hidden" convention is styled only
  * for specific widgets elsewhere, so scope a real display:none here. */
@@ -1196,6 +1353,52 @@ SmartContentTree Tree > .selected-node {
     color: $text-muted;
     text-align: center;
     background: $panel;
+}
+
+FirstRunSetupWizard SetupWizardContainer .wizard-progress {
+    height: 4;
+    min-height: 4;
+    max-height: 4;
+    padding: 0 1;
+    margin: 0;
+}
+
+.setup-progress-item {
+    height: 3;
+    min-width: 0;
+    margin: 0;
+}
+
+.setup-progress-item.-active .step-number {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: solid $ds-focus-accent;
+}
+
+.setup-progress-item.-active .step-title {
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.setup-progress-item.-complete .step-number {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: solid $success;
+}
+
+.setup-progress-item.-complete .step-title {
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.setup-progress-item.-upcoming .step-number {
+    background: $panel;
+    color: $text-muted;
+    border: solid $primary;
+}
+
+.setup-progress-item.-upcoming .step-title {
+    color: $text-muted;
 }
 
 /* TASK-1506: key input and its Test button share one row. */
@@ -1216,4 +1419,43 @@ SmartContentTree Tree > .selected-node {
  * the setup wizard's own screen. */
 FirstRunSetupWizard SetupWizardContainer {
     height: 1fr;
+}
+
+FirstRunSetupWizard SetupWizardContainer .wizard-title {
+    height: 3;
+    padding: 0 2;
+    margin: 0;
+}
+
+FirstRunSetupWizard SetupWizardContainer .wizard-steps-container {
+    height: 1fr;
+    padding: 0;
+    margin: 0;
+}
+
+FirstRunSetupWizard SetupWizardContainer .wizard-navigation {
+    height: 4;
+    min-height: 4;
+    padding: 0 2;
+    margin: 0;
+}
+
+FirstRunSetupWizard .setup-key-hints {
+    height: 1;
+    min-height: 1;
+}
+
+/* WizardProgress active-step states (TASK-16811): moved here from the
+   widget's DEFAULT_CSS so the real $ds-focus-* tokens apply (the local
+   fallbacks that used to sit beside them shadowed the bundle's values). */
+WizardProgress .step-number.active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: round $ds-focus-accent;
+    text-style: bold underline;
+}
+
+WizardProgress .step-title.active {
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }

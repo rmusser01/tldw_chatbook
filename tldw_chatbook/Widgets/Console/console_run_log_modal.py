@@ -20,19 +20,22 @@ from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 MODAL_ID = "console-run-log-modal"
 TEXT_AREA_ID = "console-run-log-text"
 CLOSE_BUTTON_ID = "console-run-log-close"
 
 
-class ConsoleRunLogModal(ModalScreen[None]):
+class ConsoleRunLogModal(SafeModalDismissMixin, ModalScreen[None]):
     """Show one run's full run log text, read-only.
 
     Dismisses with ``None`` on Close/Escape -- there is nothing to apply,
     this widget never mutates anything.
     """
 
-    BINDINGS = [("escape", "dismiss_viewer", "Close")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#console-run-log-modal"
 
     def __init__(self, *, run_id: str, log_text: str) -> None:
         """Initialize the viewer.
@@ -73,11 +76,11 @@ class ConsoleRunLogModal(ModalScreen[None]):
         except (NoMatches, QueryError):
             pass
 
-    def action_dismiss_viewer(self) -> None:
+    async def action_dismiss_viewer(self) -> None:
         """Dismiss, bound to the Escape key."""
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     @on(Button.Pressed, f"#{CLOSE_BUTTON_ID}")
-    def _close(self, event: Button.Pressed) -> None:
+    async def _close(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")

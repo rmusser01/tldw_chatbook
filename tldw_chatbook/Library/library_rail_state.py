@@ -2,13 +2,28 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
+
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 
 LIBRARY_RAIL_SECTION_IDS = ("browse", "create", "study", "ingest", "details")
 
 _TRUE_STRINGS = {"true", "yes", "1", "on"}
 _FALSE_STRINGS = {"false", "no", "0", "off"}
+
+_LIBRARY_CONTENT_SOURCE_COUNT = 6
+
+
+class LibraryLifecycle(str, Enum):
+    """Persisted Library progressive-disclosure lifecycle."""
+
+    UNKNOWN = "unknown"
+    STARTER = "starter"
+    EXPANDED = "expanded"
+    GRADUATED = "graduated"
 
 
 @dataclass(frozen=True)
@@ -57,6 +72,81 @@ def coerce_library_rail_preferences(raw: Any) -> LibraryRailPreferences:
         ingest_open=_coerce_bool(raw.get("ingest_open"), defaults.ingest_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
     )
+
+
+def coerce_library_lifecycle(
+    raw: Any,
+    *,
+    is_new_profile: bool,
+) -> LibraryLifecycle:
+    """Normalize a stored Library lifecycle value.
+
+    Args:
+        raw: Stored lifecycle value, or ``None`` when absent.
+        is_new_profile: Whether the profile was created in the current run.
+
+    Returns:
+        The stored lifecycle, or the safe default for absent/corrupt storage.
+    """
+    if raw is None:
+        if is_new_profile:
+            return LibraryLifecycle.UNKNOWN
+        return LibraryLifecycle.EXPANDED
+    try:
+        return LibraryLifecycle(raw)
+    except (TypeError, ValueError):
+        return LibraryLifecycle.EXPANDED
+
+
+def serialize_library_lifecycle(lifecycle: LibraryLifecycle) -> str:
+    """Serialize a Library lifecycle to its stable string value."""
+    return lifecycle.value
+
+
+def _validated_evidence(
+    evidence: Sequence[LibraryContentEvidence],
+) -> tuple[LibraryContentEvidence, ...]:
+    values = tuple(evidence)
+    if len(values) != _LIBRARY_CONTENT_SOURCE_COUNT:
+        raise ValueError("Library lifecycle evidence requires exactly six sources")
+    if not all(isinstance(value, LibraryContentEvidence) for value in values):
+        raise TypeError("evidence values must be LibraryContentEvidence")
+    return values
+
+
+def aggregate_library_lifecycle(
+    lifecycle: LibraryLifecycle,
+    evidence: Sequence[LibraryContentEvidence],
+) -> LibraryLifecycle:
+    """Apply one authoritative six-source evidence snapshot to a lifecycle."""
+    values = _validated_evidence(evidence)
+    if LibraryContentEvidence.HAS_USER_CONTENT in values:
+        return LibraryLifecycle.GRADUATED
+    if lifecycle is LibraryLifecycle.UNKNOWN and all(
+        value is LibraryContentEvidence.EMPTY for value in values
+    ):
+        return LibraryLifecycle.STARTER
+    return lifecycle
+
+
+def explore_library_lifecycle(lifecycle: LibraryLifecycle) -> LibraryLifecycle:
+    """Expand the Library after an explicit Explore action."""
+    if lifecycle in (LibraryLifecycle.UNKNOWN, LibraryLifecycle.STARTER):
+        return LibraryLifecycle.EXPANDED
+    return lifecycle
+
+
+def return_library_lifecycle_to_starter(
+    lifecycle: LibraryLifecycle,
+    evidence: Sequence[LibraryContentEvidence],
+) -> LibraryLifecycle:
+    """Return an expanded Library to Starter when all sources are empty."""
+    values = _validated_evidence(evidence)
+    if lifecycle is LibraryLifecycle.EXPANDED and all(
+        value is LibraryContentEvidence.EMPTY for value in values
+    ):
+        return LibraryLifecycle.STARTER
+    return lifecycle
 
 
 def serialize_library_rail_preferences(

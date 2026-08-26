@@ -12,6 +12,7 @@ from threading import RLock
 from typing import NamedTuple
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase
 
 
 class ReplicaFileInfo(NamedTuple):
@@ -34,7 +35,8 @@ class FileNotesReplica:
                 replica.
         """
         path = os.fspath(db_path)
-        if path != ":memory:":
+        is_memory_db = path == ":memory:"
+        if not is_memory_db:
             path = os.fspath(Path(path).expanduser())
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
@@ -46,6 +48,15 @@ class FileNotesReplica:
                 check_same_thread=False,
             )
             self._connection.row_factory = sqlite3.Row
+            if not is_memory_db:
+                self._connection.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power
+            # crash can lose the last commit, acceptable for this local File
+            # Notes replica/recovery cache -- the notes' file-authority copy
+            # is the source of truth) and avoids an fsync per commit. Held
+            # for the lifetime of this instance, so this is the only site
+            # that needs it (task-15465).
+            self._connection.execute("PRAGMA synchronous = NORMAL")
         self._initialize_schema()
 
     def close(self) -> None:
@@ -142,7 +153,9 @@ class FileNotesReplica:
 
         Args:
             root: Canonical notes-root identifier.
-            query: Literal text to find in replicated file content.
+            query: User text, matched as ONE quoted literal FTS5 PHRASE
+                (``quote_fts5_phrase``) -- the words must be adjacent and in
+                order, and FTS5 operators in it are inert.
             limit: Maximum number of paths to return.
 
         Returns:
@@ -151,8 +164,7 @@ class FileNotesReplica:
         query = query.strip()
         if not query or limit <= 0 or "\x00" in query:
             return []
-        escaped_query = query.replace('"', '""')
-        literal_query = f'"{escaped_query}"'
+        literal_query = quote_fts5_phrase(query)
         try:
             with self._lock:
                 rows = self._connection.execute(

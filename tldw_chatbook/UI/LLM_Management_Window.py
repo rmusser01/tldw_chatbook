@@ -2,7 +2,9 @@
 #
 #
 # Imports
+import functools
 import inspect
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 #
@@ -14,12 +16,29 @@ from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Static, Button, Input, RichLog, Label, TextArea, Collapsible
+from textual.widget import Widget
+from textual.widgets import (
+    Static,
+    Button,
+    Input,
+    RichLog,
+    Label,
+    TextArea,
+    Collapsible,
+    Select,
+)
 from loguru import logger
 
 # Local Imports
 from ..Event_Handlers.LLM_Management_Events.llm_management_events import (
     LLM_MANAGEMENT_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.gguf_source_modes import (
+    GGUFSourceMode,
+    GGUFSourceSelection,
+    ManagedGGUFChoice,
+    initial_gguf_selection,
+    managed_gguf_choices,
 )
 from ..Event_Handlers.LLM_Management_Events.llm_management_events_mlx_lm import (
     MLX_LM_BUTTON_HANDLERS,
@@ -38,8 +57,11 @@ from ..Event_Handlers.LLM_Management_Events.llm_management_events_vllm import (
 )
 from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
     current_llm_destination,
+    server_lifecycle_snapshot,
     server_is_active,
 )
+from ..Model_Artifacts.service import ArtifactRef
+from ..Model_Artifacts.store import managed_service
 from ..Utils.log_widget_manager import LogWidgetManager
 from ..Widgets.ModelArtifacts import InstallProgressed, InstallStatusChanged
 
@@ -49,8 +71,6 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Functions:
-
-
 
 
 class OllamaServiceView(VerticalScroll):
@@ -85,9 +105,7 @@ class OllamaServiceView(VerticalScroll):
             )
 
         with Horizontal(classes="ollama-button-bar"):
-            yield Button(
-                "Start Ollama Service", id="ollama-start-service-button"
-            )
+            yield Button("Start Ollama Service", id="ollama-start-service-button")
             yield Button(
                 "Stop Ollama Service",
                 id="ollama-stop-service-button",
@@ -248,6 +266,7 @@ class OllamaServiceView(VerticalScroll):
             classes="log_output_large",
         )
 
+
 class LLMManagementWindow(Container):
     """
     Container for the LLM Management Tab's UI.
@@ -255,7 +274,7 @@ class LLMManagementWindow(Container):
     """
 
     class DeferredViewsMounted(Message):
-        """The five deferred views now exist (task-2900).
+        """The deferred model-management views now exist (task-2900).
 
         Posted at the end of `_finish_deferred_mount` so ancestors that
         hydrate state into those views on (re)mount — `LLMScreen`'s
@@ -264,7 +283,32 @@ class LLMManagementWindow(Container):
         get a second, correctly-ordered chance.
         """
 
-    DEFAULT_CSS = """
+    class ManagedGGUFHandoffResolved(Message):
+        """Report exact managed-GGUF validation to the owning Models screen."""
+
+        def __init__(
+            self,
+            provider: str,
+            reference: ArtifactRef,
+            *,
+            succeeded: bool,
+            reason: str | None = None,
+        ) -> None:
+            """Create a path-free handoff result.
+
+            Args:
+                provider: Internal GGUF runtime key.
+                reference: Exact managed identity that was validated.
+                succeeded: Whether the identity was committed to the runtime.
+                reason: Allowlisted failure category, never a filesystem path.
+            """
+            super().__init__()
+            self.provider = provider
+            self.reference = reference
+            self.succeeded = succeeded
+            self.reason = reason
+
+    BUNDLED_CSS = """
     LLMManagementWindow {
         layout: horizontal;
         height: 100%;
@@ -472,6 +516,20 @@ class LLMManagementWindow(Container):
         "mlx": ("mlx-start-server-button", "mlx-stop-server-button"),
         "ollama": ("ollama-start-service-button", "ollama-stop-service-button"),
     }
+    GGUF_PROVIDERS = ("llamacpp", "llamafile")
+    GGUF_SOURCE_CONTROLS = {
+        provider: (
+            f"{provider}-gguf-source-mode",
+            f"{provider}-gguf-managed-select",
+            f"{provider}-gguf-refresh-button",
+            f"{provider}-model-path",
+            f"{provider}-browse-model-button",
+            f"{provider}-exec-path",
+            f"{provider}-browse-exec-button",
+            f"{provider}-detect-exec-button",
+        )
+        for provider in GGUF_PROVIDERS
+    }
 
     # htop-style view cycling (single printable keys; focused text inputs
     # consume them first, so forms are unaffected). See ADR-031.
@@ -489,12 +547,41 @@ class LLMManagementWindow(Container):
         Binding("9", "jump_view(8)", "View 9", show=False),
     ]
 
-    def __init__(self, app_instance: "TldwCli", **kwargs):
+    def __init__(
+        self,
+        app_instance: "TldwCli",
+        *,
+        can_start_import: Callable[[], bool] | None = None,
+        on_import_lane_changed: Callable[[bool], None] | None = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self._can_start_import = can_start_import or (lambda: True)
+        self._on_import_lane_changed = on_import_lane_changed or (lambda _active: None)
         self._async_presentation_generations: dict[str, int] = {}
         self._managed_install_active = False
         self._managed_install_progress = None
+        self._gguf_sources = {
+            provider: initial_gguf_selection(provider, "")
+            for provider in self.GGUF_PROVIDERS
+        }
+        self._managed_gguf_choices: tuple[ManagedGGUFChoice, ...] = ()
+        self._managed_gguf_inventory_generation = 0
+        self._managed_gguf_inventory_started = False
+        self._managed_gguf_inventory_error = False
+        self._pending_managed_gguf_handoff: tuple[str, ArtifactRef] | None = None
+        self._server_active_states = {
+            provider: False for provider in self.SERVER_CONTROLS
+        }
+        self._model_library_focus_ids = {
+            "curated": "curated-models-refresh",
+            "installed": "installed-models-refresh",
+        }
+        self._model_library_widget_ids = {
+            "curated": "curated-models-view",
+            "installed": "installed-models-view",
+        }
 
         # Map navigation button IDs to view IDs. Order matters: it drives the
         # [/] cycling and the position indicator, so it matches the sidebar's
@@ -509,20 +596,19 @@ class LLMManagementWindow(Container):
             "mlx-lm": "llm-view-mlx-lm",
             "curated": "llm-view-curated",
             "installed": "llm-view-installed",
+            "external": "llm-view-external",
             "remote": "llm-view-remote",
-            "download-models": "llm-view-download-models",
         }
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.debug("LLMManagementWindow.on_mount called")
-        # task-2900: the five heavy hidden views mount here, after the first
-        # refresh, then the initial activation and the one-shot Ollama
-        # initializers run — in that order, because both touch views that no
-        # longer exist at compose time (the autofill would otherwise
-        # silently never fire, UX-078).
+        self.watch(self.screen, "focused", self._record_model_library_focus, init=False)
+        # task-2900: the five heavy hidden views — Ollama, Curated, Installed,
+        # External, and Remote — mount here after the first refresh. The
+        # eleven total views then share the normal activation path.
         self.call_after_refresh(self._finish_deferred_mount)
-        self.set_interval(3.0, self._update_ollama_api_state)
+        self.set_interval(3.0, self._schedule_ollama_api_state)
 
     async def _finish_deferred_mount(self) -> None:
         """Mount deferred views, then run everything that assumes them.
@@ -543,25 +629,28 @@ class LLMManagementWindow(Container):
             # Autofill the Ollama executable when it's discoverable (UX-078).
             self._autofill_ollama_path,
             # Keep the Ollama API controls gated on a live service (UX-091).
-            self._update_ollama_api_state,
+            # task-15473 made this step await the non-blocking Ollama
+            # probe; task-15211 then moved the await into a widget-owned
+            # worker (see _schedule_ollama_api_state) so an in-flight probe
+            # cannot outlive the screen. The step stays in this loop for
+            # its ordering slot, but it now only SCHEDULES.
+            self._schedule_ollama_api_state,
         ):
             try:
-                step()
+                result = step()
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 logger.exception(f"Post-mount step failed: {step.__name__}")
         self.post_message(self.DeferredViewsMounted())
 
     async def _mount_deferred_views(self) -> None:
-        """Mount the five heavy views that arrive CSS-hidden (task-2900).
+        """Mount the deferred views that arrive CSS-hidden (task-2900).
 
-        Screen survey: `#llm-view-download-models` (76 widgets),
-        `#llm-view-ollama` (58) and the curated/installed/remote library
-        views dominated this screen's 388-widget mount cost while arriving
-        `display: none` behind the `-active` CSS mechanism. Mounting them
-        here — off the click→paint critical path — leaves every activation
-        path working: `watch_active_view` tolerates absent views, and view
-        order inside `#llm-main-content` is irrelevant (exactly one view is
-        ever shown). Idempotent for re-entered mounts.
+        Ollama plus the Curated, Installed, External, and Remote library
+        views arrive `display: none` behind the `-active` CSS mechanism.
+        Deferring those five leaves eleven total views and keeps them off the
+        click→paint critical path. Idempotent for re-entered mounts.
         """
         try:
             content = self.query_one("#llm-main-content", Container)
@@ -571,55 +660,101 @@ class LLMManagementWindow(Container):
             return
 
         from .Screens.model_curated_view import CuratedView
+        from .Screens.model_external_view import ExternalModelView
         from .Screens.model_installed_view import InstalledView
         from .Screens.model_remote_view import RemoteView
-        from ..Widgets.HuggingFace import HuggingFaceModelBrowser
 
         curated = Container(id="llm-view-curated", classes="llm-view")
         installed = Container(id="llm-view-installed", classes="llm-view")
+        external = Container(id="llm-view-external", classes="llm-view")
         remote = Container(id="llm-view-remote", classes="llm-view")
-        download = Container(id="llm-view-download-models", classes="llm-view")
         await content.mount(
             OllamaServiceView(self._ollama_prereq_text()),
             curated,
             installed,
+            external,
             remote,
-            download,
         )
 
         legacy_dir = None
         app_config = getattr(self.app_instance, "app_config", {})
         if isinstance(app_config, dict):
-            configured = app_config.get("llm_management", {}).get(
-                "model_download_dir"
-            )
+            configured = app_config.get("llm_management", {}).get("model_download_dir")
             if configured:
                 from pathlib import Path
 
                 legacy_dir = Path(str(configured)).expanduser()
 
-        await curated.mount(CuratedView(id="curated-models-view"))
+        observation_provider = getattr(
+            self.app_instance,
+            "_audio_cpp_model_library_observation_snapshot",
+            None,
+        )
+        await curated.mount(
+            CuratedView(
+                observation_provider=observation_provider,
+                id="curated-models-view",
+            )
+        )
+        source_service = self.app_instance._ensure_parakeet_source_service()
         await installed.mount(
-            InstalledView(legacy_dir=legacy_dir, id="installed-models-view")
+            InstalledView(
+                legacy_dir=legacy_dir,
+                on_root_activated=source_service.on_root_activated,
+                may_delete=source_service.may_delete,
+                recycle_idle=self.app_instance._recycle_idle_local_stt_reference,
+                can_start_import=self._can_start_import,
+                on_import_lane_changed=self._on_import_lane_changed,
+                observation_provider=observation_provider,
+                id="installed-models-view",
+            )
+        )
+        await external.mount(
+            ExternalModelView(source_service, id="external-models-view")
         )
         # Remote is explicitly idle until Search is submitted.
         await remote.mount(RemoteView(id="remote-models-view"))
-        await download.mount(
-            HuggingFaceModelBrowser(
-                self.app_instance, id="huggingface-model-browser"
-            )
-        )
 
-    def _ollama_api_available(self) -> bool:
+    async def _ollama_api_available(self) -> bool:
         """True when an Ollama service answers (app-launched or external)."""
         proc = getattr(self.app_instance, "ollama_server_process", None)
         if proc is not None and proc.poll() is None:
             return True
         from .Screens.llm_screen import _probe_local_server
 
-        return _probe_local_server()
+        return await _probe_local_server()
 
-    def _update_ollama_api_state(self) -> None:
+    def _schedule_ollama_api_state(self) -> None:
+        """Run the Ollama API-state refresh as a widget-owned worker.
+
+        task-15211 (sweep catch): the refresh awaits a real TCP probe of
+        127.0.0.1:11434, and a coroutine scheduled straight from the 3s
+        interval (or the deferred-mount one-shot) is NOT tied to this
+        widget's lifetime -- one already in flight when the screen unmounts
+        kept awaiting, and its socket fired during test teardown. Seven
+        Lab/LLM-screen tests hit the network guard exactly there. A worker
+        owned by this widget is cancelled at unmount, so the probe dies
+        with the screen; ``exclusive`` also collapses overlapping polls on
+        a slow probe instead of stacking them.
+
+        task-22220: the inactive-screen gate is hoisted here from the
+        coroutine -- the 3 s tick on a hidden tab used to construct the
+        coroutine and schedule a worker every fire just so the coroutine's
+        own first line could drop it. An inactive screen now constructs
+        nothing. The coroutine keeps its own pre-await guard (the
+        scheduling->running race) and post-await re-check (mid-probe
+        deactivation, task-15473).
+        """
+        if not self.is_attached or not self.screen.is_active:
+            return
+        self.run_worker(
+            self._update_ollama_api_state(),
+            exclusive=True,
+            group="ollama-api-state",
+            exit_on_error=False,
+        )
+
+    async def _update_ollama_api_state(self) -> None:
         """Disable API controls when no Ollama service is running.
 
         The banner already says "requires running service"; without gating,
@@ -638,7 +773,16 @@ class LLMManagementWindow(Container):
             view = self.query_one("#llm-view-ollama")
         except Exception:  # noqa: BLE001 - view not mounted
             return
-        available = self._ollama_api_available()
+        available = await self._ollama_api_available()
+        # task-15473 review: the probe above can take up to ~0.25s (it now
+        # awaits instead of blocking), during which this widget can detach
+        # or its screen can go inactive -- the old synchronous version was
+        # atomic end-to-end, so the pre-await guard above was sufficient;
+        # the async version needs the identical check repeated here before
+        # touching any button, or a detach mid-probe mutates widgets that
+        # are no longer the active screen's.
+        if not self.is_attached or not self.screen.is_active:
+            return
         for button in view.query(Button):
             if not button.id or button.id in excluded:
                 continue
@@ -674,6 +818,7 @@ class LLMManagementWindow(Container):
         except Exception:  # noqa: BLE001 - not mounted yet
             return
         narrow = 0 < content.size.width < 70
+        self.set_class(narrow, "gguf-source-narrow")
         for button in self.query(".detect-button"):
             button.display = not narrow
 
@@ -742,6 +887,8 @@ class LLMManagementWindow(Container):
         child views already mounted.
         """
         self.active_view = "llama-cpp"
+        for provider in self.GGUF_PROVIDERS:
+            self._render_gguf_source(provider)
         self._sync_all_process_controls()
 
     def _ollama_prereq_text(self) -> str:
@@ -756,8 +903,146 @@ class LLMManagementWindow(Container):
             "Install from ollama.com, or use Browse to point at it."
         )
 
+    def _gguf_mode_options(self, provider: str) -> tuple[tuple[str, str], ...]:
+        """Return the exact path-free mode matrix for one GGUF provider."""
+
+        if provider == "llamacpp":
+            return (
+                ("Managed GGUF", GGUFSourceMode.MANAGED.value),
+                ("External GGUF", GGUFSourceMode.EXTERNAL.value),
+            )
+        return (
+            ("Embedded", GGUFSourceMode.EMBEDDED.value),
+            ("Managed GGUF", GGUFSourceMode.MANAGED.value),
+            ("External GGUF", GGUFSourceMode.EXTERNAL.value),
+        )
+
+    def _server_active(self, provider: str) -> bool:
+        """Read lifecycle truth, with the legacy app-less harness idle."""
+
+        return self.app_instance is not None and server_is_active(
+            self.app_instance, provider
+        )
+
+    def _gguf_managed_options(self) -> list[tuple[str, object]]:
+        """Return path-free labels carrying exact artifact references."""
+
+        if not self._managed_gguf_choices:
+            return [("No managed GGUF models", Select.NULL)]
+        return [
+            (choice.label, choice.reference) for choice in self._managed_gguf_choices
+        ]
+
+    def _managed_gguf_ready(self, provider: str) -> bool:
+        """Return whether the retained ref is present in the current inventory."""
+
+        selection = self._gguf_sources[provider]
+        return not self._managed_gguf_inventory_error and any(
+            choice.reference == selection.managed_ref
+            for choice in self._managed_gguf_choices
+        )
+
+    def _compose_gguf_source(self, provider: str, active: bool) -> ComposeResult:
+        """Compose one compact, mutually-exclusive GGUF source control."""
+
+        selection = self._gguf_sources[provider]
+        with Horizontal(classes="gguf-source-mode-row"):
+            yield Label("Model source:", classes="gguf-source-label")
+            yield Select(
+                self._gguf_mode_options(provider),
+                value=selection.mode.value,
+                allow_blank=False,
+                compact=True,
+                id=f"{provider}-gguf-source-mode",
+                classes="gguf-source-mode",
+                disabled=active,
+            )
+
+        with Vertical(
+            id=f"{provider}-gguf-managed-region",
+            classes=(
+                "gguf-source-region gguf-source-managed"
+                + (" -active" if selection.mode is GGUFSourceMode.MANAGED else "")
+            ),
+        ):
+            with Horizontal(classes="gguf-source-choice-row"):
+                yield Select(
+                    self._gguf_managed_options(),
+                    value=(
+                        selection.managed_ref
+                        if selection.managed_ref is not None
+                        else Select.NULL
+                    ),
+                    prompt="Choose a managed GGUF model",
+                    compact=True,
+                    id=f"{provider}-gguf-managed-select",
+                    classes="gguf-source-managed-select",
+                    disabled=active or not self._managed_gguf_choices,
+                )
+                yield Button(
+                    "Refresh managed models",
+                    id=f"{provider}-gguf-refresh-button",
+                    classes="gguf-source-refresh",
+                    disabled=active,
+                )
+
+        with Vertical(
+            id=f"{provider}-gguf-external-region",
+            classes=(
+                "gguf-source-region gguf-source-external"
+                + (" -active" if selection.mode is GGUFSourceMode.EXTERNAL else "")
+            ),
+        ):
+            with Horizontal(classes="gguf-source-choice-row"):
+                yield Input(
+                    id=f"{provider}-model-path",
+                    placeholder="/path/to/external-model.gguf",
+                    disabled=active,
+                )
+                yield Button(
+                    "Browse",
+                    id=f"{provider}-browse-model-button",
+                    classes="browse_button gguf-source-browse",
+                    disabled=active,
+                    tooltip=(
+                        "Choose a GGUF model file for llama.cpp."
+                        if provider == "llamacpp"
+                        else "Choose an optional external GGUF model for llamafile."
+                    ),
+                )
+            yield Static(
+                "Outside Chatbook · integrity unknown",
+                classes="gguf-source-authority",
+            )
+            yield Static(
+                "This file is used in place and is not imported, copied, "
+                "deleted, or selected globally.",
+                classes="gguf-source-copy",
+            )
+
+        with Vertical(
+            id=f"{provider}-gguf-embedded-region",
+            classes=(
+                "gguf-source-region gguf-source-embedded"
+                + (" -active" if selection.mode is GGUFSourceMode.EMBEDDED else "")
+            ),
+        ):
+            yield Static(
+                "Use the model embedded in this llamafile executable.",
+                classes="gguf-source-copy",
+            )
+
+        yield Static(
+            self._gguf_authority_text(provider),
+            id=f"{provider}-gguf-source-status",
+            classes="gguf-source-status",
+        )
+
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""
+        initial_active = {
+            provider: self._server_active(provider) for provider in self.GGUF_PROVIDERS
+        }
         # Main content area
         with Container(id="llm-main-content"):
             # Llama.cpp View
@@ -779,48 +1064,41 @@ class LLMManagementWindow(Container):
                         "Start Server",
                         id="llamacpp-start-server-button",
                         classes="action_button",
+                        disabled=initial_active["llamacpp"],
                     )
-                    yield Button(
+                    llamacpp_stop = Button(
                         "Stop Server",
                         id="llamacpp-stop-server-button",
                         classes="action_button",
                         disabled=True,
                     )
+                    llamacpp_stop.disabled = not initial_active["llamacpp"]
+                    yield llamacpp_stop
 
                 with Container(classes="input_container"):
                     yield Label("Server Executable:", classes="inline-label")
                     yield Input(
                         id="llamacpp-exec-path",
                         placeholder="e.g. /opt/llama.cpp/build/bin/server",
+                        disabled=initial_active["llamacpp"],
                     )
                     yield Button(
                         "Browse",
                         id="llamacpp-browse-exec-button",
                         classes="browse_button",
+                        disabled=initial_active["llamacpp"],
                         tooltip="Choose the llama.cpp server executable.",
                     )
                     yield Button(
                         "Detect",
                         id="llamacpp-detect-exec-button",
                         classes="browse_button detect-button",
+                        disabled=initial_active["llamacpp"],
                         tooltip="Find the llama.cpp server binary on this machine.",
                     )
 
-                with Container(classes="input_container"):
-                    yield Label("GGUF Model File Path:", classes="inline-label")
-                    yield Input(
-                        id="llamacpp-model-path",
-                        placeholder="e.g. /models/model.gguf",
-                    )
-                    yield Button(
-                        "Browse",
-                        id="llamacpp-browse-model-button",
-                        classes="browse_button",
-                        tooltip="Choose a GGUF model file for llama.cpp.",
-                    )
-                yield Static(
-                    "The .gguf model file to serve.",
-                    classes="description",
+                yield from self._compose_gguf_source(
+                    "llamacpp", initial_active["llamacpp"]
                 )
 
                 yield Label("Host:", classes="label")
@@ -828,7 +1106,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="llamacpp-port", placeholder="8001")
-                yield Static("Default 8001 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8001 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 yield Label("Additional Arguments (single line):", classes="label")
                 yield Input(
@@ -872,52 +1153,54 @@ class LLMManagementWindow(Container):
                         "Start Server",
                         id="llamafile-start-server-button",
                         classes="action_button",
+                        disabled=initial_active["llamafile"],
                     )
-                    yield Button(
+                    llamafile_stop = Button(
                         "Stop Server",
                         id="llamafile-stop-server-button",
                         classes="action_button",
                         disabled=True,
                     )
-
+                    llamafile_stop.disabled = not initial_active["llamafile"]
+                    yield llamafile_stop
 
                 with Container(classes="input_container"):
-                    yield Label("Llamafile Executable (.llamafile):", classes="inline-label")
+                    yield Label(
+                        "Llamafile Executable (.llamafile):", classes="inline-label"
+                    )
                     yield Input(
-                        id="llamafile-exec-path", placeholder="/path/to/model.llamafile"
+                        id="llamafile-exec-path",
+                        placeholder="/path/to/model.llamafile",
+                        disabled=initial_active["llamafile"],
                     )
                     yield Button(
                         "Browse",
                         id="llamafile-browse-exec-button",
                         classes="browse_button",
+                        disabled=initial_active["llamafile"],
                         tooltip="Choose the llamafile executable.",
                     )
                     yield Button(
                         "Detect",
                         id="llamafile-detect-exec-button",
                         classes="browse_button detect-button",
+                        disabled=initial_active["llamafile"],
                         tooltip="Find the llamafile executable on this machine.",
                     )
 
-                with Container(classes="input_container"):
-                    yield Label("Optional External Model (GGUF):", classes="inline-label")
-                    yield Input(
-                        id="llamafile-model-path",
-                        placeholder="/path/to/external-model.gguf (optional)",
-                    )
-                    yield Button(
-                        "Browse",
-                        id="llamafile-browse-model-button",
-                        classes="browse_button",
-                        tooltip="Choose an optional external GGUF model for llamafile.",
-                    )
+                yield from self._compose_gguf_source(
+                    "llamafile", initial_active["llamafile"]
+                )
 
                 yield Label("Host:", classes="label")
                 yield Input(id="llamafile-host", value="127.0.0.1")
 
                 yield Label("Port:", classes="label")
                 yield Input(id="llamafile-port", placeholder="8000")
-                yield Static("Default 8000 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8000 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 yield Label("Additional Arguments (multi-line):", classes="label")
                 yield TextArea(
@@ -965,7 +1248,6 @@ class LLMManagementWindow(Container):
                         disabled=True,
                     )
 
-
                 with Container(classes="input_container"):
                     yield Label("Python Interpreter Path:", classes="inline-label")
                     yield Input(
@@ -981,7 +1263,9 @@ class LLMManagementWindow(Container):
                     )
 
                 with Container(classes="input_container"):
-                    yield Label("Model Path (or HuggingFace Repo ID):", classes="inline-label")
+                    yield Label(
+                        "Model Path (or HuggingFace Repo ID):", classes="inline-label"
+                    )
                     yield Input(
                         id="vllm-model-path",
                         placeholder="e.g., /path/to/model or HuggingFaceName/ModelName",
@@ -998,7 +1282,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="vllm-port", placeholder="8000")
-                yield Static("Default 8000 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8000 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 yield Label("Additional Arguments:", classes="label")
                 yield TextArea(
@@ -1034,7 +1321,6 @@ class LLMManagementWindow(Container):
                         disabled=True,
                     )
 
-
                 with Container(classes="input_container"):
                     yield Label("Python Interpreter Path:", classes="inline-label")
                     yield Input(
@@ -1050,7 +1336,9 @@ class LLMManagementWindow(Container):
                     )
 
                 with Container(classes="input_container"):
-                    yield Label("Path to your ONNX Server Script (.py):", classes="inline-label")
+                    yield Label(
+                        "Path to your ONNX Server Script (.py):", classes="inline-label"
+                    )
                     yield Input(
                         id="onnx-script-path",
                         placeholder="/path/to/your/onnx_server_script.py",
@@ -1063,7 +1351,9 @@ class LLMManagementWindow(Container):
                     )
 
                 with Container(classes="input_container"):
-                    yield Label("Model to Load (Path for script):", classes="inline-label")
+                    yield Label(
+                        "Model to Load (Path for script):", classes="inline-label"
+                    )
                     yield Input(
                         id="onnx-model-path",
                         placeholder="Path to your .onnx model file or directory",
@@ -1080,7 +1370,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="onnx-port", placeholder="8004", classes="input_field")
-                yield Static("Default 8004 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8004 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 yield Label("Additional Script Arguments:", classes="label")
                 yield TextArea(
@@ -1131,25 +1424,6 @@ class LLMManagementWindow(Container):
                     highlight=False,
                 )
 
-                yield Static("---", classes="separator")
-
-                yield Label("Download New Model:", classes="section_label")
-                yield Label(
-                    "Model Repo ID (e.g., 'google-bert/bert-base-uncased'):",
-                    classes="label",
-                )
-                yield Input(
-                    id="transformers-download-repo-id",
-                    placeholder="username/model_name",
-                )
-                yield Label("Revision/Branch (optional):", classes="label")
-                yield Input(id="transformers-download-revision", placeholder="main")
-                yield Button(
-                    "Download Model",
-                    id="transformers-download-model-button",
-                    classes="action_button",
-                )
-
                 yield Label("Model Operations Output", classes="section_label")
                 yield RichLog(
                     id="transformers-log-output",
@@ -1185,7 +1459,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="mlx-port", placeholder="8080", classes="input_field")
-                yield Static("Default 8080 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8080 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 with Collapsible(
                     title="Common MLX-LM Server Arguments",
@@ -1223,7 +1500,6 @@ class LLMManagementWindow(Container):
                     id="mlx-log-output", classes="log_output", wrap=True, highlight=True
                 )
 
-
     @on(InstallProgressed)
     def _managed_install_progressed(self, event: InstallProgressed) -> None:
         """Mirror Curated progress into the persistent Installed view."""
@@ -1256,12 +1532,361 @@ class LLMManagementWindow(Container):
         if not event.active:
             installed.ensure_loaded(force=True)
 
+    def gguf_source_snapshot(self, provider: str) -> GGUFSourceSelection:
+        """Return one immutable launch snapshot without store access."""
+
+        try:
+            selection = self._gguf_sources[provider]
+        except KeyError:
+            raise ValueError("unsupported GGUF source provider") from None
+        if selection.mode is GGUFSourceMode.MANAGED:
+            if self._managed_gguf_inventory_error:
+                raise ValueError("managed GGUF inventory unavailable")
+            if not self._managed_gguf_ready(provider):
+                raise ValueError("managed GGUF selection unavailable")
+        try:
+            value = self.query_one(f"#{provider}-model-path", Input).value
+        except QueryError:
+            return selection.validate_for(provider)
+        external_path = Path(value) if value.strip() else None
+        if external_path != selection.external_path:
+            selection = GGUFSourceSelection(
+                mode=selection.mode,
+                managed_ref=selection.managed_ref,
+                external_path=external_path,
+            )
+            self._gguf_sources[provider] = selection
+        return selection.validate_for(provider)
+
+    def configure_managed_gguf(
+        self,
+        provider: str,
+        reference: ArtifactRef,
+    ) -> bool:
+        """Open a GGUF runtime and preselect one exact managed model.
+
+        The method changes configuration state only. It never activates a
+        managed root, claims a server, or starts a process.
+
+        Args:
+            provider: Internal GGUF provider key (``llamacpp`` or ``llamafile``).
+            reference: Exact verified managed root to select.
+
+        Returns:
+            ``True`` when the handoff was accepted, including while a fresh
+            inventory read is resolving the exact reference.
+        """
+        if (
+            provider not in self.GGUF_PROVIDERS
+            or type(reference) is not ArtifactRef
+            or any(self._server_active(item) for item in self.GGUF_PROVIDERS)
+        ):
+            return False
+        self.active_view = "llama-cpp" if provider == "llamacpp" else "llamafile"
+        self._pending_managed_gguf_handoff = (provider, reference)
+        if reference in {choice.reference for choice in self._managed_gguf_choices}:
+            self._commit_managed_gguf_handoff(provider, reference)
+            return True
+        if not self._refresh_managed_gguf_inventory():
+            self._pending_managed_gguf_handoff = None
+            return False
+        return True
+
+    def _commit_managed_gguf_handoff(
+        self,
+        provider: str,
+        reference: ArtifactRef,
+    ) -> None:
+        """Commit a provider/ref pair already proven present in inventory."""
+        selection = self._gguf_sources[provider]
+        self._gguf_sources[provider] = GGUFSourceSelection(
+            mode=GGUFSourceMode.MANAGED,
+            managed_ref=reference,
+            external_path=selection.external_path,
+        )
+        mode = self.query_one(f"#{provider}-gguf-source-mode", Select)
+        managed = self.query_one(f"#{provider}-gguf-managed-select", Select)
+        with mode.prevent(Select.Changed):
+            mode.value = GGUFSourceMode.MANAGED.value
+        with managed.prevent(Select.Changed):
+            managed.value = reference
+        self._pending_managed_gguf_handoff = None
+        self._render_gguf_source(provider)
+        self._sync_process_controls(provider)
+        self.post_message(
+            self.ManagedGGUFHandoffResolved(
+                provider,
+                reference,
+                succeeded=True,
+            )
+        )
+
+    def _render_gguf_source(self, provider: str) -> None:
+        """Patch one source region and its path-free status in place."""
+
+        selection = self._gguf_sources[provider]
+        for mode in GGUFSourceMode:
+            try:
+                region = self.query_one(f"#{provider}-gguf-{mode.value}-region")
+            except QueryError:
+                continue
+            region.set_class(mode is selection.mode, "-active")
+        self._render_gguf_authority(provider)
+
+    def _render_gguf_authority(self, provider: str) -> None:
+        """Render selected or active authority from lifecycle truth."""
+
+        try:
+            status = self.query_one(f"#{provider}-gguf-source-status", Static)
+        except QueryError:
+            return
+        status.update(self._gguf_authority_text(provider))
+
+    def _gguf_authority_text(self, provider: str) -> str:
+        """Return path-free authority text without querying mounted widgets."""
+
+        if self.app_instance is None:
+            claim, process = None, None
+        else:
+            claim, process = server_lifecycle_snapshot(self.app_instance, provider)
+        if claim is not None:
+            phase = "Running" if process is not None else "Pending"
+            authority = claim.authority or "Local process"
+            return f"{phase} authority: {authority}"
+        if (
+            self._managed_gguf_inventory_error
+            and self._gguf_sources[provider].mode is GGUFSourceMode.MANAGED
+        ):
+            return (
+                "Managed GGUF inventory unavailable. Refresh managed models to retry."
+            )
+        if (
+            self._gguf_sources[provider].mode is GGUFSourceMode.MANAGED
+            and self._gguf_sources[provider].managed_ref is None
+        ):
+            return (
+                "Selected managed GGUF is unavailable. "
+                "Choose another managed model or refresh."
+            )
+        if (
+            self._gguf_sources[provider].mode is GGUFSourceMode.EXTERNAL
+            and self._gguf_sources[provider].external_path is None
+        ):
+            return "Choose an external GGUF file to enable Start."
+        return f"Selected authority: {self._gguf_sources[provider].authority}"
+
+    def _select_source_mode(self, provider: str, mode: GGUFSourceMode) -> None:
+        """Switch one provider without discarding inactive selections."""
+
+        if self._server_active(provider):
+            select = self.query_one(f"#{provider}-gguf-source-mode", Select)
+            with select.prevent(Select.Changed):
+                select.value = self._gguf_sources[provider].mode.value
+            return
+        self._gguf_sources[provider] = self._gguf_sources[provider].for_mode(mode)
+        self._render_gguf_source(provider)
+        self._sync_process_controls(provider)
+        if mode is GGUFSourceMode.MANAGED:
+            self._ensure_managed_gguf_inventory()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Apply source mode and exact managed-reference selections."""
+
+        select_id = event.select.id or ""
+        for provider in self.GGUF_PROVIDERS:
+            if select_id == f"{provider}-gguf-source-mode":
+                if event.value is not Select.NULL:
+                    self._select_source_mode(provider, GGUFSourceMode(str(event.value)))
+                return
+            if select_id != f"{provider}-gguf-managed-select":
+                continue
+            if self._server_active(provider):
+                with event.select.prevent(Select.Changed):
+                    event.select.value = (
+                        self._gguf_sources[provider].managed_ref or Select.NULL
+                    )
+                return
+            if event.value is Select.NULL:
+                return
+            self._gguf_sources[provider] = GGUFSourceSelection(
+                mode=self._gguf_sources[provider].mode,
+                managed_ref=event.value,
+                external_path=self._gguf_sources[provider].external_path,
+            )
+            self._sync_process_controls(provider)
+            return
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Retain external GGUF paths while preserving lifecycle fencing."""
+
+        input_id = event.input.id or ""
+        for provider in self.GGUF_PROVIDERS:
+            if input_id != f"{provider}-model-path":
+                continue
+            selection = self._gguf_sources[provider]
+            if self._server_active(provider):
+                expected = str(selection.external_path or "")
+                if event.input.value != expected:
+                    with event.input.prevent(Input.Changed):
+                        event.input.value = expected
+                return
+            external_path = Path(event.value) if event.value.strip() else None
+            mode = selection.mode
+            if (
+                provider == "llamafile"
+                and mode is GGUFSourceMode.EMBEDDED
+                and selection.external_path is None
+                and external_path is not None
+            ):
+                mode = GGUFSourceMode.EXTERNAL
+                mode_select = self.query_one(f"#{provider}-gguf-source-mode", Select)
+                with mode_select.prevent(Select.Changed):
+                    mode_select.value = mode.value
+            self._gguf_sources[provider] = GGUFSourceSelection(
+                mode=mode,
+                managed_ref=selection.managed_ref,
+                external_path=external_path,
+            )
+            self._render_gguf_source(provider)
+            self._sync_process_controls(provider)
+            return
+
+    def _ensure_managed_gguf_inventory(self) -> None:
+        """Load inventory once; explicit Refresh may always start a new generation."""
+
+        if not self._managed_gguf_inventory_started:
+            self._refresh_managed_gguf_inventory()
+
+    def _refresh_managed_gguf_inventory(self) -> bool:
+        """Start a path-free, generation-fenced inventory thread worker.
+
+        Returns:
+            ``True`` when a worker was scheduled, or ``False`` when current
+            lifecycle authority prevents a refresh.
+        """
+
+        if self.app_instance is None:
+            return False
+        if any(self._server_active(p) for p in self.GGUF_PROVIDERS):
+            return False
+        self._managed_gguf_inventory_started = True
+        self._managed_gguf_inventory_generation += 1
+        generation = self._managed_gguf_inventory_generation
+        self.app_instance.run_worker(
+            functools.partial(self._load_managed_gguf_inventory, generation),
+            thread=True,
+            group="managed_gguf_inventory",
+            description="Loading managed GGUF models",
+            exclusive=True,
+        )
+        return True
+
+    def _load_managed_gguf_inventory(self, generation: int) -> None:
+        """Read store inventory off-loop and deliver only path-free choices."""
+
+        try:
+            choices = managed_gguf_choices(managed_service().list_installed())
+            error = None
+        except Exception:
+            choices = ()
+            error = True
+            logger.error("Managed GGUF inventory load failed")
+        self.app_instance.call_from_thread(
+            self._apply_managed_gguf_inventory,
+            generation,
+            choices,
+            error,
+        )
+
+    def _apply_managed_gguf_inventory(
+        self,
+        generation: int,
+        choices: tuple[ManagedGGUFChoice, ...],
+        error: bool | None,
+    ) -> None:
+        """Apply one current inventory result to the current destination only."""
+
+        if (
+            generation != self._managed_gguf_inventory_generation
+            or current_llm_destination(self.app_instance) is not self
+            or not self.is_attached
+        ):
+            return
+        if any(self._server_active(p) for p in self.GGUF_PROVIDERS):
+            self._managed_gguf_inventory_started = False
+            pending = self._pending_managed_gguf_handoff
+            if pending is not None:
+                self._pending_managed_gguf_handoff = None
+                provider, reference = pending
+                self.post_message(
+                    self.ManagedGGUFHandoffResolved(
+                        provider,
+                        reference,
+                        succeeded=False,
+                        reason="server-active",
+                    )
+                )
+            return
+        self._managed_gguf_choices = choices
+        self._managed_gguf_inventory_error = bool(error)
+        references = {choice.reference for choice in choices}
+        for provider in self.GGUF_PROVIDERS:
+            selection = self._gguf_sources[provider]
+            if selection.managed_ref is None and choices:
+                selection = GGUFSourceSelection(
+                    mode=selection.mode,
+                    managed_ref=choices[0].reference,
+                    external_path=selection.external_path,
+                )
+                self._gguf_sources[provider] = selection
+            elif (
+                not error
+                and selection.managed_ref is not None
+                and selection.managed_ref not in references
+            ):
+                selection = GGUFSourceSelection(
+                    mode=selection.mode,
+                    managed_ref=None,
+                    external_path=selection.external_path,
+                )
+                self._gguf_sources[provider] = selection
+            select = self.query_one(f"#{provider}-gguf-managed-select", Select)
+            with select.prevent(Select.Changed):
+                select.set_options(self._gguf_managed_options())
+                select.value = (
+                    selection.managed_ref
+                    if selection.managed_ref in references
+                    else Select.NULL
+                )
+            self._sync_process_controls(provider)
+        pending = self._pending_managed_gguf_handoff
+        if pending is not None:
+            provider, reference = pending
+            if not error and reference in references:
+                self._commit_managed_gguf_handoff(provider, reference)
+            else:
+                self._pending_managed_gguf_handoff = None
+                self.post_message(
+                    self.ManagedGGUFHandoffResolved(
+                        provider,
+                        reference,
+                        succeeded=False,
+                        reason="inventory-error" if error else "missing",
+                    )
+                )
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route allowlisted actions inside this destination."""
 
         event.stop()
         button = event.button
         if not button.id:
+            return
+
+        if button.id in {
+            f"{provider}-gguf-refresh-button" for provider in self.GGUF_PROVIDERS
+        }:
+            self._refresh_managed_gguf_inventory()
             return
 
         callback = self.ACTION_HANDLERS.get(button.id)
@@ -1309,10 +1934,44 @@ class LLMManagementWindow(Container):
         """Render one provider's controls from app-owned lifecycle state."""
 
         start_id, stop_id = self.SERVER_CONTROLS[provider]
-        active = server_is_active(self.app_instance, provider)
+        active = self._server_active(provider)
+        was_active = self._server_active_states.get(provider, False)
+        self._server_active_states[provider] = active
         try:
-            self.query_one(f"#{start_id}", Button).disabled = active
-            self.query_one(f"#{stop_id}", Button).disabled = not active
+            start = self.query_one(f"#{start_id}", Button)
+            stop = self.query_one(f"#{stop_id}", Button)
+            source_ready = True
+            if provider in self.GGUF_PROVIDERS:
+                selection = self._gguf_sources[provider]
+                source_ready = (
+                    selection.mode is GGUFSourceMode.EMBEDDED
+                    or (
+                        selection.mode is GGUFSourceMode.MANAGED
+                        and self._managed_gguf_ready(provider)
+                    )
+                    or (
+                        selection.mode is GGUFSourceMode.EXTERNAL
+                        and selection.external_path is not None
+                    )
+                )
+            start.disabled = active or not source_ready
+            stop.disabled = not active
+            if provider in self.GGUF_PROVIDERS:
+                for control_id in self.GGUF_SOURCE_CONTROLS[provider]:
+                    control = self.query_one(f"#{control_id}")
+                    if control_id == f"{provider}-gguf-managed-select":
+                        control.disabled = (
+                            active
+                            or self._managed_gguf_inventory_error
+                            or not self._managed_gguf_choices
+                        )
+                    else:
+                        control.disabled = active
+                self._render_gguf_authority(provider)
+                if active and not was_active:
+                    stop.focus()
+                elif was_active and not active:
+                    start.focus()
         except QueryError:
             logger.warning(
                 "Could not restore LLM process controls (provider={})",
@@ -1412,19 +2071,77 @@ class LLMManagementWindow(Container):
 
                 # Populate help text for specific views
                 self._populate_help_text(new_view, target_view)
+                if new_view in self._model_library_focus_ids:
+                    self.call_after_refresh(
+                        self._restore_model_library_focus,
+                        new_view,
+                    )
                 self._start_view_work(new_view, target_view)
             except QueryError:
                 logger.error(f"Target view #{target_view_id} not found")
 
-    def _start_view_work(self, view_name: str, view_widget) -> None:
-        """Kick off work a view should only do once it is actually shown.
+    def _record_model_library_focus(self, focused: Widget | None) -> None:
+        """Retain stable row focus whenever the screen's reactive focus changes."""
 
-        `compose()` builds all nine views eagerly, so anything a view does
-        at mount time happens on every visit to this screen regardless of
-        which view the user wanted. The HuggingFace browse was doing exactly
-        that -- a live request to huggingface.co on arrival, for users who
-        never open Download Models (task-887).
-        """
+        if focused is None:
+            return
+        for view_name in self._model_library_focus_ids:
+            if view_name != self.active_view:
+                continue
+            view_id = self.view_mapping[view_name]
+            try:
+                pane = self.query_one(f"#{view_id}")
+            except QueryError:
+                continue
+            if pane not in focused.ancestors_with_self:
+                continue
+            try:
+                library = pane.query_one(
+                    f"#{self._model_library_widget_ids[view_name]}"
+                )
+            except QueryError:
+                return
+            locator = library.focus_locator(focused)
+            if locator is not None:
+                self._model_library_focus_ids[view_name] = locator
+            return
+
+    def _restore_model_library_focus(self, view_name: str) -> None:
+        """Move focus into the visible model-library pane after switching."""
+
+        if self.active_view != view_name:
+            return
+        target_id = self.view_mapping[view_name]
+        try:
+            target = self.query_one(f"#{target_id}")
+        except QueryError:
+            return
+        locator = self._model_library_focus_ids[view_name]
+        try:
+            library = target.query_one(f"#{self._model_library_widget_ids[view_name]}")
+        except QueryError:
+            library = None
+        if library is not None and callable(getattr(library, "restore_focus", None)):
+            library.restore_focus(locator)
+            if (
+                self.app.focused is not None
+                and target in self.app.focused.ancestors_with_self
+            ):
+                return
+        control = next(
+            (button for button in target.query(Button) if not button.disabled),
+            None,
+        )
+        if control is None or control.disabled:
+            return
+        control.focus()
+        control.scroll_visible(animate=False, immediate=True, force=True)
+
+    def _start_view_work(self, view_name: str, view_widget) -> None:
+        """Kick off work a view should only do once it is actually shown."""
+        if view_name in {"llama-cpp", "llamafile"}:
+            self._ensure_managed_gguf_inventory()
+            return
         if view_name in {"curated", "installed"}:
             try:
                 managed_view = view_widget.query_one(
@@ -1435,20 +2152,30 @@ class LLMManagementWindow(Container):
             except QueryError:
                 logger.debug(f"{view_name.title()} view is unavailable; skipped.")
                 return
+            already_loaded = bool(getattr(managed_view, "_loaded", False))
             managed_view.ensure_loaded()
+            if already_loaded:
+                # Restore the pane's semantic row focus first so the observer
+                # can retain that exact locator across its evidence recompose.
+                self.call_after_refresh(self.refresh_model_library_observations)
             return
-        if view_name != "download-models":
-            return
-        # Local import: this module is on the Models mount path, and the
-        # point of the change is to keep that path cheap.
-        from ..Widgets.HuggingFace.model_search_widget import ModelSearchWidget
 
-        try:
-            search = view_widget.query_one(ModelSearchWidget)
-        except QueryError:
-            logger.debug("Download Models view has no ModelSearchWidget; skipped.")
+    def refresh_model_library_observations(self) -> None:
+        """Refresh evidence only for the currently visible loaded library pane."""
+
+        view_name = self.active_view
+        if view_name not in {"curated", "installed"}:
             return
-        search.ensure_initial_browse()
+        try:
+            managed_view = self.query_one(
+                "#curated-models-view"
+                if view_name == "curated"
+                else "#installed-models-view"
+            )
+        except QueryError:
+            return
+        if getattr(managed_view, "_loaded", False):
+            managed_view.refresh_observations()
 
     def _populate_help_text(self, view_name: str, view_widget) -> None:
         """Populate help text for views that have it."""

@@ -77,7 +77,7 @@ class SidebarSection(Container):
             if self.content:
                 self.content.remove_class("loading-fade")
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="enhanced-sidebar-load-content")
     async def load_content(self, loader: Callable) -> None:
         """Load content asynchronously with loading indicator.
 

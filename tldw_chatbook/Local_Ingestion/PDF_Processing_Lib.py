@@ -362,6 +362,7 @@ def process_pdf(
     perform_analysis: bool = False,
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
+    keyless_ok: bool = False,  # Explicit opt-in for keyless analysis dispatch.
     custom_prompt: Optional[str] = None,
     system_prompt: Optional[str] = None,
     summarize_recursively: bool = False,
@@ -390,6 +391,10 @@ def process_pdf(
       - perform_analysis (bool): Whether to perform summarization.
       - api_name (str, optional): API name for summarization.
       - api_key (str, optional): API key for summarization.
+      - keyless_ok (bool): Explicit opt-in allowing analysis WITHOUT an
+        ``api_key`` (keyless local providers). Set only by the Library
+        ingest seam after provider readiness confirmed keyless-ready;
+        direct callers keep the historical no-key => silent-skip contract.
       - custom_prompt (str, optional): Custom user prompt for summarization.
       - system_prompt (str, optional): System prompt for summarization.
       - summarize_recursively (bool): Whether to perform recursive summarization.
@@ -808,10 +813,27 @@ def process_pdf(
 
         # --- Step 4: Summarization / Analysis ---
         # Use path_for_processing for logger context if needed
+        # Never log the credential itself -- presence is all the gate check
+        # needs, and this line now sees real keys from the Library flow.
         logger.debug(
-            f"PROCESS_PDF: Checking condition -> perform_analysis={perform_analysis}, api_name='{api_name}', api_key='{api_key}', chunks_exist={bool(processed_chunks)}"
+            f"PROCESS_PDF: Checking condition -> perform_analysis={perform_analysis}, api_name='{api_name}', api_key={'<set>' if api_key else '<none>'}, chunks_exist={bool(processed_chunks)}"
         )  # Keep this log
-        if perform_analysis and api_name and api_key and processed_chunks:
+        # (task-3301, amended by the xhigh review round / F8) Keyless local
+        # providers (ollama, llama.cpp, ...) analyze without a credential,
+        # but ONLY behind the explicit ``keyless_ok`` opt-in the Library
+        # ingest seam sets after readiness said the provider is
+        # keyless-ready. A direct caller passing ``api_name`` without a
+        # key gets the historical silent skip -- the fully key-free gate
+        # this comment used to describe let ``analyze()`` fall back to
+        # whatever credential sat in config: unrequested spend.
+        from .analysis_gate import analysis_credentials_ok
+
+        if (
+            perform_analysis
+            and api_name
+            and analysis_credentials_ok(api_key, keyless_ok)
+            and processed_chunks
+        ):
             from ..LLM_Calls.Summarization_General_Lib import analyze
 
             logger.info(
@@ -987,7 +1009,7 @@ def process_pdf(
             logger.info(
                 f"Summarization disabled by 'perform_analysis=False' for {filename}."
             )
-        elif not api_name or not api_key:
+        elif not api_name or not analysis_credentials_ok(api_key, keyless_ok):
             logger.warning(
                 f"Summarization skipped for {filename}: API name or key not provided."
             )

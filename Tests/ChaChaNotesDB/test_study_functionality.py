@@ -1,7 +1,7 @@
 # test_study_functionality.py
 """
 Comprehensive tests for study-related functionality in ChaChaNotes_DB.
-Tests flashcards, spaced repetition, learning paths, mindmaps, and study statistics.
+Tests flashcards, spaced repetition, learning paths, and study statistics.
 """
 
 import shutil
@@ -103,13 +103,6 @@ def sample_learning_path(db_instance):
         "Python Programming", "Learn Python from basics to advanced"
     )
     return path_id
-
-
-@pytest.fixture
-def sample_mindmap(db_instance):
-    """Creates a sample mindmap and returns its ID."""
-    mindmap_id = db_instance.create_mindmap("Project Planning")
-    return mindmap_id
 
 
 # --- Helper Functions ---
@@ -990,55 +983,10 @@ class TestLearningPaths:
             db_instance.update_topic_progress(topic_id, 0.5, "invalid_status")
 
 
-class TestMindmaps:
-    """Tests for mindmap functionality."""
-
-    def test_create_mindmap(self, db_instance):
-        """Test creating a new mindmap."""
-        mindmap_id = db_instance.create_mindmap("Study Plan")
-        assert mindmap_id is not None
-        assert isinstance(mindmap_id, str)
-        assert len(mindmap_id) == 36
-
-    def test_add_mindmap_node(self, db_instance, sample_mindmap):
-        """Test adding a root node to a mindmap."""
-        node_id = db_instance.add_mindmap_node(
-            sample_mindmap, "Central Idea", position=(0, 0)
-        )
-
-        assert node_id is not None
-        assert isinstance(node_id, str)
-
-        # Verify node was created
-        with db_instance.transaction() as cursor:
-            cursor.execute("SELECT * FROM mindmap_nodes WHERE id = ?", (node_id,))
-            node = cursor.fetchone()
-            assert node["text"] == "Central Idea"
-            assert node["position_x"] == 0
-            assert node["position_y"] == 0
-            assert node["parent_id"] is None
-
-    def test_add_mindmap_node_with_parent(self, db_instance, sample_mindmap):
-        """Test adding child nodes to a mindmap."""
-        # Create root node
-        root_id = db_instance.add_mindmap_node(sample_mindmap, "Main Topic")
-
-        # Add child nodes
-        db_instance.add_mindmap_node(
-            sample_mindmap, "Subtopic 1", parent_id=root_id, position=(100, 50)
-        )
-        db_instance.add_mindmap_node(
-            sample_mindmap, "Subtopic 2", parent_id=root_id, position=(100, -50)
-        )
-
-        # Verify parent-child relationships
-        with db_instance.transaction() as cursor:
-            cursor.execute(
-                "SELECT COUNT(*) as count FROM mindmap_nodes WHERE parent_id = ?",
-                (root_id,),
-            )
-            result = cursor.fetchone()
-            assert result["count"] == 2
+# NOTE (task-19042): the TestMindmaps class was removed with the write-only
+# `create_mindmap`/`add_mindmap_node` accessors it exercised. The
+# `mindmaps`/`mindmap_nodes` TABLES remain in the schema (dormant, pending a
+# future migration), so TestSchemaMigration below still asserts they exist.
 
 
 class TestStudyStatistics:

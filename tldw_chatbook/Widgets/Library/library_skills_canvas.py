@@ -33,15 +33,31 @@ from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, SelectionList, Static, TextArea
+from textual.widgets.selection_list import Selection
 
+from tldw_chatbook.Library.library_shell_state import (
+    library_choice_label,
+    library_choice_tooltip,
+    library_toggle_label,
+)
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
+)
 from tldw_chatbook.Library.library_skills_state import (
     SkillEditorState,
     SkillEditorSupportingFile,
     SkillsListState,
+    coerce_skill_editor_mode,
     save_marks_needs_review,
+    skill_invocation_copy,
+    skill_allowed_tools_sequence,
     skill_name_shadows_builtin,
+    skill_trust_requires_details,
     skill_trust_header_line,
+)
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
@@ -87,7 +103,13 @@ _NEEDS_REVIEW_WARNING = (
     'Saving marks this skill "needs review" — re-approve it in the trust '
     "panel after saving."
 )
-MODEL_HINT_COPY = "Not applied in v1 — shown for SKILL.md round-tripping only."
+# task-2859 item 9: "v1"/"round-tripping" is internal-version talk (DESIGN.md
+# plain-language rule) -- what the field actually does is unaffected by
+# renaming it: the value has no effect when the skill runs, and is kept
+# read-only here only so re-saving doesn't drop it from the imported file.
+MODEL_HINT_COPY = (
+    "Not used when running this skill — kept so saving doesn't lose the value."
+)
 
 # Fix wave (Skills Phase-1 gate, FIX 2): a brand-new install has no trust
 # manifest at all (``trust_status == "trust_uninitialized"``) -- the Library
@@ -462,13 +484,16 @@ def skill_editor_warning_lines(
 def skill_user_invocable_label(value: bool) -> str:
     """Render the user-invocable toggle Button's label (task-418 copy).
 
+    task-14902: a kept one-press toggle -- the full yes/no option set is
+    on the label with the ``✓`` marker on the active value.
+
     Args:
         value: Whether a user can invoke the skill directly.
 
     Returns:
         The toggle Button's label text.
     """
-    return f"User can invoke: {'yes' if value else 'no'} ▸"
+    return library_toggle_label("User can invoke", ("yes", "no"), 0 if value else 1)
 
 
 def skill_disable_model_label(value: bool) -> str:
@@ -477,7 +502,8 @@ def skill_disable_model_label(value: bool) -> str:
     task-418: display polarity is inverted -- the stored field stays
     ``disable_model_invocation``, but the label answers the question the
     user actually has ("can the agent invoke this?") instead of the
-    double-negative "disable model invocation: no".
+    double-negative "disable model invocation: no". task-14902: a kept
+    one-press toggle with the full option set on the label.
 
     Args:
         value: The stored ``disable_model_invocation`` flag (``True`` means
@@ -486,7 +512,7 @@ def skill_disable_model_label(value: bool) -> str:
     Returns:
         The toggle Button's label text, phrased as "Agent can invoke".
     """
-    return f"Agent can invoke: {'no' if value else 'yes'} ▸"
+    return library_toggle_label("Agent can invoke", ("yes", "no"), 1 if value else 0)
 
 
 def skill_context_toggle_label(context: str) -> str:
@@ -501,8 +527,18 @@ def skill_context_toggle_label(context: str) -> str:
     Returns:
         The cycle Button's label text.
     """
-    hint = "this conversation" if context == "inline" else "sub-agent"
-    return f"Runs in: {context} ({hint}) ▸"
+    # task-14902: a kept one-press toggle -- both spec values on the label
+    # with the ✓ marker on the active one. The task-418 plain-language
+    # hint stays, but on the ACTIVE option only so the label survives
+    # 60-column compact widths.
+    hints = {"inline": "this conversation", "fork": "sub-agent"}
+    options = tuple(
+        f"{value} ({hints[value]})" if value == context else value
+        for value in ("inline", "fork")
+    )
+    return library_toggle_label(
+        "Runs in", options, 0 if context == "inline" else 1
+    )
 
 
 def next_skill_context(context: str) -> str:
@@ -530,8 +566,7 @@ def skill_supporting_files_text(
             lines.append(f"{file.name} — {file.size} bytes (binary)")
     return "\n".join(lines)
 
-
-class LibrarySkillsListCanvas(VerticalScroll):
+class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library skills canvas: the list view, or the skill editor.
 
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``
@@ -622,9 +657,120 @@ class LibrarySkillsListCanvas(VerticalScroll):
         import_path: str = "",
         import_status: str = "",
         import_review_name: str = "",
+        sort_choices_visible: bool = False,
+        editor_mode: str = "basic",
+        tool_catalog: tuple[str, ...] = (),
+        tool_filter: str = "",
+        mutation_in_flight: bool = False,
+        more_actions_open: bool = False,
+        trust_details_open: bool = False,
+        script_access_granted: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        self.state = state
+        self.sort_mode = sort_mode
+        self.sort_choices_visible = sort_choices_visible
+        self.filter_value = filter_value
+        self.mode = mode
+        self.trust_posture = trust_posture
+        self.confirming_reset = confirming_reset
+        self.editor_state = editor_state
+        self.warnings = warnings
+        self.status = status
+        self.conflict = conflict
+        self.active_review = active_review
+        self.is_create = is_create
+        self.dirty = dirty
+        self.confirming_delete = confirming_delete
+        self.scroll_to_actions = scroll_to_actions
+        self.skill_path = skill_path
+        self.import_open = import_open
+        self.import_path = import_path
+        self.import_status = import_status
+        self.import_review_name = import_review_name
+        self.editor_mode = coerce_skill_editor_mode(editor_mode)
+        self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
+        self.tool_filter = tool_filter
+        self.mutation_in_flight = mutation_in_flight
+        self.more_actions_open = more_actions_open
+        self.trust_details_open = trust_details_open
+        self.script_access_granted = script_access_granted
+        self.rebuilding_tool_picker = False
+        self.styles.width = "1fr"
+        self.styles.min_width = 40
+
+    def compose(self) -> ComposeResult:
+        if self.mode == "loading":
+            yield Static(
+                "Loading skill…",
+                id="library-skill-loading",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
+        if self.mode == "editor":
+            yield from self._compose_editor()
+            return
+        yield from self._compose_list()
+
+    def sync_state(
+        self,
+        *,
+        state: SkillsListState | None,
+        sort_mode: str,
+        filter_value: str,
+        mode: str,
+        trust_posture: str,
+        confirming_reset: bool,
+        editor_state: SkillEditorState | None,
+        warnings: str,
+        status: str,
+        conflict: bool,
+        active_review: Mapping[str, Any] | None,
+        is_create: bool,
+        dirty: bool,
+        confirming_delete: bool,
+        scroll_to_actions: bool,
+        skill_path: str,
+        import_open: bool,
+        import_path: str,
+        import_status: str,
+        import_review_name: str,
+        sort_choices_visible: bool,
+        editor_mode: str = "basic",
+        tool_catalog: tuple[str, ...] = (),
+        tool_filter: str = "",
+        mutation_in_flight: bool = False,
+        more_actions_open: bool = False,
+        trust_details_open: bool = False,
+        script_access_granted: bool = False,
+    ) -> None:
+        """Apply a complete skills snapshot within the mounted canvas.
+
+        Args:
+            state: Skills list snapshot, or ``None`` outside list mode.
+            sort_mode: Active skill sort identifier.
+            filter_value: Current skill filter text.
+            mode: Canvas surface to render.
+            trust_posture: Trust state for the selected skill.
+            confirming_reset: Whether reset confirmation is armed.
+            editor_state: Skill editor snapshot.
+            warnings: Current skill validation warning copy.
+            status: Current skill editor status copy.
+            conflict: Whether the selected skill has an edit conflict.
+            active_review: Active trust-review data, if any.
+            is_create: Whether the editor is creating a skill.
+            dirty: Whether the skill editor has unsaved changes.
+            confirming_delete: Whether delete confirmation is armed.
+            scroll_to_actions: Whether to reveal the editor action row.
+            skill_path: Filesystem path for the selected skill.
+            import_open: Whether the skill import form is expanded.
+            import_path: Current skill import path.
+            import_status: Current skill import outcome copy.
+            import_review_name: Skill awaiting post-import trust review.
+            sort_choices_visible: Whether the sort chooser is expanded.
+        """
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
@@ -645,14 +791,16 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.import_path = import_path
         self.import_status = import_status
         self.import_review_name = import_review_name
-        self.styles.width = "1fr"
-        self.styles.min_width = 40
-
-    def compose(self) -> ComposeResult:
-        if self.mode == "editor":
-            yield from self._compose_editor()
-            return
-        yield from self._compose_list()
+        self.sort_choices_visible = sort_choices_visible
+        self.editor_mode = coerce_skill_editor_mode(editor_mode)
+        self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
+        self.tool_filter = tool_filter
+        self.mutation_in_flight = mutation_in_flight
+        self.more_actions_open = more_actions_open
+        self.trust_details_open = trust_details_open
+        self.script_access_granted = script_access_granted
+        self.refresh(recompose=True)
+        self._schedule_scroll_to_actions()
 
     def on_mount(self) -> None:
         """task-417: a recompose lands a fresh canvas scrolled to the top.
@@ -662,6 +810,161 @@ class LibrarySkillsListCanvas(VerticalScroll):
         user still sees the Save button and its status line they just
         acted on.
         """
+        self._schedule_scroll_to_actions()
+
+    async def set_editor_mode(self, mode: str) -> None:
+        """Switch the mounted Skill presentations without rebuilding the draft."""
+        requested = coerce_skill_editor_mode(mode)
+        focused = self.app.focused
+        basic = self.query_one("#library-skill-basic-fields")
+        advanced = self.query_one("#library-skill-advanced-fields")
+        hiding_focused = bool(
+            focused is not None
+            and (
+                (requested == "advanced" and basic in focused.ancestors_with_self)
+                or (requested == "basic" and advanced in focused.ancestors_with_self)
+            )
+        )
+        if hiding_focused:
+            self.screen.set_focus(None)
+        self.editor_mode = requested
+        basic.display = requested == "basic"
+        advanced.display = requested == "advanced"
+        state = self.editor_state
+        self.query_one("#library-skill-argument-fields").display = bool(
+            requested == "advanced" or (state is not None and state.user_invocable)
+        )
+        mode_button = self.query_one("#library-skill-editor-mode", Button)
+        mode_button.label = "Show basic" if requested == "advanced" else "Show advanced"
+        if hiding_focused:
+            self.call_after_refresh(
+                self._restore_editor_mode_focus,
+                focused,
+                requested,
+            )
+
+    def _restore_editor_mode_focus(self, prior_focus, editor_mode: str) -> None:
+        """Focus the mode control unless a newer visible user target won."""
+        live_focus = self.app.focused
+        hidden_region = self.query_one(
+            "#library-skill-basic-fields"
+            if editor_mode == "advanced"
+            else "#library-skill-advanced-fields"
+        )
+        live_focus_is_hidden = bool(
+            live_focus is not None
+            and hidden_region in live_focus.ancestors_with_self
+        )
+        if (
+            live_focus is not None
+            and live_focus is not prior_focus
+            and live_focus.id != "library-skill-editor-mode"
+            and not live_focus_is_hidden
+        ):
+            return
+        target = self.query_one("#library-skill-editor-mode", Button)
+        self.screen.set_focus(target, scroll_visible=False)
+
+    def sync_lifecycle_actions(
+        self,
+        *,
+        dirty: bool | None = None,
+        conflict: bool | None = None,
+        confirming_delete: bool | None = None,
+        mutation_in_flight: bool | None = None,
+        more_actions_open: bool | None = None,
+        is_create: bool | None = None,
+    ) -> None:
+        """Patch lifecycle-valid actions without replacing editor fields."""
+        if dirty is not None:
+            self.dirty = bool(dirty)
+        if conflict is not None:
+            self.conflict = bool(conflict)
+        if confirming_delete is not None:
+            self.confirming_delete = bool(confirming_delete)
+        if mutation_in_flight is not None:
+            self.mutation_in_flight = bool(mutation_in_flight)
+        if more_actions_open is not None:
+            self.more_actions_open = bool(more_actions_open)
+        if is_create is not None:
+            self.is_create = bool(is_create)
+
+        busy = self.mutation_in_flight
+        conflict_active = self.conflict and not busy
+        delete_armed = (
+            self.confirming_delete
+            and not self.conflict
+            and not self.is_create
+            and not busy
+        )
+        create = self.is_create and not busy and not self.conflict
+        dirty_active = (
+            self.dirty
+            and not self.is_create
+            and not busy
+            and not self.conflict
+            and not self.confirming_delete
+        )
+        clean = (
+            not self.dirty
+            and not self.is_create
+            and not busy
+            and not self.conflict
+            and not self.confirming_delete
+        )
+        visibility = {
+            "#library-skill-mutation-progress": busy,
+            "#library-skill-mutation-reason": busy,
+            "#library-skill-conflict-reload": conflict_active,
+            "#library-skill-delete-confirm": delete_armed,
+            "#library-skill-delete-cancel": delete_armed,
+            "#library-skill-save": create or dirty_active,
+            "#library-skill-cancel": create,
+            "#library-skill-discard": dirty_active,
+            "#library-skill-back": clean,
+            "#library-skill-more-actions": clean,
+            "#library-skill-delete": clean and self.more_actions_open,
+            "#library-skill-delete-confirm-copy": delete_armed,
+            "#library-skill-conflict-copy": self.conflict,
+            "#library-skill-save-status": not self.conflict,
+        }
+        for selector, visible in visibility.items():
+            self.query_one(selector).display = visible
+        self.query_one("#library-skill-save", Button).label = (
+            "Save skill" if self.is_create else "Save changes"
+        )
+
+    def _tool_picker_selections(self, filter_value: str = "") -> list[Selection]:
+        """Build unique chooser rows while retaining raw content separately."""
+        state = self.editor_state
+        if state is None:
+            return []
+        query = filter_value.strip().casefold()
+        captured = skill_allowed_tools_sequence(state.allowed_tools_csv)
+        captured_set = set(captured)
+        known_set = set(self.tool_catalog)
+        rows = [
+            Selection(name, name, name in captured_set)
+            for name in self.tool_catalog
+            if not query or query in name.casefold()
+        ]
+        rows.extend(
+            Selection(f"{name} (unavailable)", name, True, disabled=True)
+            for name in dict.fromkeys(captured)
+            if name not in known_set and (not query or query in name.casefold())
+        )
+        return rows
+
+    def set_tool_filter(self, value: str) -> None:
+        """Filter only picker rows; never rewrite the captured Skill allowlist."""
+        self.tool_filter = value
+        picker = self.query_one("#library-skill-tool-picker", SelectionList)
+        self.rebuilding_tool_picker = True
+        picker.clear_options().add_options(self._tool_picker_selections(value))
+        self.rebuilding_tool_picker = False
+
+    def _schedule_scroll_to_actions(self) -> None:
+        """Preserve the post-save scroll receipt across canvas-only syncs."""
         if not (self.scroll_to_actions and self.mode == "editor"):
             return
 
@@ -679,6 +982,8 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 try:
                     target = self.query_one(selector)
                 except (NoMatches, QueryError):
+                    continue
+                if not target.display:
                     continue
                 target.scroll_visible(animate=False)
                 return
@@ -744,18 +1049,36 @@ class LibrarySkillsListCanvas(VerticalScroll):
         # shape: every child is a fixed-width compact Button).
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
+        # task-14902: the sort choice strip replaces this toolbar row while
+        # open (the Notes Sort precedent).
+        toolbar.display = not self.sort_choices_visible
         with toolbar:
             yield Button(
-                f"sort: {_SORT_LABELS.get(self.sort_mode, 'Name')} ▸",
+                library_choice_label(
+                    "sort", _SORT_LABELS.get(self.sort_mode, "Name")
+                ),
                 id="library-skills-sort",
                 classes="library-canvas-action",
                 compact=True,
+                tooltip=library_choice_tooltip(
+                    "the sort order", tuple(_SORT_LABELS.values())
+                ),
             )
             yield Button(
                 "Import…",
                 id="library-skills-import",
                 classes="library-canvas-action",
                 compact=True,
+            )
+        if self.sort_choices_visible:
+            yield from compose_library_choice_strip(
+                strip_id="library-skills-sort-choices",
+                choice_class="library-skills-sort-choice",
+                options=tuple(
+                    (f"library-skills-sort-{mode}", mode, label)
+                    for mode, label in _SORT_LABELS.items()
+                ),
+                active_value=self.sort_mode,
             )
         if self.import_open:
             yield from self._compose_import_row()
@@ -912,9 +1235,10 @@ class LibrarySkillsListCanvas(VerticalScroll):
         editor_state = self.editor_state
         if editor_state is None:
             return
+        advanced = self.editor_mode == "advanced"
         yield Button(
-            "‹ Back to list",
-            id="library-skill-back",
+            "Show basic" if advanced else "Show advanced",
+            id="library-skill-editor-mode",
             classes="library-canvas-action",
             compact=True,
         )
@@ -963,75 +1287,129 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 classes="library-skill-field-hint",
                 markup=False,
             )
-        yield Static(
-            "Argument hint", classes="library-prompt-field-label", markup=False
+        basic_fields = Vertical(id="library-skill-basic-fields")
+        basic_fields.styles.display = "none" if advanced else "block"
+        with basic_fields:
+            yield Static(
+                skill_invocation_copy(
+                    editor_state.user_invocable,
+                    editor_state.disable_model_invocation,
+                ),
+                id="library-skill-invocation-copy",
+                markup=False,
+            )
+        argument_fields = Vertical(id="library-skill-argument-fields")
+        argument_fields.styles.display = (
+            "block" if advanced or editor_state.user_invocable else "none"
         )
-        yield Input(
-            value=editor_state.argument_hint or "", id="library-skill-argument-hint"
-        )
-        yield Static(
-            "Allowed tools", classes="library-prompt-field-label", markup=False
-        )
-        yield Input(
-            value=editor_state.allowed_tools_csv,
-            placeholder="Allowed tools (comma-separated)",
-            id="library-skill-allowed-tools",
-        )
+        with argument_fields:
+            yield Static(
+                "Argument hint", classes="library-prompt-field-label", markup=False
+            )
+            yield Input(
+                value=editor_state.argument_hint or "",
+                id="library-skill-argument-hint",
+            )
+        # task-14902: kept one-press toggles -- the labels now carry the
+        # full option set with the ✓ active marker, so the old
+        # option-enumerating tooltips (task-4023 AC#5's stopgap for a
+        # hidden option space) are redundant; the tooltips now say what a
+        # press does instead.
         yield Button(
             skill_user_invocable_label(editor_state.user_invocable),
             id="library-skill-user-invocable",
             classes="library-canvas-action",
             compact=True,
+            tooltip="Press to switch user invocation.",
         )
         yield Button(
             skill_disable_model_label(editor_state.disable_model_invocation),
             id="library-skill-disable-model",
             classes="library-canvas-action",
             compact=True,
-        )
-        yield Button(
-            skill_context_toggle_label(editor_state.context),
-            id="library-skill-context",
-            classes="library-canvas-action",
-            compact=True,
-        )
-        yield Static(
-            "Model override", classes="library-prompt-field-label", markup=False
-        )
-        # task-420: the field has no runtime effect in v1 -- render it
-        # read-only (still visible for SKILL.md round-tripping of an
-        # imported skill's value) instead of live-and-inert.
-        yield Input(
-            value=editor_state.model or "",
-            id="library-skill-model",
-            disabled=True,
-        )
-        yield Static(
-            MODEL_HINT_COPY,
-            id="library-skill-model-hint",
-            classes="library-prompt-field-hint",
-            markup=False,
+            tooltip="Press to switch agent invocation.",
         )
         yield Static("Body", classes="library-prompt-field-label", markup=False)
         yield TextArea(editor_state.body, id="library-skill-body")
-        yield Static(
-            "Supporting files", classes="library-prompt-field-label", markup=False
-        )
-        yield Static(
-            skill_supporting_files_text(editor_state.supporting_files),
-            id="library-skill-supporting",
-            markup=False,
-        )
-        yield Static(self.warnings, id="library-skill-warnings", markup=False)
-        if self.conflict:
+        advanced_fields = Vertical(id="library-skill-advanced-fields")
+        advanced_fields.styles.display = "block" if advanced else "none"
+        with advanced_fields:
             yield Static(
-                "This skill changed elsewhere — Reload discards your edit and refetches it.",
-                id="library-skill-conflict-copy",
-                classes="destination-purpose",
+                "Allowed tools", classes="library-prompt-field-label", markup=False
+            )
+            yield Static(
+                "Restricts which currently available tools this Skill may use; "
+                "it never grants permission.",
+                id="library-skill-tool-help",
+                classes="library-prompt-field-hint",
                 markup=False,
             )
-        else:
-            yield Static(self.status, id="library-skill-save-status", markup=False)
+            yield Input(
+                value=self.tool_filter,
+                placeholder="Filter tools",
+                id="library-skill-tool-filter",
+            )
+            yield SelectionList(
+                *self._tool_picker_selections(self.tool_filter),
+                id="library-skill-tool-picker",
+            )
+            yield Static(
+                editor_state.allowed_tools_csv,
+                id="library-skill-tool-captured",
+                classes="library-prompt-field-hint",
+                markup=False,
+            )
+            yield Button(
+                skill_context_toggle_label(editor_state.context),
+                id="library-skill-context",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip=(
+                    "Press to switch the execution context: inline runs in "
+                    "this conversation, fork runs in a sub-agent."
+                ),
+            )
+            if editor_state.model:
+                yield Static(
+                    "Imported model",
+                    classes="library-prompt-field-label",
+                    markup=False,
+                )
+                yield Input(
+                    value=editor_state.model,
+                    id="library-skill-model",
+                    disabled=True,
+                )
+                yield Static(
+                    MODEL_HINT_COPY,
+                    id="library-skill-model-hint",
+                    classes="library-prompt-field-hint",
+                    markup=False,
+                )
+            yield Static(
+                "Supporting files",
+                classes="library-prompt-field-label",
+                markup=False,
+            )
+            yield Static(
+                skill_supporting_files_text(editor_state.supporting_files),
+                id="library-skill-supporting",
+                markup=False,
+            )
+            yield Static(self.warnings, id="library-skill-warnings", markup=False)
+        conflict_copy = Static(
+            "This skill changed elsewhere — Reload discards your edit and refetches it.",
+            id="library-skill-conflict-copy",
+            classes="destination-purpose",
+            markup=False,
+        )
+        conflict_copy.display = self.conflict
+        yield conflict_copy
+        save_status = Static(
+            self.status, id="library-skill-save-status", markup=False
+        )
+        save_status.display = not self.conflict
+        yield save_status
         # task-416: no trust panel in create mode -- a never-saved skill
         # has no on-disk files, so the panel could only show a false state
         # ("Trust: trusted") with dead buttons. The post-create snapshot
@@ -1047,73 +1425,125 @@ class LibrarySkillsListCanvas(VerticalScroll):
         confirming_delete = (
             self.confirming_delete and not self.conflict and not self.is_create
         )
-        if confirming_delete:
-            yield Static(
-                skill_delete_confirm_copy(
-                    editor_state.name, len(editor_state.supporting_files)
-                ),
-                id="library-skill-delete-confirm-copy",
-                markup=False,
-            )
-        toolbar = Horizontal(classes="ds-toolbar")
+        delete_copy = Static(
+            skill_delete_confirm_copy(
+                editor_state.name, len(editor_state.supporting_files)
+            ),
+            id="library-skill-delete-confirm-copy",
+            markup=False,
+        )
+        delete_copy.display = confirming_delete and not self.mutation_in_flight
+        yield delete_copy
+        toolbar = Horizontal(
+            id="library-skill-lifecycle-actions", classes="ds-toolbar"
+        )
         toolbar.styles.height = "auto"
         with toolbar:
-            if self.conflict:
-                yield Button(
-                    "Reload",
-                    id="library-skill-conflict-reload",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            elif confirming_delete:
-                yield Button(
-                    "Delete",
-                    id="library-skill-delete-confirm",
-                    classes="library-canvas-action library-media-action-danger",
-                    compact=True,
-                )
-                yield Button(
-                    "Cancel",
-                    id="library-skill-delete-cancel",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            else:
-                yield Button(
-                    "Save",
-                    id="library-skill-save",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                # task-449: explicit leave-without-saving path. Disabled
-                # until the editor is actually dirty (live-enabled by
-                # ``_mark_library_skill_dirty`` without a recompose, and
-                # re-disabled by the save-success patcher) so a clean
-                # editor can't lose an edit to a stray click.
-                yield Button(
-                    "Discard changes",
-                    id="library-skill-discard",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=not self.dirty,
-                    # F-018: reason while disabled, action while enabled --
-                    # kept current in place by the screen's live patcher.
-                    tooltip=(
-                        SKILL_DISCARD_TOOLTIP_DIRTY
-                        if self.dirty
-                        else SKILL_DISCARD_TOOLTIP_CLEAN
-                    ),
-                )
-                # task-415: no Delete in create mode -- a never-saved
-                # skill has nothing on disk to delete, and the old
-                # always-rendered button was a silent no-op there.
-                if not self.is_create:
-                    yield Button(
-                        "Delete",
-                        id="library-skill-delete",
-                        classes="library-canvas-action library-media-action-danger",
-                        compact=True,
-                    )
+            busy = self.mutation_in_flight
+            conflict = self.conflict and not busy
+            delete_armed = confirming_delete and not busy
+            create = self.is_create and not busy and not self.conflict
+            dirty = (
+                self.dirty
+                and not self.is_create
+                and not busy
+                and not self.conflict
+                and not confirming_delete
+            )
+            clean = (
+                not self.dirty
+                and not self.is_create
+                and not busy
+                and not self.conflict
+                and not confirming_delete
+            )
+            progress = Static(
+                "Saving changes…",
+                id="library-skill-mutation-progress",
+                markup=False,
+            )
+            progress.display = busy
+            yield progress
+            reason = Static(
+                "Editor actions are unavailable until saving finishes.",
+                id="library-skill-mutation-reason",
+                markup=False,
+            )
+            reason.display = busy
+            yield reason
+            reload_button = Button(
+                "Reload",
+                id="library-skill-conflict-reload",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            reload_button.display = conflict
+            yield reload_button
+            confirm_delete = Button(
+                "Delete",
+                id="library-skill-delete-confirm",
+                classes="library-canvas-action library-media-action-danger",
+                compact=True,
+            )
+            confirm_delete.display = delete_armed
+            yield confirm_delete
+            confirm_cancel = Button(
+                "Cancel",
+                id="library-skill-delete-cancel",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            confirm_cancel.display = delete_armed
+            yield confirm_cancel
+            save = Button(
+                "Save skill" if self.is_create else "Save changes",
+                id="library-skill-save",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            save.display = create or dirty
+            yield save
+            cancel = Button(
+                "Cancel",
+                id="library-skill-cancel",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            cancel.display = create
+            yield cancel
+            discard = Button(
+                "Discard changes",
+                id="library-skill-discard",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip=SKILL_DISCARD_TOOLTIP_DIRTY,
+            )
+            discard.display = dirty
+            yield discard
+            back = Button(
+                "Back to list",
+                id="library-skill-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            back.display = clean
+            yield back
+            more = Button(
+                "More actions",
+                id="library-skill-more-actions",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            more.display = clean
+            yield more
+            secondary_delete = Button(
+                "Delete",
+                id="library-skill-delete",
+                classes="library-canvas-action library-media-action-danger",
+                compact=True,
+            )
+            secondary_delete.display = clean and self.more_actions_open
+            yield secondary_delete
 
     def _compose_trust_panel(self, editor_state: SkillEditorState) -> ComposeResult:
         """Render the trust panel: state line, changed-files, Unlock/Review/Approve.
@@ -1148,6 +1578,23 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 classes=state_classes,
                 markup=False,
             )
+            show_details = (
+                self.trust_details_open
+                or self.script_access_granted
+                or skill_trust_requires_details(
+                    editor_state.trust_status,
+                    editor_state.trust_blocked,
+                    editor_state.trust_changed_files,
+                )
+            )
+            if not show_details:
+                yield Button(
+                    "View details",
+                    id="library-skill-trust-view-details",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                return
             # task-421: always present (empty for states with in-panel
             # remediation) so the screen's no-recompose panel patch can
             # keep it current, same contract as the review-files line.
@@ -1173,7 +1620,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
             # via ``_render_library_skill_trust_panel``, same contract as
             # the always-present review-files/review-content lines above.
             yield Static(
-                skill_script_grant_line(False),
+                skill_script_grant_line(self.script_access_granted),
                 id="library-skill-script-grant",
                 markup=False,
             )

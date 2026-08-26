@@ -333,11 +333,50 @@ def test_release_raises_stable_error_without_masking_unlock_failure(
     assert exc_info.value.__cause__ is (
         unlock_failure if unlock_fails else close_failure
     )
-    if unlock_fails:
-        assert any(
-            "close failed" in note for note in getattr(exc_info.value, "__notes__", ())
-        )
-    assert lease.acquired is False
+    assert lease.acquired is unlock_fails
+
+
+def test_unlock_failure_retains_real_shared_lock_until_release_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lease = ArtifactOperationLease(
+        tmp_path,
+        key(),
+        LeaseMode.SHARED,
+    ).acquire()
+    real_unlock = portalocker.unlock
+    attempts = 0
+
+    def fail_once(handle: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("private unlock failure")
+        real_unlock(handle)
+
+    monkeypatch.setattr(portalocker, "unlock", fail_once)
+    with pytest.raises(ArtifactLeaseError, match="failed releasing shared lease"):
+        lease.release()
+    assert lease.acquired is True
+    with pytest.raises(ArtifactLeaseTimeoutError):
+        ArtifactOperationLease(
+            tmp_path,
+            key(),
+            LeaseMode.EXCLUSIVE,
+            timeout_seconds=0,
+        ).acquire()
+
+    lease.release()
+    assert attempts == 2
+    with ArtifactOperationLease(
+        tmp_path,
+        key(),
+        LeaseMode.EXCLUSIVE,
+        timeout_seconds=0,
+    ):
+        pass
+    assert attempts == 3
 
 
 def test_release_does_not_attach_close_failure_to_ambient_exception(
@@ -661,6 +700,41 @@ def test_lease_set_release_unwinds_all_keys_and_raises_first_error(
         assert lease_set.acquired is False
     finally:
         lease_set.release()
+
+
+def test_lease_set_release_retains_only_failed_unlock_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lease_set = ArtifactOperationLeaseSet(
+        tmp_path,
+        [
+            ArtifactLeaseKey("a", "rev", "int8"),
+            ArtifactLeaseKey("b", "rev", "int8"),
+        ],
+        LeaseMode.SHARED,
+    ).acquire()
+    release_order: list[str] = []
+    failed = False
+    real_release = ArtifactOperationLease.release
+
+    def fail_before_unlock(lease: ArtifactOperationLease) -> None:
+        nonlocal failed
+        release_order.append(lease.key.artifact_id)
+        if lease.key.artifact_id == "b" and not failed:
+            failed = True
+            raise ArtifactLeaseError("injected unlock failure")
+        real_release(lease)
+
+    monkeypatch.setattr(ArtifactOperationLease, "release", fail_before_unlock)
+    with pytest.raises(ArtifactLeaseError, match="injected unlock failure"):
+        lease_set.release()
+    assert [lease.key.artifact_id for lease in lease_set._leases] == ["b"]
+
+    lease_set.release()
+
+    assert release_order == ["b", "a", "b"]
+    assert lease_set.acquired is False
 
 
 def test_acquire_preserves_timeout_when_rollback_release_fails(

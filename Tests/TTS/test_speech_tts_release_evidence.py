@@ -17,6 +17,8 @@ SPEC_PATH = REPO_ROOT / (
 EVIDENCE_PATH = REPO_ROOT / (
     "Docs/superpowers/qa/speech-tts-settings-ownership-2026-08-01/release-evidence.md"
 )
+MODULE_GUIDE_PATH = REPO_ROOT / "Docs/Development/TTS/TTS_MODULE_GUIDE.md"
+SPEECH_GUIDE_PATH = REPO_ROOT / "Docs/Features/Speech-Services-Guide.md"
 
 REQUIREMENT_HEADING = re.compile(
     r"^### ((?:IA|OWN|CFG|CAT|STATE|MIG|SEC|A11Y)-\d{3}) — ",
@@ -112,3 +114,27 @@ def test_release_evidence_keeps_headless_and_audible_claims_separate() -> None:
         in (evidence)
     )
     assert "does not claim audible output or incremental streaming" in evidence
+
+
+def test_clone_reference_guides_document_privacy_downgrade_and_scope_truth() -> None:
+    module_guide = MODULE_GUIDE_PATH.read_text(encoding="utf-8")
+    speech_guide = SPEECH_GUIDE_PATH.read_text(encoding="utf-8")
+    combined = f"{module_guide}\n{speech_guide}"
+    normalized = combined.casefold()
+
+    for required in (
+        "local plaintext",
+        "not encryption",
+        "best-effort deletion",
+        "not forensic erasure",
+        "TASK-13208",
+        "retained v2 pre-migration backup",
+        "loss of post-migration profile changes",
+        "explicit clone transfer",
+        "warning-gated",
+        "voice-bundle portability",
+    ):
+        assert required.casefold() in normalized
+    assert "source path is never persisted" in normalized
+    assert "reference audio and transcript" in normalized
+    assert "profile database backups contain" in normalized

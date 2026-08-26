@@ -4,7 +4,7 @@ title: Add managed transcribe.cpp GGUF acquisition after provider
 status: To Do
 assignee: []
 created_date: '2026-08-02 14:54'
-updated_date: '2026-08-03 21:37'
+updated_date: '2026-08-13 01:37'
 labels:
   - stt
   - gguf
@@ -39,5 +39,5 @@ Add curated downloads and managed local-file import only after direct-path trans
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Cross-link 2026-08-03: TASK-2062 (model browser Phase 3, in progress on feat/task-2062-model-browser-phase-3) is building the generic copy-into-store import engine as Model_Artifacts/local_import.py — stream-copy+hash into marker-owned staging temps, install(consume_source=True) verification, content-addressed revisions, with consumer/runtime/format parameterizable (LLM defaults). When 1915 activates, review REUSING that engine plus the live gguf_admission parser rather than activating _deferred_gguf_managed_import.py wholesale; the deferred prototype's descriptor constants may still be the right transcribe.cpp values, but the copy/verify/promote path should be shared. Also note: descriptor file:// source_url and unknown-license accommodation landed via 2062 Task 1 (cross-field-gated in service.py), which 1915's local-copy AC #2 will need.
+Cross-link revised 2026-08-12: TASK-2062.1 is the planned generic LLM GGUF import boundary. If it lands before TASK-1915 activates, reuse its service-owned one-copy staging, full-digest content identity, structural GGUF inspector, and path-private LOCAL_INTEGRITY_RECORDED descriptor accommodation. TASK-1915 must still apply transcribe.cpp-specific architecture admission and provider fields. Do not activate _deferred_gguf_managed_import.py wholesale, do not persist file:// or fabricated source URLs, and do not assume the earlier marker-owned local_import.py design exists until TASK-2062.1 is merged.
 <!-- SECTION:NOTES:END -->

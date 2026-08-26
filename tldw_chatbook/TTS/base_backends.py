@@ -100,6 +100,17 @@ class TTSBackendBase(ABC):
                 logger.warning(f"Progress callback error: {e}")
 
 
+class TTSBackendConnectionError(ValueError):
+    """Raised when a TTS backend cannot reach its endpoint.
+
+    A ``ValueError`` subclass on purpose: the backend failure contract is
+    "failures are ValueError" and consumers across audiobook, media
+    reading, and briefings catch exactly that — the subclass lets the
+    events layer distinguish reachability from configuration
+    (TASK-15530) without changing any existing consumer.
+    """
+
+
 class APITTSBackend(TTSBackendBase):
     """Base class for API-based TTS backends (OpenAI, ElevenLabs, etc.)"""
 

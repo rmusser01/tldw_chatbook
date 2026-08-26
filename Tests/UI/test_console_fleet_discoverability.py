@@ -214,13 +214,6 @@ async def test_console_f1_help_is_scrollable_and_reachable_at_realistic_sizes(
         # swallows the space at the break (observed: "...finished · ✗" /
         # "failed — clears..."), so checking the exact single-line constant
         # against wrapped, compositor-rendered text is itself unreliable.
-        # Assert its components instead (still proves the legend rendered
-        # and is reachable at rest, without overfitting to one wrap point).
-        assert "Status markers:" in at_rest
-        assert "● running" in at_rest
-        assert "◆ needs approval" in at_rest
-        assert "✓ finished" in at_rest
-
         # AC#3's sole mechanism -- Alt+W/Alt+1..9 -- lives in the LAST
         # shortcut group and is genuinely below the fold at rest at these
         # sizes (this is the exact clipping the Critical finding is about).
@@ -236,6 +229,10 @@ async def test_console_f1_help_is_scrollable_and_reachable_at_realistic_sizes(
         # line's own wrap-sensitivity argues against.
         reachable_text = await _scan_scroll_checkpoints(pilot, scroll)
         assert "Leaving Console cancels" in reachable_text
+        assert "Status markers:" in reachable_text
+        assert "● running" in reachable_text
+        assert "◆ needs approval" in reachable_text
+        assert "✓ finished" in reachable_text
 
         # The reviewer's literal reachability check: after scroll_end, the
         # hotkeys (and the still-pinned Close button) are genuinely on

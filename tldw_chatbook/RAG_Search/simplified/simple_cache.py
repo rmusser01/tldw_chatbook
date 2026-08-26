@@ -3,13 +3,33 @@ Simple cache implementation for the RAG service.
 
 This provides a lightweight caching solution for search results,
 replacing the complex cache service from the old implementation.
+
+Diagnostics here name a query by ``query_fp`` (a ``content_fingerprint``) and
+by ``key`` (this cache's own index), never by its text. TASK-21700: every
+cache diagnostic used to interpolate ``query[:50]`` -- the user's own words --
+and the prefix was strictly *less* useful than either handle, since two long
+queries sharing a prefix printed identically. ``key`` answers "did these two
+lines hit the same cache entry"; ``query_fp`` is stable across the whole
+RAG tree, so a hit logged in ``rag_service`` can be traced to the entry
+logged here.
 """
 
 import hashlib
 import json
 import time
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from collections import abc
+from typing import (
+    Any,
+    Collection,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 from dataclasses import dataclass, field
 from collections import OrderedDict
 from loguru import logger
@@ -22,27 +42,59 @@ from tldw_chatbook.Metrics.metrics_logger import (
     log_gauge,
     timeit,
 )
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
+
+
+# The keyword leg's pre-TASK-15400 MATCH construction. A key built with
+# this value renders byte-identically to every key built before the
+# construction existed, which is the invariant
+# `test_the_and_construction_keeps_the_hybrid_key_byte_identical` pins.
+# Spelled out here rather than imported from `rag_service` (which imports
+# THIS module) -- the two are kept honest by that test, not by an import.
+LEGACY_FTS_MATCH_CONSTRUCTION = "and"
 
 
 def _canonicalize_metadata_allowlist(
-    metadata_allowlist: Optional[Dict[str, Any]],
-) -> Optional[frozenset]:
+    metadata_allowlist: Optional[Any],
+) -> Optional[Tuple[frozenset, ...]]:
     """Canonicalize a metadata allowlist into a stable, hashable form.
 
-    ``None`` (or an empty mapping) stays ``None`` so cache keys built
-    without an allowlist are byte-identical to keys built before this
+    ``None`` (or an empty mapping/sequence) stays ``None`` so cache keys
+    built without an allowlist are byte-identical to keys built before this
     parameter existed -- no behavior change for existing callers.
 
-    Otherwise, returns a ``frozenset`` of ``(key, sorted_values_tuple)``
-    pairs so that dict key order and value iteration order (values are
-    commonly passed as ``set``, whose iteration order is not guaranteed)
-    do not affect equality.
+    Two shapes are accepted, matching ``RAGService.search``: ONE mapping
+    (every key AND-ed), or a SEQUENCE of mappings (a union of AND-groups --
+    what ``rag_scope.build_semantic_allowlists`` returns, one entry per
+    source type, because a flat dict cannot express "media in A OR note in
+    B"). A single mapping canonicalizes to a one-element tuple, so the bare
+    mapping and the one-element list are the same request and share a key.
+
+    Each entry becomes a ``frozenset`` of ``(key, sorted_values_tuple)``
+    pairs so dict key order and value iteration order (values are commonly
+    passed as ``set``, whose iteration order is not guaranteed) do not
+    affect equality; the entries are then sorted so two orderings of the
+    same union agree. Entry BOUNDARIES survive, because ``[{a}, {b}]`` (a
+    union) and ``{a, b}`` (an intersection) are different searches.
     """
     if not metadata_allowlist:
         return None
-    return frozenset(
-        (k, tuple(sorted(str(x) for x in v))) for k, v in metadata_allowlist.items()
-    )
+    if isinstance(metadata_allowlist, abc.Mapping):
+        entries: List[Any] = [metadata_allowlist]
+    else:
+        # Empty entries are NOT filtered out: an entry that restricts nothing
+        # makes a different request from one that is absent, and dropping it
+        # here would let `[{a}, {}]` share a key with `[{a}]`. The engine
+        # rejects that shape outright (`_allowlist_entries`), so this is the
+        # key function agreeing with the guard rather than second-guessing it.
+        entries = list(metadata_allowlist)
+        if not entries:
+            return None
+    canonical = [
+        frozenset((k, tuple(sorted(str(x) for x in v))) for k, v in entry.items())
+        for entry in entries
+    ]
+    return tuple(sorted(canonical, key=sorted))
 
 
 @dataclass
@@ -132,7 +184,10 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> str:
         """
         Create a cache key from search parameters.
@@ -145,12 +200,66 @@ class SimpleRAGCache:
             top_k: Number of results
             filters: Optional metadata filters
             metadata_allowlist: Optional metadata key -> allowed-values
-                scoping filter. Included in the key so two searches that
-                are identical except for their allowlist never share a
-                cached entry. Defaults to ``None``, which produces a key
-                identical to what this method returned before this
-                parameter existed -- no behavior change for existing
-                callers.
+                scoping filter -- ONE mapping (keys AND-ed) or a SEQUENCE
+                of mappings (a union of AND-groups, the shape
+                ``rag_scope.build_semantic_allowlists`` returns). Included
+                in the key so two searches that are identical except for
+                their scope never share a cached entry: a shared key is how
+                a scoped search silently serves an unscoped one's rows.
+                Defaults to ``None``, which produces a key identical to
+                what this method returned before this parameter existed --
+                and a ONE-entry allowlist keeps its pre-union rendering, so
+                no existing caller's key moved either.
+            keyword_source_types: Optional keyword-leg source-type selection
+                (TASK-14751). Two searches identical except for which
+                source types the FTS leg budgets for return DIFFERENT rows,
+                so they must never share an entry -- a shared key would
+                silently serve a media-only search's rows to a notes-only
+                one. ``None`` is omitted from the key, so keys built without
+                a selection stay byte-identical to before.
+            hybrid_fusion: The RESOLVED ``(alpha, rrf_k, pool_multiplier)``
+                actually used for a HYBRID search (TASK-4110 review,
+                important 1). These change the fused row set/ordering just
+                as much as ``top_k`` does, so without this, two hybrid
+                searches identical except for `rrf_k` (or alpha, or the
+                pool multiplier) would share one entry -- the SECOND
+                request silently served the FIRST's stale results forever.
+                Caught live: this is what would have made Task 4's
+                strategy sweep report every k as "+0.000, k doesn't
+                matter" on a single cached service. Callers pass ``None``
+                for semantic/keyword search (those legs never depend on
+                these three), and the caller (``RAGService.search``) always
+                passes the RESOLVED values -- not the raw config
+                attributes -- for hybrid, so two configs that happen to
+                resolve to the same effective value (e.g. an out-of-range
+                alpha and 0.7) correctly SHARE an entry rather than
+                needlessly splitting one. A default-config hybrid key's
+                exact bytes change as a result (a new key part is always
+                present for `search_type == "hybrid"`); nothing pins the
+                literal hash, and the cache is in-process/ephemeral only.
+            fts_match_construction: The keyword leg's MATCH construction
+                (TASK-15400) -- the companion to ``hybrid_fusion`` for the
+                OTHER leg, and part of the key for the same reason: it
+                changes which rows the FTS leg returns at all, so two
+                searches identical except for it must never share an entry.
+                The construction is not a user knob, but it IS mutable at
+                runtime (the arc's sweep varies it on a live
+                ``SearchConfig`` against a per-service cache), which is
+                precisely the shape that made TASK-4110's sweep report "k
+                doesn't matter" before the fusion params entered the key.
+                Passed for hybrid AND keyword searches (both read the FTS
+                leg), ``None`` for semantic. The pre-arc construction
+                (``"and"``) contributes NO key part, so every key built
+                before this parameter existed stays byte-identical. Since
+                TASK-15400 shipped ``and_stopword_trim`` as the default
+                (2026-08-11) that is no longer the key a DEFAULT search
+                renders, and TASK-15700 moved it again (2026-08-13) to
+                ``and_then_prefix``, so today a default search carries
+                ``fts:and_then_prefix``. That is the point: this key is
+                VALUE-keyed on the construction, so entries cached under any
+                previous one are keyed apart rather than served to the new
+                one. The cost is a one-time run of cold misses after each
+                such flip, which is the correct trade and not new to either.
 
         Returns:
             A unique cache key
@@ -169,7 +278,51 @@ class SimpleRAGCache:
             # iteration order is not guaranteed (and is hash-seed
             # dependent for strings), but sorting the (key, values) tuples
             # is stable.
-            key_parts.append(json.dumps(sorted(canonical_allowlist)))
+            if len(canonical_allowlist) == 1:
+                # One AND-group: rendered exactly as it was before the union
+                # shape existed, so every pre-B1 key stays byte-identical.
+                key_parts.append(json.dumps(sorted(canonical_allowlist[0])))
+            else:
+                # A union of AND-groups. The extra nesting level is what
+                # keeps `[{a}, {b}]` from colliding with `{a, b}` -- two
+                # different searches over the same values.
+                key_parts.append(
+                    "allowlists:"
+                    + json.dumps([sorted(entry) for entry in canonical_allowlist])
+                )
+
+        if keyword_source_types is not None:
+            # Prefixed so this part can never be confused with the
+            # allowlist part above, and sorted so set iteration order (which
+            # is hash-seed dependent for strings) does not affect the key.
+            # An EMPTY selection is a real, distinct request ("no keyword
+            # leg") and must not collapse onto `None`, which is why the
+            # presence of the part -- not its truthiness -- is the test.
+            key_parts.append(
+                "kst:"
+                + json.dumps(sorted(str(x) for x in keyword_source_types))
+            )
+
+        if hybrid_fusion is not None:
+            alpha, rrf_k, pool_multiplier = hybrid_fusion
+            key_parts.append(
+                "fusion:"
+                + json.dumps(
+                    {"alpha": alpha, "rrf_k": rrf_k, "pool_multiplier": pool_multiplier},
+                    sort_keys=True,
+                )
+            )
+
+        if (
+            fts_match_construction is not None
+            and fts_match_construction != LEGACY_FTS_MATCH_CONSTRUCTION
+        ):
+            # Prefixed like the parts above so it can never be confused with
+            # another one. Omitted for the LEGACY (pre-TASK-15400)
+            # construction (see the parameter's docstring) -- this is that
+            # value's byte-identity guarantee, not a "falsy means absent"
+            # test, and it is deliberately NOT re-pointed at the new default.
+            key_parts.append("fts:" + fts_match_construction)
 
         # Use a faster hash function - fallback to md5 if xxhash not available
         key_str = "|".join(key_parts)
@@ -188,7 +341,11 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        *,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Async-safe get cached search results.
@@ -202,6 +359,13 @@ class SimpleRAGCache:
                 in the cache key so differently-scoped searches never share
                 a cache entry. Defaults to ``None`` (no change for existing
                 callers).
+            keyword_source_types: Optional keyword-leg source-type selection;
+                also part of the key, for the same reason.
+            hybrid_fusion: The resolved ``(alpha, rrf_k, pool_multiplier)``
+                for a hybrid search; see ``_make_key`` for why this must be
+                part of the key.
+            fts_match_construction: The keyword leg's MATCH construction
+                (hybrid/keyword searches); see ``_make_key``.
 
         Returns:
             Tuple of (results, context) if found and valid, None otherwise
@@ -218,13 +382,24 @@ class SimpleRAGCache:
                 await self._prune_expired_async()
                 self._last_prune_time = current_time
 
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
+            )
             log_counter("cache_request", labels={"type": search_type})
 
             if key not in self._cache:
                 self._misses += 1
                 log_counter("cache_miss", labels={"type": search_type})
-                logger.debug(f"Cache miss for query: '{query[:50]}...'")
+                logger.debug(
+                    f"Cache miss (query_fp={content_fingerprint(query)}, key={key})"
+                )
                 return None
 
             entry = self._cache[key]
@@ -239,7 +414,8 @@ class SimpleRAGCache:
                 log_counter("cache_expired", labels={"type": search_type})
                 log_histogram("cache_entry_expired_age_seconds", age)
                 logger.debug(
-                    f"Cache entry expired for query: '{query[:50]}...' (age: {age:.1f}s, ttl: {ttl}s)"
+                    f"Cache entry expired (query_fp={content_fingerprint(query)}, "
+                    f"key={key}, age: {age:.1f}s, ttl: {ttl}s)"
                 )
                 return None
 
@@ -261,7 +437,8 @@ class SimpleRAGCache:
             log_gauge("cache_hit_rate", hit_rate)
 
             logger.debug(
-                f"Cache hit for query: '{query[:50]}...' (age: {age:.1f}s, accesses: {entry.access_count})"
+                f"Cache hit (query_fp={content_fingerprint(query)}, key={key}, "
+                f"age: {age:.1f}s, accesses: {entry.access_count})"
             )
 
             return entry.value
@@ -272,13 +449,39 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Thread-safe synchronous cache get.
 
         This method is safe to call from any context and will not cause deadlocks.
         For better performance in async contexts, use get_async() directly.
+
+        TASK-15701: the three search-defining dimensions below are accepted
+        and forwarded so this path renders the SAME key as `get_async`. They
+        were previously absent from the signature entirely, which made the
+        sync key a legacy, construction-less one -- harmless while `and` was
+        both the legacy value and the shipped default, and a WRONG-HIT risk
+        once the default moved (twice). The API was kept rather than removed
+        because it is the cache's ergonomic test surface (58 call sites);
+        production reads and writes go through the async path only, re-verified
+        at fix time.
+
+        Args:
+            query: The search query.
+            search_type: Which retrieval mode ran.
+            top_k: The result window.
+            filters: Optional metadata filters.
+            metadata_allowlist: Optional per-source-type allowlist.
+            keyword_source_types: Which sub-legs the keyword leg queried.
+            hybrid_fusion: (alpha, rrf_k, pool) for the fusion step.
+            fts_match_construction: How the FTS MATCH expression was built.
+
+        Returns:
+            The cached (results, context) pair, or None on a miss.
         """
         if not self.enabled:
             return None
@@ -298,6 +501,9 @@ class SimpleRAGCache:
                     top_k,
                     filters,
                     metadata_allowlist,
+                    keyword_source_types,
+                    hybrid_fusion,
+                    fts_match_construction,
                 )
                 return future.result(
                     timeout=1.0
@@ -305,7 +511,14 @@ class SimpleRAGCache:
         except RuntimeError:
             # No running loop, safe to run directly
             return self._sync_get_impl(
-                query, search_type, top_k, filters, metadata_allowlist
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
             )
 
     def _sync_get_impl(
@@ -314,7 +527,10 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]],
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
@@ -326,13 +542,24 @@ class SimpleRAGCache:
                 self._prune_expired_sync()
                 self._last_prune_time = current_time
 
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
+            )
             log_counter("cache_request", labels={"type": search_type})
 
             if key not in self._cache:
                 self._misses += 1
                 log_counter("cache_miss", labels={"type": search_type})
-                logger.debug(f"Cache miss for query: '{query[:50]}...'")
+                logger.debug(
+                    f"Cache miss (query_fp={content_fingerprint(query)}, key={key})"
+                )
                 return None
 
             entry = self._cache[key]
@@ -344,7 +571,9 @@ class SimpleRAGCache:
             if time.time() - entry.timestamp > ttl:
                 self._misses += 1
                 log_counter("cache_expired", labels={"type": search_type})
-                logger.debug(f"Cache expired for query: '{query[:50]}...'")
+                logger.debug(
+                    f"Cache expired (query_fp={content_fingerprint(query)}, key={key})"
+                )
                 del self._cache[key]
                 self._update_memory_sync()
                 return None
@@ -357,7 +586,9 @@ class SimpleRAGCache:
 
             self._hits += 1
             log_counter("cache_hit", labels={"type": search_type})
-            logger.debug(f"Cache hit for query: '{query[:50]}...'")
+            logger.debug(
+                f"Cache hit (query_fp={content_fingerprint(query)}, key={key})"
+            )
 
             # Check for corrupted entry (None value)
             if entry.value is None:
@@ -378,7 +609,11 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        *,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> None:
         """
         Async-safe cache search results.
@@ -394,12 +629,37 @@ class SimpleRAGCache:
                 in the cache key so differently-scoped searches never share
                 a cache entry. Defaults to ``None`` (no change for existing
                 callers).
+            keyword_source_types: Optional keyword-leg source-type selection;
+                also part of the key. **TASK-15701 closed the sync-twin gap
+                this argument used to describe**: ``get``/``put`` now accept
+                and forward this dimension too, so both paths render the same
+                key and two sync searches differing only in it can no longer
+                collide. (The historical hazard, for anyone reading a git
+                blame: the sync twins could not take it, so two sync searches
+                differing only in an omitted dimension rendered the SAME key
+                and the second was served the first's rows -- a wrong hit,
+                latent only because no production code called the sync API.)
+            hybrid_fusion: The resolved ``(alpha, rrf_k, pool_multiplier)``
+                for a hybrid search; see ``_make_key`` for why this must be
+                part of the key. Carried by both paths since TASK-15701.
+            fts_match_construction: The keyword leg's MATCH construction
+                (hybrid/keyword searches); see ``_make_key``. Carried by both
+                paths since TASK-15701.
         """
         if not self.enabled:
             return
 
         async with self._async_lock:
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
+            )
 
             # Calculate memory for new entry
             entry = CacheEntry(key=key, value=(results, context), timestamp=time.time())
@@ -470,7 +730,9 @@ class SimpleRAGCache:
             log_histogram("cache_entry_size_mb", entry_memory / 1024 / 1024)
 
             logger.debug(
-                f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_memory / 1024 / 1024:.1f}MB)"
+                f"Cached results (query_fp={content_fingerprint(query)}, "
+                f"key={key}, {len(results)} results, "
+                f"{entry_memory / 1024 / 1024:.1f}MB)"
             )
 
     def put(
@@ -481,13 +743,33 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> None:
         """
         Thread-safe synchronous cache put.
 
         This method is safe to call from any context and will not cause deadlocks.
         For better performance in async contexts, use put_async() directly.
+
+        TASK-15701: forwards the same three search-defining dimensions as
+        `put_async`, so an entry cannot be STORED under a key asserting a
+        construction that did not produce it. See `get` for why the sync API
+        was kept rather than removed.
+
+        Args:
+            query: The search query.
+            search_type: Which retrieval mode ran.
+            top_k: The result window.
+            results: The rows to cache.
+            context: The rendered context string.
+            filters: Optional metadata filters.
+            metadata_allowlist: Optional per-source-type allowlist.
+            keyword_source_types: Which sub-legs the keyword leg queried.
+            hybrid_fusion: (alpha, rrf_k, pool) for the fusion step.
+            fts_match_construction: How the FTS MATCH expression was built.
         """
         if not self.enabled:
             return
@@ -509,12 +791,24 @@ class SimpleRAGCache:
                     context,
                     filters,
                     metadata_allowlist,
+                    keyword_source_types,
+                    hybrid_fusion,
+                    fts_match_construction,
                 )
                 future.result(timeout=1.0)  # 1 second timeout for cache operations
         except RuntimeError:
             # No running loop, safe to run directly
             self._sync_put_impl(
-                query, search_type, top_k, results, context, filters, metadata_allowlist
+                query,
+                search_type,
+                top_k,
+                results,
+                context,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
             )
 
     def _sync_put_impl(
@@ -525,11 +819,23 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]],
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> None:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
+            )
 
             # Create cache entry
             entry = CacheEntry(key=key, value=(results, context), timestamp=time.time())
@@ -559,7 +865,9 @@ class SimpleRAGCache:
             log_gauge("cache_memory_mb", self._current_memory_bytes / 1024 / 1024)
 
             logger.debug(
-                f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_memory / 1024 / 1024:.1f}MB)"
+                f"Cached results (query_fp={content_fingerprint(query)}, "
+                f"key={key}, {len(results)} results, "
+                f"{entry_memory / 1024 / 1024:.1f}MB)"
             )
 
     async def clear_async(self) -> None:

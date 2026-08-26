@@ -68,7 +68,7 @@ pytest --cov=tldw_chatbook  # With coverage
 
 ### Data Layer (`DB/`)
 
-- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v7
+- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v37
 - **`Client_Media_DB_v2.py`** - Media storage with chunking
 - **`RAG_Indexing_DB.py`** - Vector storage (when enabled)
 - Other DBs: Evals, Prompts, Subscriptions
@@ -153,7 +153,8 @@ Key sections:
 
 ### Testing
 
-- Run full suite before PRs
+- **Ask before full sweeps**: before running the full test suite, ask whether a full sweep is wanted. Unless the user opts in, verify with targeted runs only — the tests touching the modified files/functionality
+- Run the full suite only when the user asks for it (e.g. pre-PR/pre-merge verification they explicitly request)
 - Use real SQLite in-memory for DB tests
 - Property-based testing with Hypothesis
 - Markers: unit, integration, optional, asyncio
@@ -165,7 +166,13 @@ Key sections:
 - `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
 - Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
-- Config: `[console] local_tools_enabled` / `workspace_root` (confinement root for fs_*; empty = app cwd)
+- Console file authority: every live Chat gets private temporary scratch. Named Workspaces may add explicit folder bindings; local `fs_*`/Git uses scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and never grants a Console Chat access.
+
+### Console Project Instructions
+- `AGENTS.override.md` / `AGENTS.md` startup and lazy nested guidance is untrusted, ephemeral user context bounded by one selected local-filesystem binding; it never grants tool permission.
+- Registry ownership and path targets feed one shared activation ledger before normal tool review; read-only bindings do not advertise mutating tools.
+- UI, persistence, and logs keep automatic bodies out of metadata surfaces; the explicit disposable Context **Next Send** preview is the only automatic UI body view.
+- Governance: `backlog/decisions/069-console-project-instruction-local-state-and-preflight.md` and `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`.
 
 ### Config Encryption
 - AES-256 with PBKDF2

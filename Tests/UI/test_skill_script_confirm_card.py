@@ -21,7 +21,11 @@ from unittest.mock import Mock
 
 import pytest
 from textual import on
-from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from textual.app import ComposeResult
 from textual.widgets import Static
 
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -98,7 +102,7 @@ def test_card_statics_are_markup_free():
         assert widget._render_markup is False
 
 
-class _CardHarnessApp(App[None]):
+class _CardHarnessApp(ConsolidatedCSSApp):
     """Minimal host for `SkillScriptConfirmCard` that records `ScriptDecided`."""
 
     def __init__(self) -> None:
@@ -115,7 +119,7 @@ class _CardHarnessApp(App[None]):
         self.request_ids.append(event.request_id)
 
 
-class _CardsHarnessApp(App[None]):
+class _CardsHarnessApp(ConsolidatedCSSApp):
     """Minimal host for `ChatTaskCards`."""
 
     def compose(self) -> ComposeResult:
@@ -397,14 +401,14 @@ def test_set_console_pending_skill_script_preserves_other_resume_fields(mock_cha
     )
 
     payload = {"skill_name": "demo", "script_path": "s.py", "request_id": "r1"}
-    screen._set_console_pending_skill_script(payload)
+    screen._skill._set_console_pending_skill_script(payload)
 
     state = screen._task_resume_state
     assert state.summary == "Keep me"
     assert state.last_step == "Also keep"
     assert state.pending_skill_script == payload
 
-    screen._set_console_pending_skill_script(None)
+    screen._skill._set_console_pending_skill_script(None)
     assert screen._task_resume_state.pending_skill_script is None
     assert screen._task_resume_state.summary == "Keep me"
 

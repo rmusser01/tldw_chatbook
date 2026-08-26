@@ -9,7 +9,7 @@ need) but per-button label budget -- Button's ``line-pad: 1`` (one blank
 cell each side, not zero-able via CSS) stacked on the strip rule's
 ``padding: 0 1`` left plain Buttons only ``width - 4`` label cells, so
 ``Temporary`` (9 chars) got 8 in its 12-wide button. (Session tabs escaped:
-``ConsoleSessionTabButton``'s nowrap+clip DEFAULT_CSS paints past the
+``ConsoleSessionTabButton``'s nowrap+clip BUNDLED_CSS paints past the
 line-pad area up to the widget edge, so their 19-char labels rendered whole
 all along.) The rule now carries ``padding: 0``; line-pad alone keeps the
 identical one-cell visual gap and leaves the label budget at ``width - 2``.
@@ -28,6 +28,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import HorizontalScroll
 from textual.widgets import Button
 
@@ -205,7 +209,7 @@ async def test_many_tabs_scroll_and_keep_all_controls_reachable() -> None:
             )
 
 
-class StyledTabStripHost(App[None]):
+class StyledTabStripHost(ConsolidatedCSSApp):
     """Bare session surface with the shipped stylesheet (app-tier rules)."""
 
     CSS_PATH = str(BUNDLE)

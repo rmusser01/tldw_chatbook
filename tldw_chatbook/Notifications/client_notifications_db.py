@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+import time
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from ..DB.base_db import BaseDB
 from ..DB.private_sqlite import connect_private_sqlite
@@ -28,15 +31,78 @@ _CATEGORY_NOTIFICATION_SETTINGS = (
 
 
 class ClientNotificationsDB(BaseDB):
-    """Dedicated local queue/inbox store for client notifications."""
+    """Dedicated local queue/inbox store for client notifications.
+
+    task-15466: file-backed connections are held per thread (the
+    ``Workspace_DB`` idiom). The previous shape opened a brand-new
+    private-SQLite connection -- which re-verifies the database file and
+    its three sidecars every time -- for every operation, including one
+    per dispatched notification, and never closed any of them
+    (``with conn`` is sqlite3's TRANSACTION context manager, not a closing
+    one, so they leaked until GC).
+
+    Thread safety: the inbox is read from the UI thread and written from
+    dispatch worker threads, and sqlite3 refuses a connection used off its
+    creating thread (``check_same_thread`` defaults to True). Thread-local
+    storage is what makes the held connection safe -- each thread owns one.
+    The ``:memory:`` branch is deliberately NOT thread-local: an in-memory
+    database lives inside its connection, so per-thread connections would
+    each see their own empty inbox. It keeps a single shared connection
+    (which is why ``Home/active_work_adapter.py`` only moves inbox reads
+    off-loop once it has confirmed the store is file-backed).
+    """
 
     _CURRENT_SCHEMA_VERSION = 1
 
+    #: Liveness-ping gate (mirrors `Workspace_DB`/`ChaChaNotes_DB`,
+    #: task-261/3011): a recently-used held connection is known-good
+    #: without spending a `SELECT 1` on every call.
+    _LIVENESS_PING_IDLE_SECONDS = 30.0
+
     def __init__(self, db_path: str | Path, client_id: str = "default"):
+        # Both must precede super().__init__: _initialize_schema (run
+        # eagerly for :memory: below) already needs a connection.
         self._memory_conn: sqlite3.Connection | None = None
-        super().__init__(db_path, client_id)
+        self._thread_local = threading.local()
+        # TASK-21105: file-backed schema creation is deferred to the first
+        # connection (initialize_schema=False below). Construction resolves
+        # the path only; no file/WAL sidecars are created until first
+        # feature use (an inbox read or a dispatched notification).
+        # ``:memory:`` stays eager so its single shared connection is
+        # created on the constructing thread, exactly as before.
+        self._schema_ready = False
+        self._schema_lock = threading.Lock()
+        super().__init__(db_path, client_id, initialize_schema=False)
+        if self.is_memory_db:
+            self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        """Create the schema exactly once, on first connection (TASK-21105).
+
+        Single-flight under a lock: the first touch can come from a
+        dispatch worker thread while the UI thread reads the inbox. A
+        failed attempt leaves ``_schema_ready`` False so the next
+        operation retries.
+        """
+        if self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            self._initialize_schema()
+            self._schema_ready = True
 
     def _get_connection(self) -> sqlite3.Connection:
+        self._ensure_schema()
+        return self._open_connection()
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open a raw connection without the first-use schema ensure.
+
+        ``_initialize_schema`` must use this directly: it runs inside
+        ``_ensure_schema``'s lock, and going through ``_get_connection``
+        there would deadlock on the non-reentrant lock.
+        """
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
@@ -44,16 +110,127 @@ class ClientNotificationsDB(BaseDB):
                     ":memory:",
                 )
                 self._memory_conn.row_factory = sqlite3.Row
+                # synchronous is harmless (and a no-op performance-wise) on an
+                # in-memory database; set for uniformity with the file-backed
+                # branch below rather than special-casing it away (task-15465).
+                self._memory_conn.execute("PRAGMA synchronous = NORMAL")
+                self._memory_conn.isolation_level = None
             return self._memory_conn
-        return super()._get_connection()
+        conn = super()._get_connection()
+        conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local notification inbox)
+        # and avoids an fsync per commit. Unlike journal_mode, which is
+        # persisted in the file, synchronous is per-connection and must be
+        # re-applied on every NEW connection -- which is why this pairing
+        # lives in the one place connections are created (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
+        # task-3012: a held (long-lived) connection needs true autocommit.
+        # Python's default isolation mode auto-BEGINs on any DML; that
+        # implicit transaction then makes the explicit BEGIN in
+        # `transaction()` raise "cannot start a transaction within a
+        # transaction", and silently ROLLS BACK bare DML on close.
+        # Audited (task-15466) -- every site in this file: `_initialize_
+        # schema` executescript (self-commits either way), single-statement
+        # writes in insert_notification and _update_flags (each its own
+        # autocommit transaction), the multi-statement settings loop in
+        # update_settings (now wrapped in an explicit `transaction()`), and
+        # read-only SELECTs elsewhere.
+        conn.isolation_level = None
+        return conn
+
+    def _held_connection(self) -> sqlite3.Connection:
+        """Return this thread's held connection, opening or reviving it.
+
+        In-memory stores share the single cached connection instead (see
+        the class docstring). The liveness probe is a plain no-op
+        statement; a connection another component closed (or that SQLite
+        invalidated) is transparently replaced.
+        """
+        if getattr(self, "is_memory_db", False):
+            return self._get_connection()
+        conn = getattr(self._thread_local, "conn", None)
+        if conn is not None:
+            last_used = getattr(self._thread_local, "conn_last_used", None)
+            if (
+                last_used is None
+                or (time.monotonic() - last_used)
+                >= self._LIVENESS_PING_IDLE_SECONDS
+            ):
+                try:
+                    conn.execute("SELECT 1")
+                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    try:
+                        conn.close()
+                    except Exception:  # noqa: BLE001 - already unusable
+                        pass
+                    conn = None
+        if conn is None:
+            conn = self._get_connection()
+            self._thread_local.conn = conn
+        self._thread_local.conn_last_used = time.monotonic()
+        return conn
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """Yield this thread's held connection (no transaction opened).
+
+        In autocommit mode a single statement is its own transaction, so
+        reads and single-statement writes need nothing more than this.
+        """
+        yield self._held_connection()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Yield the held connection inside a write transaction.
+
+        Required for any block whose statements must land (or not land)
+        together: in autocommit mode each bare statement would otherwise
+        commit on its own.
+
+        Nesting: the explicit BEGIN runs on the ONE connection this thread
+        holds (or, for ``:memory:``, the single shared one), so nesting a
+        second ``transaction()`` inside one raises
+        ``sqlite3.OperationalError: cannot start a transaction within a
+        transaction``. Pre-port each block had its own connection and
+        nesting silently "worked"; the outer block still rolls back
+        cleanly, because the failure propagates through its ``except``.
+
+        Raises:
+            Exception: Re-raised after rolling back, on any error inside
+                the ``with`` block. On clean exit the transaction commits.
+        """
+        conn = self._held_connection()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
 
     def close(self) -> None:
+        """Close the memory connection, or this thread's held connection."""
         if self._memory_conn is not None:
             self._memory_conn.close()
             self._memory_conn = None
+        conn = getattr(self._thread_local, "conn", None)
+        self._thread_local.conn = None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 - best-effort teardown
+                pass
 
     def _initialize_schema(self) -> None:
-        with self._get_connection() as conn:
+        # Raw connection: runs under _ensure_schema's lock (TASK-21105), so
+        # it cannot use connection()/_held_connection (both re-enter
+        # _get_connection). File-backed: one short-lived connection, closed
+        # below; the held per-thread connection opens on the first real
+        # operation. :memory:: the shared cached connection, never closed.
+        conn = self._open_connection()
+        try:
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -93,6 +270,9 @@ class ClientNotificationsDB(BaseDB):
                 );
                 """
             )
+        finally:
+            if not getattr(self, "is_memory_db", False):
+                conn.close()
 
     def insert_notification(
         self,
@@ -107,7 +287,9 @@ class ClientNotificationsDB(BaseDB):
         payload: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Insert a notification and return the normalized row."""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
+            # Single statement: autocommit already makes it its own
+            # transaction, so no explicit commit is needed.
             cursor = conn.execute(
                 """
                 INSERT INTO client_notifications (
@@ -134,7 +316,6 @@ class ClientNotificationsDB(BaseDB):
                 ),
             )
             notification_id = int(cursor.lastrowid)
-            conn.commit()
         return self.get_notification(notification_id)
 
     def insert(self, **kwargs: Any) -> dict[str, Any]:
@@ -143,7 +324,7 @@ class ClientNotificationsDB(BaseDB):
 
     def get_notification(self, notification_id: int) -> dict[str, Any]:
         """Return a notification by id."""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 "SELECT * FROM client_notifications WHERE id = ?",
                 (notification_id,),
@@ -190,7 +371,7 @@ class ClientNotificationsDB(BaseDB):
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(int(limit), 1))
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 f"""
                 SELECT *
@@ -216,7 +397,7 @@ class ClientNotificationsDB(BaseDB):
         if not include_dismissed:
             clauses.append("is_dismissed = 0")
         params.append(max(int(limit), 1))
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 f"""
                 SELECT *
@@ -250,7 +431,7 @@ class ClientNotificationsDB(BaseDB):
     def get_settings(self) -> dict[str, Any]:
         """Return local notification settings with defaults filled in."""
         settings = deepcopy(DEFAULT_NOTIFICATION_SETTINGS)
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 "SELECT key, value FROM client_notification_settings"
             ).fetchall()
@@ -287,8 +468,17 @@ class ClientNotificationsDB(BaseDB):
         unknown = set(settings) - set(DEFAULT_NOTIFICATION_SETTINGS)
         if unknown:
             raise ValueError(f"Unknown notification settings: {sorted(unknown)}")
+        if not settings:
+            # `update_preferences` reaches here with nothing to write when
+            # its caller passed no changes. Returning early keeps a
+            # zero-statement BEGIN IMMEDIATE -- which would still take the
+            # write lock -- off a read-only path.
+            return self.get_settings()
         now = self._now_iso()
-        with self._get_connection() as conn:
+        # One upsert per setting: under autocommit they would commit
+        # independently, so an explicit transaction keeps a multi-key
+        # update all-or-nothing.
+        with self.transaction() as conn:
             for key, value in settings.items():
                 if key == "category_preferences":
                     value = self._normalize_category_preferences(value)
@@ -300,7 +490,6 @@ class ClientNotificationsDB(BaseDB):
                     """,
                     (key, json.dumps(value, sort_keys=True), now),
                 )
-            conn.commit()
         return self.get_settings()
 
     def update_preferences(
@@ -365,12 +554,13 @@ class ClientNotificationsDB(BaseDB):
         assignments = ", ".join(f"{field} = ?" for field in fields)
         params = list(fields.values())
         params.append(notification_id)
-        with self._get_connection() as conn:
+        with self.connection() as conn:
+            # Single statement: autocommit already makes it its own
+            # transaction, so no explicit commit is needed.
             cursor = conn.execute(
                 f"UPDATE client_notifications SET {assignments} WHERE id = ?",
                 tuple(params),
             )
-            conn.commit()
             return cursor.rowcount > 0
 
     @staticmethod

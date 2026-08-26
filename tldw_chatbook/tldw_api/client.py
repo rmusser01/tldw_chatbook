@@ -36,6 +36,7 @@ from .schemas import (
     ProcessXMLResponseItem,  # Add specific XML/MediaWiki later if needed
 )
 from .notes_workspace_schemas import (
+    MAX_WORKSPACE_SOURCE_ID_CHARS,
     MediaSearchRequest,
     NoteLinkCreate,
     NoteCreateRequest,
@@ -43,10 +44,19 @@ from .notes_workspace_schemas import (
     NoteUpdateRequest,
     WorkspaceArtifactCreateRequest,
     WorkspaceArtifactUpdateRequest,
+    WorkspaceCapabilitiesResponse,
     WorkspaceCreateRequest,
     WorkspaceNoteCreateRequest,
     WorkspaceNoteUpdateRequest,
     WorkspaceSourceCreateRequest,
+    WorkspaceSourceDeleteResponse,
+    WorkspaceSourceListResponse,
+    WorkspaceSourcePreviewResponse,
+    WorkspaceSourceReorderRequest,
+    WorkspaceSourceSelectionRequest,
+    WorkspaceSourceStatusListResponse,
+    WorkspaceSourceWriteResponse,
+    WorkspaceSourceResponse,
     WorkspaceSourceUpdateRequest,
     WorkspaceUpdateRequest,
 )
@@ -1043,6 +1053,30 @@ class ChatQueueActivityResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+# task-19557 Qodo round: actual redirect statuses only. The whole 3xx band
+# also contains 304 Not Modified, which is a cache-validation response (no
+# `Location`, not a redirect) that conditional-GET callers rely on reaching
+# normal processing -- e.g. `get_user_profile_catalog(if_none_match=...)`.
+# Treating 304 as a refused redirect would break that path.
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+
+def _workspace_source_path_id(value: Any, field_name: str) -> str:
+    """Validate and quote one opaque workspace/source path segment."""
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be text")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be blank")
+    if (
+        len(normalized) > MAX_WORKSPACE_SOURCE_ID_CHARS
+        or len(normalized.encode("utf-8")) > 4096
+    ):
+        raise ValueError(f"{field_name} is too long")
+    return quote(normalized, safe="")
+
+
 class TLDWAPIClient:
     # Ceiling on how long a *connection* may take to establish.
     #
@@ -1146,9 +1180,70 @@ class TLDWAPIClient:
                 base_url=self.base_url,
                 headers=headers,
                 timeout=httpx.Timeout(self.timeout, connect=self.connect_timeout),
-                follow_redirects=True,
+                # task-19557: this client authenticates via the client-level
+                # `X-API-KEY` header (api-key is the DEFAULT auth mode; an
+                # optional bearer `Authorization` may also be present). httpx's
+                # built-in redirect-follower strips only `Authorization`/`Cookie`
+                # on a cross-host hop -- it has no notion of `X-API-KEY`, so a
+                # redirecting or compromised server (or a MITM on an `http://`
+                # base URL) could otherwise capture the real API key verbatim.
+                # `follow_redirects=False` plus `_raise_if_redirected` below
+                # refuses to follow ANY redirect rather than partially forward
+                # credentials -- the same "refuse rather than risk forwarding"
+                # shape as the `x-goog-api-key` fix in
+                # `LLM_Calls/LLM_API_Calls.py` (`chat_with_google`).
+                follow_redirects=False,
             )
         return self._client
+
+    @staticmethod
+    async def _raise_if_redirected(response: httpx.Response, endpoint: str) -> None:
+        """Refuse a redirect response rather than following it with credentials.
+
+        The shared client carries the ``X-API-KEY`` (and possibly bearer
+        ``Authorization``) header and is constructed with
+        ``follow_redirects=False`` (see ``_get_client``) specifically so a
+        redirect response lands here instead of httpx silently completing
+        the hop. There is no legitimate reason for this client to follow a
+        redirect -- ``base_url`` is the server the caller explicitly
+        configured -- so an actual redirect is treated as hostile/
+        misconfigured and refused outright.
+
+        Only ``_REDIRECT_STATUS_CODES`` (301/302/303/307/308) trigger the
+        refusal -- NOT the whole 3xx band. 304 Not Modified is a
+        cache-validation response, not a redirect (no ``Location``), and
+        conditional-GET callers (e.g. ``get_user_profile_catalog``'s
+        ``if_none_match``) rely on it reaching normal processing rather
+        than being refused here.
+
+        The redirect ``Location`` is deliberately never echoed in the
+        raised message -- it is server- (and on a hostile/compromised
+        endpoint, attacker-) controlled data, same reasoning as the
+        Anthropic/Google redirect-refusal sites in ``LLM_API_Calls.py``.
+
+        Explicitly closes ``response`` before raising. httpx's own
+        ``send()``/``stream()`` already release the connection on the
+        paths that reach here (an eagerly-read non-streaming response, or
+        the ``stream()`` context manager's own ``finally: aclose()``), but
+        ``aclose()`` is idempotent and this makes the guarantee explicit
+        here rather than resting on a reader's trust of that internal
+        contract.
+
+        Args:
+            response: The response to inspect.
+            endpoint: The request path, used only for the error message.
+
+        Raises:
+            APIConnectionError: If ``response`` is an actual redirect.
+        """
+        if response.status_code not in _REDIRECT_STATUS_CODES:
+            return
+        await response.aclose()
+        raise APIConnectionError(
+            f"Server returned a redirect ({response.status_code}) for "
+            f"{endpoint}; refusing to follow with the X-API-KEY/Authorization "
+            "credential."
+        )
 
     async def close(self):
         if self._client and not self._client.is_closed:
@@ -1229,6 +1324,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             )  # Pass endpoint directly
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
             if response.status_code in {204, 205}:
                 return {}
@@ -1310,6 +1406,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             )
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()
             content_disposition = response.headers.get("content-disposition")
             return ReadingExportResponse(
@@ -1379,6 +1476,7 @@ class TLDWAPIClient:
             response = await client.request(
                 method, endpoint, params=params, headers=headers
             )
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()
             return {
                 str(key).lower(): str(value) for key, value in response.headers.items()
@@ -1423,6 +1521,7 @@ class TLDWAPIClient:
             async with client.stream(
                 method, endpoint, data=data, files=files
             ) as response:
+                await self._raise_if_redirected(response, endpoint)
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line:
@@ -1495,6 +1594,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             ) as response:
+                await self._raise_if_redirected(response, endpoint)
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line == "":
@@ -2450,19 +2550,31 @@ class TLDWAPIClient:
             "DELETE", f"/api/v1/workspaces/{workspace_id}/notes/{note_id}"
         )
 
-    async def list_workspace_sources(self, workspace_id: str) -> Dict[str, Any]:
-        return await self._request("GET", f"/api/v1/workspaces/{workspace_id}/sources")
+    async def list_workspace_sources(
+        self, workspace_id: str
+    ) -> list[Dict[str, Any]]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        response = await self._request(
+            "GET", f"/api/v1/workspaces/{workspace_path}/sources"
+        )
+        validated = WorkspaceSourceListResponse.model_validate(response)
+        return [item.model_dump(mode="json") for item in validated.root]
 
     async def create_workspace_source(
         self,
         workspace_id: str,
         request_data: WorkspaceSourceCreateRequest,
     ) -> Dict[str, Any]:
-        return await self._request(
-            "POST",
-            f"/api/v1/workspaces/{workspace_id}/sources",
-            json_data=request_data.model_dump(mode="json"),
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        request = WorkspaceSourceCreateRequest.model_validate(
+            request_data.model_dump(mode="json")
         )
+        response = await self._request(
+            "POST",
+            f"/api/v1/workspaces/{workspace_path}/sources",
+            json_data=request.model_dump(mode="json"),
+        )
+        return WorkspaceSourceResponse.model_validate(response).model_dump(mode="json")
 
     async def update_workspace_source(
         self,
@@ -2470,18 +2582,109 @@ class TLDWAPIClient:
         source_id: str,
         request_data: WorkspaceSourceUpdateRequest,
     ) -> Dict[str, Any]:
-        return await self._request(
-            "PUT",
-            f"/api/v1/workspaces/{workspace_id}/sources/{source_id}",
-            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        source_path = _workspace_source_path_id(source_id, "source_id")
+        request = WorkspaceSourceUpdateRequest.model_validate(
+            request_data.model_dump(exclude_unset=True, mode="json")
         )
+        response = await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_path}/sources/{source_path}",
+            json_data=request.model_dump(exclude_unset=True, mode="json"),
+        )
+        return WorkspaceSourceResponse.model_validate(response).model_dump(mode="json")
 
     async def delete_workspace_source(
         self, workspace_id: str, source_id: str
-    ) -> Dict[str, Any]:
-        return await self._request(
-            "DELETE", f"/api/v1/workspaces/{workspace_id}/sources/{source_id}"
+    ) -> Any:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        source_path = _workspace_source_path_id(source_id, "source_id")
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/workspaces/{workspace_path}/sources/{source_path}",
         )
+        return WorkspaceSourceDeleteResponse.model_validate(response).model_dump(
+            mode="json"
+        )
+
+    async def get_workspace_source_preview(
+        self,
+        workspace_id: str,
+        source_id: str,
+        *,
+        max_chars: int = 3000,
+        chunk_limit: int = 3,
+    ) -> Dict[str, Any]:
+        if type(max_chars) is not int or not 1 <= max_chars <= 12_000:
+            raise ValueError("max_chars must be between 1 and 12000")
+        if type(chunk_limit) is not int or not 0 <= chunk_limit <= 10:
+            raise ValueError("chunk_limit must be between 0 and 10")
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        source_path = _workspace_source_path_id(source_id, "source_id")
+        response = await self._request(
+            "GET",
+            f"/api/v1/workspaces/{workspace_path}/sources/{source_path}/preview",
+            params={"max_chars": max_chars, "chunk_limit": chunk_limit},
+        )
+        return WorkspaceSourcePreviewResponse.model_validate(response).model_dump(
+            mode="json"
+        )
+
+    async def get_workspace_source_status(
+        self, workspace_id: str
+    ) -> Dict[str, Any]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        response = await self._request(
+            "GET", f"/api/v1/workspaces/{workspace_path}/sources/status"
+        )
+        return WorkspaceSourceStatusListResponse.model_validate(response).model_dump(
+            mode="json"
+        )
+
+    async def get_workspace_capabilities(
+        self, workspace_id: str
+    ) -> Dict[str, Any]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        response = await self._request(
+            "GET", f"/api/v1/workspaces/{workspace_path}/capabilities"
+        )
+        return WorkspaceCapabilitiesResponse.model_validate(response).model_dump(
+            mode="json"
+        )
+
+    async def set_workspace_source_selection(
+        self,
+        workspace_id: str,
+        request_data: WorkspaceSourceSelectionRequest,
+    ) -> list[Dict[str, Any]]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        request = WorkspaceSourceSelectionRequest.model_validate(
+            request_data.model_dump(mode="json")
+        )
+        response = await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_path}/sources/selection",
+            json_data=request.model_dump(mode="json"),
+        )
+        WorkspaceSourceWriteResponse.model_validate(response)
+        return await self.list_workspace_sources(workspace_id)
+
+    async def reorder_workspace_sources(
+        self,
+        workspace_id: str,
+        request_data: WorkspaceSourceReorderRequest,
+    ) -> list[Dict[str, Any]]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        request = WorkspaceSourceReorderRequest.model_validate(
+            request_data.model_dump(mode="json")
+        )
+        response = await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_path}/sources/reorder",
+            json_data=request.model_dump(mode="json"),
+        )
+        WorkspaceSourceWriteResponse.model_validate(response)
+        return await self.list_workspace_sources(workspace_id)
 
     async def list_workspace_artifacts(self, workspace_id: str) -> Dict[str, Any]:
         return await self._request(

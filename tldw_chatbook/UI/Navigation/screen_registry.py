@@ -7,7 +7,7 @@ from importlib import import_module
 
 from loguru import logger
 
-from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP
+from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_RESEARCH_WORKSPACE
 from .shell_destinations import resolve_shell_route
 
 
@@ -146,6 +146,26 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "writing": ScreenRoute(
         "writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"
     ),
+    # task-16322 (ADR-068) re-registers the research screen: the local
+    # research execution engine now drives launched local runs, so
+    # ResearchWindow (the run/event observation surface) is reachable from
+    # navigation again under the legacy "research" route id (still a
+    # command-palette direct command via TAB_RESEARCH and valid in saved
+    # startup configs). This reverses task-255's temporary library alias;
+    # the Workbench migration owner stays "library"
+    # (UI/Workbench/route_inventory.py).
+    "research": ScreenRoute(
+        "research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"
+    ),
+    # Task 1 records the lazy route contract. The screen module is created by
+    # the dedicated screen task, so this metadata is intentionally not
+    # importable yet.
+    "research_workspace": ScreenRoute(
+        "research_workspace",
+        TAB_RESEARCH_WORKSPACE,
+        "tldw_chatbook.UI.Screens.research_workspace_screen",
+        "ResearchWorkspaceScreen",
+    ),
     "chatbooks": ScreenRoute(
         "chatbooks",
         "chatbooks",
@@ -187,16 +207,8 @@ _SCREEN_ALIASES = {
     # mirrors the "notes"/"prompts"/"skills" aliases above, and matches the
     # route inventory, which already declared ingest -> library.
     "ingest": "library",
-    # The orphan "research" screen registration is removed (Task 255, from
-    # the 2026-07-12 RAG module audit): no shell destination or navigation
-    # call ever targeted it, and the Workbench route inventory already maps
-    # research -> library. TAB_RESEARCH remains in ALL_TABS (command palette
-    # direct command) and startup configs may still say "research", so the
-    # route id resolves to Library instead of dead-ending -- mirrors the
-    # "notes"/"prompts"/"skills" aliases above. ``Research_Window.py`` /
-    # ``Research_Modules/`` are intentionally NOT deleted here; that is a
-    # separate, larger decision.
-    "research": "library",
+    # "research" is a REAL screen route again (task-16322, ADR-068) -- see
+    # its ScreenRoute registration above. It is deliberately NOT an alias.
     # The standalone Search screen is retired (RAG UX v2 PR-1, critique
     # 2026-08-02T21-11-50Z): search/RAG now lives entirely inside Library's
     # Search / RAG canvas (rail row "browse-search"), with Console staging
@@ -243,6 +255,25 @@ def registered_screen_route_ids() -> tuple[str, ...]:
     return tuple(sorted(_SCREEN_ROUTES))
 
 
+def registered_screen_routes() -> tuple[ScreenRoute, ...]:
+    """Return every registered canonical ``ScreenRoute`` without importing.
+
+    Unlike ``registered_screen_route_ids()`` (ids only), this exposes the
+    route metadata itself -- notably ``module_path`` -- so a caller can
+    dedupe routes that share one module (e.g. ``"ccp"``/``"personas"`` both
+    target ``personas_screen.PersonasScreen``, ``"tools_settings"``/``"mcp"``
+    both target ``mcp_screen.MCPScreen``) or call ``load_screen_class()``
+    directly. Used by the app's background screen-module pre-importer
+    (task-15472) to warm ``sys.modules`` after first paint.
+
+    Returns:
+        Route objects sorted by ``screen_name`` for a stable, deterministic
+        iteration order.
+    """
+
+    return tuple(_SCREEN_ROUTES[route_id] for route_id in sorted(_SCREEN_ROUTES))
+
+
 def registered_screen_aliases() -> tuple[str, ...]:
     """Return screen route aliases without loading screen classes.
 
@@ -276,6 +307,32 @@ def resolve_screen_target(target: str) -> tuple[str, str, type | None]:
     if route is None:
         return route_id, route_id, None
     return route.screen_name, route.canonical_tab, route.load_screen_class()
+
+
+def resolve_screen_route(target: str) -> ScreenRoute | None:
+    """Resolve a navigation target to its ``ScreenRoute`` WITHOUT importing it.
+
+    ``resolve_screen_target()`` answers the same question but calls
+    ``load_screen_class()`` as part of answering it, which is precisely the
+    synchronous import a caller wanting the *metadata* is trying to avoid.
+    This exposes the already-existing lazy lookup (aliases, then direct
+    routes, then the shell destination model -- identical resolution, same
+    helper) so a caller can decide what to import before importing it.
+
+    task-21110: ``app.py`` uses this to learn which module the initial screen
+    will need while the splash is still on screen, then warms it on the
+    background thread the screen pre-importer already owns.
+
+    Args:
+        target: The requested route id or alias.
+
+    Returns:
+        The resolved ``ScreenRoute``, or ``None`` when the target is not
+        routable (the same miss that ``resolve_screen_target()`` reports as a
+        ``None`` screen class).
+    """
+
+    return _lookup_route(target)[1]
 
 
 def _lookup_route(target: str) -> tuple[str, ScreenRoute | None]:

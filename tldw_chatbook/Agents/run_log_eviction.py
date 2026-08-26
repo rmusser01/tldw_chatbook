@@ -56,7 +56,10 @@ from loguru import logger
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
+    count_console_messages_tokens,
+    count_provider_continuation_tokens,
 )
+from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
 from .agent_models import FENCE_TOOL_RESULT_PREFIX, SEARCH_RUN_LOG_TOOL_NAME
 
 #: `[agents]` config key (see `run_log._setting`'s env-var/TOML/default
@@ -356,6 +359,8 @@ def bound_history_for_send(
     window: int | None = None,
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
     min_recent_rounds: int = DEFAULT_MIN_RECENT_ROUNDS,
+    continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
+    continuation_owner_key: str = "id",
 ) -> list[dict[str, Any]]:
     """Bound one turn's SEND payload to the model window, run-log-aware.
 
@@ -401,23 +406,68 @@ def bound_history_for_send(
             (``agent_service._make_call_model``, via ``run_log._setting``)
             -- this function trusts it as-is, same as every other
             already-resolved parameter here.
+        continuation_groups: Validated canonical private state attached to
+            visible assistant owner IDs in ``payload``. Private tokens affect
+            selection, but private content is never added to the run log.
 
     Returns:
         ``payload`` unchanged (same object) when ``enabled`` is ``False``,
         when the task instruction cannot be unambiguously located (see
         ``_task_row_index`` -- a wrong pin is worse than no eviction, so
         this degrades exactly like a failure rather than guessing), when
-        nothing needed dropping, or when trimming itself failed; otherwise
-        a NEW list with the oldest whole rounds removed and a synthetic
-        note in their place. Never raises: any failure degrades to sending
-        the full history for this turn, logged at warning -- eviction is a
-        context optimisation, never load-bearing for the run's correctness
-        (task-1272: "must never raise into an agent run").
+        nothing needed dropping, or when ordinary visible-only trimming
+        failed; otherwise a NEW list with the oldest whole rounds removed
+        and a synthetic note in their place.
+
+    Raises:
+        RuntimeError: Continuation-aware trimming failed. Private history is
+            load-bearing for an exact provider request, so this path fails
+            closed rather than sending an unbounded payload. Visible-only
+            eviction retains task-1272's legacy non-raising fallback.
     """
     if not enabled:
         return payload
     try:
         boundary = _make_round_boundary(native=native)
+        owner_ids = {
+            message.get(continuation_owner_key)
+            for message in payload
+            if type(message.get(continuation_owner_key)) is str
+        }
+        if any(
+            group.owner_message_id not in owner_ids for group in continuation_groups
+        ):
+            logger.warning(
+                "run-log eviction: continuation owner missing from payload; "
+                "sending full history rather than detach private state"
+            )
+            return payload
+        private_tokens = {
+            group.owner_message_id: count_provider_continuation_tokens(
+                group,
+                model=model,
+                count_fn=count_fn,
+            )
+            for group in continuation_groups
+        }
+
+        def count_with_private(rows: list[dict[str, Any]], selected_model: str) -> int:
+            visible = (
+                count_fn(rows, selected_model)
+                if count_fn is not None
+                else count_console_messages_tokens(rows, selected_model)
+            )
+            retained_ids = {
+                row.get(continuation_owner_key)
+                for row in rows
+                if type(row.get(continuation_owner_key)) is str
+            }
+            return visible + sum(
+                token_count
+                for owner_id, token_count in private_tokens.items()
+                if owner_id in retained_ids
+            )
+
         # task-1272 Phase 3 review finding A: locate the task by CONTENT
         # (the last real user row -- see `_task_row_index`'s own
         # docstring), not by assuming it is the first row after the
@@ -438,7 +488,7 @@ def bound_history_for_send(
             provider=provider,
             response_reservation=response_reservation,
             window=window,
-            count_fn=count_fn,
+            count_fn=count_with_private if continuation_groups else count_fn,
             is_turn_boundary=boundary,
             # Live-verified 2026-07-28, hardened by finding A above:
             # without this, the task instruction sits in the middle of
@@ -450,7 +500,8 @@ def bound_history_for_send(
             # asking `bound_messages_to_window` to re-guess a position
             # (`pin_first_user`'s forward scan) -- see that parameter's
             # docstring in console_history_budget.py.
-            pin_row_index=task_index,
+            pin_row_index=task_index if not continuation_groups else None,
+            mandatory_row_index=task_index if continuation_groups else None,
             # Live-verified follow-up, same day: without a floor, a tight
             # enough window can keep only the in-flight round, so the agent
             # can no longer see the handful of steps it just took and
@@ -466,12 +517,31 @@ def bound_history_for_send(
         # that prefix is preserved verbatim, so its length is identical in
         # `bound.messages`).
         result = list(bound.messages)
-        result.insert(
-            _pinned_prefix_len(payload, task_index),
-            _synthetic_note(bound.dropped_turns),
+        insert_at = (
+            _pinned_prefix_len(payload, task_index)
+            if not continuation_groups
+            else next(
+                (
+                    index
+                    for index, message in enumerate(result)
+                    if message.get("role") != "system"
+                ),
+                len(result),
+            )
         )
+        result.insert(insert_at, _synthetic_note(bound.dropped_turns))
         return result
-    except Exception:  # noqa: BLE001 -- eviction must never abort a run
+    except Exception as exc:  # noqa: BLE001 -- boundary must fail safely
+        if continuation_groups:
+            safe_error = RuntimeError(
+                "provider continuation history could not be bounded"
+            )
+            logger.warning(
+                "run-log eviction failed for continuation history; refusing "
+                "the provider request (category={})",
+                type(exc).__name__,
+            )
+            raise safe_error from None
         logger.opt(exception=True).warning(
             "run-log eviction failed for this turn; sending full history"
         )

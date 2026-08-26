@@ -1,4 +1,4 @@
-"""Selector merge-cap tests for resolve_provider_model_options (ADR-019).
+"""Selector authority and merge-cap tests (ADR-020).
 
 Discovered entries merge into dropdown options only when the provider's total
 discovered catalog is at or below SELECTOR_MERGE_CAP; oversized catalogs stay
@@ -39,24 +39,56 @@ def _entries(provider, ids, source="runtime_discovered"):
 
 
 @pytest.mark.asyncio
-async def test_small_discovered_catalog_merges_with_label():
+async def test_cloud_catalog_excludes_saved_only_models_and_keeps_live_label():
     options = await resolve_provider_model_options(
         {"OpenAI": ["saved-1"]},
         _FakeScope(_entries("OpenAI", ["new-1"])),
         provider="OpenAI",
     )
-    assert [o.model_id for o in options] == ["saved-1", "new-1"]
-    assert "runtime discovered" in options[1].label
+    assert [o.model_id for o in options] == ["new-1"]
+    assert "runtime discovered" in options[0].label
+
+
+class _EmptySnapshotScope:
+    async def merge_saved_and_discovered_models(self, **_kwargs):
+        return ()
+
+    async def has_discovered_model_snapshot(self, **_kwargs):
+        return True
 
 
 @pytest.mark.asyncio
-async def test_oversized_catalog_stays_saved_only():
+async def test_empty_cloud_snapshot_is_authoritative_over_saved_history():
+    options = await resolve_provider_model_options(
+        {"Anthropic": ["retired-model"]},
+        _EmptySnapshotScope(),
+        provider="Anthropic",
+    )
+
+    assert options == []
+
+
+@pytest.mark.asyncio
+async def test_empty_cloud_snapshot_preserves_current_model_as_unlisted():
+    options = await resolve_provider_model_options(
+        {"Anthropic": ["retired-model"]},
+        _EmptySnapshotScope(),
+        provider="Anthropic",
+        current_model="retired-model",
+    )
+
+    assert [option.model_id for option in options] == ["retired-model"]
+    assert options[0].source == "current_unlisted"
+
+
+@pytest.mark.asyncio
+async def test_oversized_cloud_catalog_does_not_restore_saved_only_models():
     options = await resolve_provider_model_options(
         {"OpenRouter": ["saved-1"]},
         _FakeScope(_entries("OpenRouter", [f"v/m{i}" for i in range(60)])),
         provider="OpenRouter",
     )
-    assert [o.model_id for o in options] == ["saved-1"]
+    assert options == []
 
 
 @pytest.mark.asyncio
@@ -68,7 +100,7 @@ async def test_catalog_at_cap_boundary_merges_in():
         ),
         provider="OpenRouter",
     )
-    assert [o.model_id for o in options] == ["saved-1"] + [
+    assert [o.model_id for o in options] == [
         f"v/m{i}" for i in range(SELECTOR_MERGE_CAP)
     ]
 
@@ -85,7 +117,7 @@ async def test_catalog_one_over_cap_stays_saved_only():
         ),
         provider="OpenRouter",
     )
-    assert [o.model_id for o in options] == ["saved-1"]
+    assert options == []
 
 
 @pytest.mark.asyncio
@@ -96,7 +128,32 @@ async def test_uncapped_returns_full_catalog_for_picker():
         provider="OpenRouter",
         merge_cap=None,
     )
-    assert len(options) == 61
+    assert len(options) == 60
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_full_catalog_remains_searchable_in_model_popover():
+    discovered = _entries(
+        "QwenCloud",
+        [f"qwen-model-{index}" for index in range(SELECTOR_MERGE_CAP + 10)],
+    )
+
+    dropdown = await resolve_provider_model_options(
+        {"QwenCloud": ["saved-model"]},
+        _FakeScope(discovered),
+        provider="QwenCloud",
+    )
+    searchable = await resolve_provider_model_options(
+        {"QwenCloud": ["saved-model"]},
+        _FakeScope(discovered),
+        provider="QwenCloud",
+        merge_cap=None,
+    )
+
+    assert dropdown == []
+    assert [option.model_id for option in searchable] == [
+        f"qwen-model-{index}" for index in range(SELECTOR_MERGE_CAP + 10)
+    ]
 
 
 @pytest.mark.asyncio
@@ -118,7 +175,69 @@ async def test_oversized_catalog_still_includes_current_model_transient():
         provider="OpenRouter",
         current_model="picked-elsewhere",
     )
-    assert [o.model_id for o in options] == ["picked-elsewhere", "saved-1"]
+    assert [o.model_id for o in options] == ["picked-elsewhere"]
+    assert options[0].source == "current_unlisted"
+    assert "not in latest catalog" in options[0].label
+
+
+@pytest.mark.asyncio
+async def test_endpoint_confirmed_saved_model_survives_cloud_pruning():
+    entries = (
+        MergedModelEntry(
+            provider="Anthropic",
+            provider_list_key="Anthropic",
+            model_id="claude-current",
+            display_name="claude-current",
+            source="persisted_discovered",
+            capability_status="known",
+            persisted=True,
+        ),
+        MergedModelEntry(
+            provider="Anthropic",
+            provider_list_key="Anthropic",
+            model_id="claude-retired",
+            display_name="claude-retired",
+            source="saved",
+            capability_status="known",
+            persisted=True,
+        ),
+    )
+
+    options = await resolve_provider_model_options(
+        {"Anthropic": ["claude-current", "claude-retired"]},
+        _FakeScope(entries),
+        provider="Anthropic",
+    )
+
+    assert [option.model_id for option in options] == ["claude-current"]
+    assert options[0].source == "persisted_discovered"
+
+
+@pytest.mark.asyncio
+async def test_manual_local_discovery_remains_additive():
+    entries = (
+        MergedModelEntry(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            model_id="saved-alias",
+            display_name="saved-alias",
+            source="saved",
+            capability_status="known",
+            persisted=True,
+        ),
+        *_entries("llama_cpp", ["server-model"]),
+    )
+
+    options = await resolve_provider_model_options(
+        {"llama_cpp": ["saved-alias"]},
+        _FakeScope(entries),
+        provider="llama_cpp",
+    )
+
+    assert [option.model_id for option in options] == [
+        "saved-alias",
+        "server-model",
+    ]
 
 
 class _RaisingScope:

@@ -15,7 +15,23 @@ prompt through any of the three callers -- see
 below, which is the whole point of the shared function.
 """
 
-from tldw_chatbook.UI.Screens.chat_screen import _character_session_prompt_seed
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from textual.content import Content
+
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.UI.Console_Modules.session import _character_session_prompt_seed
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+    ConsoleCharacterChoice,
+)
+
+from Tests.UI.test_destination_shells import _build_test_app
 
 
 def test_macros_resolved_in_system_prompt_and_greeting():
@@ -29,14 +45,17 @@ def test_macros_resolved_in_system_prompt_and_greeting():
         "first_message": "Hello {{user}}, I am {{char}}.",
     }
 
-    name, system_prompt, greeting = _character_session_prompt_seed(card)
+    seed = _character_session_prompt_seed(card)
 
-    assert name == "Elara"
-    assert "{{" not in system_prompt
-    assert "{{" not in greeting
-    assert "Elara guides User through the city." in system_prompt
-    assert "User meets Elara at dusk." in system_prompt
-    assert greeting == "Hello User, I am Elara."
+    assert seed.name == "Elara"
+    assert "{{user}}" in seed.system_template
+    assert "{{char}}" in seed.system_template
+    assert "{{" not in seed.system_prompt
+    assert "{{" not in seed.greeting
+    assert "Elara guides User through the city." in seed.system_prompt
+    assert "User meets Elara at dusk." in seed.system_prompt
+    assert seed.greeting_template == "Hello {{user}}, I am {{char}}."
+    assert seed.greeting == "Hello User, I am Elara."
 
 
 def test_character_alias_macros_resolve_to_character_name():
@@ -53,21 +72,25 @@ def test_character_alias_macros_resolve_to_character_name():
         "first_message": "",
     }
 
-    _name, system_prompt, greeting = _character_session_prompt_seed(card)
+    seed = _character_session_prompt_seed(card)
 
-    assert system_prompt == "Description: Elara and Elara both mean the AI."
-    assert greeting == ""
+    assert seed.system_template == (
+        "Description: {{character}} and {{persona}} both mean the AI."
+    )
+    assert seed.system_prompt == "Description: Elara and Elara both mean the AI."
+    assert seed.greeting_template == ""
+    assert seed.greeting == ""
 
 
 def test_empty_card_falls_back_to_defaults():
     """An empty card yields the name hint, default prompt, and no greeting."""
-    name, system_prompt, greeting = _character_session_prompt_seed(
-        {}, name_hint="Hinted"
-    )
+    seed = _character_session_prompt_seed({}, name_hint="Hinted")
 
-    assert name == "Hinted"
-    assert system_prompt == "Stay in character."
-    assert greeting == ""
+    assert seed.name == "Hinted"
+    assert seed.system_template == "Stay in character."
+    assert seed.system_prompt == "Stay in character."
+    assert seed.greeting_template == ""
+    assert seed.greeting == ""
 
 
 def test_whitespace_only_card_falls_back_to_stay_in_character():
@@ -89,9 +112,10 @@ def test_whitespace_only_card_falls_back_to_stay_in_character():
         "first_message": "",
     }
 
-    _name, system_prompt, _greeting = _character_session_prompt_seed(card)
+    seed = _character_session_prompt_seed(card)
 
-    assert system_prompt == "Stay in character."
+    assert seed.system_template == "Stay in character."
+    assert seed.system_prompt == "Stay in character."
 
 
 def test_whitespace_only_card_agrees_with_the_preview_builder():
@@ -113,12 +137,12 @@ def test_whitespace_only_card_agrees_with_the_preview_builder():
         "post_history_instructions": " \t ",
     }
 
-    _name, console_system_prompt, _greeting = _character_session_prompt_seed(card)
+    seed = _character_session_prompt_seed(card)
     preview_system_prompt = build_preview_system_prompt(card, greeting="")
 
-    assert console_system_prompt == "Stay in character."
+    assert seed.system_prompt == "Stay in character."
     assert preview_system_prompt == "Stay in character."
-    assert console_system_prompt == preview_system_prompt
+    assert seed.system_prompt == preview_system_prompt
 
 
 def test_message_example_and_post_history_instructions_reach_the_prompt():
@@ -134,10 +158,261 @@ def test_message_example_and_post_history_instructions_reach_the_prompt():
         "first_message": "",
     }
 
-    _name, system_prompt, _greeting = _character_session_prompt_seed(card)
+    seed = _character_session_prompt_seed(card)
 
-    assert "Example dialogue:\n<START>\nVex: Try me." in system_prompt
-    assert "Never break character." in system_prompt
+    assert "Example dialogue:\n<START>\nVex: Try me." in seed.system_prompt
+    assert "Never break character." in seed.system_prompt
+
+
+def test_seed_uses_effective_name_once_without_recursing_inserted_macros():
+    """Sequential replacement would rewrite the macro inside the user name."""
+    card = {
+        "name": "Alraune",
+        "system_prompt": "Guard {{user}} beside {{character}}.",
+        "first_message": "Hello, {{user}}. I am {{char}}.",
+    }
+
+    seed = _character_session_prompt_seed(
+        card,
+        user_name="Captain {{character}}",
+    )
+
+    assert seed.system_template == "Guard {{user}} beside {{character}}."
+    assert seed.system_prompt == "Guard Captain {{character}} beside Alraune."
+    assert seed.greeting_template == "Hello, {{user}}. I am {{char}}."
+    assert seed.greeting == "Hello, Captain {{character}}. I am Alraune."
+
+
+def _roleplay_card(*, card_id: int = 7, name: str = "Alraune") -> dict:
+    return {
+        "id": card_id,
+        "name": name,
+        "system_prompt": "Protect {{user}} as {{character}}.",
+        "first_message": "Hello, {{user}}.",
+    }
+
+
+def _character_screen(monkeypatch, card: dict) -> ChatScreen:
+    app = _build_test_app()
+    app.app_config.setdefault("chat_defaults", {})["user_display_name"] = (
+        "Captain Rowan"
+    )
+    app.chachanotes_db = SimpleNamespace(
+        get_local_authority_id=lambda: "local-authority"
+    )
+    app.character_persona_scope_service = SimpleNamespace(
+        get_character=AsyncMock(return_value=card)
+    )
+    screen = ChatScreen(app)
+    screen._console_chat_store = ConsoleChatStore()
+    monkeypatch.setattr(
+        ChatScreen,
+        "app",
+        property(lambda current_screen: current_screen.app_instance),
+    )
+    monkeypatch.setattr(screen, "_sync_native_console_chat_ui", AsyncMock())
+    monkeypatch.setattr(
+        screen, "_focus_console_composer_if_needed", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        screen._character,
+        "_refresh_active_character_avatar_if_scope_changed",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(screen, "_sync_console_temporary_chip", lambda: None)
+    return screen
+
+
+def _start_chat_handoff(card: dict) -> ChatHandoffPayload:
+    character_id = str(card["id"])
+    return ChatHandoffPayload(
+        source="personas",
+        item_type="character-card",
+        title=str(card["name"]),
+        body="Character summary",
+        runtime_backend="local",
+        source_owner="local",
+        source_selector_state="local",
+        metadata={
+            "intent": "start_chat",
+            "selected_kind": "character",
+            "selected_record_id": character_id,
+            "selected_name": str(card["name"]),
+            "selected_target_id": f"local:character:{character_id}",
+            "backend": "local",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_personas_start_chat_seeds_template_provenance_with_global_name(
+    monkeypatch,
+):
+    """Bypassing the store seed would persist a greeting with no trusted source."""
+    card = _roleplay_card()
+    screen = _character_screen(monkeypatch, card)
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    store = screen._ensure_console_chat_store()
+    session = store.switch_session(store.active_session_id)
+    assert session.character_name == "Alraune"
+    assert session.character_system_template == "Protect {{user}} as {{character}}."
+    assert session.settings.system_prompt == "Protect Captain Rowan as Alraune."
+    greeting = store.messages_for_session(session.id)
+    assert len(greeting) == 1
+    assert greeting[0].role is ConsoleMessageRole.ASSISTANT
+    assert greeting[0].content == "Hello, Captain Rowan."
+    assert greeting[0].metadata.template_kind == "character_greeting"
+    assert greeting[0].metadata.template_source == "Hello, {{user}}."
+
+
+@pytest.mark.asyncio
+async def test_character_picker_new_chat_seeds_template_provenance(monkeypatch):
+    """The picker-new path must not fall back to ordinary eager greeting text."""
+    card = _roleplay_card()
+    screen = _character_screen(monkeypatch, card)
+    monkeypatch.setattr(
+        screen._character, "_fetch_character_card_for_avatar", lambda _id: card
+    )
+
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=7, name="Alraune", placement="new")
+    )
+
+    store = screen._ensure_console_chat_store()
+    session = store.switch_session(store.active_session_id)
+    assert session.character_system_template == "Protect {{user}} as {{character}}."
+    assert session.settings.system_prompt == "Protect Captain Rowan as Alraune."
+    greeting = store.messages_for_session(session.id)
+    assert len(greeting) == 1
+    assert greeting[0].metadata.template_source == "Hello, {{user}}."
+
+
+@pytest.mark.asyncio
+async def test_character_picker_keeps_raw_identity_but_sanitizes_notification(
+    monkeypatch,
+):
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    card = _roleplay_card(name=raw_name)
+    screen = _character_screen(monkeypatch, card)
+    monkeypatch.setattr(
+        screen._character, "_fetch_character_card_for_avatar", lambda _id: card
+    )
+    notify = MagicMock()
+    monkeypatch.setattr(screen.app_instance, "notify", notify)
+
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=7, name=raw_name, placement="new")
+    )
+
+    store = screen._ensure_console_chat_store()
+    session = store.switch_session(store.active_session_id)
+    visible_notification = Content.from_markup(notify.call_args.args[0]).plain
+    assert visible_notification == "Started a new chat with Nyx Admin?[/bold]."
+    assert "\n" not in visible_notification
+    assert "\t" not in visible_notification
+    assert session.character_name == raw_name
+    assert session.title == f"Chat with {raw_name}"
+    assert raw_name in session.settings.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_character_picker_swap_uses_override_and_only_greets_empty_chat(
+    monkeypatch,
+):
+    """A swap in a non-empty chat must update provenance without interrupting it."""
+    first_card = _roleplay_card()
+    second_card = _roleplay_card(card_id=8, name="Brynn")
+    cards = {7: first_card, 8: second_card}
+    screen = _character_screen(monkeypatch, first_card)
+    monkeypatch.setattr(
+        screen._character,
+        "_fetch_character_card_for_avatar",
+        lambda card_id: cards[card_id],
+    )
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    )
+    store.set_session_user_display_name_override(
+        session.id,
+        "Per Chat",
+        global_default="Captain Rowan",
+    )
+
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=7, name="Alraune", placement="swap")
+    )
+    first_messages = store.messages_for_session(session.id)
+    assert [message.content for message in first_messages] == ["Hello, Per Chat."]
+    assert first_messages[0].metadata.template_source == "Hello, {{user}}."
+
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=8, name="Brynn", placement="swap")
+    )
+
+    assert session.character_name == "Brynn"
+    assert session.character_system_template == "Protect {{user}} as {{character}}."
+    assert session.settings.system_prompt == "Protect Per Chat as Brynn."
+    assert [message.content for message in store.messages_for_session(session.id)] == [
+        "Hello, Per Chat."
+    ]
+
+
+def test_character_swap_surfaces_refused_durable_projection(monkeypatch):
+    """A live-first swap must not report clean success after a refused write."""
+    card = _roleplay_card(card_id=8, name="Brynn")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-4.1",
+            system_prompt="Old Alraune prompt.",
+        ),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
+    session.character_system_template = "Old {{character}} prompt."
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Keep this chat non-empty.",
+        persist=False,
+    )
+    session.persisted_conversation_id = "conv-1"
+    store.persistence = SimpleNamespace(
+        update_conversation_system_prompt=lambda **_kwargs: False,
+        update_conversation_roleplay_context=lambda **_kwargs: True,
+    )
+    notifications: list[tuple[str, str | None]] = []
+    screen.app_instance.notify = lambda message, **kwargs: notifications.append(
+        (str(message), kwargs.get("severity"))
+    )
+    seed = _character_session_prompt_seed(card, user_name="Captain Rowan")
+
+    swapped = screen._session._swap_console_session_character(
+        store,
+        8,
+        seed,
+        global_default="Captain Rowan",
+    )
+
+    assert swapped is False
+    assert session.character_name == "Brynn"
+    assert session.character_system_template == "Protect {{user}} as {{character}}."
+    assert session.settings.system_prompt == "Protect Captain Rowan as Brynn."
+    assert notifications == [
+        (
+            "Character changed for this session, but the change could not be saved.",
+            "warning",
+        )
+    ]
 
 
 def test_console_engine_and_preview_compose_byte_identical_system_prompts():
@@ -171,9 +446,7 @@ def test_console_engine_and_preview_compose_byte_identical_system_prompts():
     )
 
     console_card = dict(fields)
-    _console_name, console_system_prompt, console_greeting = (
-        _character_session_prompt_seed(console_card)
-    )
+    seed = _character_session_prompt_seed(console_card)
 
     engine_card = CardSnapshot(
         id=1,
@@ -191,12 +464,12 @@ def test_console_engine_and_preview_compose_byte_identical_system_prompts():
     preview_card = dict(fields)
     preview_system_prompt = build_preview_system_prompt(preview_card, greeting="")
 
-    assert console_system_prompt == engine_system_prompt
-    assert console_system_prompt == preview_system_prompt
+    assert seed.system_prompt == engine_system_prompt
+    assert seed.system_prompt == preview_system_prompt
     # Sanity: this is a real assertion about real content, not three empty
     # strings agreeing by accident.
-    assert "You are Vex." in console_system_prompt
-    assert "Try me, User." in console_system_prompt
-    assert "{{" not in console_system_prompt
+    assert "You are Vex." in seed.system_prompt
+    assert "Try me, User." in seed.system_prompt
+    assert "{{" not in seed.system_prompt
     # The greeting path is unchanged by task-1744 and resolves independently.
-    assert console_greeting == "Well, User, look who it is."
+    assert seed.greeting == "Well, User, look who it is."

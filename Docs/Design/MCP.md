@@ -77,14 +77,18 @@ tldw_chatbook/MCP/
 ### Design Principles
 - **Modular Architecture**: Clear separation between server, tools, resources, and prompts
 - **Async-First**: All operations use async/await for optimal performance
-- **Security**: API keys and sensitive data are never exposed through MCP
+- **Security**: Internal diagnostics and refusals are payload-free. Authorized
+  external MCP clients can read private Library data through enabled tools,
+  resources, and prompts and may send that data onward, including to cloud
+  models. API keys remain internal.
 - **Extensibility**: Easy to add new tools, resources, or prompts
 - **Error Handling**: Comprehensive error handling with detailed logging
 
 ## Components
 
 ### Server (`server.py`)
-The main MCP server implementation using FastMCP framework:
+The main MCP server implementation uses the public `mcp-unified==0.2.1`
+gateway:
 - Initializes database connections
 - Registers tools, resources, and prompts
 - Handles transport (stdio for Claude Desktop, HTTP planned)
@@ -118,6 +122,50 @@ MCP client for connecting to external MCP servers:
 - Provides unified interface for tool/resource access
 - Handles connection lifecycle
 
+## Standalone stdio contract
+
+Install the packaged optional extra and launch the server from the same Python
+environment:
+
+```bash
+pip install "tldw_chatbook[mcp]"
+python -m tldw_chatbook.MCP
+```
+
+The standalone server uses strict JSON-RPC over stdio. It supports legacy
+revision `2025-03-26`, revision `2025-11-25`, and the current `2026-07-28`
+profile. Batch requests are accepted only with `2025-03-26`; `2025-11-25` and
+`2026-07-28` reject them.
+
+### Standalone inventory
+
+The retired `ingest_media` placeholder is absent. Use Library Import for
+persistent URL or file ingestion.
+
+- **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
+- **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
+- **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
+- **Library tools excluded from standalone (24):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
+
+### Standalone behavior and controls
+
+All 24 Library tools are excluded from the standalone stdio catalog. They
+remain available only through the app's gated, logged direct Library execution
+path, whose raw in-app `tools/call` route is refused.
+
+Resource reads return at most 256 KiB of UTF-8 text at a time. Follow the
+opaque `nextUri` in `_meta["tldw.chatbook/continuation"]`; handler metadata,
+when present, is namespaced under `_meta["tldw.chatbook/resource"]`.
+
+Workspace-local filesystem, git, and web tools are off by default with
+`[mcp] expose_local_tools = false`. When enabled, they retain workspace
+confinement, consult the shared `mcp_permissions.json` permission store on
+each call, and honor its kill switch. An external `ask` state is refused
+because an stdio client cannot display Chatbook's operator approval card.
+
+> [!WARNING]
+> An external MCP client runs with the user's OS access. It can read private local Library content through exposed tools, resources, and prompts, and it may send that content off-device to a cloud model. Enable only the surface you intend to disclose and trust the client and its model provider.
+
 ## MCP Tools
 
 ### Chat Tools
@@ -150,11 +198,16 @@ Have conversations with specific characters.
 
 #### `search_rag`
 Search the RAG (Retrieval-Augmented Generation) database.
+
+`use_semantic` remains a boolean compatibility switch: `false` forces media
+keyword search; `true` or omission follows the active RAG profile's `plain`,
+`semantic`, or `hybrid` search mode.
+
 - **Parameters**:
   - `query`: Search query
   - `limit`: Maximum results (default: 10)
   - `media_types`: Optional media type filter
-  - `use_semantic`: Use semantic search if available
+  - `use_semantic`: Enable profile-driven RAG search (default: `true`)
 - **Returns**: List of search results with content and metadata
 
 #### `search_conversations`
@@ -179,8 +232,6 @@ Create a new note.
 - **Parameters**:
   - `title`: Note title
   - `content`: Note content
-  - `tags`: Optional list of tags
-  - `template`: Optional template name
 - **Returns**: Note ID and creation details
 
 #### `list_characters`
@@ -201,15 +252,32 @@ Export conversations in various formats.
   - `format`: Export format (markdown, json, text)
 - **Returns**: Formatted conversation content
 
-#### `ingest_media`
-Ingest media from URLs or files (placeholder).
-- **Parameters**:
-  - `url`: Optional URL to ingest
-  - `file_path`: Optional local file path
-  - `media_type`: Type of media
-  - `title`: Optional title
-  - `tags`: Optional tags
-- **Returns**: Ingestion status and media ID
+### Library Tools (read-only, descriptor-backed)
+
+In addition to the standalone tools above, the in-process local MCP surface
+exposes 18 read-only `library_*` tools — `library_list_*`, `library_get_*`, and
+`library_search_*` for each of Media, Notes, Prompts, Skills, Conversations,
+and Collections. The same shared service and all 18 tools are also callable by
+Console agents when `[console].direct_library_tools` is enabled. They answer
+factual Library questions (list, count, view, lexical search) without touching
+the RAG/embedding pipeline.
+
+- **Registration**: appended to the capability manifest from the descriptor
+  table in `Library/library_tool_contract.py`
+  (`_describe_local_library_tools` in `server.py`); dispatched in-process by
+  `LocalMCPRuntimeDelegate` to the shared synchronous service. The standalone
+  server deliberately does not consume this combined manifest.
+- **Semantics**: bounded pages with exact totals; opaque stable IDs
+  (`type:<base64url>`); literal keyword-only search (no semantic/embedding);
+  get tools read bounded windows with revision-checked continuation cursors;
+  every serialized response fits within 32 KiB.
+- **Compatibility**: the standalone tools above are unchanged; the `library_*`
+  namespace is additive and independent of the Console
+  `[console].direct_library_tools` toggle.
+
+See `Docs/Development/Agent-Tools/local-library-tools.md` for the full
+contract (exact names, pagination, continuation, error codes, and security
+boundaries).
 
 ## MCP Resources
 
@@ -303,47 +371,24 @@ Character-based creative writing.
 
 ## Configuration
 
-MCP is configured through the `[mcp]` section in config.toml:
+The standalone gateway is stdio-only. The only `[mcp]` configuration key
+consumed by the standalone gateway is `expose_local_tools`. Its default is:
 
 ```toml
 [mcp]
-# Basic settings
-enabled = false  # Enable MCP server functionality
-server_name = "tldw_chatbook"
-server_version = "0.1.0"
-transport = "stdio"  # "stdio" for Claude Desktop, "http" for web
-http_port = 3000  # Port for HTTP transport
-allowed_clients = ["claude-desktop", "localhost"]
-
-# Feature toggles
-expose_tools = true  # Expose tools (chat, search, etc.)
-expose_resources = true  # Expose resources (conversations, notes, etc.)
-expose_prompts = true  # Expose prompt templates
-
-# Security settings
-require_auth = false  # Require authentication (not implemented yet)
-rate_limit = 100  # Max requests per minute per client
-max_concurrent_requests = 10  # Max concurrent requests
-
-# Tool-specific settings
-[mcp.tools]
-chat_default_provider = "openai"
-chat_default_temperature = 0.7
-chat_default_max_tokens = 4096
-search_default_limit = 10
-enable_media_ingestion = true
-
-# Resource-specific settings
-[mcp.resources]
-max_list_limit = 100  # Maximum items in list operations
-default_list_limit = 10  # Default items in list operations
-enable_binary_resources = false  # Allow binary resources
-
-# Prompt-specific settings
-[mcp.prompts]
-enable_custom_prompts = true  # Allow custom prompts
-max_prompt_length = 10000  # Maximum prompt length
+expose_local_tools = false
 ```
+
+The shipped entry point does not open an HTTP listener and does not implement
+standalone authentication or client allowlisting. `mcp-unified` applies its
+fixed `GatewayLimits` defaults: 600 requests per minute and 16 in-flight
+requests. Those limits are not Chatbook config keys. When local tools are
+enabled, workspace confinement comes from `[console] workspace_root` and each
+call still uses the shared permission store and kill switch described above.
+Confinement is not the only path check: credential, permission-store and
+app-database paths (`Utils/sensitive_paths.py`) are refused regardless of the
+configured root, enforced for these tools inside
+`Tools/local_tool_impls.py`'s `resolve_workspace_path`.
 
 ## Installation and Setup
 
@@ -356,21 +401,14 @@ max_prompt_length = 10000  # Maximum prompt length
 
 1. **Install with MCP support**:
    ```bash
-   pip install tldw-chatbook[mcp]
+   pip install "tldw_chatbook[mcp]"
    ```
    Or for development:
    ```bash
    pip install -e ".[mcp]"
    ```
 
-2. **Enable MCP in configuration**:
-   Edit `~/.config/tldw_cli/config.toml`:
-   ```toml
-   [mcp]
-   enabled = true
-   ```
-
-3. **Configure API keys** (if using chat tools):
+2. **Configure API keys** (if using chat tools):
    ```toml
    [API]
    openai_api_key = "your-api-key"
@@ -387,32 +425,18 @@ python -m tldw_chatbook.MCP
 
 ### Claude Desktop Integration
 
-1. **Install as MCP server**:
-   ```bash
-   mcp install /path/to/tldw_chatbook/MCP/server.py
-   ```
-
-2. **Or add to Claude Desktop config manually**:
+1. **Add the packaged module command to the client configuration**:
    Edit Claude Desktop's MCP config to include:
    ```json
    {
      "mcpServers": {
        "tldw_chatbook": {
          "command": "python",
-         "args": ["-m", "tldw_chatbook.MCP"],
-         "env": {
-           "PYTHONPATH": "/path/to/tldw_chatbook"
-         }
+         "args": ["-m", "tldw_chatbook.MCP"]
        }
      }
    }
    ```
-
-### Development Mode
-Use MCP Inspector for testing:
-```bash
-mcp dev /path/to/tldw_chatbook/MCP/server.py
-```
 
 ### Verification
 Check server is running:
@@ -471,9 +495,10 @@ await client.disconnect_from_server("my_server")
 - Path traversal prevention for file operations
 
 ### Access Control
-- Client allowlisting via `allowed_clients` config
-- Rate limiting per client
-- Maximum concurrent request limits
+- The standalone server inherits the launching client's OS access over stdio;
+  it has no network authentication or client-allowlisting layer.
+- The gateway enforces its fixed request-rate and in-flight limits.
+- Enabled local tools remain permission-gated and workspace-confined.
 
 ### Data Security
 - Database operations use existing tldw_chatbook security
@@ -596,11 +621,10 @@ await client.disconnect_from_server("my_server")
 ### Common Issues
 
 1. **MCP not available error**:
-   - Ensure MCP dependencies are installed: `pip install mcp[cli]`
+   - Ensure MCP dependencies are installed: `pip install "tldw_chatbook[mcp]"`
    - Check Python version is 3.11+
 
 2. **Server won't start**:
-   - Check config.toml has `mcp.enabled = true`
    - Verify database paths are correct
    - Check logs for initialization errors
 

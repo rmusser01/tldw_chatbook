@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Sequence
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 
 if TYPE_CHECKING:
     # Deferred at runtime (mirrors local_skills_service.py's own TYPE_CHECKING
@@ -179,6 +183,46 @@ class SkillsScopeService:
             action_id="skills.context.list.server",
             method_name="get_context",
         )
+
+    async def get_library_user_content_evidence(
+        self, *, mode: SkillsBackend | str | None = None
+    ) -> LibraryContentEvidence:
+        """Return tri-state evidence for available user-owned skills."""
+        normalized_mode = self._normalize_mode(mode)
+        service = self._require_service(normalized_mode)
+        local_evidence_context = getattr(
+            service, "get_library_user_content_evidence_context", None
+        )
+        if normalized_mode == SkillsBackend.LOCAL and callable(local_evidence_context):
+            self._enforce_policy("skills.context.list.local")
+            context = self._normalize_response(
+                normalized_mode, await asyncio.to_thread(local_evidence_context)
+            )
+        else:
+            context = await self.get_context(mode=normalized_mode)
+        model_dump = getattr(context, "model_dump", None)
+        if callable(model_dump):
+            context = model_dump(mode="json")
+        if not isinstance(context, dict) or not isinstance(
+            context.get("available_skills"), list
+        ):
+            return LibraryContentEvidence.UNKNOWN
+        available = context["available_skills"]
+        if normalized_mode == SkillsBackend.LOCAL:
+            if not all(isinstance(item, dict) for item in available):
+                return LibraryContentEvidence.UNKNOWN
+            return (
+                LibraryContentEvidence.HAS_USER_CONTENT
+                if available
+                else LibraryContentEvidence.EMPTY
+            )
+        if normalized_mode == SkillsBackend.SERVER:
+            return (
+                LibraryContentEvidence.EMPTY
+                if not available
+                else LibraryContentEvidence.UNKNOWN
+            )
+        return LibraryContentEvidence.UNKNOWN
 
     async def count_skills(
         self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
@@ -357,12 +401,16 @@ class SkillsScopeService:
                 path, unknown skill, or missing file).
             SkillTrustBlockedError: Skill not currently trusted.
         """
-        normalized_mode = self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL
+        normalized_mode = (
+            self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL
+        )
         if normalized_mode is not SkillsBackend.LOCAL:
             raise ValueError("skill_file reads are local-only")
         service = self._require_service(SkillsBackend.LOCAL)
         self._enforce_policy("skills.read_file.launch.local")
-        return await self._maybe_await(service.read_skill_file(skill_name, relative_path))
+        return await self._maybe_await(
+            service.read_skill_file(skill_name, relative_path)
+        )
 
     def enforce_install_remote(self) -> None:
         """Gate a remote skill install (public seam for skill_remote_fetch).
@@ -426,6 +474,7 @@ class SkillsScopeService:
         args: Sequence[str],
         *,
         mode: SkillsBackend | str | None = None,
+        output_root: Path | None = None,
     ) -> ScriptRunResult:
         """Run a LOCAL trusted skill's bundled script (runtime run_skill_script seam).
 
@@ -436,6 +485,8 @@ class SkillsScopeService:
                 list/tuple of str (see the local service's
                 ``run_skill_script`` for why a bare str is rejected).
             mode: Backend selector; only local is accepted.
+            output_root: Optional explicit retained-output root forwarded to
+                the local backend.
 
         Returns:
             The local service's ScriptRunResult.
@@ -455,7 +506,12 @@ class SkillsScopeService:
         service = self._require_service(SkillsBackend.LOCAL)
         self._enforce_policy("skills.run_script.launch.local")
         return await self._maybe_await(
-            service.run_skill_script(skill_name, script_path, args)
+            service.run_skill_script(
+                skill_name,
+                script_path,
+                args,
+                output_root=output_root,
+            )
         )
 
     async def seed_builtin_skills(

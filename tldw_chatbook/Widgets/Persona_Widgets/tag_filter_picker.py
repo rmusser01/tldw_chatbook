@@ -14,7 +14,14 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Input, Label, ListItem, ListView, Static
+
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`). A full refresh clears
+#: and re-appends every matching `ListItem` into the `ListView`, which
+#: should not happen on every keystroke (task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 
 class TagFilterPicker(ModalScreen[str | None]):
@@ -46,6 +53,7 @@ class TagFilterPicker(ModalScreen[str | None]):
         self._tags = list(tags)
         self._current = current
         self._row_tags: list[str | None] = []
+        self._filter_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -79,7 +87,16 @@ class TagFilterPicker(ModalScreen[str | None]):
     @on(Input.Changed, "#tag-filter-search")
     def _filter(self, event: Input.Changed) -> None:
         event.stop()
-        needle = event.value.strip().lower()
+        needle = event.value
+        if self._filter_debounce_timer is not None:
+            self._filter_debounce_timer.stop()
+        self._filter_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS, lambda: self._apply_filter_debounced(needle)
+        )
+
+    def _apply_filter_debounced(self, raw_value: str) -> None:
+        self._filter_debounce_timer = None
+        needle = raw_value.strip().lower()
         tags = [t for t in self._tags if needle in t.lower()] if needle else self._tags
         self._populate(tags)
 

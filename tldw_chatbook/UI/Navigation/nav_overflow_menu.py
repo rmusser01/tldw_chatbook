@@ -68,8 +68,11 @@ class NavOverflowMenu(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="nav-overflow-menu"):
             yield Static("All destinations", id="nav-overflow-menu-title")
-            for index, destination in enumerate(SHELL_DESTINATION_ORDER):
-                label = nav_button_label(index, destination.accessible_label)
+            for destination in SHELL_DESTINATION_ORDER:
+                label = nav_button_label(
+                    destination.destination_id,
+                    destination.accessible_label,
+                )
                 if destination.destination_id == self._active_destination_id:
                     label = f"{label} (current)"
                 button = Button(

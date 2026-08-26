@@ -2,14 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import math
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from ipaddress import IPv6Address
 from typing import Any
-from urllib.parse import ParseResult, urlparse, urlunparse
+from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
 import httpx
 
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
+from tldw_chatbook.Chat.local_server_discovery import (
+    MODEL_ID_MAX_CHARS,
+    MODEL_IDS_MAX_COUNT,
+    MODEL_PROBE_RESPONSE_MAX_BYTES,
+    UnsupportedModelResponseEncoding,
+    read_bounded_model_response,
+)
+from tldw_chatbook.LLM_Calls.qwencloud_url import (
+    QwenCloudBaseURLValidationError,
+    normalize_qwencloud_base_url,
+)
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     DiscoveredModel,
     DiscoveryErrorKind,
@@ -18,12 +34,19 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 )
 from tldw_chatbook.Utils.input_validation import validate_url
 
-
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "koboldcpp": frozenset({"/api/v1/generate"}),
     "ollama": frozenset({"/api/tags"}),
     "local_ollama": frozenset({"/api/tags"}),
 }
+_QWENCLOUD_PROVIDER_KEY = "qwencloud"
+_MAX_ENDPOINT_LENGTH = 2000
+_MAX_GENERIC_PATH_DECODE_PASSES = 2
+_GENERIC_ENDPOINT_TAILS = (("models",), ("responses",), ("chat", "completions"))
+_GENERIC_REQUEST_ENDPOINT_TAILS = _GENERIC_ENDPOINT_TAILS[1:]
+_PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
+_ENCODED_PATH_SEPARATOR_RE = re.compile(r"%(?:2[fF]|5[cC])")
+_ZONE_ID_RE = re.compile(r"[A-Za-z0-9._~-]+")
 _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -38,6 +61,7 @@ _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
         "local_vllm",
         "openai",
         "openrouter",
+        "qwencloud",
         "tabbyapi",
         "vllm",
     }
@@ -102,11 +126,22 @@ _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES = frozenset({"token"})
 
 _ANTHROPIC_PROVIDER_KEY = "anthropic"
 _ANTHROPIC_VERSION_HEADER = "2023-06-01"
-_ANTHROPIC_MODELS_PAGE_LIMIT = 1000
+MODEL_DISCOVERY_RESPONSE_MAX_BYTES = MODEL_PROBE_RESPONSE_MAX_BYTES
+DISCOVERED_MODEL_MAX_COUNT = MODEL_IDS_MAX_COUNT
+DISCOVERED_MODEL_ID_MAX_CHARS = MODEL_ID_MAX_CHARS
+MODEL_METADATA_MAX_DEPTH = 8
+MODEL_METADATA_MAX_ITEMS = 256
+MODEL_METADATA_MAX_SERIALIZED_BYTES = 16 * 1024
+MODEL_METADATA_MAX_VALUE_CHARS = 4096
+MODEL_METADATA_MAX_KEY_CHARS = 128
+
+_ANTHROPIC_MODELS_PAGE_LIMIT = DISCOVERED_MODEL_MAX_COUNT
 _ANTHROPIC_MAX_MODEL_PAGES = 10
 
 
-def build_discovery_auth_headers(provider_identity: str, api_key: str | None) -> dict[str, str]:
+def build_discovery_auth_headers(
+    provider_identity: str, api_key: str | None
+) -> dict[str, str]:
     """Return provider-appropriate auth headers for a models request.
 
     Args:
@@ -135,9 +170,14 @@ def _normalized_provider_identity(provider_identity: str | None) -> str:
 def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
     """Parse a configured endpoint, accepting host-only local URLs."""
     raw_endpoint = str(endpoint or "").strip()
-    if not raw_endpoint:
+    if not raw_endpoint or len(raw_endpoint) > _MAX_ENDPOINT_LENGTH:
         return None
     candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
+    if "\\" in candidate or any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in candidate
+    ):
+        return None
     try:
         parsed = urlparse(candidate)
     except ValueError:
@@ -152,7 +192,97 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         parsed.port
     except ValueError:
         return None
-    return parsed
+    return parsed if _is_structurally_safe_generic_endpoint(parsed) else None
+
+
+def _is_structurally_safe_generic_endpoint(parsed: ParseResult) -> bool:
+    """Validate generic discovery structure without provider suffix policy."""
+    if not _is_safe_generic_authority(parsed.netloc):
+        return False
+    if not _is_safe_generic_path(parsed.path):
+        return False
+    safe_url = urlunparse(
+        (parsed.scheme, _safe_netloc(parsed), parsed.path or "/", "", "", "")
+    )
+    return validate_url(safe_url)
+
+
+def _is_safe_generic_authority(netloc: str) -> bool:
+    """Allow percent only for an RFC 6874 bracketed IPv6 zone identifier."""
+    if any(character in netloc for character in '\\|^{}<>"`') or netloc.endswith(":"):
+        return False
+    if "%" not in netloc:
+        return True
+
+    host_port = netloc.rsplit("@", 1)[-1]
+    closing_bracket = host_port.find("]")
+    if not host_port.startswith("[") or closing_bracket < 0:
+        return False
+    bracketed_host = host_port[1:closing_bracket]
+    remainder = host_port[closing_bracket + 1 :]
+    if bracketed_host.count("%25") != 1 or (
+        remainder and not re.fullmatch(r":\d+", remainder)
+    ):
+        return False
+    address, zone_id = bracketed_host.split("%25", 1)
+    try:
+        IPv6Address(address)
+    except ValueError:
+        return False
+    return _ZONE_ID_RE.fullmatch(zone_id) is not None
+
+
+def _is_safe_generic_path(path: str) -> bool:
+    """Reject parser-ambiguous path structure without rewriting the URL."""
+    if (
+        "//" in path
+        or re.search(r"%(?![0-9A-Fa-f]{2})", path) is not None
+        or any(segment in {".", ".."} for segment in path.split("/"))
+        or _has_unsafe_generic_endpoint_tail_structure(path)
+    ):
+        return False
+
+    validation_path = path
+    for _pass in range(_MAX_GENERIC_PATH_DECODE_PASSES):
+        if _ENCODED_PATH_SEPARATOR_RE.search(validation_path):
+            return False
+        try:
+            decoded_path = unquote(validation_path, errors="strict")
+        except UnicodeDecodeError:
+            return False
+        if decoded_path == validation_path:
+            break
+        if (
+            any(
+                ord(character) < 32 or ord(character) == 127
+                for character in decoded_path
+            )
+            or any(segment in {".", ".."} for segment in decoded_path.split("/"))
+            or _has_unsafe_generic_endpoint_tail_structure(decoded_path)
+        ):
+            return False
+        validation_path = decoded_path
+    return _PERCENT_ESCAPE_RE.search(validation_path) is None
+
+
+def _has_unsafe_generic_endpoint_tail_structure(path: str) -> bool:
+    """Reject repeated or non-terminal generic request endpoint tails."""
+    segments = tuple(segment.lower() for segment in path.strip("/").split("/"))
+    request_tails = [
+        (tail, index + len(tail))
+        for tail in _GENERIC_REQUEST_ENDPOINT_TAILS
+        for index in range(len(segments) - len(tail) + 1)
+        if segments[index : index + len(tail)] == tail
+    ]
+    if len(request_tails) > 1 or any(
+        end != len(segments) for _tail, end in request_tails
+    ):
+        return True
+    return any(
+        segments[-len(first + second) :] == first + second
+        for first in _GENERIC_ENDPOINT_TAILS
+        for second in _GENERIC_ENDPOINT_TAILS
+    )
 
 
 def _normalized_path(parsed: ParseResult) -> str:
@@ -176,7 +306,7 @@ def _safe_netloc(parsed: ParseResult) -> str:
 def _parse_endpoint_for_fingerprint(endpoint: str | None) -> ParseResult | None:
     """Parse any URL-like endpoint so safe display can strip credentials."""
     raw_endpoint = str(endpoint or "").strip()
-    if not raw_endpoint:
+    if not raw_endpoint or len(raw_endpoint) > _MAX_ENDPOINT_LENGTH:
         return None
     candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
     try:
@@ -206,6 +336,22 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
     return None
 
 
+def _models_path_preserving_encoding(path: str) -> str:
+    """Return the models path without decoding or recasing its base prefix."""
+    raw_path = (path or "/").rstrip("/") or "/"
+    normalized_path = raw_path.lower()
+    normalized_models_path = _models_path_for_endpoint_path(normalized_path)
+    if normalized_models_path is None:
+        return raw_path
+    if normalized_path == "/" or normalized_path in {"/completion", "/completions"}:
+        return normalized_models_path
+    if normalized_path.endswith("/chat/completions"):
+        return f"{raw_path[: -len('/chat/completions')]}/models"
+    if normalized_path.endswith("/models"):
+        return raw_path
+    return f"{raw_path}/models"
+
+
 def _is_base_url_path(path: str) -> bool:
     """Return whether a path requires provider identity to infer ``/v1/models``."""
     normalized_path = (path or "/").rstrip("/").lower() or "/"
@@ -215,9 +361,8 @@ def _is_base_url_path(path: str) -> bool:
 def _is_explicit_openai_compatible_path(path: str) -> bool:
     """Return whether a path explicitly opts into OpenAI-compatible discovery."""
     normalized_path = (path or "/").rstrip("/").lower() or "/"
-    return (
-        normalized_path in _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS
-        or normalized_path.endswith("/chat/completions")
+    return normalized_path in _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS or (
+        normalized_path.endswith("/chat/completions")
     )
 
 
@@ -231,11 +376,18 @@ def supports_openai_compatible_model_discovery(
     provider discovery URLs are rejected even when the provider can also expose
     an OpenAI-compatible API at another configured endpoint.
     """
+    provider_key = _normalized_provider_identity(provider_identity)
+    if provider_key == _QWENCLOUD_PROVIDER_KEY:
+        try:
+            normalize_qwencloud_base_url(normalized_endpoint)
+        except QwenCloudBaseURLValidationError:
+            return False
+        return True
+
     parsed = _parse_endpoint(normalized_endpoint)
     if parsed is None:
         return False
 
-    provider_key = _normalized_provider_identity(provider_identity)
     path = _normalized_path(parsed)
     native_paths = _NATIVE_ENDPOINT_PATHS_BY_PROVIDER.get(provider_key, frozenset())
     if path in native_paths:
@@ -251,6 +403,13 @@ def supports_openai_compatible_model_discovery(
 
 def build_models_url(endpoint: str, provider_identity: str) -> str:
     """Return the OpenAI-compatible models endpoint for a configured URL."""
+    if _normalized_provider_identity(provider_identity) == _QWENCLOUD_PROVIDER_KEY:
+        try:
+            base_url = normalize_qwencloud_base_url(endpoint)
+        except QwenCloudBaseURLValidationError:
+            return fingerprint_endpoint(endpoint)
+        return f"{base_url}/models"
+
     parsed = _parse_endpoint(endpoint)
     if parsed is None:
         return str(endpoint or "").strip()
@@ -271,7 +430,7 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
                 )
             )
 
-    models_path = _models_path_for_endpoint_path(path) or path
+    models_path = _models_path_preserving_encoding(parsed.path)
 
     return urlunparse((parsed.scheme, _safe_netloc(parsed), models_path, "", "", ""))
 
@@ -322,28 +481,69 @@ def _is_sensitive_metadata_key(key: object) -> bool:
     )
 
 
-def _scrub_model_metadata_value(value: Any) -> Any:
-    """Recursively remove sensitive-looking fields from endpoint metadata."""
-    if isinstance(value, Mapping):
-        return {
-            str(key): _scrub_model_metadata_value(nested_value)
-            for key, nested_value in value.items()
-            if not _is_sensitive_metadata_key(key)
-        }
-    if isinstance(value, list):
-        return [_scrub_model_metadata_value(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_scrub_model_metadata_value(item) for item in value)
-    return value
+def _scrub_model_metadata_value(
+    value: Any,
+    *,
+    depth: int,
+    budget: list[int],
+) -> Any:
+    """Return bounded JSON-like metadata with credential-looking fields removed."""
+
+    if depth > MODEL_METADATA_MAX_DEPTH:
+        raise ValueError("Invalid models response: metadata is too deep")
+    budget[0] += 1
+    if budget[0] > MODEL_METADATA_MAX_ITEMS:
+        raise ValueError("Invalid models response: metadata has too many items")
+    if type(value) is dict:
+        result: dict[str, Any] = {}
+        for key, nested_value in value.items():
+            if type(key) is not str or len(key) > MODEL_METADATA_MAX_KEY_CHARS:
+                raise ValueError("Invalid models response: metadata key is invalid")
+            if _is_sensitive_metadata_key(key):
+                continue
+            result[key] = _scrub_model_metadata_value(
+                nested_value,
+                depth=depth + 1,
+                budget=budget,
+            )
+        return result
+    if type(value) is list:
+        return [
+            _scrub_model_metadata_value(item, depth=depth + 1, budget=budget)
+            for item in value
+        ]
+    if type(value) is tuple:
+        return tuple(
+            _scrub_model_metadata_value(item, depth=depth + 1, budget=budget)
+            for item in value
+        )
+    if type(value) is str:
+        if len(value) > MODEL_METADATA_MAX_VALUE_CHARS:
+            raise ValueError("Invalid models response: metadata value is too large")
+        return value
+    if value is None or type(value) in {bool, int}:
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    raise ValueError("Invalid models response: metadata value is invalid")
 
 
 def _safe_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     """Copy endpoint model metadata while dropping sensitive-looking fields."""
-    return {
-        str(key): _scrub_model_metadata_value(value)
-        for key, value in model_payload.items()
-        if not _is_sensitive_metadata_key(key)
-    }
+    if type(model_payload) is not dict:
+        raise ValueError("Invalid models response: metadata is invalid")
+    metadata = _scrub_model_metadata_value(model_payload, depth=0, budget=[0])
+    if type(metadata) is not dict:
+        raise ValueError("Invalid models response: metadata is invalid")
+    serialized = json.dumps(
+        metadata,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    if len(serialized) > MODEL_METADATA_MAX_SERIALIZED_BYTES:
+        raise ValueError("Invalid models response: metadata is too large")
+    return metadata
 
 
 def normalize_models_response(
@@ -355,21 +555,25 @@ def normalize_models_response(
     now_iso: str,
 ) -> tuple[DiscoveredModel, ...]:
     """Normalize an OpenAI ``/models`` response into discovery contracts."""
-    data = payload.get("data") if isinstance(payload, Mapping) else None
-    if not isinstance(data, list):
+    data = payload.get("data") if type(payload) is dict else None
+    if type(data) is not list:
         raise ValueError("Invalid models response: expected data list")
+    if len(data) > DISCOVERED_MODEL_MAX_COUNT:
+        raise ValueError("Invalid models response: too many models")
 
     seen_model_ids: set[str] = set()
     models: list[DiscoveredModel] = []
     for item in data:
-        if not isinstance(item, Mapping):
+        if type(item) is not dict:
             raise ValueError("Invalid models response: expected model objects")
 
         model_id = item.get("id")
-        if not isinstance(model_id, str) or not model_id.strip():
+        if type(model_id) is not str or not model_id.strip():
             raise ValueError("Invalid models response: model id is required")
 
         model_id = model_id.strip()
+        if len(model_id) > DISCOVERED_MODEL_ID_MAX_CHARS or not model_id.isprintable():
+            raise ValueError("Invalid models response: model id is invalid")
         if model_id in seen_model_ids:
             continue
         seen_model_ids.add(model_id)
@@ -453,7 +657,10 @@ async def discover_openai_compatible_models(
             ),
         )
 
-    headers = build_discovery_auth_headers(provider, api_key) or None
+    headers = {
+        **build_discovery_auth_headers(provider, api_key),
+        "Accept-Encoding": "identity",
+    }
     paginate = _normalized_provider_identity(provider) == _ANTHROPIC_PROVIDER_KEY
 
     async def _request_payloads(
@@ -465,8 +672,27 @@ async def discover_openai_compatible_models(
         )
         for _page in range(_ANTHROPIC_MAX_MODEL_PAGES if paginate else 1):
             try:
-                response = await active_client.get(models_url, headers=headers, params=params)
-                response.raise_for_status()
+                async with active_client.stream(
+                    "GET",
+                    models_url,
+                    headers=headers,
+                    params=params,
+                    follow_redirects=False,
+                ) as response:
+                    response.raise_for_status()
+                    body = await read_bounded_model_response(response)
+            except UnsupportedModelResponseEncoding:
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "invalid_response",
+                        "Compressed models responses are not supported.",
+                        "Use an endpoint that honors identity encoding.",
+                    ),
+                )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in {401, 403}:
                     return None, ModelDiscoveryResult(
@@ -478,6 +704,18 @@ async def discover_openai_compatible_models(
                             "missing_credentials",
                             "The models endpoint rejected the configured credentials.",
                             "Check the API key configured for this provider.",
+                        ),
+                    )
+                if exc.response.status_code == 404:
+                    return None, ModelDiscoveryResult(
+                        provider=provider,
+                        provider_list_key=provider_list_key,
+                        endpoint_fingerprint=endpoint_fingerprint,
+                        status="unsupported",
+                        error=_discovery_error(
+                            "unsupported_endpoint",
+                            "The models endpoint is unavailable.",
+                            "Enter the model ID used by this endpoint.",
                         ),
                     )
                 return None, ModelDiscoveryResult(
@@ -503,9 +741,21 @@ async def discover_openai_compatible_models(
                         "Check the endpoint URL, server availability, and credentials.",
                     ),
                 )
+            if body is None:
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "invalid_response",
+                        "The models response is too large.",
+                        "Use an endpoint with a bounded models response.",
+                    ),
+                )
             try:
-                payload = response.json()
-            except ValueError:
+                payload = await asyncio.to_thread(json.loads, body)
+            except (RecursionError, UnicodeDecodeError, ValueError):
                 return None, ModelDiscoveryResult(
                     provider=provider,
                     provider_list_key=provider_list_key,
@@ -517,7 +767,7 @@ async def discover_openai_compatible_models(
                         "Use an endpoint that returns a JSON object with a data array of model IDs.",
                     ),
                 )
-            if not isinstance(payload, Mapping) or not isinstance(payload.get("data"), list):
+            if type(payload) is not dict or type(payload.get("data")) is not list:
                 return None, ModelDiscoveryResult(
                     provider=provider,
                     provider_list_key=provider_list_key,
@@ -529,11 +779,37 @@ async def discover_openai_compatible_models(
                         "Use an endpoint that returns a JSON object with a data array of model IDs.",
                     ),
                 )
+            data = payload["data"]
+            current_count = sum(len(item["data"]) for item in payloads)
+            if len(data) > DISCOVERED_MODEL_MAX_COUNT - current_count:
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "invalid_response",
+                        "The models endpoint returned too many models.",
+                        "Use a narrower models endpoint or provider filter.",
+                    ),
+                )
             payloads.append(payload)
             if not paginate:
                 break
             last_id = payload.get("last_id")
             if bool(payload.get("has_more")) and isinstance(last_id, str) and last_id:
+                if current_count + len(data) >= DISCOVERED_MODEL_MAX_COUNT:
+                    return None, ModelDiscoveryResult(
+                        provider=provider,
+                        provider_list_key=provider_list_key,
+                        endpoint_fingerprint=endpoint_fingerprint,
+                        status="error",
+                        error=_discovery_error(
+                            "invalid_response",
+                            "The paginated models response exceeded the model limit.",
+                            "Use a narrower provider-side model filter.",
+                        ),
+                    )
                 params = {"limit": _ANTHROPIC_MODELS_PAGE_LIMIT, "after_id": last_id}
                 continue
             break
@@ -576,7 +852,9 @@ async def discover_openai_compatible_models(
     for payload in payloads:
         combined_data.extend(payload["data"])
 
-    now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    now_iso = (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
     try:
         models = normalize_models_response(
             {"data": combined_data},

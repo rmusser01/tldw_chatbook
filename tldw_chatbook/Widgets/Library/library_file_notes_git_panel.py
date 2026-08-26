@@ -15,12 +15,25 @@ from textual.app import ComposeResult
 from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.containers import Container, Grid, Horizontal, Vertical, VerticalScroll
-from textual.events import Resize
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Static,
+    TextArea,
+)
 
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_DISABLED_ACTION_MARKER,
+    library_disabled_action_label,
+)
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitIncludedNote,
     CommitOutcome,
@@ -35,12 +48,15 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushReviewProjection,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileSystemIdentity,
     HeadIdentity,
     PushCandidateAvailability,
+    RepositoryIdentity,
     SessionGitRow,
     SessionGitStatus,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 _CHANGE_VERBS = {
     "created": "CREATED",
@@ -164,12 +180,14 @@ class CommitPanelReviewProjection:
     """Sanitized review facts paired with explicit note change types."""
 
     review: CommitReviewProjection
+    repository: RepositoryIdentity
     included_notes: tuple[CommitReviewNoteProjection, ...]
 
     def __post_init__(self) -> None:
         included_notes = tuple(self.included_notes)
         if (
-            tuple(item.note for item in included_notes)
+            type(self.repository) is not RepositoryIdentity
+            or tuple(item.note for item in included_notes)
             != self.review.included_notes
         ):
             raise ValueError(
@@ -215,10 +233,12 @@ class PushPanelReviewProjection:
 
     review: PushReviewProjection
     availability: PushCandidateAvailability
+    repository: RepositoryIdentity
 
     def __post_init__(self) -> None:
         if (
-            self.review.candidate != self.availability.candidate
+            type(self.repository) is not RepositoryIdentity
+            or self.review.candidate != self.availability.candidate
             or len(self.review.candidate.included_notes)
             != len(self.availability.change_types)
         ):
@@ -405,6 +425,13 @@ def _push_destination_summary(destination: PushDestinationProjection) -> str:
         f"{destination.scheme} · {principal}:{destination.port} · "
         f"{destination.repository_path}"
     )
+
+
+def _filesystem_identity_summary(identity: FileSystemIdentity) -> str:
+    """Format one already-owned filesystem identity for audit display."""
+    device = "?" if identity.device is None else str(identity.device)
+    inode = "?" if identity.inode is None else str(identity.inode)
+    return f"{device}:{inode}"
 
 
 def _row_primary_copy(row: SessionGitRow) -> str:
@@ -608,9 +635,6 @@ class LibraryFileNotesGitPanel(Vertical):
     ]
 
     DEFAULT_CSS = """
-    $ds-focus-bg: #51677e;
-    $ds-focus-fg: $text;
-
     LibraryFileNotesGitPanel {
         display: none;
         height: 1fr;
@@ -670,7 +694,19 @@ class LibraryFileNotesGitPanel(Vertical):
         display: none;
     }
 
+    #file-notes-git-status.-complete-copy,
+    #file-notes-git-action-status.-complete-copy {
+        max-height: 100%;
+        text-wrap: wrap;
+    }
+
     #file-notes-git-empty {
+        display: none;
+    }
+
+    #file-notes-git-selected-actions,
+    #file-notes-git-bulk-toggle,
+    #file-notes-git-bulk-actions {
         display: none;
     }
 
@@ -687,8 +723,8 @@ class LibraryFileNotesGitPanel(Vertical):
 
     .file-notes-git-row:focus,
     .file-notes-git-row.-highlight {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
+        background: $primary-background;
+        color: $text;
         text-style: bold underline;
         outline: none;
     }
@@ -711,8 +747,8 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     LibraryFileNotesGitPanel Button.-style-default:focus {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
+        background: $primary-background;
+        color: $text;
         text-style: bold underline;
         outline: none;
     }
@@ -750,7 +786,7 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-push-body:focus {
-        outline: heavy $ds-focus-bg;
+        outline: heavy $primary;
     }
 
     .file-notes-git-push-phase {
@@ -766,9 +802,14 @@ class LibraryFileNotesGitPanel(Vertical):
         text-wrap: wrap;
     }
 
-    #file-notes-git-push-review-lead {
+    .file-notes-git-review-heading {
         text-style: bold;
-        margin-bottom: 1;
+        margin-top: 1;
+    }
+
+    #file-notes-git-commit-review-what-heading,
+    #file-notes-git-push-review-what-heading {
+        margin-top: 0;
     }
 
     #file-notes-git-push-review-notes {
@@ -778,9 +819,44 @@ class LibraryFileNotesGitPanel(Vertical):
         background: $surface-darken-1;
     }
 
+    #file-notes-git-commit-review-technical,
+    #file-notes-git-push-review-technical {
+        height: auto;
+        min-height: 1;
+        margin: 1 0 0 0;
+        border: none;
+        background: transparent;
+    }
+
+    #file-notes-git-commit-review-technical > CollapsibleTitle,
+    #file-notes-git-push-review-technical > CollapsibleTitle {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+        background: $surface-darken-1;
+        color: $text;
+    }
+
+    #file-notes-git-commit-review-technical > CollapsibleTitle:focus,
+    #file-notes-git-push-review-technical > CollapsibleTitle:focus {
+        border: none;
+        outline: heavy $accent;
+        background: $accent 20%;
+        color: $text;
+        text-style: bold underline;
+    }
+
+    #file-notes-git-commit-review-technical > Contents,
+    #file-notes-git-push-review-technical > Contents {
+        height: auto;
+        padding: 1 0 0 0;
+        background: transparent;
+    }
+
     #file-notes-git-push-review-details {
         width: auto;
-        margin: 1 0;
+        margin: 1 0 0 0;
     }
 
     #file-notes-git-push-result-title {
@@ -851,7 +927,7 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-commit-body:focus {
-        outline: heavy $ds-focus-bg;
+        outline: heavy $primary;
     }
 
     .file-notes-git-commit-phase {
@@ -932,8 +1008,8 @@ class LibraryFileNotesGitPanel(Vertical):
 
     .file-notes-git-commit-included-row:focus,
     .file-notes-git-commit-included-row.-highlight {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
+        background: $primary-background;
+        color: $text;
         text-style: bold underline;
         outline: none;
     }
@@ -1092,11 +1168,14 @@ class LibraryFileNotesGitPanel(Vertical):
         self._trust_available = False
         self._status_ready = False
         self._mutating = False
+        self._bulk_actions_expanded = False
         self._row_render_generation = 0
         self._replacing_rows = False
         self._repository_text = "Repository: not checked"
         self._current_status_text = "Status: NOT CHECKED"
+        self._current_status_complete = False
         self._last_action_text = ""
+        self._last_action_complete = False
         self._selected_note_text = ""
         self._commit_phase: CommitPanelPhase = "list"
         self._commit_availability: CommitDraftProjection | None = None
@@ -1154,7 +1233,7 @@ class LibraryFileNotesGitPanel(Vertical):
                     compact=True,
                 )
             yield Static(
-                "Prepare session for commit",
+                "Review session changes",
                 id="file-notes-git-title",
                 markup=False,
             )
@@ -1164,12 +1243,12 @@ class LibraryFileNotesGitPanel(Vertical):
                 markup=False,
             )
             yield Static(
-                "Session paths only · stages complete file state",
+                "Review and commit only notes changed during this Chatbook session.",
                 id="file-notes-git-scope",
                 markup=False,
             )
             yield Static(
-                "Up/Down Select | Tab Actions | Enter Run | Esc Back",
+                "Up/Down select · Tab actions · Enter run · Esc back",
                 id="file-notes-git-guide",
                 markup=False,
             )
@@ -1205,6 +1284,11 @@ class LibraryFileNotesGitPanel(Vertical):
                     id="file-notes-git-unstage-selected",
                     compact=True,
                 )
+            yield Button(
+                "Show bulk actions",
+                id="file-notes-git-bulk-toggle",
+                compact=True,
+            )
             with Horizontal(id="file-notes-git-bulk-actions"):
                 yield Button(
                     "Stage all (0)",
@@ -1303,9 +1387,12 @@ class LibraryFileNotesGitPanel(Vertical):
                     classes="file-notes-git-commit-phase",
                 ):
                     yield Static(
-                        "",
-                        id="file-notes-git-commit-review-branch",
-                        classes="file-notes-git-commit-copy",
+                        "What",
+                        id="file-notes-git-commit-review-what-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
                         markup=False,
                     )
                     yield Static(
@@ -1317,6 +1404,36 @@ class LibraryFileNotesGitPanel(Vertical):
                         "",
                         id="file-notes-git-commit-review-message",
                         classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Where",
+                        id="file-notes-git-commit-review-where-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-repository",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-branch",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Impact",
+                        id="file-notes-git-commit-review-impact-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
                         markup=False,
                     )
                     yield Static(
@@ -1375,6 +1492,37 @@ class LibraryFileNotesGitPanel(Vertical):
                         classes="file-notes-git-commit-copy",
                         markup=False,
                     )
+                    yield Static(
+                        "Recovery",
+                        id="file-notes-git-commit-review-recovery-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-recovery",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    with Collapsible(
+                        title="Technical details",
+                        collapsed=True,
+                        id="file-notes-git-commit-review-technical",
+                    ):
+                        for widget_id in (
+                            "worktree-identity",
+                            "git-directory",
+                            "git-common-directory",
+                        ):
+                            yield Static(
+                                "",
+                                id=f"file-notes-git-commit-review-{widget_id}",
+                                classes="file-notes-git-commit-copy",
+                                markup=False,
+                            )
 
                 with Vertical(
                     id="file-notes-git-commit-execution",
@@ -1471,15 +1619,20 @@ class LibraryFileNotesGitPanel(Vertical):
                     id="file-notes-git-push-review-surface",
                     classes="file-notes-git-push-phase",
                 ):
+                    yield Static(
+                        "What",
+                        id="file-notes-git-push-review-what-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
                     for widget_id in (
                         "lead",
                         "subject",
                         "candidate",
                         "transition",
-                        "local-branch",
-                        "remote",
-                        "ref",
-                        "endpoint",
                         "counts",
                     ):
                         yield Static(
@@ -1488,11 +1641,6 @@ class LibraryFileNotesGitPanel(Vertical):
                             classes="file-notes-git-push-copy",
                             markup=False,
                         )
-                    yield Button(
-                        "Endpoint Details",
-                        id="file-notes-git-push-review-details",
-                        compact=True,
-                    )
                     yield TextArea(
                         "",
                         id="file-notes-git-push-review-notes",
@@ -1500,12 +1648,50 @@ class LibraryFileNotesGitPanel(Vertical):
                         soft_wrap=True,
                         tab_behavior="focus",
                     )
+                    yield Static(
+                        "Where",
+                        id="file-notes-git-push-review-where-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
                     for widget_id in (
+                        "repository",
+                        "local-branch",
+                        "destination",
+                        "remote",
+                        "ref",
+                        "endpoint",
                         "lease",
                         "transport",
-                        "local-hooks",
-                        "remote-effects",
+                        "authentication",
+                    ):
+                        yield Static(
+                            "",
+                            id=f"file-notes-git-push-review-{widget_id}",
+                            classes="file-notes-git-push-copy",
+                            markup=False,
+                        )
+                    yield Button(
+                        "Endpoint details",
+                        id="file-notes-git-push-review-details",
+                        compact=True,
+                    )
+                    yield Static(
+                        "Impact",
+                        id="file-notes-git-push-review-impact-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    for widget_id in (
+                        "effects",
                         "later-edits",
+                        "local-hooks",
                         "objects",
                     ):
                         yield Static(
@@ -1514,6 +1700,38 @@ class LibraryFileNotesGitPanel(Vertical):
                             classes="file-notes-git-push-copy",
                             markup=False,
                         )
+                    yield Static(
+                        "Recovery",
+                        id="file-notes-git-push-review-recovery-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-review-recovery",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
+                    )
+                    with Collapsible(
+                        title="Technical details",
+                        collapsed=True,
+                        id="file-notes-git-push-review-technical",
+                    ):
+                        for widget_id in (
+                            "worktree-identity",
+                            "git-directory",
+                            "git-common-directory",
+                            "refspec-audit",
+                        ):
+                            yield Static(
+                                "",
+                                id=f"file-notes-git-push-review-{widget_id}",
+                                classes="file-notes-git-push-copy",
+                                markup=False,
+                            )
 
                 with Vertical(
                     id="file-notes-git-push-result",
@@ -1579,6 +1797,18 @@ class LibraryFileNotesGitPanel(Vertical):
     def on_mount(self) -> None:
         self._sync_commit_footer_layout(self.size.width)
         self.call_after_refresh(self._finish_mount)
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Keep expanded push-review controls inside the compact viewport."""
+        if (
+            self._push_phase == "review"
+            and event.widget.id == "file-notes-git-push-review-details"
+        ):
+            event.widget.scroll_visible(
+                animate=False,
+                force=True,
+                immediate=True,
+            )
 
     def _finish_mount(self) -> None:
         """Project child-dependent state after the composed rows are mounted."""
@@ -1658,15 +1888,28 @@ class LibraryFileNotesGitPanel(Vertical):
         return row.content_region.width or fallback
 
     def _fit_fixed_regions(self) -> None:
-        for selector, text in (
-            ("#file-notes-git-repository", self._repository_text),
-            ("#file-notes-git-status", self._current_status_text),
-            ("#file-notes-git-action-status", self._last_action_text),
-            ("#file-notes-git-selected-note", self._selected_note_text),
+        for selector, text, complete in (
+            ("#file-notes-git-repository", self._repository_text, False),
+            (
+                "#file-notes-git-status",
+                self._current_status_text,
+                self._current_status_complete,
+            ),
+            (
+                "#file-notes-git-action-status",
+                self._last_action_text,
+                self._last_action_complete,
+            ),
+            ("#file-notes-git-selected-note", self._selected_note_text, False),
         ):
             widget = self.query_one(selector, Static)
+            widget.set_class(complete, "-complete-copy")
             width = widget.content_region.width or self.content_region.width
-            fitted = text if width <= 0 else _fit_two_line_copy(text, width)
+            fitted = (
+                text
+                if complete or width <= 0
+                else _fit_two_line_copy(text, width)
+            )
             widget.update(fitted)
 
     def _set_repository_text(self, text: str) -> None:
@@ -1695,6 +1938,7 @@ class LibraryFileNotesGitPanel(Vertical):
     def _sync_commit_availability(self) -> None:
         if not self.is_mounted:
             return
+        focused = self.screen.focused
         available = self._commit_availability is not None
         count = (
             self._commit_availability.staged_note_count
@@ -1704,10 +1948,17 @@ class LibraryFileNotesGitPanel(Vertical):
         button = self.query_one("#file-notes-git-commit-staged", Button)
         zero = self.query_one("#file-notes-git-commit-zero", Static)
         button.label = f"Commit staged ({count})"
-        button.disabled = count == 0 or self._mutating
-        button.display = available
+        show_action = available and count > 0 and not self._mutating
+        button.disabled = not show_action
+        button.display = show_action
         zero.display = available and count == 0
+        self._sync_disabled_action_presentation()
         self._sync_action_layout(self.content_region.width)
+        if focused is button and not show_action:
+            self.screen.set_focus(
+                self.query_one("#file-notes-git-back", Button),
+                scroll_visible=False,
+            )
 
     def render_push_availability(
         self,
@@ -1725,11 +1976,19 @@ class LibraryFileNotesGitPanel(Vertical):
     def _sync_push_availability(self) -> None:
         if not self.is_attached:
             return
+        focused = self.screen.focused
         button = self.query_one("#file-notes-git-push-review", Button)
         available = self._push_availability is not None
-        button.display = available
-        button.disabled = not available or self._mutating
+        show_action = available and not self._mutating
+        button.display = show_action
+        button.disabled = not show_action
+        self._sync_disabled_action_presentation()
         self._sync_action_layout(self.content_region.width)
+        if focused is button and not show_action:
+            self.screen.set_focus(
+                self.query_one("#file-notes-git-back", Button),
+                scroll_visible=False,
+            )
 
     def return_to_push_list(self) -> None:
         """Clear workflow-only projections and restore the Session Git list."""
@@ -1737,22 +1996,32 @@ class LibraryFileNotesGitPanel(Vertical):
         self._show_push_phase("list", None)
         target = (
             "#file-notes-git-push-review"
-            if self._push_availability is not None
+            if self._push_availability is not None and not self._mutating
             else "#file-notes-git-back"
         )
         self.call_after_refresh(self._focus_push_list_control, target)
 
     def _focus_push_list_control(self, selector: str) -> None:
-        """Ignore list-focus repair after teardown or a newer phase."""
+        """Focus the requested list action or its first safe fallback."""
         if not self.is_attached or self._push_phase != "list":
             return
-        control = self.query_one(selector, Widget)
-        if any(
-            isinstance(node, Widget) and not node.display
-            for node in control.ancestors_with_self
-        ):
+        candidates = dict.fromkeys(
+            (
+                selector,
+                "#file-notes-git-refresh",
+                "#file-notes-git-back",
+            )
+        )
+        for candidate in candidates:
+            control = self.query_one(candidate, Button)
+            hidden = any(
+                isinstance(node, Widget) and not node.display
+                for node in control.ancestors_with_self
+            )
+            if hidden or control.disabled:
+                continue
+            control.focus()
             return
-        control.focus()
 
     def restore_push_focus(
         self,
@@ -1780,14 +2049,30 @@ class LibraryFileNotesGitPanel(Vertical):
         review = projection.review
         candidate = review.candidate
         destination = review.destination
+        repository = projection.repository
         branch = destination.destination_ref.removeprefix("refs/heads/")
         values = {
             "lead": (
-                "Push 1 commit created from "
-                f"{candidate.included_note_count} session notes to "
-                f"{review.configured_remote_label}/{branch}."
+                "Pushes 1 reviewed commit created from "
+                f"{candidate.included_note_count} session notes."
             ),
-            "subject": f"Subject: {candidate.subject}",
+            "subject": f"Commit subject: {candidate.subject}",
+            "repository": (
+                "Local repository: "
+                f"{_repository_path_for_display(repository.worktree_root)}"
+            ),
+            "destination": f"{review.configured_remote_label}/{branch}",
+            "counts": (
+                f"{candidate.included_note_count} session notes: "
+                + " · ".join(
+                    f"{change_type} {count}"
+                    for change_type, count in projection.availability.change_counts
+                )
+            ),
+            "effects": "Remote hooks, branch policy, CI, or mirrors may run.",
+            "later-edits": (
+                "Later note edits remain local and are not added to this commit."
+            ),
             "candidate": f"Candidate OID: {candidate.candidate_oid}",
             "transition": f"Parent transition: {candidate.transition}",
             "local-branch": f"Local branch: {candidate.local_branch_ref}",
@@ -1798,34 +2083,46 @@ class LibraryFileNotesGitPanel(Vertical):
             "endpoint": (
                 f"Sanitized endpoint: {_push_destination_summary(destination)}"
             ),
-            "counts": "Included changes: "
-            + " · ".join(
-                f"{change_type} {count}"
-                for change_type, count in projection.availability.change_counts
-            ),
             "lease": f"Expected-parent lease: {review.exact_lease}",
             "transport": (
-                "Secure transport: HTTPS with certificate verification; "
-                "existing noninteractive authentication only; terminal "
-                "prompts disabled"
+                "Transport: HTTPS with certificate verification"
+                if destination.certificate_verification_required
+                else "Transport: SSH with strict snapshotted host trust"
+            ),
+            "authentication": (
+                "Authentication: existing noninteractive credentials only; "
+                "terminal prompts disabled"
                 if destination.certificate_verification_required
                 else (
-                    "Secure transport: SSH with strict snapshotted host trust; "
-                    "existing SSH agent only; identity files disabled; "
-                    "terminal prompts disabled"
+                    "Authentication: existing SSH agent only; identity files "
+                    "disabled; terminal prompts disabled"
                 )
             ),
             "local-hooks": "Local pre-push hooks will not run",
-            "remote-effects": (
-                "Remote hooks, branch policy, CI, or mirrors may run"
-            ),
-            "later-edits": (
-                "Later note edits remain local and are not added to this commit"
-            ),
             "objects": (
                 "Git publishes the reviewed commit and required Git objects; "
                 "this list is provenance, not a separate note-transfer selection"
             ),
+            "recovery": (
+                "Back leaves this review without pushing. If the result is "
+                "uncertain, Check remote again never pushes."
+            ),
+            "worktree-identity": (
+                "Worktree identity: "
+                f"{_filesystem_identity_summary(repository.worktree_identity)}"
+            ),
+            "git-directory": (
+                "Git directory: "
+                f"{_repository_path_for_display(repository.git_dir)} · identity "
+                f"{_filesystem_identity_summary(repository.git_dir_identity)}"
+            ),
+            "git-common-directory": (
+                "Git common directory: "
+                f"{_repository_path_for_display(repository.git_common_dir)} "
+                "· identity "
+                f"{_filesystem_identity_summary(repository.git_common_dir_identity)}"
+            ),
+            "refspec-audit": f"Exact refspec: {review.exact_refspec}",
         }
         for widget_id, copy in values.items():
             self.query_one(
@@ -1846,6 +2143,10 @@ class LibraryFileNotesGitPanel(Vertical):
         )
         note_surface.load_text(notes)
         note_surface.styles.height = max(2, min(8, len(candidate.included_notes)))
+        self.query_one(
+            "#file-notes-git-push-review-technical",
+            Collapsible,
+        ).collapsed = True
         self._show_push_phase("review", operation_id)
         self._focus_push_control("#file-notes-git-push-back")
 
@@ -1947,6 +2248,7 @@ class LibraryFileNotesGitPanel(Vertical):
             self.query_one(f"#{action_id}", Button).disabled = (
                 not self._push_result.action_enabled
             )
+        self._sync_disabled_action_presentation()
         self._sync_push_footer_layout(self.size.width)
 
     def _sync_workflow_surfaces(self) -> None:
@@ -2066,11 +2368,19 @@ class LibraryFileNotesGitPanel(Vertical):
         """Render one immutable, literal review without owning its authority."""
         self._commit_review = projection
         review = projection.review
+        repository = projection.repository
         branch = _repository_path_for_display(review.branch)
+        self.query_one(
+            "#file-notes-git-commit-review-repository",
+            Static,
+        ).update(
+            "Repository: "
+            f"{_repository_path_for_display(repository.worktree_root)}"
+        )
         self.query_one(
             "#file-notes-git-commit-review-branch",
             Static,
-        ).update(f"Branch: {branch} · Parent: {review.old_commit[:12]}")
+        ).update(f"Branch: {branch} · Parent: {review.old_commit}")
         self.query_one(
             "#file-notes-git-commit-review-message",
             Static,
@@ -2139,6 +2449,41 @@ class LibraryFileNotesGitPanel(Vertical):
             "Included notes use their complete staged file state, "
             "not only edits made in Chatbook"
         )
+        self.query_one(
+            "#file-notes-git-commit-review-recovery",
+            Static,
+        ).update(
+            "Edit message or cancel before the commit starts. If the result "
+            "is uncertain, Check again verifies without retrying."
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-worktree-identity",
+            Static,
+        ).update(
+            "Worktree identity: "
+            f"{_filesystem_identity_summary(repository.worktree_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-git-directory",
+            Static,
+        ).update(
+            "Git directory: "
+            f"{_repository_path_for_display(repository.git_dir)} · identity "
+            f"{_filesystem_identity_summary(repository.git_dir_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-git-common-directory",
+            Static,
+        ).update(
+            "Git common directory: "
+            f"{_repository_path_for_display(repository.git_common_dir)} "
+            "· identity "
+            f"{_filesystem_identity_summary(repository.git_common_dir_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-technical",
+            Collapsible,
+        ).collapsed = True
 
         self._commit_notes = projection.included_notes
         self._commit_included_expanded = False
@@ -2380,6 +2725,7 @@ class LibraryFileNotesGitPanel(Vertical):
                 "#file-notes-git-commit-check-again",
                 Button,
             ).disabled = recovery is None
+        self._sync_disabled_action_presentation()
 
     def _focus_commit_control(self, selector: str) -> None:
         self.call_after_refresh(
@@ -2514,22 +2860,34 @@ class LibraryFileNotesGitPanel(Vertical):
                 if status.state == "stale"
                 else "Git status failed. Retry Refresh."
             )
-            self.set_current_status(f"Status: {token} — {detail}")
+            self.set_current_status(
+                f"Status: {token} — {detail}",
+                complete=True,
+            )
         else:
             self.clear_commit_availability()
             self._clear_rows()
             if not authority_available or status.state == "unavailable":
                 detail = status.message or "Restore Git, then Refresh."
-                self.set_current_status(f"Status: UNAVAILABLE — {detail}")
+                self.set_current_status(
+                    f"Status: UNAVAILABLE — {detail}",
+                    complete=True,
+                )
                 self.clear_last_action()
             elif status.state == "stale":
                 detail = (
                     status.message or "Session notes changed; Refresh before staging."
                 )
-                self.set_current_status(f"Status: STALE — {detail}")
+                self.set_current_status(
+                    f"Status: STALE — {detail}",
+                    complete=True,
+                )
             elif status.state == "error":
                 detail = status.message or "Git status failed. Retry Refresh."
-                self.set_current_status(f"Status: STALE · ERROR — {detail}")
+                self.set_current_status(
+                    f"Status: STALE · ERROR — {detail}",
+                    complete=True,
+                )
 
         self._sync_empty_state()
         self._update_actions()
@@ -2548,7 +2906,8 @@ class LibraryFileNotesGitPanel(Vertical):
         )
         self.set_current_status(
             "Status: TRUST REQUIRED — Trust this repository to check "
-            "current session notes."
+            "current session notes.",
+            complete=True,
         )
         self._sync_empty_state()
         self._update_actions()
@@ -2584,8 +2943,11 @@ class LibraryFileNotesGitPanel(Vertical):
         """Render transient mutation state without owning its lifecycle."""
         self._mutating = active
         if active:
+            status = "Status: UPDATING INDEX"
+            if detail:
+                status += f" · {detail}"
             self.set_current_status(
-                "Status: UPDATING INDEX" + (f" — {detail}" if detail else "")
+                status + ". Actions are unavailable until this operation finishes."
             )
         elif detail:
             self.set_current_status(detail)
@@ -2593,15 +2955,27 @@ class LibraryFileNotesGitPanel(Vertical):
         self._sync_push_availability()
         self._update_actions()
 
-    def set_current_status(self, detail: str) -> None:
-        """Set repository freshness/recovery without changing last action."""
+    def set_current_status(self, detail: str, *, complete: bool = False) -> None:
+        """Set repository freshness/recovery without changing last action.
+
+        Args:
+            detail: Status copy to render.
+            complete: Preserve the complete copy instead of fitting two lines.
+        """
         self._current_status_text = detail
+        self._current_status_complete = complete
         self._fit_fixed_regions()
 
-    def set_last_action(self, detail: str) -> None:
-        """Set the latest action result independently of current freshness."""
+    def set_last_action(self, detail: str, *, complete: bool = False) -> None:
+        """Set the latest action result independently of current freshness.
+
+        Args:
+            detail: Latest-action copy to render.
+            complete: Preserve the complete copy instead of fitting two lines.
+        """
         widget = self.query_one("#file-notes-git-action-status", Static)
         self._last_action_text = detail
+        self._last_action_complete = complete
         self._fit_fixed_regions()
         widget.display = bool(detail)
 
@@ -2609,6 +2983,7 @@ class LibraryFileNotesGitPanel(Vertical):
         """Clear an obsolete latest-action presentation."""
         widget = self.query_one("#file-notes-git-action-status", Static)
         self._last_action_text = ""
+        self._last_action_complete = False
         self._fit_fixed_regions()
         widget.display = False
 
@@ -2626,7 +3001,10 @@ class LibraryFileNotesGitPanel(Vertical):
         self._clear_rows()
         self.clear_last_action()
         self._set_repository_text("Repository: unavailable")
-        self.set_current_status(f"Status: UNAVAILABLE — {detail}")
+        self.set_current_status(
+            f"Status: UNAVAILABLE — {detail}",
+            complete=True,
+        )
         self._sync_empty_state()
         self._update_actions()
 
@@ -2644,7 +3022,10 @@ class LibraryFileNotesGitPanel(Vertical):
         if not retain_rows:
             self._clear_rows()
         token = "STALE · ERROR" if error else "STALE"
-        self.set_current_status(f"Status: {token} — {detail}")
+        self.set_current_status(
+            f"Status: {token} — {detail}",
+            complete=True,
+        )
         self._sync_empty_state()
         self._update_actions()
 
@@ -2802,6 +3183,9 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-unstage-selected",
             Button,
         )
+        selected_actions = self.query_one("#file-notes-git-selected-actions")
+        bulk_toggle = self.query_one("#file-notes-git-bulk-toggle", Button)
+        bulk_actions = self.query_one("#file-notes-git-bulk-actions")
         stage_all = self.query_one("#file-notes-git-stage-all", Button)
         unstage_all = self.query_one("#file-notes-git-unstage-all", Button)
         selected_note = self.query_one(
@@ -2823,30 +3207,104 @@ class LibraryFileNotesGitPanel(Vertical):
             )
             self._fit_fixed_regions()
             selected_note.display = True
-        can_mutate = self._status_ready and not self._mutating
-        stage_selected.display = (
-            self._trusted and selected is not None and selected.stage_action is not None
+        can_mutate = (
+            self._status_ready
+            and not self._mutating
+            and not self._replacing_rows
         )
+        show_stage = (
+            self._trusted
+            and selected is not None
+            and selected.stage_action is not None
+        )
+        stage_selected.display = show_stage
         stage_selected.disabled = not can_mutate
         if selected is not None and selected.stage_action == "stage_update":
             stage_selected.label = "Stage update"
         else:
             stage_selected.label = "Stage"
-        unstage_selected.display = (
-            self._trusted and selected is not None and selected.unstage_eligible
+        show_unstage = (
+            self._trusted
+            and selected is not None
+            and selected.stage_action is None
+            and selected.unstage_eligible
         )
+        unstage_selected.display = show_unstage
         unstage_selected.label = "Unstage"
         unstage_selected.disabled = not can_mutate
+        selected_actions.display = show_stage or show_unstage
         stage_count = sum(row.stage_eligible for row in self._rows)
         unstage_count = sum(row.unstage_eligible for row in self._rows)
         stage_all.label = f"Stage all ({stage_count})"
         unstage_all.label = f"Unstage all ({unstage_count})"
-        stage_all.display = self._trusted and bool(self._rows)
-        unstage_all.display = self._trusted and bool(self._rows)
+        bulk_available = (
+            self._trusted
+            and (stage_count > 0 or unstage_count > 0)
+        )
+        if (
+            focused is not None
+            and (
+                (
+                    not (show_stage or show_unstage)
+                    and focused in {stage_selected, unstage_selected}
+                )
+                or (
+                    not bulk_available
+                    and (
+                        focused is bulk_toggle
+                        or focused in {stage_all, unstage_all}
+                    )
+                )
+            )
+        ):
+            if self._trust_available and trust.display:
+                target = trust
+            elif refresh.display and not refresh.disabled:
+                target = refresh
+            else:
+                target = back
+            self.screen.set_focus(target, scroll_visible=False)
+            self.call_after_refresh(partial(self._settle_action_focus, target))
+            focused = target
+        if not bulk_available:
+            self._bulk_actions_expanded = False
+        action_counts = []
+        if stage_count:
+            action_counts.append(f"{stage_count} stage")
+        if unstage_count:
+            action_counts.append(f"{unstage_count} unstage")
+        toggle_verb = "Hide" if self._bulk_actions_expanded else "Show"
+        bulk_toggle.label = f"{toggle_verb} bulk · {' · '.join(action_counts)}"
+        bulk_toggle.display = bulk_available
+        bulk_actions.display = bulk_available and self._bulk_actions_expanded
+        stage_all.display = bulk_actions.display and stage_count > 0
+        unstage_all.display = bulk_actions.display and unstage_count > 0
         stage_all.disabled = not (can_mutate and stage_count > 0)
         unstage_all.disabled = not (can_mutate and unstage_count > 0)
+        self._sync_disabled_action_presentation()
         self._sync_action_layout(self.content_region.width)
         self._repair_hidden_focus(focused, back, trust, refresh)
+
+    def _sync_disabled_action_presentation(self) -> None:
+        """Mark disabled Session Git actions without relying on color alone."""
+        prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
+        for button in self.query(Button):
+            label = str(button.label)
+            base_label = label.removeprefix(prefix)
+            rendered_label = library_disabled_action_label(
+                base_label,
+                button.disabled,
+            )
+            if label != rendered_label:
+                button.label = rendered_label
+
+    def _settle_action_focus(self, target: Button) -> None:
+        """Finish action focus repair without stealing focus outside the panel."""
+        focused = self.screen.focused
+        if focused is not None and self not in focused.ancestors:
+            return
+        if target.display and not target.disabled:
+            self.screen.set_focus(target, scroll_visible=False)
 
     def _repair_hidden_focus(
         self,
@@ -2883,6 +3341,12 @@ class LibraryFileNotesGitPanel(Vertical):
         if not self._replacing_rows and isinstance(item, _SessionGitListItem):
             self._selected_group_id = item.row.group_id
             self._update_actions()
+
+    @on(Button.Pressed, "#file-notes-git-bulk-toggle")
+    def _toggle_bulk_actions(self) -> None:
+        """Expand or collapse the retained bulk Session Git actions."""
+        self._bulk_actions_expanded = not self._bulk_actions_expanded
+        self._update_actions()
 
     @on(ListView.Highlighted, "#file-notes-git-commit-included-notes")
     def _commit_note_highlighted(self, _event: ListView.Highlighted) -> None:
@@ -3310,7 +3774,7 @@ class SessionGitTrustDialog(ConfirmationDialog):
             markup=True,
         )
         super().__init__(
-            title="Trust Session Git repository?",
+            title="Trust repository for session changes?",
             message=(
                 f"Repository: {display_path}\n\n"
                 "Trust lasts only for this application process. Git status "
@@ -3328,10 +3792,11 @@ class SessionGitTrustDialog(ConfirmationDialog):
         self.query_one("#cancel-button", Button).focus()
 
 
-class PushEndpointDetailsDialog(ModalScreen[None]):
+class PushEndpointDetailsDialog(SafeModalDismissMixin, ModalScreen[None]):
     """Show every sanitized endpoint field in a selectable read-only surface."""
 
-    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Close", show=False)]
+    SAFE_MODAL_CONTENT = "#file-notes-push-endpoint-details-dialog"
 
     DEFAULT_CSS = """
     PushEndpointDetailsDialog {
@@ -3368,9 +3833,15 @@ class PushEndpointDetailsDialog(ModalScreen[None]):
     }
     """
 
-    def __init__(self, destination: PushDestinationProjection) -> None:
+    def __init__(
+        self,
+        destination: PushDestinationProjection,
+        *,
+        restore_focus: bool = True,
+    ) -> None:
         super().__init__(id="file-notes-push-endpoint-details-screen")
         self.selectable_details = destination.selectable_details
+        self.SAFE_MODAL_RESTORE_FOCUS = restore_focus
 
     def compose(self) -> ComposeResult:
         with Vertical(id="file-notes-push-endpoint-details-dialog"):
@@ -3402,7 +3873,7 @@ class PushEndpointDetailsDialog(ModalScreen[None]):
         ).focus()
 
     def action_close(self) -> None:
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#file-notes-push-endpoint-details-close")
     def _close_pressed(self, event: Button.Pressed) -> None:
@@ -3410,10 +3881,11 @@ class PushEndpointDetailsDialog(ModalScreen[None]):
         self.action_close()
 
 
-class PushDestinationAuthorizationDialog(ModalScreen[bool]):
+class PushDestinationAuthorizationDialog(SafeModalDismissMixin, ModalScreen[bool]):
     """Authorize first contact with one configured sanitized destination."""
 
-    BINDINGS = [Binding("escape", "decline", "Cancel", show=False)]
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
+    SAFE_MODAL_CONTENT = "#file-notes-push-auth-dialog"
 
     DEFAULT_CSS = """
     PushDestinationAuthorizationDialog {
@@ -3571,8 +4043,13 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
         """Treat any close path without an affirmative result as decline."""
         return super().dismiss(False if result is None else result)
 
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Return the explicit non-authorizing result for generic cancellation."""
+        del source
+        self.dismiss_safe_once(False)
+
     def action_decline(self) -> None:
-        self.dismiss(False)
+        self.dismiss_safe_once(False)
 
     @on(Button.Pressed, "#file-notes-push-auth-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:
@@ -3587,11 +4064,4 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
     @on(Button.Pressed, "#file-notes-push-auth-details")
     def _details_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.app.push_screen(
-            PushEndpointDetailsDialog(self._authorization.destination),
-            callback=self._restore_details_focus,
-        )
-
-    def _restore_details_focus(self, _result: None) -> None:
-        if self.is_mounted:
-            self.query_one("#file-notes-push-auth-details", Button).focus()
+        self.app.push_screen(PushEndpointDetailsDialog(self._authorization.destination))

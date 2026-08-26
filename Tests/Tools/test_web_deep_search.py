@@ -309,6 +309,41 @@ def test_deep_search_places_timeouts_into_search_params(deep_env, monkeypatch):
     assert seen["search_params"].get("relevance_scrape_timeout_s") == 30
 
 
+def test_deep_search_places_respect_robots_txt_into_search_params(deep_env, monkeypatch):
+    """task-3260: the tool must place the real, configured
+    [webfetch] respect_robots_txt setting into search_params -- the
+    pydantic-safe channel analyze_and_aggregate/search_result_relevance
+    read it from (mirrors the timeouts plumbing above)."""
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": True}
+    )
+    seen = {}
+
+    def fake_generate(q, p):
+        seen["search_params"] = dict(p)
+        return _PHASE1
+
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", fake_generate)
+    web_deep_search("q")
+    assert seen["search_params"].get("respect_robots_txt") is True
+
+
+def test_deep_search_places_respect_robots_txt_false_into_search_params(deep_env, monkeypatch):
+    """Same seam, opposite value -- proves this isn't hardcoded True."""
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": False}
+    )
+    seen = {}
+
+    def fake_generate(q, p):
+        seen["search_params"] = dict(p)
+        return _PHASE1
+
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", fake_generate)
+    web_deep_search("q")
+    assert seen["search_params"].get("respect_robots_txt") is False
+
+
 def test_deep_search_places_max_queries_cap_into_search_params(deep_env, monkeypatch):
     """Important 2 (final review): search_default_max_queries is already
     resolved by _deep_search_settings() but was never handed to the
@@ -695,3 +730,45 @@ def test_deep_search_footer_deadline_note_says_may_be_incomplete(deep_env, monke
     assert "Deep answer [1]." in out  # the run DID fully succeed
     assert "deadline reached: partial synthesis" not in out.lower()
     assert "deadline reached" in out.lower() and "may be incomplete" in out.lower()
+
+
+def test_deep_search_footer_discloses_gate_fallback(deep_env, monkeypatch):
+    final_answer = dict(_FINAL)
+    final_answer["gate"] = {"relevant": 3, "raw": 5, "fallback": True}
+    final_answer["evidence"] = [
+        {"id": 1, "url": "https://e.com/", "title": "T", "content": "c",
+         "original_content": "o", "reasoning": "gate fallback", "chunk_index": 0,
+         "gate_unverified": True},
+    ]
+
+    async def fake_aa(wsr, sqd, params, cancel_event=None):
+        return {"final_answer": final_answer, "relevant_results": {"1": {}},
+                "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa)
+    out = web_deep_search("what is love")
+    assert "not relevance-verified" in out
+
+
+# --- shared pipeline param assembly (task-16484) ----------------------------------
+
+def test_deep_search_pipeline_params_shape_and_overrides():
+    from tldw_chatbook.Tools.web_tool_impls import deep_search_pipeline_params
+
+    params = deep_search_pipeline_params()
+
+    for key in (
+        "engine", "relevance_analysis_llm", "final_answer_llm",
+        "relevance_llm_timeout_s", "relevance_scrape_timeout_s",
+        "search_default_max_queries", "result_count", "subquery_generation",
+        "phase1_time_budget_s", "respect_robots_txt",
+    ):
+        assert key in params, key
+
+    bounded = deep_search_pipeline_params(
+        engine="duckduckgo", max_results=3, subquery=False, max_queries=1
+    )
+    assert bounded["engine"] == "duckduckgo"
+    assert bounded["result_count"] == 3
+    assert bounded["subquery_generation"] is False
+    assert bounded["search_default_max_queries"] == 1

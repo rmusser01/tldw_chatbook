@@ -38,7 +38,7 @@ os.environ["XDG_CONFIG_HOME"] = str(IMPORT_SANDBOX / "config")
 os.environ["XDG_DATA_HOME"] = str(IMPORT_SANDBOX / "data")
 
 from loguru import logger
-from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app, drain_created_dirs
 from Tests.UI.test_library_prompts_canvas import _wire_empty_non_prompt_services
@@ -337,12 +337,13 @@ def _assert_apply_footer_painted(editor: PromptBlockEditor) -> dict[str, Any]:
     """Prove the live modal paints complete lane choices and safe action geometry."""
 
     footer = editor.query_one("#prompt-editor-footer")
+    outer_footer = editor.app.screen.query_one("#console-prompts-footer")
     lane_options = editor.query_one("#prompt-editor-lane-options")
     actions = editor.query_one("#prompt-editor-actions")
     system = editor.query_one("#prompt-editor-apply-system", Checkbox)
     user = editor.query_one("#prompt-editor-apply-user", Checkbox)
     for checkbox, label in (
-        (system, "Apply system prompt to this session"),
+        (system, "Replace this session's System prompt"),
         (user, "Apply User"),
     ):
         painted = "\n".join(
@@ -353,23 +354,32 @@ def _assert_apply_footer_painted(editor: PromptBlockEditor) -> dict[str, Any]:
         assert checkbox.is_on_screen
         assert editor.region.contains_region(checkbox.region)
 
+    apply_reason = editor.query_one("#prompt-editor-apply-reason", Static)
+    apply_explanation = str(apply_reason.renderable)
+    assert "active session" in apply_explanation
+    assert "System changes only" in apply_explanation
+    painted_apply_explanation = "\n".join(
+        apply_reason.render_line(row).text for row in range(apply_reason.region.height)
+    )
+    assert (
+        "System changes only on Apply in this active session"
+        in " ".join(painted_apply_explanation.split())
+    )
+
     assert footer.has_class("two-row")
     assert lane_options.region.bottom <= actions.region.y
+    assert editor.region.bottom <= outer_footer.region.y
     assert system.region.right <= user.region.x
     action_widgets = [
-        editor.query_one(selector, Button)
-        for selector in (
-            "#prompt-editor-back",
-            "#prompt-editor-save-prompt",
-            "#prompt-editor-save-recipe",
-            "#prompt-editor-update-original",
-            "#prompt-editor-apply",
-        )
+        editor.query_one("#prompt-editor-apply", Button),
+        editor.query_one("#prompt-editor-save-menu", Select),
     ]
+    assert not editor.query_one("#prompt-editor-back", Button).is_on_screen
     for action in action_widgets:
         assert action.is_on_screen
         assert action.region.width > 0 and action.region.height > 0
         assert editor.region.contains_region(action.region)
+        assert action.region.bottom <= outer_footer.region.y
     for left, right in zip(action_widgets, action_widgets[1:]):
         assert left.region.right <= right.region.x
     return {
@@ -379,7 +389,9 @@ def _assert_apply_footer_painted(editor: PromptBlockEditor) -> dict[str, Any]:
         "user_checkbox_glyph_visible": True,
         "user_checkbox_full_label_visible": True,
         "lane_and_action_rows_do_not_overlap": True,
-        "action_buttons_do_not_overlap_or_clip": True,
+        "editor_actions_do_not_overlap_outer_footer": True,
+        "action_controls_do_not_overlap_or_clip": True,
+        "apply_precedes_save_menu": True,
     }
 
 
@@ -647,12 +659,14 @@ async def _capture_artifact_compatibility_states(
                 )
                 converted = modal.query_one(PromptBlockEditor)
                 assert modal.state.working_copy_unsaved
-                assert converted.query_one(
-                    "#prompt-editor-update-original", Button
-                ).disabled
-                assert not converted.query_one(
-                    "#prompt-editor-save-prompt", Button
-                ).disabled
+                save_menu = converted.query_one("#prompt-editor-save-menu", Select)
+                save_options = [
+                    value
+                    for _label, value in save_menu._options
+                    if value is not Select.NULL
+                ]
+                assert "update" not in save_options
+                assert "prompt" in save_options
                 assert converted.query_one("#prompt-editor-apply", Button).disabled
                 case_observation.update(
                     {
@@ -760,7 +774,7 @@ async def _capture_block_edit_and_system_apply(
             editor.query_one("#prompt-editor-validation", Static).renderable
         )
         assert editor.query_one("#prompt-editor-apply", Button).disabled
-        assert editor.query_one("#prompt-editor-save-prompt", Button).disabled
+        assert editor.query_one("#prompt-editor-save-menu", Select).disabled
         assert editor.query_one("#prompt-block-content-goal", TextArea) is goal
         assert app.focused is goal
         _capture(
@@ -824,7 +838,8 @@ async def _capture_block_edit_and_system_apply(
             lambda: app.screen_stack[-1] is console,
             label="optional System and User Apply completion",
         )
-        live_settings = console._ensure_active_console_session_settings()
+        live_settings = store.session_settings(session_id)
+        assert live_settings is not None
         assert live_settings.system_prompt == expected_system
         assert composer.draft_text() == expected_user
         assert store.session_draft(session_id) == expected_user
@@ -900,6 +915,29 @@ async def _capture_provider_unavailable_improve(
                 and bool(modal.query("#console-prompts-auto-improve"))
             ),
             label="provider-unavailable Improve state",
+        )
+        auto = modal.query_one("#console-prompts-auto-improve", Button)
+        review = modal.query_one("#console-prompts-review-improve", Button)
+        assert not auto.disabled and not review.disabled
+        auto.press()
+        await _wait(
+            pilot,
+            lambda: (
+                gateway.resolution_calls == 1
+                and modal.query_one(
+                    "#console-prompts-auto-improve", Button
+                ).disabled
+                and modal.query_one(
+                    "#console-prompts-review-improve", Button
+                ).disabled
+                and "unavailable"
+                in str(
+                    modal.query_one(
+                        "#console-prompts-improvement-status", Static
+                    ).renderable
+                ).lower()
+            ),
+            label="provider-unavailable resolved recovery state",
         )
         auto = modal.query_one("#console-prompts-auto-improve", Button)
         review = modal.query_one("#console-prompts-review-improve", Button)
@@ -1005,8 +1043,14 @@ async def _capture_responsive_surfaces(
             if action_ids and action_ids[0] == "save-chat"
             else action_ids
         )
-        assert normal[:3] == ["prompts", "attach-context", "save-chatbook"]
-        observed["prompts_first_normal_menu_item"] = True
+        assert normal[:4] == [
+            "improve-current-draft",
+            "prompts",
+            "attach-context",
+            "save-chatbook",
+        ]
+        observed["improve_first_normal_menu_item"] = True
+        observed["prompt_library_second_normal_menu_item"] = True
         observed["menu_order"] = action_ids
         _capture(
             app,
@@ -1015,6 +1059,77 @@ async def _capture_responsive_surfaces(
             forbidden,
         )
 
+        menu.query_one(
+            "#console-composer-menu-improve-current-draft", Button
+        ).press()
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label="direct Prompt improvement modal",
+        )
+        modal = app.screen_stack[-1]
+        await _wait(
+            pilot,
+            lambda: bool(modal.query("#console-prompts-review-improve")),
+            label="direct Improve choices",
+        )
+        assert modal.state.mode == "improve"
+        assert app.focused is modal.query_one(
+            "#console-prompts-review-improve", Button
+        )
+        await pilot.pause()
+        observed["direct_improve_recommended_focus"] = True
+        _capture(
+            app,
+            f"{prefix}-direct-improve.svg",
+            f"Prompt Workbench direct Improve {prefix}",
+            forbidden,
+        )
+
+        analysis_context = modal.query_one(
+            "#console-prompts-include-system", Checkbox
+        )
+        analysis_disclosure = modal.query_one(
+            "#console-prompts-analysis-context-disclosure", Static
+        )
+        assert str(analysis_context.label) == (
+            "Let the improver read the current System prompt"
+        )
+        assert str(analysis_disclosure.renderable) == (
+            "Used only to improve the draft. It does not change this session."
+        )
+        analysis_context.focus()
+        analysis_context.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        assert analysis_context.is_on_screen
+        assert analysis_disclosure.is_on_screen
+        painted_analysis = "\n".join(
+            analysis_context.render_line(row).text
+            for row in range(analysis_context.region.height)
+        )
+        painted_disclosure = "\n".join(
+            analysis_disclosure.render_line(row).text
+            for row in range(analysis_disclosure.region.height)
+        )
+        assert "Let the improver read the current System prompt" in painted_analysis
+        assert "Used only to improve the draft" in painted_disclosure
+        assert "does not change this session" in painted_disclosure
+        observed["system_analysis_choice_painted"] = True
+        _capture(
+            app,
+            f"{prefix}-system-analysis-choice.svg",
+            f"Prompt Workbench System analysis choice {prefix}",
+            forbidden,
+        )
+        await _close_modal(pilot, modal)
+
+        composer.query_one("#console-composer-menu", Button).press()
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsoleComposerMenuModal),
+            label="composer hamburger menu after direct Improve",
+        )
+        menu = app.screen_stack[-1]
         menu.query_one("#console-composer-menu-prompts", Button).press()
         await _wait(
             pilot,
@@ -1071,6 +1186,49 @@ async def _capture_responsive_surfaces(
             lambda: bool(modal.query("#console-prompts-recipe-outcome-first")),
             label="Recipe chooser",
         )
+        assert str(
+            modal.query_one(
+                "#console-prompts-recipe-outcome-description", Static
+            ).renderable
+        ).startswith("Outcome-first starts with Goal")
+        assert str(
+            modal.query_one(
+                "#console-prompts-recipe-saved-description", Static
+            ).renderable
+        ) == "Saved Recipe reuses a format from Library > Prompts."
+        assert str(
+            modal.query_one(
+                "#console-prompts-recipe-blank-description", Static
+            ).renderable
+        ).startswith("Blank starts with empty System and User lanes")
+        for selector in (
+            "#console-prompts-recipe-outcome-first",
+            "#console-prompts-recipe-saved",
+            "#console-prompts-recipe-blank",
+        ):
+            choice = modal.query_one(selector, Button)
+            choice.focus()
+            choice.scroll_visible(
+                animate=False, force=True, immediate=True, top=True
+            )
+            await pilot.pause()
+            assert choice.is_on_screen
+        recommended_choice = modal.query_one(
+            "#console-prompts-recipe-outcome-first", Button
+        )
+        recommended_choice.focus()
+        recommended_choice.scroll_visible(
+            animate=False, force=True, immediate=True, top=True
+        )
+        modal.query_one("#console-prompts-back", Button).focus()
+        await pilot.pause()
+        observed["recipe_chooser_guidance"] = True
+        _capture(
+            app,
+            f"{prefix}-recipe-chooser.svg",
+            f"Prompt Workbench Recipe chooser {prefix}",
+            forbidden,
+        )
         modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
         await _wait(
             pilot,
@@ -1078,6 +1236,18 @@ async def _capture_responsive_surfaces(
             label="shared Recipe block editor",
         )
         editor = modal.query_one(PromptBlockEditor)
+        for block_id in ("goal", "context-evidence", "constraints", "output"):
+            assert editor.query_one(f"#prompt-block-{block_id}").display
+        for block_id in (
+            "role",
+            "personality",
+            "collaboration-style",
+            "success-criteria",
+            "stop-rules",
+        ):
+            assert not editor.query_one(f"#prompt-block-{block_id}").display
+        reveal_optional = editor.query_one("#prompt-editor-show-optional", Button)
+        assert str(reveal_optional.label) == "Show 5 optional blocks"
         await editor._change_field("goal", "content", "Produce a measurable outcome.")
         editor.query_one("#prompt-block-duplicate-goal", Button).press()
         await pilot.pause()
@@ -1094,6 +1264,21 @@ async def _capture_responsive_surfaces(
             f"Prompt Workbench Recipe editor {prefix}",
             forbidden,
         )
+        reveal_optional.focus()
+        reveal_optional.scroll_visible(animate=False, immediate=True)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert all(
+            editor.query_one(f"#prompt-block-{block_id}").display
+            for block_id in (
+                "role",
+                "personality",
+                "collaboration-style",
+                "success-criteria",
+                "stop-rules",
+            )
+        )
+        observed["recipe_optional_blocks_keyboard_revealed"] = True
 
         before_fill = composer.capture_draft_snapshot()
         modal.query_one("#console-prompts-recipe-fill", Button).press()
@@ -1110,6 +1295,10 @@ async def _capture_responsive_surfaces(
                 > 0
                 and editor.query_one("#prompt-editor-apply-user", Checkbox).region.width
                 > 0
+                and (
+                    editor.query_one("#prompt-editor-footer").has_class("two-row")
+                    is (editor.size.width < 120)
+                )
             ),
             label=f"Filled Prompt Apply footer at {prefix}",
         )
@@ -1123,9 +1312,14 @@ async def _capture_responsive_surfaces(
             "#prompt-block-duplicate-additional-context",
             Button,
         )
-        save_recipe = editor.query_one("#prompt-editor-save-recipe", Button)
+        save_menu = editor.query_one("#prompt-editor-save-menu", Select)
+        save_options = [
+            value
+            for _label, value in save_menu._options
+            if value is not Select.NULL
+        ]
         assert duplicate.disabled is True
-        assert save_recipe.disabled is True
+        assert "recipe" not in save_options
         observed["filled_prompt_review"] = True
         observed["mapped_context_duplicate_disabled"] = True
         observed["mapped_context_recipe_save_disabled"] = True
@@ -1149,8 +1343,93 @@ async def _capture_responsive_surfaces(
             ),
             label="mapped Additional context deletion",
         )
-        assert save_recipe.disabled is False
+        assert "recipe" in [
+            value
+            for _label, value in save_menu._options
+            if value is not Select.NULL
+        ]
         observed["recipe_save_recovered_after_mapped_context_delete"] = True
+
+        await _close_modal(pilot, modal)
+        composer.clear_draft()
+        composer.insert_text("Draft a useful answer.")
+        auto_before = composer.capture_draft_snapshot()
+        console._open_console_prompts_modal(initial_mode="improve")
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label=f"responsive Auto Improve modal at {prefix}",
+        )
+        modal = app.screen_stack[-1]
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await _wait(
+            pilot,
+            lambda: (
+                app.screen_stack[-1] is console
+                and composer.query_one(
+                    "#console-prompt-improvement-recovery"
+                ).display
+            ),
+            label=f"responsive Draft improved recovery at {prefix}",
+        )
+        recovery = composer.query_one("#console-prompt-improvement-recovery")
+        assert recovery.region.width > 0 and recovery.region.height == 1
+        assert not composer.query_one(
+            "#console-prompt-improvement-undo", Button
+        ).disabled
+        assert not composer.query_one(
+            "#console-prompt-improvement-review", Button
+        ).disabled
+        observed["auto_recovery_visible"] = True
+        _capture(
+            app,
+            f"{prefix}-auto-success-recovery.svg",
+            f"Prompt Workbench automatic replacement recovery {prefix}",
+            forbidden,
+        )
+
+        composer.query_one("#console-prompt-improvement-review", Button).press()
+        await _wait(
+            pilot,
+            lambda: bool(
+                app.screen_stack[-1].query("#console-prompt-comparison-modal")
+            ),
+            label=f"responsive before-after comparison at {prefix}",
+        )
+        comparison = app.screen_stack[-1]
+        assert comparison.query_one(
+            "#console-prompt-comparison-before", TextArea
+        ).read_only
+        assert comparison.query_one(
+            "#console-prompt-comparison-after", TextArea
+        ).read_only
+        assert app.focused is comparison.query_one(
+            "#console-prompt-comparison-keep", Button
+        )
+        observed["before_after_review_visible"] = True
+        _capture(
+            app,
+            f"{prefix}-auto-review-changes.svg",
+            f"Prompt Workbench automatic replacement review {prefix}",
+            forbidden,
+        )
+        comparison.query_one("#console-prompt-comparison-keep", Button).press()
+        await _wait(
+            pilot,
+            lambda: app.screen_stack[-1] is console,
+            label=f"responsive comparison Keep at {prefix}",
+        )
+        assert composer.improvement_undo_available
+        composer.query_one("#console-prompt-improvement-undo", Button).press()
+        await _wait(
+            pilot,
+            lambda: not composer.improvement_undo_available,
+            label=f"responsive visible Undo at {prefix}",
+        )
+        assert _semantic_snapshot(
+            composer.capture_draft_snapshot()
+        ) == _semantic_snapshot(auto_before)
+        observed["visible_undo_exact"] = True
     return observed
 
 
@@ -1367,10 +1646,9 @@ async def _exercise_improvement_states(
         )
         assert "System prompt changed" in stale_status
         assert composer.capture_draft_snapshot() == stale_live_draft
-        assert (
-            console._ensure_active_console_session_settings().system_prompt
-            == "Live System edit while waiting."
-        )
+        live_settings = store.session_settings(session_id)
+        assert live_settings is not None
+        assert live_settings.system_prompt == "Live System edit while waiting."
         assert (
             tuple(store.messages_for_session(session_id))
             == messages_before_stale_release
@@ -1557,6 +1835,264 @@ async def _capture_guards_and_library(
     return observed
 
 
+async def _capture_recipe_library_round_trip(
+    service: Any,
+    db: PromptsDatabase,
+    forbidden: tuple[str, ...],
+) -> dict[str, Any]:
+    """Save, deep-link, edit, reopen, fill, review, and apply one real Recipe."""
+
+    gateway = DeterministicGateway()
+    app = _build_test_app(configured_default="chat")
+    _configure_app(app, service, gateway)
+    observed: dict[str, Any] = {}
+    async with _run_test(app, size=(140, 40)) as pilot:
+        console = await _console(app, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft a launch brief from the available evidence.")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        store.set_session_system_prompt(session_id, "Keep the launch brief factual.")
+        system_before = store.session_settings(session_id).system_prompt
+
+        console._open_console_prompts_modal(initial_mode="improve")
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label="round-trip Improve modal",
+        )
+        modal = app.screen_stack[-1]
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await _wait(
+            pilot,
+            lambda: bool(modal.query("#console-prompts-recipe-outcome-first")),
+            label="round-trip Recipe chooser",
+        )
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await _wait(
+            pilot,
+            lambda: bool(modal.query(PromptBlockEditor)),
+            label="round-trip Outcome-first editor",
+        )
+        editor = modal.query_one(PromptBlockEditor)
+        await editor._change_field(
+            "goal",
+            "content",
+            "Create a decision-ready launch brief.",
+        )
+        await editor._change_field(
+            "context-evidence",
+            "content",
+            "Use only the evidence supplied in the current request.",
+        )
+        initial_definition = editor.state.definition
+        save_menu = editor.query_one("#prompt-editor-save-menu", Select)
+        save_menu.value = "recipe"
+        await _wait(
+            pilot,
+            lambda: modal.query_one(
+                "#console-prompts-recipe-save-confirmation-panel"
+            ).display,
+            label="Recipe save confirmation",
+        )
+        target = modal._saved_recipe_library_target
+        assert target is not None and target[0] == "local"
+        saved_id = int(target[1])
+        saved = db.fetch_prompt_details(saved_id)
+        assert saved is not None
+        assert saved["artifact_type"] == "recipe"
+        assert saved["version"] == 1
+        saved_definition = saved["prompt_definition"]
+        if isinstance(saved_definition, str):
+            saved_definition = json.loads(saved_definition)
+        assert saved_definition["lanes"][1]["blocks"][0]["id"] == "goal"
+        observed["saved_recipe_identity"] = saved_id
+        observed["save_confirmation_named_library_prompts"] = True
+        _capture(
+            app,
+            "140x40-recipe-saved-confirmation.svg",
+            "Recipe saved to Library confirmation",
+            forbidden,
+        )
+
+        modal.query_one("#console-prompts-open-saved-recipe", Button).press()
+        await _wait(
+            pilot,
+            lambda: (
+                app.screen.__class__.__name__ == "LibraryScreen"
+                and bool(app.screen.query("#library-prompt-name"))
+            ),
+            label="newly saved Recipe deep-link in Library",
+        )
+        library = app.screen
+        assert library._selected_prompt_id == saved_id
+        assert "Recipe · Local" in str(
+            library.query_one("#library-prompt-artifact-status", Static).renderable
+        )
+        library_editor = library.query_one(
+            "#library-prompt-block-editor", PromptBlockEditor
+        )
+        assert library_editor.state.definition == initial_definition
+        await _wait(
+            pilot,
+            lambda: not library.query_one("#library-prompt-save", Button).disabled,
+            label="saved Recipe Library update capability",
+        )
+        await library_editor._change_field(
+            "goal",
+            "content",
+            "Create an edited, decision-ready launch brief.",
+        )
+        library.query_one(
+            "#library-prompt-recipe-starter", Checkbox
+        ).value = True
+        library.query_one("#library-prompt-name", Input).value = (
+            "QA round-trip reusable prompt"
+        )
+        await pilot.pause()
+        edited_goal = "Create an edited, decision-ready launch brief."
+        assert (
+            library_editor.state.definition.lanes[1].blocks[0].content
+            == edited_goal
+        ), library_editor.state.definition.lanes[1].blocks[0].content
+        assert library._library_prompt_block_state is not None
+        assert (
+            library._library_prompt_block_state.definition.lanes[1]
+            .blocks[0]
+            .content
+            == edited_goal
+        ), library._library_prompt_block_state.definition.lanes[1].blocks[0].content
+        library.query_one("#library-prompt-save", Button).press()
+        await _wait(
+            pilot,
+            lambda: bool(
+                str(
+                    library.query_one(
+                        "#library-prompt-save-status", Static
+                    ).renderable
+                )
+            ),
+            label="edited Recipe save in Library",
+        )
+        library_save_status = str(
+            library.query_one("#library-prompt-save-status", Static).renderable
+        )
+        assert library_save_status == "Saved.", library_save_status
+        assert library._library_prompt_version == 2
+        persisted = db.fetch_prompt_details(saved_id)
+        assert persisted is not None
+        assert persisted["artifact_type"] == "recipe"
+        assert persisted["version"] == 2
+        persisted_definition = persisted["prompt_definition"]
+        if isinstance(persisted_definition, str):
+            persisted_definition = json.loads(persisted_definition)
+        assert persisted_definition["kind"] == "block_recipe"
+        persisted_goal = persisted_definition["lanes"][1]["blocks"][0]["content"]
+        assert persisted_goal == (
+            "Create an edited, decision-ready launch brief."
+        ), persisted_goal
+        observed["library_lossless_reopen"] = True
+        observed["library_edit_version"] = 2
+        _capture(
+            app,
+            "140x40-library-saved-recipe.svg",
+            "Saved Recipe reopened and edited in Library",
+            forbidden,
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        console = await _console(app, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        console._open_console_prompts_modal(initial_mode="improve")
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label="round-trip reopen Improve modal",
+        )
+        modal = app.screen_stack[-1]
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await _wait(
+            pilot,
+            lambda: bool(modal.query("#console-prompts-recipe-saved")),
+            label="round-trip saved Recipe choice",
+        )
+        modal.query_one("#console-prompts-recipe-saved", Button).press()
+        await _wait(
+            pilot,
+            lambda: bool(modal.query("#console-prompts-search")),
+            label="round-trip saved Recipe browser",
+        )
+        modal.query_one("#console-prompts-search", Input).value = (
+            "QA round-trip reusable prompt"
+        )
+        await _wait(
+            pilot,
+            lambda: len(modal.query(".console-prompts-result")) == 1,
+            label="round-trip saved Recipe search result",
+        )
+        result = modal.query_one(".console-prompts-result", Button)
+        assert "Recipe" in str(result.label)
+        result.press()
+        await _wait(
+            pilot,
+            lambda: bool(modal.query(PromptBlockEditor)),
+            label="round-trip saved Recipe Console editor",
+        )
+        editor = modal.query_one(PromptBlockEditor)
+        assert modal._recipe_source == "local"
+        assert modal._recipe_source_id
+        assert not modal._recipe_source_id.startswith("builtin:")
+        assert modal._recipe_version == 2
+        assert editor.state.definition.lanes[1].blocks[0].content == (
+            "Create an edited, decision-ready launch brief."
+        )
+        assert tuple(block.id for block in editor.state.definition.lanes[1].blocks) == (
+            "goal",
+            "context-evidence",
+            "constraints",
+            "output",
+            "success-criteria",
+            "stop-rules",
+        )
+        modal.query_one("#console-prompts-recipe-fill", Button).press()
+        await _wait(
+            pilot,
+            lambda: getattr(modal._editor_state, "artifact_type", None) == "prompt",
+            label="round-trip Filled Prompt review",
+        )
+        review_editor = modal.query_one(PromptBlockEditor)
+        assert review_editor.query_one(
+            "#prompt-editor-apply-system", Checkbox
+        ).value is False
+        assert review_editor.query_one(
+            "#prompt-editor-apply-user", Checkbox
+        ).value is True
+        expected_user = review_editor.state.compiled_user
+        review_editor.query_one("#prompt-editor-apply", Button).press()
+        await _wait(
+            pilot,
+            lambda: not isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label="round-trip Prompt Apply dismissal",
+        )
+        assert composer.draft_text() == expected_user
+        settings_after = store.session_settings(session_id)
+        assert settings_after is not None
+        assert settings_after.system_prompt == system_before
+        assert gateway.stream_calls == 0
+        observed["filled_review_required"] = True
+        observed["applied_user_lane"] = True
+        observed["system_lane_unchanged"] = True
+        observed["normal_send_calls"] = 0
+        _capture(
+            app,
+            "140x40-recipe-roundtrip-applied.svg",
+            "Recipe round trip applied to Console",
+            forbidden,
+        )
+    return observed
+
+
 async def _canary_run(service: Any, log_path: Path) -> dict[str, Any]:
     category_values = {
         category: f"qa-{category}-{uuid.uuid4().hex}"
@@ -1716,6 +2252,14 @@ async def main() -> None:
         if stage in {"all", "guards"}:
             observations["guards_library"] = await _capture_guards_and_library(
                 service, ids, generic_forbidden
+            )
+        if stage in {"all", "roundtrip"}:
+            observations[
+                "recipe_library_round_trip"
+            ] = await _capture_recipe_library_round_trip(
+                service,
+                db,
+                generic_forbidden,
             )
         canary = (
             await _canary_run(service, log_path)

@@ -1,8 +1,8 @@
-"""Collapse and solo state for the Watchlists workbench's four regions.
+"""Preferred and effective pane state for the Watchlists workbench.
 
-Pure state: no Textual import, no I/O. The screen's fiddliest interaction —
-four independently collapsible regions plus a solo/restore toggle — lives
-here so it can be tested without a Textual pilot.
+Pure state: no Textual import, no I/O. The user's preferred side-pane state
+and the transient responsive/Article Focus result can therefore be tested
+without a Textual pilot.
 
 Every mutator returns a new instance; the type is frozen and hashable, so a
 Textual reactive can hold it and equality comparison decides whether to
@@ -37,31 +37,68 @@ REGION_ORDER: tuple[Region, ...] = (
     Region.RIGHT_RAIL,
 )
 
-#: The vertically stacked centre panes. Only these may be soloed.
-CENTRE_REGIONS: tuple[Region, ...] = (Region.ITEMS, Region.CONTENT)
+#: Side panes whose preferred open/collapsed state may be changed by the user.
+COLLAPSIBLE_REGIONS: tuple[Region, ...] = (
+    Region.LEFT_RAIL,
+    Region.ITEMS,
+    Region.RIGHT_RAIL,
+)
 
+#: Side panes mounted in Read, in display order.
+READ_SIDE_PANE_ORDER: tuple[Region, ...] = COLLAPSIBLE_REGIONS
+
+#: Side panes mounted around a management canvas, in display order.
+MANAGEMENT_SIDE_PANE_ORDER: tuple[Region, ...] = (
+    Region.LEFT_RAIL,
+    Region.RIGHT_RAIL,
+)
+
+#: Fixed width of every mounted side-pane grip.
+PANE_GRIP_WIDTH = 5
+
+#: Minimum expanded width of each side pane.
+PANE_MINIMUM_WIDTHS: dict[Region, int] = {
+    Region.LEFT_RAIL: 24,
+    Region.ITEMS: 32,
+    Region.RIGHT_RAIL: 30,
+}
+
+#: Preferred comfort width for the permanent Reader or management canvas.
+CENTRE_COMFORT_WIDTH = 44
+
+#: Extra columns a responsively collapsed pane must clear before it
+#: re-expands (TASK-22211). Same value and role as the Library reader's
+#: `LAYOUT_HYSTERESIS_WIDTH` (`Library/library_media_reader_state.py`):
+#: collapse happens exactly at a pane's bare width boundary, but expansion
+#: waits until the width clears that boundary by this margin, so a +/-1-cell
+#: resize oscillation (or a 2-cell scrollbar toggle) at the boundary cannot
+#: mount/remove a whole pane per event. Must stay wider than the default
+#: vertical scrollbar (2 cells) for the scrollbar-toggle guard to hold.
+LAYOUT_HYSTERESIS_WIDTH = 4
+
+#: Default collapse order when Read becomes too narrow.
+READ_COLLAPSE_PRIORITY: tuple[Region, ...] = (
+    Region.RIGHT_RAIL,
+    Region.LEFT_RAIL,
+    Region.ITEMS,
+)
+
+#: Default collapse order when a management tab becomes too narrow.
+MANAGEMENT_COLLAPSE_PRIORITY: tuple[Region, ...] = (
+    Region.RIGHT_RAIL,
+    Region.LEFT_RAIL,
+)
 
 @dataclass(frozen=True)
 class RegionLayout:
-    """Which regions are collapsed, and whether one centre pane is soloed.
+    """A preferred or effective set of collapsed regions.
 
     Attributes:
-        collapsed: Regions currently collapsed to their header. While
-            `solo_region` is set, this is the solo-DERIVED view (the other
-            centre panes collapsed around the soloed one) rather than a
-            layout the user configured directly — see
-            `collapsed_for_persistence`.
-        solo_region: The centre region currently isolated via `solo`, or
-            `None` when no pane is soloed.
-        _pre_solo: The collapsed set as it was immediately before the most
-            recent `solo` call, kept so a second `solo` call (or config
-            persistence, via `collapsed_for_persistence`) can recover it.
-            `None` when the layout has never been soloed.
+        collapsed: Regions currently collapsed. Preferred layouts contain
+            only `COLLAPSIBLE_REGIONS`.
     """
 
     collapsed: frozenset[Region] = frozenset()
-    solo_region: Region | None = None
-    _pre_solo: frozenset[Region] | None = None
 
     def is_collapsed(self, region: Region) -> bool:
         """Whether ``region`` is currently collapsed to its header.
@@ -82,72 +119,101 @@ class RegionLayout:
         """
         return tuple(r for r in REGION_ORDER if r not in self.collapsed)
 
-    def toggle(self, region: Region) -> RegionLayout:
-        """Collapse ``region`` if expanded, expand it if collapsed.
-
-        A manual toggle clears any solo: the user has edited the layout by
-        hand, so a later solo-restore must not resurrect a stale snapshot.
+    def toggle_preferred(self, region: Region) -> RegionLayout:
+        """Flip one side pane's preferred collapse state.
 
         Args:
-            region: The region to collapse or expand.
+            region: The collapsible side pane to update.
 
         Returns:
-            A new layout with `region`'s collapse state flipped and no
-            solo in effect (`solo_region` is always `None` afterwards).
-        """
-        collapsed = set(self.collapsed)
-        if region in collapsed:
-            collapsed.discard(region)
-        else:
-            collapsed.add(region)
-        return RegionLayout(collapsed=frozenset(collapsed))
-
-    def solo(self, region: Region) -> RegionLayout:
-        """Collapse the other centre panes around ``region``; call again to restore.
-
-        Rails are unaffected — solo is about the centre stack only.
-
-        Args:
-            region: The centre region to isolate.
-
-        Returns:
-            A layout with the other centre regions collapsed, or the
-            pre-solo layout if ``region`` is already soloed.
+            A new preferred layout with ``region`` flipped.
 
         Raises:
-            ValueError: If ``region`` is a rail rather than a centre region.
+            ValueError: If ``region`` is the permanent centre content.
         """
-        if region not in CENTRE_REGIONS:
-            raise ValueError(f"{region!r} is not a centre region; solo applies to {CENTRE_REGIONS}")
+        if region not in COLLAPSIBLE_REGIONS:
+            raise ValueError(f"{region!r} is not a collapsible side pane")
 
-        if self.solo_region == region:
-            return RegionLayout(collapsed=self._pre_solo or frozenset())
+        collapsed = set(self.collapsed).intersection(COLLAPSIBLE_REGIONS)
+        collapsed.symmetric_difference_update({region})
+        return RegionLayout(collapsed=frozenset(collapsed))
 
-        # Re-soloing a different pane keeps the ORIGINAL pre-solo snapshot, so
-        # restore always returns to what the user had before soloing at all.
-        baseline = self._pre_solo if self.solo_region is not None else self.collapsed
-        rails = {r for r in self.collapsed if r not in CENTRE_REGIONS}
-        others = {r for r in CENTRE_REGIONS if r != region}
+
+def resolve_effective_layout(
+    preferred: RegionLayout,
+    *,
+    width: int,
+    read_mode: bool,
+    article_focus: bool,
+    priority_target: Region | None,
+    previous: RegionLayout | None = None,
+) -> RegionLayout:
+    """Derive mounted side-pane collapses without changing ``preferred``.
+
+    Args:
+        preferred: The user's preferred side-pane layout.
+        width: Available workbench width in terminal columns.
+        read_mode: Whether Read's Feed Items pane is mounted.
+        article_focus: Whether every mounted side pane is temporarily hidden.
+        priority_target: An expanded mounted pane to collapse last, if any.
+        previous: Previously resolved effective layout used for hysteresis.
+
+    Returns:
+        A new effective layout with no solo or restore state.
+    """
+    mounted = READ_SIDE_PANE_ORDER if read_mode else MANAGEMENT_SIDE_PANE_ORDER
+    priority = READ_COLLAPSE_PRIORITY if read_mode else MANAGEMENT_COLLAPSE_PRIORITY
+    preferred_collapsed = set(preferred.collapsed).intersection(mounted)
+
+    if article_focus:
         return RegionLayout(
-            collapsed=frozenset(rails | others),
-            solo_region=region,
-            _pre_solo=baseline,
+            collapsed=frozenset(preferred_collapsed.union(mounted))
         )
 
-    def collapsed_for_persistence(self) -> frozenset[Region]:
-        """The collapsed set that should survive a restart.
+    required_width = (
+        CENTRE_COMFORT_WIDTH
+        + len(mounted) * PANE_GRIP_WIDTH
+        + sum(
+            PANE_MINIMUM_WIDTHS[region]
+            for region in mounted
+            if region not in preferred_collapsed
+        )
+    )
+    candidates = [
+        region for region in priority if region not in preferred_collapsed
+    ]
+    if priority_target in candidates:
+        candidates.remove(priority_target)
+        candidates.append(priority_target)
 
-        While soloed, `collapsed` is the solo-DERIVED view — the other
-        centre panes collapsed to isolate `solo_region` — not a layout the
-        user configured. Persisting that verbatim would strand a restart in
-        a view the user never chose, with no `_pre_solo` baseline left to
-        restore from. Returning the pre-solo baseline instead means a
-        restart reproduces what the user actually set up, and solo itself
-        genuinely does not survive a restart, matching what
-        `region_layout_store`'s module docstring promises.
+    nominal_collapsed = set(preferred_collapsed)
+    for region in candidates:
+        if required_width <= width:
+            break
+        nominal_collapsed.add(region)
+        required_width -= PANE_MINIMUM_WIDTHS[region]
 
-        Returns:
-            `_pre_solo` when `solo_region` is set, otherwise `collapsed`
-            unchanged.
-        """
-        return self._pre_solo if self.solo_region is not None else self.collapsed
+    if previous is None:
+        return RegionLayout(collapsed=frozenset(nominal_collapsed))
+
+    nominally_open = set(mounted).difference(nominal_collapsed)
+    previously_open = set(mounted).difference(previous.collapsed)
+    accepted_open = nominally_open.intersection(previously_open)
+    accepted_width = (
+        CENTRE_COMFORT_WIDTH
+        + len(mounted) * PANE_GRIP_WIDTH
+        + sum(PANE_MINIMUM_WIDTHS[region] for region in accepted_open)
+    )
+
+    for region in reversed(candidates):
+        if region not in nominally_open or region not in previous.collapsed:
+            continue
+        reopened_width = accepted_width + PANE_MINIMUM_WIDTHS[region]
+        if width < reopened_width + LAYOUT_HYSTERESIS_WIDTH:
+            break
+        accepted_open.add(region)
+        accepted_width = reopened_width
+
+    return RegionLayout(
+        collapsed=frozenset(set(mounted).difference(accepted_open))
+    )

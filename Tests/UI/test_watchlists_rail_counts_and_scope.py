@@ -174,7 +174,7 @@ async def test_a_check_that_produces_items_updates_the_rail_counts():
 async def test_ingesting_an_item_updates_the_rail_counts():
     """AC#1. Triage moves items out of the unread bucket the rail counts."""
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
     app = _build_test_app()
     watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
@@ -197,7 +197,7 @@ async def test_ingesting_an_item_updates_the_rail_counts():
         screen = await _mounted(host, pilot)
         screen.active_section = "items"
         await pilot.pause(0.3)
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if pane.items:
@@ -493,7 +493,7 @@ async def test_opening_items_refreshes_the_rail_once_the_user_pauses():
     lag is removed with a debounce rather than the label weakened: a burst of
     opens costs one reload after the burst.
     """
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
     app = _build_test_app()
     watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
@@ -517,7 +517,7 @@ async def test_opening_items_refreshes_the_rail_once_the_user_pauses():
         screen = await _mounted(host, pilot)
         screen.active_section = "items"
         await pilot.pause(0.3)
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(60):
             await pilot.pause()
             if len(pane.items) >= 3:
@@ -583,3 +583,86 @@ async def test_a_check_that_is_only_queued_does_not_re_read_the_counts():
         await pilot.pause()
         assert reloads == ["x"], "a finished run must refresh the counts"
         screen._load_tree_data = real_load_tree
+
+
+# --- TASK-3072 plan task 6: the Starred root's badge -------------------------
+
+
+@pytest.mark.asyncio
+async def test_starred_root_badge_counts_flagged_items():
+    """The Starred root's badge is `get_flagged_items_count` -- global and
+    status-agnostic, refreshed through the same tree-data load as every
+    other node. Two flagged items on different sources read as one "2".
+    """
+    app = _build_test_app()
+    _watchlist_id, assigned_id, unassigned_id = _seed_two_sources_one_assigned(app)
+    db = app.local_watchlists_service._db()
+    with db.transaction() as conn:
+        for index, source_id in enumerate((assigned_id, unassigned_id, unassigned_id)):
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": f"https://feed.test/post-{index}/",
+                    "title": f"Post {index}",
+                    "content_hash": f"hash-starred-{index}",
+                },
+                run_id=None,
+                now=f"2026-08-04T09:00:0{index}+00:00",
+            )
+    item_ids = [
+        row[0]
+        for row in db.conn.execute("SELECT id FROM subscription_items ORDER BY id")
+    ]
+    db.set_item_flagged(item_ids[0], True)
+    db.set_item_flagged(item_ids[1], True)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        for _ in range(40):
+            await pilot.pause()
+            if _rail_label(screen, "wl-tree-node-starred").endswith("2"):
+                break
+        assert _rail_label(screen, "wl-tree-node-starred") == "★ Starred  2"
+
+
+@pytest.mark.asyncio
+async def test_all_unread_and_today_badges_count_their_own_facts():
+    """TASK-3791 plan task 4: All Unread reuses the All-sources unread count
+    (one fact, two angles); Today counts unread items at/after local
+    midnight only."""
+    from datetime import datetime, timedelta, timezone
+
+    app = _build_test_app()
+    _watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
+    db = app.local_watchlists_service._db()
+    now = datetime.now(timezone.utc)
+    with db.transaction() as conn:
+        for index, published in enumerate(
+            (now.isoformat(), now.isoformat(), (now - timedelta(hours=49)).isoformat())
+        ):
+            persist_subscription_item(
+                conn,
+                assigned_id,
+                {
+                    "url": f"https://assigned.test/today-{index}/",
+                    "title": f"Today {index}",
+                    "content_hash": f"hash-today-{index}",
+                    "published_date": published,
+                },
+                run_id=None,
+                now=now.isoformat(),
+            )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        for _ in range(40):
+            await pilot.pause()
+            if _rail_label(screen, "wl-tree-node-unread").endswith("3"):
+                break
+        assert _rail_label(screen, "wl-tree-node-unread") == "All Unread  3"
+        assert _rail_label(screen, "wl-tree-node-today") == "Today  2", (
+            "the two fresh items count; the 49-hour-old one does not"
+        )

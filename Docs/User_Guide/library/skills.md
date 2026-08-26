@@ -20,7 +20,16 @@ editor in create mode.
 
 ## Layout tour
 
-![Skills list](../images/library/skills-list.svg)
+```text
+Library rail                 Skills list / editor
+┌────────────────────┐       ┌──────────────────────────────────────────┐
+│ Browse             │       │ Skills (N)                               │
+│   Skills           │  ───▶ │ Filter skills…                           │
+│ Create             │       │ sort: Name        Import…                │
+│   New skill        │       │ ✓ code-review                            │
+└────────────────────┘       │ ⚠ summarize                              │
+                             └──────────────────────────────────────────┘
+```
 
 The list canvas, top to bottom:
 
@@ -29,8 +38,9 @@ The list canvas, top to bottom:
   action button when there is something to do (both hidden while the list
   is empty). The lines and their buttons are listed under Features below.
 - **Filter** — "Filter skills… (Enter)".
-- **Toolbar** — "sort: Name ▸" / "sort: Status ▸" (Status puts
-  needs-review skills first) and "Import…".
+- **Toolbar** — "sort: Name" / "sort: Status" (press to open a one-row
+  strip of Name / Status with ✓ on the active one and pick directly;
+  Status puts needs-review skills first) and "Import…".
 - **Rows** — one per skill: **⚠ name** (blocked — needs review before use)
   or **✓ name** (usable), with a dimmer description line underneath.
 - **Empty state** — "No skills yet — use Create ▸ New skill in the rail,
@@ -75,31 +85,123 @@ SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
   "Unsupported file type.", "Skill import is unavailable.", and
   `Skipped — a skill named "name" already exists.`
 
+### Project skills (`.SKILLS/`)
+
+A project with a `.SKILLS/` (or `.skills/`) folder at its root can offer its
+skills for import automatically instead of one-at-a-time manual imports. The
+convention: each skill is either a subdirectory containing a top-level
+`SKILL.md` (skill name = the directory name) or a loose `*.md` file (name
+derived from the filename). Anything else in the folder — a subdirectory
+without `SKILL.md`, a non-markdown file — is listed as skipped with a
+reason, never silently ignored. A symlinked `.SKILLS/` directory, or a
+symlinked entry inside it, is refused.
+
+Chatbook offers to import from `.SKILLS/` at two moments, never silently:
+
+- **App startup**, when launched from inside such a project (or a
+  subdirectory of one — the search walks upward looking for `.SKILLS/`,
+  stopping at the first ancestor containing `.git`, at your home folder, or
+  at the filesystem root).
+- **After creating a workspace** bound to a folder that contains `.SKILLS/`
+  (the folder row in the "New Workspace" dialog shows "— contains N project
+  skill(s)" while you're adding it).
+
+The prompt lists each discovered skill with a checkbox — **new** entries
+checked by default, entries that match an **already installed** skill name
+left unchecked (an existing skill is never silently overwritten), and
+**invalid** entries (a bad name, or a file that can't be read) shown
+unselectable with a reason. Unparseable frontmatter is not one of those
+reasons — a skill file whose frontmatter can't be parsed still imports
+fine, just with an empty description (matching how a manual import treats
+the same case). **Import selected** runs the same importer as a manual
+import; **Not now** declines for this launch only — you're asked again only
+if the project's skill set actually changes (a new or removed skill file
+changes its fingerprint); **Never for this folder** declines permanently for
+that project. Declining or importing from either trigger (startup or
+workspace creation) is remembered for both.
+
+**Every import still lands trust-pending, exactly like a manual import** —
+the prompt states this up front ("Imported skills require a one-time trust
+review in Library ▸ Skills before they can run") because a project-imported
+skill is otherwise indistinguishable from any other skill in the list. The
+result view's **Review in Library ▸ Skills** button brings you straight
+here to review and approve them (see [Trust panel](#trust-panel) above).
+
+The whole feature can be turned off — no scanning, no prompts, at either
+trigger — with `[skills] project_skills_prompt_enabled = false` in
+`config.toml`; it defaults to on. This does not affect the manual
+**Import…** row above, which is always available regardless of this
+setting.
+
 ### Editor
 
-| Field / control | Notes |
-|---|---|
-| Name | Create mode hints "lowercase letters, numbers, hyphens (e.g. code-review)". For an existing skill the field is disabled: "Rename isn't supported — create a new skill instead." |
-| Description | Optional; when blank: "No description set — lists show the skill's first body line automatically. Type here to set your own." |
-| Argument hint | Optional usage hint shown to invokers. |
-| Allowed tools | Input, "Allowed tools (comma-separated)". |
-| "User can invoke: yes/no ▸" | Toggle — whether `$name` works for you. |
-| "Agent can invoke: yes/no ▸" | Toggle — whether the agent may use it as a tool. |
-| "Runs in: inline (this conversation) ▸" / "Runs in: fork (sub-agent) ▸" | Toggle between running in your conversation or a sub-agent. |
-| Model override | Disabled: "Not applied in v1 — shown for SKILL.md round-tripping only." |
-| Body | The skill's instructions (the SKILL.md content). |
-| Supporting files | Read-only list ("name (N bytes)"; "No supporting files." when empty). |
+The editor opens in **Basic** by default. **Show advanced** reveals the
+technical controls; **Show basic** returns to the concise view. The choice is
+remembered for this profile. Switching views does not rebuild the draft, so
+text, undo history, focus, and scroll position stay intact.
+
+```text
+Basic                                  Advanced
+┌──────────────────────────────┐       ┌──────────────────────────────┐
+│ Name                         │       │ Basic fields remain mounted  │
+│ Description                  │       │ Run context                  │
+│ Instructions                 │       │ Restrict tools   [Filter…]   │
+│ You can invoke       [on/off]│       │ ┌ SelectionList (bounded) ┐  │
+│ Agent can invoke     [on/off]│       │ │ [x] calculator          │  │
+│ Argument hint (when useful)  │       │ │ [x] old-tool unavailable│  │
+│ Trust summary / safe action  │       │ └──────────────────────────┘  │
+│              Show advanced ▶ │       │ Supporting files / metadata  │
+└──────────────────────────────┘       │ ◀ Show basic                  │
+                                       └──────────────────────────────┘
+```
+
+Basic fields:
+
+- **Name** — editable while creating. Existing Skills cannot be renamed;
+  create a new Skill instead.
+- **Description** — optional list summary.
+- **Instructions** — the Skill's `SKILL.md` body.
+- **You can invoke** and **Agent can invoke** — independent choices. Turning
+  both off makes the Skill reference-only; the editor says so explicitly.
+- **Argument hint** — shown when user invocation is enabled.
+- **Trust** — a healthy Skill is one compact line plus **View details**.
+  Changed, blocked, quarantined, script-enabled, or otherwise actionable
+  safety states expand automatically in Basic and Advanced.
+
+Advanced adds:
+
+- **Run context** — inline in this conversation or forked to a sub-agent.
+- **Restrict tools** — a bounded searchable checklist of eligible builtin and
+  enabled local tools. This narrows what the Skill may use; it never grants a
+  permission. Imported unavailable names remain visible and selected. Merely
+  opening, filtering, or switching views does not rewrite the stored ordered
+  allowlist, including duplicates and unknown names.
+- **Supporting files** and technical warnings.
+- **Imported model metadata** — read-only and shown only when present; it is
+  preserved when saving but is not a runtime model selector.
 
 Warnings appear above the actions when they apply: `Name shadows a
 built-in command/tool ("name") — it will not be invocable as /name or as
 an agent tool.` and `Saving marks this skill "needs review" — re-approve
 it in the trust panel after saving.`
 
-Actions: **Save**, **Discard changes** (enabled once you have edits), and
-**Delete** (hidden in create mode). Delete confirms inline with
+Actions follow the draft lifecycle instead of showing one permanent toolbar:
+
+| State | Available actions |
+|---|---|
+| New | **Save skill**, **Cancel** |
+| Saved, unchanged | **Back to list**, **More actions** |
+| Saved, changed | **Save changes**, **Discard changes** |
+| Changed elsewhere | **Reload** |
+| Delete confirmation | **Delete**, **Cancel** |
+| Saving/deleting | Progress plus a readable unavailable reason |
+
+**More actions** contains **Delete** only for a clean saved Skill. Esc closes
+the disclosure before leaving the editor. Delete confirms inline with
 `Delete "name"? This removes the skill's directory and cannot be undone.`
 (naming the supporting files too, when it has any). Save status lines:
-"Saved.", "A skill with this name already exists.", "Skill name must use
+`Saved. Review trust before using this Skill with the agent.`, "A skill with
+this name already exists.", "Skill name must use
 lowercase letters, numbers, and hyphens.", "This skill is blocked by trust
 review — approve it in the trust panel before saving.", or "Couldn't save
 this skill. Try again." If the skill changed elsewhere while you were
@@ -146,7 +248,8 @@ parentheses when something differs from the trusted baseline.
 ## Common tasks
 
 1. **Create a skill.** Rail **Create ▸ New skill**, type a name (lowercase
-   letters, numbers, hyphens), write the Body, **Save** (or Ctrl+S). Then
+   letters, numbers, hyphens), write the Instructions, **Save skill** (or
+   Ctrl+S). Then
    scroll to the Trust panel, **Review changes**, **Approve**, and enter
    your passphrase — now `$name` runs in Console.
 2. **Import from a GitHub URL.** In the list, click **Import…**, paste the
@@ -168,8 +271,10 @@ parentheses when something differs from the trusted baseline.
 
 | Key | Action |
 |---|---|
-| Ctrl+S | Save the skill — only while the skill editor is open |
-| Esc | Back to the skills list — only while the skill editor is open |
+| Ctrl+S | Save — only when the open Skill is new or has changes |
+| Esc | Close More actions first; otherwise return to the Skills list |
+| Tab / Shift+Tab | Move through the current Basic or Advanced controls |
+| Arrow keys / Space | Move and toggle items in the Advanced tool checklist |
 
 Both keys act only inside the skill editor; elsewhere in Library they pass
 through (Esc also cancels the passphrase dialogs).
@@ -184,8 +289,10 @@ through (Esc also cancels the passphrase dialogs).
   deep dive on how bundled scripts run and are sandboxed.
 - [Library](../library.md) — the surrounding screen; [Prompts](prompts.md)
   are the simpler cousin (inserted text, no trust or execution).
-- This panel owns no `config.toml` keys; trust lives in a local,
-  passphrase-protected store on this machine. Guide index:
+- Trust itself lives in a local, passphrase-protected store on this
+  machine, not in `config.toml`. The one config key this panel's flow does
+  read is `[skills] project_skills_prompt_enabled` (default `true`) —
+  see [Project skills](#project-skills-skills) above. Guide index:
   [index](../index.md).
 
 ## Quirks & troubleshooting
@@ -211,6 +318,27 @@ through (Esc also cancels the passphrase dialogs).
   re-check.
 - **Model override does nothing yet** — it is kept only so SKILL.md files
   round-trip without losing the field.
+- **Skills imported from a project's `.SKILLS/` folder are quarantined like
+  any other import** — a fresh `$mention` of one in Console is refused with
+  a pointer back here until you review and approve it; the import prompt's
+  header says this explicitly, but it's easy to miss.
+- **`.SKILLS/` scanning is opt-out, not opt-in** — set `[skills]
+  project_skills_prompt_enabled = false` in `config.toml` if you don't want
+  Chatbook checking project directories for skill folders at startup or on
+  workspace creation.
 
 —
 *Verified against dev @ bd05a692a — 2026-07-31*
+
+*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
+(task-14902: the list's sort control converged on the Library
+chooser-strip pattern (press → Name / Status with ✓ on the active one,
+direct pick, Escape cancels); the editor's three two-state switches stay
+one-press toggles with their full option set now on the label —
+"User can invoke: ✓ yes ⇄ no" — so the option space is on screen.)*
+
+*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
+(task-18705: documented the new "Project skills (`.SKILLS/`)" convention —
+per-project discovery at startup and workspace creation, the fingerprint
+gated prompt ledger, the quarantine/trust-review expectation, and the
+`[skills] project_skills_prompt_enabled` kill-switch.)*

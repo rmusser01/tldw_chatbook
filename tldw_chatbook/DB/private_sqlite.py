@@ -12,9 +12,9 @@ import warnings
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
-from threading import Lock, RLock
+from threading import Lock, RLock, get_ident
 from types import MappingProxyType
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping, cast
 from urllib.parse import quote
 
 import tldw_chatbook.Utils.private_paths as private_paths
@@ -23,8 +23,12 @@ from tldw_chatbook.Utils.private_paths import (
     PrivatePathResult,
     PrivatePathStatus,
     lexical_path,
+    secure_private_directory,
     verify_trusted_directory,
 )
+
+
+_SQLITE_CONNECT = sqlite3.connect
 
 
 class SQLiteTargetKind(StrEnum):
@@ -79,6 +83,13 @@ _READ_ONLY_URI = frozenset({SQLiteTargetKind.READ_ONLY_URI})
 _PRIVATE_AND_READ_ONLY = frozenset(
     {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.READ_ONLY_URI}
 )
+_PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
+    {
+        SQLiteTargetKind.PRIVATE_FILE,
+        SQLiteTargetKind.MEMORY,
+        SQLiteTargetKind.READ_ONLY_URI,
+    }
+)
 
 _SQLITE_OWNER_POLICIES = {
     "app.prompts_parent": SQLiteOwnerPolicy(
@@ -120,6 +131,13 @@ _SQLITE_OWNER_POLICIES = {
         "tldw_chatbook/DB/base_db",
         _PRIVATE_OR_MEMORY,
         "BaseDB is the shared file and memory connection owner for subclasses.",
+    ),
+    "db.subscriptions.agent_read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Subscriptions_DB",
+        _READ_ONLY_URI,
+        "External agent tools read the existing Watchlists database without "
+        "creating, migrating, or writing it.",
+        preserve_read_only_source_mode=True,
     ),
     "db.subscriptions.site_configs": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Subscriptions_DB",
@@ -180,16 +198,6 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "RAG indexing supports private files and exact in-memory targets.",
     ),
-    "db.search_history": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/search_history_db",
-        _PRIVATE_OR_MEMORY,
-        "Search history supports private files and exact in-memory targets.",
-    ),
-    "db.sync_client_example": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/Sync_Client",
-        _PRIVATE_FILE,
-        "The executable sync example must not teach unsafe parent creation.",
-    ),
     "eval.orchestrator_parent": SQLiteOwnerPolicy(
         "tldw_chatbook/Evals/eval_orchestrator",
         _PRIVATE_FILE,
@@ -211,6 +219,13 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "The Notes library owns a per-user database parent.",
     ),
+    "notes.sync_state": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/notes_device_state_store",
+        _PRIVATE_AND_READ_ONLY,
+        "Device-private import receipts and lasting-sync state remain "
+        "profile-local; planning may inspect an existing ledger read-only, and "
+        "the owner remains outside centralized backup.",
+    ),
     "notifications.client": SQLiteOwnerPolicy(
         "tldw_chatbook/Notifications/client_notifications_db",
         _MEMORY,
@@ -218,8 +233,36 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "notifications.event_state": SQLiteOwnerPolicy(
         "tldw_chatbook/Notifications/event_state_repository",
-        _MEMORY,
-        "Event state currently uses only an in-memory database.",
+        _PRIVATE_OR_MEMORY,
+        "The durable server-event ledger. The app gives it a private file "
+        "under the user data directory (`build_server_parity_state_"
+        "repositories`) and falls back to an exact in-memory target when "
+        "that directory cannot be trusted. TASK-21131: the file branch used "
+        "to be opened by `BaseDB._get_connection` under `db.base`, so this "
+        "entry described only half of it; the enforced target kinds are "
+        "unchanged (`db.base` allows exactly the same two).",
+    ),
+    "rag.chachanotes_keyword_leg": SQLiteOwnerPolicy(
+        "tldw_chatbook/RAG_Search/simplified/rag_service",
+        _READ_ONLY_URI,
+        "The RAG keyword leg reads notes and conversations out of the live "
+        "ChaChaNotes database. Read-only URI only: search must never write "
+        "to, create, or migrate the user's main database, and this owner "
+        "preserves the source file's mode rather than reasserting private "
+        "permissions on a file another owner already governs.",
+        preserve_read_only_source_mode=True,
+    ),
+    "rag.prompts_keyword_leg": SQLiteOwnerPolicy(
+        "tldw_chatbook/RAG_Search/simplified/rag_service",
+        _READ_ONLY_URI,
+        "The RAG keyword leg reads saved prompts out of the live Prompts "
+        "database (TASK-15020/B2) -- the only retrieval path prompts have, "
+        "since nothing indexes them semantically. Read-only URI only: "
+        "search must never write to, create, or migrate the user's prompts "
+        "database, and this owner preserves the source file's mode rather "
+        "than reasserting private permissions on a file another owner "
+        "already governs.",
+        preserve_read_only_source_mode=True,
     ),
     "research.local": SQLiteOwnerPolicy(
         "tldw_chatbook/Research_Interop/local_research_service",
@@ -285,6 +328,13 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "TTS profile storage requires a checked writable private database.",
     ),
+    "tts.profile_store_descriptor": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_schema",
+        _READ_ONLY_URI,
+        "TTS shared startup proves the exact current store through an immutable "
+        "view bound to its retained descriptor before opening the live path.",
+        preserve_read_only_source_mode=True,
+    ),
     "tts.profile_candidate": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_schema",
         _READ_ONLY_URI,
@@ -312,6 +362,49 @@ _SQLITE_OWNER_POLICIES = {
         "TTS profile backups use the centralized caller-connection seam.",
         centralized_backup_allowed=True,
     ),
+    "tts.profile_migration_backup": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_repository",
+        _PRIVATE_AND_READ_ONLY,
+        "TTS profile v2 migration sources and retained backups require "
+        "private exact-version validation and centralized online backup.",
+        centralized_backup_allowed=True,
+    ),
+    "tts.profile_migration_boundary": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_candidate",
+        _PRIVATE_MEMORY_AND_READ_ONLY,
+        "TTS migration boundaries use an isolated in-memory source and one "
+        "exclusive owner-private future-artifact destination.",
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
+    ),
+    "tts.profile_migration_publication": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_publication",
+        _READ_ONLY_URI,
+        "TTS migration publication immutably revalidates exact prepared and "
+        "retained artifacts before and after durable namespace replacement.",
+        preserve_read_only_source_mode=True,
+    ),
+    "tts.profile_migration_recovery": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_recovery",
+        _READ_ONLY_URI,
+        "TTS startup recovery immutably validates journal-classified exact "
+        "active and retained backup authority before profile-store open.",
+        preserve_read_only_source_mode=True,
+    ),
+    "tts.profile_migration_publication_descriptor": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_publication",
+        _READ_ONLY_URI,
+        "TTS migration publication validates an immutable "
+        "read-only view bound to an already verified descriptor.",
+        preserve_read_only_source_mode=True,
+    ),
+    "tts.profile_migration_recovery_descriptor": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_recovery",
+        _READ_ONLY_URI,
+        "TTS startup recovery validates an immutable read-only view bound to "
+        "an already verified descriptor.",
+        preserve_read_only_source_mode=True,
+    ),
     "tts.profile_restore_stage": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_repository",
         _PRIVATE_AND_READ_ONLY,
@@ -328,12 +421,18 @@ _SQLITE_OWNER_POLICIES = {
     "tts.profile_snapshot": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_repository",
         _READ_ONLY_URI,
-        "TTS standalone snapshot integrity checks are validated read-only.",
+        "TTS standalone snapshots use immutable read-only access for incremental BLOB validation.",
     ),
     "tamagotchi.sqlite": SQLiteOwnerPolicy(
         "tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage",
         _PRIVATE_OR_MEMORY,
         "All SQLiteStorage methods share private file and Path(':memory:') support.",
+    ),
+    "utils.db_upgrade_notice": SQLiteOwnerPolicy(
+        "tldw_chatbook/Utils/db_upgrade_notice",
+        _READ_ONLY_URI,
+        "The pre-boot upgrade notice reads only the schema-version row, "
+        "read-only, before the app constructs (task-21100).",
     ),
     "utils.legacy_user_database_path": SQLiteOwnerPolicy(
         "tldw_chatbook/Utils/paths",
@@ -362,6 +461,76 @@ _RESTORE_LOCK = RLock()
 
 _PRIVATE_FILE_MODE = 0o600
 _SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_PROFILE_MIGRATION_BOUNDARY_VERSIONS = frozenset({2, 3})
+_PROFILE_MIGRATION_BOUNDARY_OWNER = "tts.profile_migration_boundary"
+_PROFILE_DESTINATION_FACTORY_TOKEN = object()
+
+
+class SQLitePrivateDestinationError(OSError):
+    """Bounded failure for an opaque private SQLite destination."""
+
+    def __init__(self, code: str = "destination_invalid") -> None:
+        self.code = code
+        super().__init__(f"SQLite private destination failed: {code}")
+
+    def __repr__(self) -> str:
+        return f"SQLitePrivateDestinationError({self.code!r})"
+
+
+class ProfileMigrationBoundaryDestination:
+    """Opaque, thread-confined owner for one future boundary artifact."""
+
+    __slots__ = (
+        "__connection",
+        "__file_identity",
+        "__file_fd",
+        "__parent_identity",
+        "__parent_fd",
+        "__path",
+        "__schema_version",
+        "__state",
+        "__thread_id",
+    )
+
+    def __init__(
+        self,
+        factory_token: object,
+        *,
+        connection: sqlite3.Connection,
+        file_identity: os.stat_result,
+        file_fd: int = -1,
+        parent_identity: os.stat_result,
+        parent_fd: int = -1,
+        path: Path,
+        schema_version: int,
+    ) -> None:
+        if factory_token is not _PROFILE_DESTINATION_FACTORY_TOKEN:
+            raise SQLitePrivateDestinationError()
+        self.__connection: sqlite3.Connection | None = connection
+        self.__file_identity = file_identity
+        self.__file_fd = file_fd
+        self.__parent_identity = parent_identity
+        self.__parent_fd = parent_fd
+        self.__path = path
+        self.__schema_version = schema_version
+        self.__state = "open"
+        self.__thread_id = get_ident()
+
+    def __repr__(self) -> str:
+        return "ProfileMigrationBoundaryDestination(<private>)"
+
+    def __enter__(self) -> ProfileMigrationBoundaryDestination:
+        if self.__state != "open" or self.__thread_id != get_ident():
+            raise SQLitePrivateDestinationError()
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: object,
+        _exc: object,
+        _traceback: object,
+    ) -> None:
+        _close_profile_migration_destination(self)
 
 
 def _warn_unverified_platform(owner_id: str) -> None:
@@ -911,13 +1080,38 @@ def _connect_registered_sqlite(
     read_only: bool = False,
     must_exist: bool = False,
     immutable: bool = False,
+    expected_identity: os.stat_result | None = None,
+    _verified_descriptor_fd: int | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     if "uri" in kwargs:
         raise ValueError("The SQLite uri option is owned by the private seam")
     if immutable and not read_only:
         raise ValueError("Immutable SQLite connections must be read-only")
+    if expected_identity is not None and not isinstance(
+        expected_identity,
+        os.stat_result,
+    ):
+        raise TypeError("expected_identity must be an os.stat_result")
     policy = _validated_owner_policy(owner_id)
+    if _verified_descriptor_fd is not None:
+        if not read_only or not immutable or not must_exist:
+            raise ValueError("Descriptor SQLite views are immutable read-only")
+        if SQLiteTargetKind.READ_ONLY_URI not in policy.allowed_target_kinds:
+            raise ValueError("SQLite owner does not allow descriptor reads")
+        opened = os.fstat(_verified_descriptor_fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+        ):
+            raise ValueError("SQLite descriptor must be a regular file")
+        return _SQLITE_CONNECT(
+            f"file:/dev/fd/{_verified_descriptor_fd}?mode=ro&immutable=1",
+            uri=True,
+            **kwargs,
+        )
     raw, target_kind = _classify_target(database, read_only=read_only)
     if target_kind is SQLiteTargetKind.MEMORY and must_exist:
         raise ValueError("must_exist is only valid for file-backed SQLite")
@@ -944,6 +1138,17 @@ def _connect_registered_sqlite(
                 read_only and policy.preserve_read_only_source_mode
             ),
         )
+        if expected_identity is not None:
+            observed_identity = selected.lstat()
+            if not private_paths._same_identity(
+                observed_identity,
+                expected_identity,
+            ):
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_expected_identity_changed",
+                )
         for suffix in _SIDECAR_SUFFIXES:
             _prepare_artifact(
                 Path(f"{selected}{suffix}"),
@@ -981,6 +1186,7 @@ def connect_private_sqlite(
     read_only: bool = False,
     must_exist: bool = False,
     immutable: bool = False,
+    expected_identity: os.stat_result | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     """Open SQLite only after enforcing the registered target policy."""
@@ -991,8 +1197,42 @@ def connect_private_sqlite(
         read_only=read_only,
         must_exist=must_exist,
         immutable=immutable,
+        expected_identity=expected_identity,
         **kwargs,
     )
+
+
+def connect_private_sqlite_descriptor(
+    owner_id: str,
+    file_fd: int,
+    **kwargs: Any,
+) -> sqlite3.Connection:
+    """Open an immutable SQLite view bound to an already verified descriptor."""
+
+    policy = _validated_owner_policy(owner_id)
+    if SQLiteTargetKind.READ_ONLY_URI not in policy.allowed_target_kinds:
+        raise ValueError("SQLite owner does not allow descriptor reads")
+    opened = os.fstat(file_fd)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_uid != os.geteuid()
+        or stat.S_IMODE(opened.st_mode) != 0o600
+        or opened.st_nlink != 1
+    ):
+        raise ValueError("SQLite descriptor must be a regular file")
+    duplicate = os.dup(file_fd)
+    try:
+        return _connect_registered_sqlite(
+            owner_id,
+            ":memory:",
+            read_only=True,
+            must_exist=True,
+            immutable=True,
+            _verified_descriptor_fd=duplicate,
+            **kwargs,
+        )
+    finally:
+        os.close(duplicate)
 
 
 @dataclass(slots=True)
@@ -1376,6 +1616,841 @@ def _backup_pages(
     )
 
 
+def _raise_private_destination_failure(error: BaseException) -> None:
+    if not isinstance(error, Exception):
+        raise error
+    raise SQLitePrivateDestinationError() from None
+
+
+def _profile_destination_connection(
+    destination: ProfileMigrationBoundaryDestination,
+) -> sqlite3.Connection:
+    connection = object.__getattribute__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+    )
+    if connection is None:
+        raise SQLitePrivateDestinationError()
+    return connection
+
+
+def _unattached_database_rows(
+    rows: list[sqlite3.Row | tuple[object, ...]],
+) -> tuple[object, ...] | None:
+    main_rows = [row for row in rows if len(row) >= 3 and row[1] == "main"]
+    if len(main_rows) != 1 or any(
+        len(row) < 3
+        or row[1] not in {"main", "temp"}
+        or (row[1] == "temp" and row[2] not in {"", None})
+        for row in rows
+    ):
+        return None
+    return tuple(main_rows[0])
+
+
+def _profile_destination_sidecars_absent(parent_fd: int, leaf: str) -> bool:
+    for suffix in _SIDECAR_SUFFIXES:
+        try:
+            os.stat(
+                f"{leaf}{suffix}",
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        return False
+    return True
+
+
+def _profile_destination_namespace_holds(
+    destination: ProfileMigrationBoundaryDestination,
+    parent_fd: int,
+    file_fd: int,
+    leaf: str,
+) -> bool:
+    return (
+        private_paths._same_identity(
+            os.fstat(parent_fd),
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_identity",
+            ),
+        )
+        and _artifact_postcondition_holds(
+            file_fd,
+            parent_fd,
+            leaf,
+            expected_identity=object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_identity",
+            ),
+            selected=cast(
+                Path,
+                object.__getattribute__(
+                    destination,
+                    "_ProfileMigrationBoundaryDestination__path",
+                ),
+            ),
+        )
+        and _profile_destination_sidecars_absent(parent_fd, leaf)
+    )
+
+
+def _verify_profile_migration_destination(
+    destination: ProfileMigrationBoundaryDestination,
+    *,
+    require_empty: bool,
+) -> sqlite3.Connection:
+    if (
+        type(destination) is not ProfileMigrationBoundaryDestination
+        or object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__thread_id",
+        )
+        != get_ident()
+        or object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+        )
+        != "open"
+    ):
+        raise SQLitePrivateDestinationError()
+    selected = cast(
+        Path,
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__path",
+        ),
+    )
+    parent_result = verify_trusted_directory(
+        selected.parent,
+        allow_shared_sticky=False,
+    )
+    if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+        raise SQLitePrivateDestinationError()
+    parent_stat = selected.parent.lstat()
+    file_stat = selected.lstat()
+    if (
+        not private_paths._same_identity(
+            parent_stat,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_identity",
+            ),
+        )
+        or parent_stat.st_uid != os.geteuid()
+        or stat.S_IMODE(parent_stat.st_mode) != 0o700
+        or not private_paths._same_identity(
+            file_stat,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_identity",
+            ),
+        )
+        or private_paths._classify_private_file_stat(
+            file_stat,
+            expected_uid=os.geteuid(),
+        )
+        is not None
+        or stat.S_IMODE(file_stat.st_mode) != _PRIVATE_FILE_MODE
+    ):
+        raise SQLitePrivateDestinationError()
+    connection = _profile_destination_connection(destination)
+    if connection.in_transaction:
+        raise SQLitePrivateDestinationError()
+    database_rows = list(connection.execute("PRAGMA database_list"))
+    main_row = _unattached_database_rows(database_rows)
+    if main_row is None or not main_row[2]:
+        raise SQLitePrivateDestinationError()
+    opened_path = lexical_path(os.fsdecode(cast(str, main_row[2])))
+    verify_trusted_directory(opened_path.parent, allow_shared_sticky=False)
+    if not private_paths._same_identity(opened_path.lstat(), file_stat):
+        raise SQLitePrivateDestinationError()
+    parent_fd, leaf = private_paths._open_verified_parent(
+        selected,
+        missing_leaf_allowed=False,
+    )
+    try:
+        if not private_paths._same_identity(
+            parent_stat, os.fstat(parent_fd)
+        ) or not _profile_destination_sidecars_absent(parent_fd, leaf):
+            raise SQLitePrivateDestinationError()
+    finally:
+        os.close(parent_fd)
+    if require_empty:
+        version_row = connection.execute("PRAGMA user_version").fetchone()
+        objects_row = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'"
+        ).fetchone()
+        if (
+            version_row is None
+            or len(version_row) != 1
+            or type(version_row[0]) is not int
+            or version_row[0] != 0
+            or objects_row is None
+            or len(objects_row) != 1
+            or type(objects_row[0]) is not int
+            or objects_row[0] != 0
+        ):
+            raise SQLitePrivateDestinationError()
+    return connection
+
+
+def _close_profile_migration_destination(
+    destination: ProfileMigrationBoundaryDestination,
+) -> None:
+    if type(destination) is not ProfileMigrationBoundaryDestination:
+        raise SQLitePrivateDestinationError()
+    connection = object.__getattribute__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+    )
+    errors: list[BaseException] = []
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as close_error:
+            errors.append(close_error)
+        else:
+            object.__setattr__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__connection",
+                None,
+            )
+    if errors:
+        for pending_error in errors:
+            if not isinstance(pending_error, Exception):
+                raise pending_error
+        raise errors[0]
+    if (
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+        )
+        == "open"
+    ):
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+            "closed",
+        )
+    for attribute in ("__file_fd", "__parent_fd"):
+        private_name = f"_ProfileMigrationBoundaryDestination{attribute}"
+        descriptor = cast(int, object.__getattribute__(destination, private_name))
+        if descriptor >= 0:
+            object.__setattr__(destination, private_name, -1)
+            try:
+                os.close(descriptor)
+            except BaseException as close_error:
+                errors.append(close_error)
+    for pending_error in errors:
+        if not isinstance(pending_error, Exception):
+            raise pending_error
+    if errors:
+        raise errors[0]
+
+
+def close_profile_migration_destination(
+    destination: ProfileMigrationBoundaryDestination,
+) -> None:
+    """Close and revoke one opaque migration destination."""
+
+    error: BaseException | None = None
+    try:
+        _close_profile_migration_destination(destination)
+    except BaseException as caught:
+        error = caught
+    if error is not None:
+        _raise_private_destination_failure(error)
+
+
+def discard_profile_migration_destination(
+    destination: ProfileMigrationBoundaryDestination,
+    *,
+    tombstone_key: object,
+) -> None:
+    """Descriptor-verify and quarantine one unpublished candidate."""
+
+    body_error: BaseException | None = None
+    try:
+        from tldw_chatbook.TTS.profile_migration_namespace import (
+            MigrationTombstoneKey,
+            ParentAuthority,
+            remove_exact,
+        )
+
+        if (
+            type(destination) is not ProfileMigrationBoundaryDestination
+            or type(tombstone_key) is not MigrationTombstoneKey
+            or object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__thread_id",
+            )
+            != get_ident()
+        ):
+            raise ValueError
+        selected = cast(
+            Path,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__path",
+            ),
+        )
+        parent_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_fd",
+            ),
+        )
+        file_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_fd",
+            ),
+        )
+        if (
+            parent_fd < 0
+            or file_fd < 0
+            or not _profile_destination_namespace_holds(
+                destination,
+                parent_fd,
+                file_fd,
+                selected.name,
+            )
+        ):
+            raise ValueError
+        connection = object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__connection",
+        )
+        if connection is not None:
+            connection.close()
+            object.__setattr__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__connection",
+                None,
+            )
+        if not _profile_destination_namespace_holds(
+            destination,
+            parent_fd,
+            file_fd,
+            selected.name,
+        ):
+            raise ValueError
+        identity = cast(
+            os.stat_result,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_identity",
+            ),
+        )
+        parent = cast(
+            os.stat_result,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_identity",
+            ),
+        )
+        if file_fd < 0 or not private_paths._same_identity(os.fstat(file_fd), identity):
+            raise ValueError
+        remove_exact(
+            selected,
+            parent_authority=ParentAuthority(parent),
+            file_identity=identity,
+            tombstone_key=tombstone_key,
+        )
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+            "discarded",
+        )
+    except BaseException as error:
+        body_error = error
+    close_error: BaseException | None = None
+    try:
+        _close_profile_migration_destination(destination)
+    except BaseException as error:
+        close_error = error
+    for pending in (body_error, close_error):
+        if pending is not None and not isinstance(pending, Exception):
+            raise pending
+    if body_error is not None or close_error is not None:
+        raise SQLitePrivateDestinationError() from None
+
+
+def open_canonical_profile_migration_destination(
+    path: str | os.PathLike[str],
+    *,
+    schema_version: int,
+    tombstone_key: object,
+) -> ProfileMigrationBoundaryDestination:
+    """Acquire one fixed migration leaf while retaining exact descriptors."""
+
+    error: BaseException | None = None
+    connection: sqlite3.Connection | None = None
+    parent_fd = -1
+    file_fd = -1
+    destination: ProfileMigrationBoundaryDestination | None = None
+    try:
+        if type(schema_version) is not int or not 0 <= schema_version <= 4:
+            raise ValueError
+        selected = _private_destination(path)
+        parent_result = secure_private_directory(
+            selected.parent,
+            create=False,
+            application_owned=True,
+        )
+        if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+            raise ValueError
+        from tldw_chatbook.TTS.profile_migration_namespace import (
+            MigrationTombstoneKey,
+            ParentAuthority,
+            open_new_or_reused_private_file,
+        )
+
+        if type(tombstone_key) is not MigrationTombstoneKey:
+            raise ValueError
+        parent_fd, file_fd, file_identity, authority = open_new_or_reused_private_file(
+            selected,
+            parent_authority=ParentAuthority(selected.parent.lstat()),
+            tombstone_key=tombstone_key,
+        )
+        connection = _connect_registered_sqlite(
+            _PROFILE_MIGRATION_BOUNDARY_OWNER,
+            selected,
+            must_exist=True,
+            expected_identity=file_identity,
+            timeout=0,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        destination = ProfileMigrationBoundaryDestination(
+            _PROFILE_DESTINATION_FACTORY_TOKEN,
+            connection=connection,
+            file_identity=file_identity,
+            file_fd=file_fd,
+            parent_identity=authority.identity,
+            parent_fd=parent_fd,
+            path=selected,
+            schema_version=schema_version,
+        )
+        _verify_profile_migration_destination(destination, require_empty=True)
+        connection = None
+        parent_fd = -1
+        file_fd = -1
+    except BaseException as caught:
+        error = caught
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as close_error:
+            if error is None or not isinstance(close_error, Exception):
+                error = close_error
+    for descriptor in (file_fd, parent_fd):
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except BaseException as close_error:
+                if error is None or not isinstance(close_error, Exception):
+                    error = close_error
+    if error is not None:
+        _raise_private_destination_failure(error)
+    assert destination is not None
+    return destination
+
+
+def open_profile_migration_boundary_destination(
+    path: str | os.PathLike[str],
+    *,
+    schema_version: int,
+) -> ProfileMigrationBoundaryDestination:
+    """Exclusively create one opaque owner-private boundary destination."""
+
+    error: BaseException | None = None
+    connection: sqlite3.Connection | None = None
+    destination: ProfileMigrationBoundaryDestination | None = None
+    try:
+        if (
+            type(schema_version) is not int
+            or schema_version not in _PROFILE_MIGRATION_BOUNDARY_VERSIONS
+        ):
+            raise ValueError
+        selected = _private_destination(path)
+        if _existing_entry_stat(selected) is not None:
+            raise ValueError
+        parent_result = secure_private_directory(
+            selected.parent,
+            create=False,
+            application_owned=True,
+        )
+        if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+            raise ValueError
+        parent_identity = selected.parent.lstat()
+        parent_fd, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=True,
+        )
+        try:
+            if not private_paths._same_identity(
+                os.fstat(parent_fd),
+                parent_identity,
+            ) or not _profile_destination_sidecars_absent(parent_fd, leaf):
+                raise ValueError
+        finally:
+            os.close(parent_fd)
+        connection = _connect_registered_sqlite(
+            _PROFILE_MIGRATION_BOUNDARY_OWNER,
+            selected,
+            timeout=0,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        file_identity = selected.lstat()
+        destination = ProfileMigrationBoundaryDestination(
+            _PROFILE_DESTINATION_FACTORY_TOKEN,
+            connection=connection,
+            file_identity=file_identity,
+            parent_identity=parent_identity,
+            path=selected,
+            schema_version=schema_version,
+        )
+        _verify_profile_migration_destination(destination, require_empty=True)
+        connection = None
+    except BaseException as caught:
+        error = caught
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as close_error:
+            if error is None or not isinstance(close_error, Exception):
+                error = close_error
+    if error is not None:
+        _raise_private_destination_failure(error)
+    assert destination is not None
+    return destination
+
+
+def _snapshot_connection_to_memory(
+    source: sqlite3.Connection,
+) -> sqlite3.Connection:
+    """Create one isolated in-memory SQLite copy for a migration callback."""
+
+    if not isinstance(source, sqlite3.Connection) or source.in_transaction:
+        raise SQLitePrivateDestinationError()
+    database_rows = list(source.execute("PRAGMA database_list"))
+    if _unattached_database_rows(database_rows) is None:
+        raise SQLitePrivateDestinationError()
+    snapshot = _connect_registered_sqlite(
+        _PROFILE_MIGRATION_BOUNDARY_OWNER,
+        ":memory:",
+        isolation_level=None,
+    )
+    try:
+        snapshot.row_factory = sqlite3.Row
+        snapshot.execute("PRAGMA foreign_keys = ON")
+        _backup_pages(source, snapshot, restore=False)
+        return snapshot
+    except BaseException as primary_error:
+        close_error: BaseException | None = None
+        try:
+            snapshot.close()
+        except BaseException as error:
+            close_error = error
+        for pending_error in (primary_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        raise primary_error
+
+
+def _validate_closed_profile_migration_destination(
+    destination: ProfileMigrationBoundaryDestination,
+    validate: Callable[[sqlite3.Connection], None],
+) -> None:
+    selected = cast(
+        Path,
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__path",
+        ),
+    )
+    connection: sqlite3.Connection | None = None
+    body_error: BaseException | None = None
+    close_error: BaseException | None = None
+    try:
+        connection = _connect_registered_sqlite(
+            _PROFILE_MIGRATION_BOUNDARY_OWNER,
+            selected,
+            read_only=True,
+            must_exist=True,
+            immutable=True,
+            isolation_level=None,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA query_only = ON")
+        validate(connection)
+    except BaseException as error:
+        body_error = error
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as error:
+            close_error = error
+    for pending_error in (body_error, close_error):
+        if pending_error is not None and not isinstance(pending_error, Exception):
+            raise pending_error
+    if body_error is not None:
+        raise body_error
+    if close_error is not None:
+        raise close_error
+
+
+def backup_profile_migration_boundary(
+    source: sqlite3.Connection,
+    destination: ProfileMigrationBoundaryDestination,
+    *,
+    schema_version: int,
+    validate: Callable[[sqlite3.Connection], None],
+) -> None:
+    """Back up one isolated boundary into its exact private destination."""
+
+    body_error: BaseException | None = None
+    close_error: BaseException | None = None
+    connection: sqlite3.Connection | None = None
+    try:
+        if (
+            type(destination) is not ProfileMigrationBoundaryDestination
+            or type(schema_version) is not int
+            or schema_version
+            != object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__schema_version",
+            )
+            or not callable(validate)
+        ):
+            raise ValueError
+        connection = _verify_profile_migration_destination(
+            destination,
+            require_empty=True,
+        )
+        _backup_pages(source, connection, restore=False)
+        _verify_profile_migration_destination(destination, require_empty=False)
+        validate(connection)
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if checkpoint is None or len(checkpoint) != 3 or checkpoint[0] != 0:
+            raise sqlite3.OperationalError
+        journal_mode = connection.execute("PRAGMA journal_mode = DELETE").fetchone()
+        if journal_mode is None or str(journal_mode[0]).lower() != "delete":
+            raise sqlite3.OperationalError
+        _verify_profile_migration_destination(destination, require_empty=False)
+    except BaseException as caught:
+        body_error = caught
+    if connection is not None:
+        try:
+            connection.close()
+            object.__setattr__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__connection",
+                None,
+            )
+        except BaseException as caught:
+            close_error = caught
+    if body_error is None and close_error is None:
+        try:
+            selected = cast(
+                Path,
+                object.__getattribute__(
+                    destination,
+                    "_ProfileMigrationBoundaryDestination__path",
+                ),
+            )
+            parent_fd, leaf = private_paths._open_verified_parent(
+                selected,
+                missing_leaf_allowed=False,
+            )
+            file_fd = -1
+            try:
+                file_fd = _open_artifact_fd(
+                    parent_fd,
+                    leaf,
+                    writable=False,
+                    create=False,
+                )
+                if not _profile_destination_namespace_holds(
+                    destination,
+                    parent_fd,
+                    file_fd,
+                    leaf,
+                ):
+                    raise SQLitePrivateDestinationError()
+                os.fsync(file_fd)
+                os.fsync(parent_fd)
+                if not _profile_destination_namespace_holds(
+                    destination,
+                    parent_fd,
+                    file_fd,
+                    leaf,
+                ):
+                    raise SQLitePrivateDestinationError()
+                _validate_closed_profile_migration_destination(destination, validate)
+                if not _profile_destination_namespace_holds(
+                    destination,
+                    parent_fd,
+                    file_fd,
+                    leaf,
+                ):
+                    raise SQLitePrivateDestinationError()
+                object.__setattr__(
+                    destination,
+                    "_ProfileMigrationBoundaryDestination__state",
+                    "ready",
+                )
+                return
+            finally:
+                if file_fd >= 0:
+                    os.close(file_fd)
+                os.close(parent_fd)
+        except BaseException as caught:
+            body_error = caught
+    object.__setattr__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__state",
+        "failed",
+    )
+    for pending in (body_error, close_error):
+        if pending is not None and not isinstance(pending, Exception):
+            raise pending
+    raise SQLitePrivateDestinationError() from None
+
+
+def migrate_profile_store_to_candidate(
+    source: sqlite3.Connection,
+    destination: ProfileMigrationBoundaryDestination,
+    *,
+    migrate: Callable[[sqlite3.Connection], Any],
+    validate: Callable[[sqlite3.Connection], None],
+    progress_guard: Callable[[], None] | None = None,
+) -> Any:
+    """Copy and migrate one candidate while its exact descriptors stay pinned."""
+
+    connection: sqlite3.Connection | None = None
+    result: Any = None
+    body_error: BaseException | None = None
+    try:
+        if (
+            not callable(migrate)
+            or not callable(validate)
+            or (progress_guard is not None and not callable(progress_guard))
+            or source.in_transaction
+        ):
+            raise ValueError
+        if progress_guard is not None:
+            progress_guard()
+        connection = _verify_profile_migration_destination(
+            destination,
+            require_empty=True,
+        )
+        _backup_pages(
+            source,
+            connection,
+            restore=False,
+            progress_guard=progress_guard,
+        )
+        _verify_profile_migration_destination(destination, require_empty=False)
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__connection",
+            None,
+        )
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+            "migrating",
+        )
+        result = migrate(connection)
+        connection = None  # The migration callback owns and closes it.
+        if progress_guard is not None:
+            progress_guard()
+        file_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_fd",
+            ),
+        )
+        parent_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_fd",
+            ),
+        )
+        if file_fd < 0 or parent_fd < 0:
+            raise ValueError
+        os.fsync(file_fd)
+        os.fsync(parent_fd)
+        immutable = connect_private_sqlite_descriptor(
+            "tts.profile_migration_publication_descriptor",
+            file_fd,
+            isolation_level=None,
+        )
+        try:
+            immutable.row_factory = sqlite3.Row
+            immutable.execute("PRAGMA foreign_keys = ON")
+            immutable.execute("PRAGMA query_only = ON")
+            validate(immutable)
+            if progress_guard is not None:
+                progress_guard()
+        finally:
+            immutable.close()
+        selected = cast(
+            Path,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__path",
+            ),
+        )
+        parent_check, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=False,
+        )
+        try:
+            if not _profile_destination_namespace_holds(
+                destination,
+                parent_check,
+                file_fd,
+                leaf,
+            ):
+                raise ValueError
+        finally:
+            os.close(parent_check)
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+            "ready",
+        )
+        return result
+    except BaseException as error:
+        body_error = error
+    object.__setattr__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__state",
+        "failed",
+    )
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as close_error:
+            if body_error is None or not isinstance(close_error, Exception):
+                body_error = close_error
+    assert body_error is not None
+    if not isinstance(body_error, Exception):
+        raise body_error
+    raise SQLitePrivateDestinationError() from None
+
+
 def backup_connection_to_private(
     owner_id: str,
     source_connection: sqlite3.Connection,
@@ -1681,15 +2756,24 @@ def restore_private_sqlite(
 
 
 __all__ = [
+    "ProfileMigrationBoundaryDestination",
     "SQLITE_OWNER_REGISTRY",
     "SQLiteOwnerPolicy",
     "SQLitePrivacyUnverifiedWarning",
+    "SQLitePrivateDestinationError",
     "SQLiteRestoreBusyError",
     "SQLiteRestoreIndeterminateError",
     "SQLiteTargetKind",
     "backup_connection_to_private",
     "backup_open_connections_to_private",
+    "backup_profile_migration_boundary",
+    "close_profile_migration_destination",
     "connect_private_sqlite",
+    "connect_private_sqlite_descriptor",
     "copy_private_sqlite",
+    "discard_profile_migration_destination",
+    "migrate_profile_store_to_candidate",
+    "open_canonical_profile_migration_destination",
+    "open_profile_migration_boundary_destination",
     "restore_private_sqlite",
 ]

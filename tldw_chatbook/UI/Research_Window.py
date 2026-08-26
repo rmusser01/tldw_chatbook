@@ -6,10 +6,13 @@ import json
 from typing import Any
 
 from textual import on
+
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Button,
+    Checkbox,
     Input,
     Label,
     ListItem,
@@ -20,6 +23,132 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.UI.Research_Modules import ResearchController
+from tldw_chatbook.UI.Research_Modules.bundle_rendering import (
+    default_artifact_for_bundle,
+    render_artifact,
+    render_bundle_summary,
+)
+
+
+def _parse_provider_tokens(text: str | None) -> list[str]:
+    """Parse and validate the providers input (task-16791/Qodo +
+    task-16792): the raw text goes through the shared input validator, then
+    tokens -- source ids ("pubmed") OR category names ("biomedical",
+    "repositories", ...) -- are validated against the catalog and
+    deduplicated in order. Unknown tokens drop to a warning rather than
+    silently narrowing; invalid input drops the whole list."""
+    from tldw_chatbook.Utils.input_validation import validate_text_input
+
+    from ..Research_Interop.research_source_catalog import (
+        CATEGORIES,
+        catalog_entries,
+    )
+
+    raw = str(text or "")
+    if not validate_text_input(raw, max_length=200):
+        return []
+    known = {e.source_id for e in catalog_entries()} | set(CATEGORIES)
+    seen: list[str] = []
+    unknown: list[str] = []
+    for part in raw.split(","):
+        token = part.strip().lower()
+        if not token:
+            continue
+        if token in known:
+            if token not in seen:
+                seen.append(token)
+        else:
+            unknown.append(token)
+    if unknown:
+        logger.warning(f"providers input ignored unknown tokens: {unknown}")
+    return seen
+
+
+def _parse_limits_text(text: str | None) -> tuple[dict[str, float], list[str]]:
+    """Parse a limits input like "max_searches=5, max_runtime_seconds=120"
+    into a limits_json dict (task-16334). Invalid pairs are excluded and
+    reported as warnings so one typo never blocks run creation."""
+    limits: dict[str, float] = {}
+    warnings: list[str] = []
+    for raw_pair in str(text or "").split(","):
+        pair = raw_pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            warnings.append(f"unparsed limit (expected key=value): {pair!r}")
+            continue
+        key, _, raw_value = pair.partition("=")
+        key = key.strip()
+        try:
+            value = float(raw_value.strip())
+        except ValueError:
+            warnings.append(f"non-numeric limit for {key!r}: {raw_value.strip()!r}")
+            continue
+        if key:
+            limits[key] = value
+    return limits, warnings
+
+
+def _parse_config_bool(value: Any) -> bool:
+    """Parse a config bool that may arrive as an actual bool or a string
+    (task-16814: ``bool("false")`` is True -- truthy strings must not
+    enable the network-costing lane)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"true", "1", "yes", "on"}
+
+
+def _rounds_options(current: int) -> list[tuple[str, int]]:
+    """Rounds options that always include ``current`` (Qodo, PR 1769).
+
+    The control offered a fixed 1-4 with ``allow_blank=False``, so an install
+    configuring more rounds -- or a restored state holding more -- raised
+    InvalidSelectValueError and the window failed to mount entirely. Extending
+    the options rather than clamping the value keeps the control honest: it
+    shows what the run will actually do instead of quietly displaying a
+    different number.
+
+    Args:
+        current: The value that must be selectable.
+
+    Returns:
+        Ascending (label, value) pairs covering 1-4 plus ``current``.
+    """
+    values = sorted({1, 2, 3, 4, max(1, int(current or 1))})
+    return [(f"{n} round" if n == 1 else f"{n} rounds", n) for n in values]
+
+
+def _iteration_rounds_default() -> int:
+    """Rounds the window offers by default (task-17371).
+
+    Deliberately delegates to the engine's own resolver so the number a user
+    sees is the number a run would have used anyway -- a second default here
+    would drift from it. Lazy import keeps the window's module import cheap.
+    """
+    try:
+        from ..Research_Interop.local_research_engine import (
+            _configured_max_iterations,
+        )
+
+        return max(1, int(_configured_max_iterations()))
+    except Exception:  # noqa: BLE001 - a UI default must never fail to load
+        return 1
+
+
+def _academic_lane_default() -> bool:
+    """Config default for the academic lane toggle: [SearchSettings]
+    research_academic_lane (default False). Failures default OFF -- the
+    lane costs network calls, so the safe default is opt-in."""
+    try:
+        from tldw_chatbook.config import get_cli_setting
+
+        return _parse_config_bool(
+            get_cli_setting("SearchSettings", "research_academic_lane", False)
+        )
+    except Exception:
+        return False
 
 
 class ResearchWindow(Vertical):
@@ -35,11 +164,30 @@ class ResearchWindow(Vertical):
         self.current_artifact: Any | None = None
         self.event_log_entries: list[str] = []
         self.status_message = ""
+        # task-16328: academic lane toggle (arXiv + Semantic Scholar papers
+        # join the run's evidence pool when enabled).
+        self.academic_enabled = _academic_lane_default()
+        # task-17371: rounds this window will launch with (multi-hop). Shown
+        # rather than buried in the limits box, and persisted like the lane
+        # toggle; a typed max_iterations still wins on create.
+        self.iteration_rounds = _iteration_rounds_default()
+        # task-16334: budget limits text (parsed into limits_json on create)
+        # and the rendered follow-up answer.
+        self.limits_text = ""
+        self.followup_answer_text = ""
+        # task-16791: per-run lane routing + academic provider selection.
+        self.source_policy = "balanced"
+        self.providers_text = ""
         self.controller = ResearchController(
             getattr(app_instance, "research_scope_service", None)
         )
 
     def compose(self) -> ComposeResult:
+        """Build the window: toolbar, run-creation row, run list and detail pane.
+
+        Yields:
+            The window's child widgets, in mount order.
+        """
         yield Label("Research Sessions")
         with Horizontal(id="research-toolbar"):
             yield Select(
@@ -49,8 +197,35 @@ class ResearchWindow(Vertical):
                 id="research-source-select",
             )
             yield Button("Refresh", id="research-refresh-runs")
+            yield Checkbox(
+                "Academic (arXiv + S2)",
+                value=self.academic_enabled,
+                id="research-academic-toggle",
+            )
         with Horizontal(id="research-create-row"):
             yield Input(placeholder="Research question", id="research-query-input")
+            yield Input(
+                placeholder="Limits: max_searches=5, max_runtime_seconds=120",
+                id="research-limits-input",
+            )
+            yield Select(
+                [("Balanced", "balanced"), ("Web only", "web_only"),
+                 ("Academic only", "academic_only"), ("Web first", "web_first"),
+                 ("Academic first", "academic_first")],
+                value=self.source_policy,
+                allow_blank=False,
+                id="research-policy-select",
+            )
+            yield Select(
+                _rounds_options(self.iteration_rounds),
+                value=self.iteration_rounds,
+                allow_blank=False,
+                id="research-rounds-select",
+            )
+            yield Input(
+                placeholder="Providers: arxiv, pubmed",
+                id="research-providers-input",
+            )
             yield Button("Create Run", id="research-create-run", variant="primary")
         yield Static(self.status_message, id="research-status")
         with Horizontal(id="research-body"):
@@ -76,6 +251,13 @@ class ResearchWindow(Vertical):
                 with Horizontal(id="research-checkpoint-actions"):
                     yield Button("Approve Checkpoint", id="research-approve-checkpoint")
                     yield Button("Clear Events", id="research-clear-events")
+                with Horizontal(id="research-followup-row"):
+                    yield Input(
+                        placeholder="Ask a follow-up about the selected run",
+                        id="research-followup-input",
+                    )
+                    yield Button("Ask Follow-up", id="research-followup-ask")
+                yield Static("No follow-up yet.", id="research-followup-answer")
                 yield Static("No bundle loaded.", id="research-bundle-detail")
                 yield Static("No artifact loaded.", id="research-artifact-detail")
                 yield Static(
@@ -83,11 +265,176 @@ class ResearchWindow(Vertical):
                 )
 
     def save_state(self) -> dict[str, Any]:
-        return {"source": self.current_source}
+        """Capture the operator's run-creation choices for later restoration.
+
+        Returns:
+            The source, academic-lane flag, limits text, source policy,
+            provider tokens and multi-hop round count.
+        """
+        return {
+            "source": self.current_source,
+            "academic": self.academic_enabled,
+            "limits": self.limits_text,
+            "policy": self.source_policy,
+            "providers": self.providers_text,
+            "rounds": self.iteration_rounds,
+        }
 
     def restore_state(self, state: dict[str, Any]) -> None:
+        """Reapply saved choices, falling back to defaults for bad values.
+
+        Every field is validated rather than trusted: an unknown source or
+        policy, or a non-positive round count, resolves to its default instead
+        of reaching a widget that would reject it.
+
+        Args:
+            state: A mapping previously produced by ``save_state`` (or empty).
+        """
         source = str((state or {}).get("source") or "local").strip().lower()
         self.current_source = source if source in {"local", "server"} else "local"
+        self.academic_enabled = bool((state or {}).get("academic"))
+        self.limits_text = str((state or {}).get("limits") or "")
+        policy = str((state or {}).get("policy") or "balanced")
+        self.source_policy = (
+            policy if policy in {
+                "balanced", "web_only", "academic_only", "web_first", "academic_first",
+            } else "balanced"
+        )
+        self.providers_text = str((state or {}).get("providers") or "")
+        try:
+            rounds = int((state or {}).get("rounds") or 0)
+        except (TypeError, ValueError):
+            rounds = 0
+        self.iteration_rounds = rounds if rounds >= 1 else _iteration_rounds_default()
+        self._sync_academic_toggle()
+        try:
+            rounds_select = self.query_one("#research-rounds-select", Select)
+            # Widen first: assigning a value the mounted control does not offer
+            # raises InvalidSelectValueError (Qodo, PR 1769).
+            rounds_select.set_options(_rounds_options(self.iteration_rounds))
+            rounds_select.value = self.iteration_rounds
+        except Exception:
+            pass  # not mounted yet; compose()'s initial value covers it
+        try:
+            self.query_one("#research-limits-input", Input).value = self.limits_text
+        except Exception:
+            pass  # not mounted yet; compose()'s initial value covers it
+
+    def _sync_academic_toggle(self) -> None:
+        try:
+            self.query_one("#research-academic-toggle", Checkbox).value = (
+                self.academic_enabled
+            )
+        except Exception:
+            pass  # not mounted yet; the compose() initial value covers it
+
+    @on(Button.Pressed, "#research-followup-ask")
+    async def _on_followup_ask(self, event: Button.Pressed) -> None:
+        try:
+            question = self.query_one("#research-followup-input", Input).value
+        except Exception:
+            question = ""
+        await self.ask_follow_up(question or None)
+
+    async def ask_follow_up(self, question: str | None) -> Any:
+        """Answer a follow-up from the selected local run's stored claims
+        (task-16334). Renders the answer, or the engine's explicit
+        insufficient-evidence verdict -- never a fabricated one."""
+        try:
+            run_id = self._selected_run_id()
+        except ValueError:
+            run_id = ""
+        if not run_id:
+            self._set_status("Select a research run before asking a follow-up.")
+            return None
+        if self.current_source != "local":
+            self._set_status("Follow-up Q&A is available for local runs only.")
+            return None
+        local_service = getattr(self.app_instance, "local_research_service", None)
+        if local_service is None:
+            self._set_status("Local research service unavailable for follow-ups.")
+            return None
+        if not question or not str(question).strip():
+            self._set_status("Type a follow-up question first.")
+            return None
+        question = str(question).strip()
+
+        # The default follow-up answerer reads the synthesis LLM from
+        # search_params; assemble them the same way the tool does so the
+        # window uses the configured pipeline.
+        search_params: dict[str, Any] = {}
+        try:
+            from ..Tools.web_tool_impls import _deep_search_settings
+
+            final_llm = _deep_search_settings().get("final_answer_llm")
+            if final_llm:
+                search_params["final_answer_llm"] = final_llm
+        except Exception:
+            pass
+
+        from ..Research_Interop.local_research_engine import LocalResearchEngine
+
+        engine = LocalResearchEngine(local_service, search_params=search_params)
+        try:
+            result = await engine.answer_follow_up(run_id, question)
+        except Exception as exc:  # noqa: BLE001 - report, never crash the window
+            self._set_status(f"Follow-up failed: {exc}")
+            return None
+        if result.get("status") == "answered":
+            self.followup_answer_text = (
+                f"Q: {question}\n{result.get('answer') or ''}"
+            )
+        else:
+            self.followup_answer_text = (
+                f"Q: {question}\n[insufficient evidence] "
+                f"{result.get('reason') or 'stored evidence does not support this question'}\n"
+                f"{result.get('suggestion') or ''}"
+            )
+        try:
+            self.query_one("#research-followup-answer", Static).update(
+                self.followup_answer_text
+            )
+        except Exception:
+            pass  # not mounted (tests); the state carries the text
+        self._set_status(f"Follow-up {result.get('status')}.")
+        return result
+
+    @on(Input.Changed, "#research-limits-input")
+    def _on_limits_input_changed(self, event: Input.Changed) -> None:
+        self.limits_text = event.value
+
+    @on(Input.Changed, "#research-providers-input")
+    def _on_providers_input_changed(self, event: Input.Changed) -> None:
+        self.providers_text = event.value
+
+    @on(Select.Changed, "#research-policy-select")
+    def _on_policy_changed(self, event: Select.Changed) -> None:
+        self.source_policy = str(event.value or "balanced")
+        self._set_status(f"Source policy: {self.source_policy}")
+
+    @on(Select.Changed, "#research-rounds-select")
+    def _on_rounds_changed(self, event: Select.Changed) -> None:
+        try:
+            self.iteration_rounds = max(1, int(event.value))
+        except (TypeError, ValueError):
+            return
+        if self.iteration_rounds == 1:
+            self._set_status("Rounds: 1 (single pass -- no gap-driven follow-up).")
+        else:
+            self._set_status(
+                f"Rounds: {self.iteration_rounds}. Each extra round researches the "
+                "gaps the previous answer left open -- more evidence, and "
+                "proportionally more searches and LLM calls."
+            )
+
+    @on(Checkbox.Changed, "#research-academic-toggle")
+    def _on_academic_toggle_changed(self, event: Checkbox.Changed) -> None:
+        self.academic_enabled = bool(event.value)
+        self._set_status(
+            "Academic sources (arXiv + Semantic Scholar) "
+            + ("enabled" if self.academic_enabled else "disabled")
+            + " for local runs."
+        )
 
     async def switch_source(self, source: str) -> list[Any]:
         self.current_source = self._normalize_source(source)
@@ -112,9 +459,146 @@ class ResearchWindow(Vertical):
         return self.runs
 
     async def create_run(self, payload: dict[str, Any]) -> Any:
+        """Create a run from the payload plus this window's live inputs.
+
+        Reads the limits and providers inputs directly (rather than trusting
+        the seeded attributes), folds in the source policy, provider overrides
+        and the multi-hop round count, then starts the local engine for a
+        freshly created local run.
+
+        Args:
+            payload: Base run fields from the caller, e.g. the query.
+
+        Returns:
+            The created run record, or whatever the controller returned.
+        """
+        # Qodo (PR 1722): read the inputs live -- restore_state seeds the
+        # attributes, but typing in the widgets must reach the payload.
+        try:
+            self.limits_text = self.query_one("#research-limits-input", Input).value
+        except Exception:
+            pass
+        try:
+            self.providers_text = self.query_one(
+                "#research-providers-input", Input
+            ).value
+        except Exception:
+            pass
+        limits, warnings = _parse_limits_text(self.limits_text)
+        if warnings:
+            self._set_status("Limits: " + "; ".join(warnings))
+        # task-17371: the rounds control contributes max_iterations unless the
+        # limits box already states one -- a typed value is the more specific
+        # statement of intent, and is what the engine treats as authoritative.
+        # Qodo (PR 1769): _parse_limits_text preserves key casing, so a typed
+        # "Max_Iterations=1" used to be invisible here AND invisible to the
+        # engine (which reads the canonical lowercase key), leaving the control's
+        # value in charge of a run the user had explicitly bounded. Any casing
+        # now counts, and is normalized onto the canonical key; a later variant
+        # wins, as a repeated key would.
+        typed_variants = [key for key in limits if key.lower() == "max_iterations"]
+        if typed_variants:
+            typed_value = limits[typed_variants[-1]]
+            limits = {
+                key: value
+                for key, value in limits.items()
+                if key not in typed_variants
+            }
+            limits["max_iterations"] = typed_value
+        else:
+            limits = {**limits, "max_iterations": max(1, int(self.iteration_rounds or 1))}
+        if limits:
+            payload = {**payload, "limits_json": limits}
+        # task-16791: lane routing + provider selection ride the run record.
+        payload = {**payload, "source_policy": self.source_policy}
+        providers = _parse_provider_tokens(self.providers_text)
+        if self.providers_text.strip() and not providers:
+            self._set_status("Providers input invalid or all-unknown; ignored.")
+        if providers:
+            payload = {**payload, "provider_overrides": {
+                "academic_providers": providers,
+            }}
         created = await self.controller.create_run(self.current_source, payload)
+        if self.current_source == "local":
+            created_id = (
+                created.get("id") if isinstance(created, dict) else getattr(created, "id", None)
+            )
+            if created_id:
+                self._start_local_engine(str(created_id))
         await self.load_runs(self.current_source)
         return created
+
+    def _start_local_engine(self, run_id: str) -> None:
+        """Start the local research execution engine for ``run_id``
+        (task-16322, ADR-068) in a Textual worker when mounted.
+
+        A resumed local run re-enters the engine, which restarts the phase
+        machine from the top (phase-level resume is out of scope for v1).
+        Without a mounted app (headless/tests) or without the app's
+        ``local_research_service``, this reports and does nothing -- it must
+        never block the create/resume flow it hangs off of.
+        """
+        local_service = getattr(self.app_instance, "local_research_service", None)
+        if local_service is None:
+            self._set_status("Local research engine unavailable (no local service).")
+            return
+        # Lazy import keeps the window's module import cheap and lets tests
+        # patch LocalResearchEngine on its own module.
+        from tldw_chatbook.Research_Interop.local_research_engine import (
+            LocalResearchEngine,
+        )
+
+        # task-16328: the academic lane joins the evidence pool (with DOI
+        # dedup) when the window toggle is on; off keeps today's web-only
+        # behavior with a None paper_search_fn.
+        from ..Research_Interop.academic_providers import search_papers
+
+        # task-17371: the window used to construct the engine with NO
+        # search_params, so the pipeline rejected every window-launched run
+        # ("Invalid search_params parameter") before a single search, and the
+        # engine's gap analysis -- which reads final_answer_llm from these
+        # params -- could never fire. Assemble them the way the Console
+        # /research command and the baseline recorder do (one shared
+        # assembly, task-16484); a failure to assemble is reported instead of
+        # being spent on a run that cannot succeed.
+        try:
+            from ..Tools.web_tool_impls import deep_search_pipeline_params
+
+            search_params = deep_search_pipeline_params()
+        except Exception as exc:  # noqa: BLE001 - report, never crash the window
+            logger.error(f"Research engine params unavailable: {exc}")
+            self._set_status(
+                "Research engine unavailable: deep-search settings could not be "
+                f"assembled ({exc}). Check [SearchSettings] in your config."
+            )
+            return
+
+        engine = LocalResearchEngine(
+            local_service,
+            search_params=search_params,
+            paper_search_fn=search_papers if self.academic_enabled else None,
+        )
+
+        async def _run_engine() -> None:
+            try:
+                await engine.execute_run(run_id)
+            except Exception as exc:  # noqa: BLE001 - worker must not crash the app
+                # task-16814: dispatch through the UI message pump rather
+                # than mutating widgets from worker context (async workers
+                # run on the loop, but deferring is correct for either).
+                try:
+                    self.call_later(self._set_status, f"Local research engine error: {exc}")
+                except Exception:
+                    self._set_status(f"Local research engine error: {exc}")
+
+        if self.is_mounted:
+            self.run_worker(
+                _run_engine(),
+                group=f"research-engine-{run_id}",
+                exclusive=True,
+                description=f"Local research engine: {run_id}",
+            )
+            self._set_status(f"Local research engine started for {run_id}.")
 
     def select_run(self, run: Any) -> None:
         self._set_selected_run(run, reset_payload_state=True)
@@ -129,7 +613,19 @@ class ResearchWindow(Vertical):
         run_id = self._selected_run_id()
         updated = await self.controller.resume_run(self.current_source, run_id)
         self._set_selected_run(updated, reset_payload_state=False)
+        if self.current_source == "local":
+            status = self._record_field(updated, "status")
+            if status not in {"completed", "failed", "cancelled"}:
+                self._start_local_engine(run_id)
         return updated
+
+    @staticmethod
+    def _record_field(record: Any, field: str, default: str = "") -> str:
+        if isinstance(record, dict):
+            value = record.get(field)
+        else:
+            value = getattr(record, field, None)
+        return str(value) if value is not None else default
 
     async def cancel_selected_run(self) -> Any:
         run_id = self._selected_run_id()
@@ -142,15 +638,16 @@ class ResearchWindow(Vertical):
         bundle = await self.controller.get_bundle(self.current_source, run_id)
         self.current_bundle = dict(bundle or {})
         self._render_bundle_detail()
-        if self.current_bundle and self.is_mounted:
-            first_artifact_name = next(iter(self.current_bundle.keys()), "")
-            if first_artifact_name:
+        # task-16483: open the most useful artifact right away (the report
+        # when present -- never the local shape's run record).
+        default_name = default_artifact_for_bundle(self.current_bundle)
+        if default_name:
+            if self.is_mounted:
                 try:
-                    self.query_one("#research-artifact-name", Input).value = str(
-                        first_artifact_name
-                    )
+                    self.query_one("#research-artifact-name", Input).value = default_name
                 except Exception:
                     pass
+            await self.load_selected_run_artifact(default_name)
         self._set_status(f"Loaded research bundle for {run_id}.")
         return self.current_bundle
 
@@ -179,8 +676,22 @@ class ResearchWindow(Vertical):
             if not resolved_checkpoint_id and self.current_source != "local":
                 self._set_status("Checkpoint id is required.")
                 return None
+            run_id = self._selected_run_id()
             if not resolved_checkpoint_id:
-                resolved_checkpoint_id = "local-checkpoint-unavailable"
+                # task-16482: local runs resolve their latest PENDING
+                # checkpoint (the engine parks at one boundary at a time).
+                local_service = getattr(
+                    self.app_instance, "local_research_service", None
+                )
+                pending = (
+                    local_service.latest_pending_checkpoint(run_id)
+                    if local_service is not None
+                    else None
+                )
+                if pending is None:
+                    self._set_status("No pending checkpoint for this run.")
+                    return None
+                resolved_checkpoint_id = str(pending["id"])
             resolved_patch_payload = (
                 patch_payload
                 if patch_payload is not None
@@ -197,6 +708,10 @@ class ResearchWindow(Vertical):
             return None
         self._set_selected_run(updated, reset_payload_state=False)
         self._set_status(f"Approved research checkpoint {resolved_checkpoint_id}.")
+        if self.current_source == "local":
+            # task-16482: approval unblocks the boundary -- restart the
+            # engine so the run continues to its next phase/checkpoint.
+            self._start_local_engine(run_id)
         return updated
 
     async def watch_selected_run_events(
@@ -295,6 +810,32 @@ class ResearchWindow(Vertical):
             raise ValueError("No research run is selected.")
         return str(self._record_get(self.selected_run, "id") or "")
 
+    def on_mount(self) -> None:
+        # task-16486: while a local engine run is in flight, keep the
+        # selected run's detail current without manual Refresh.
+        self.set_interval(2.0, self._auto_refresh_selected_run)
+
+    async def _auto_refresh_selected_run(self) -> None:
+        """Refresh the selected LOCAL run's detail while it is non-terminal
+        (task-16486). Payload state (bundle/artifact selections) is
+        preserved; server-source selections and terminal runs are skipped
+        (server observation already has its own streaming surface)."""
+        if self.current_source != "local" or self.selected_run is None:
+            return
+        if self._record_field(self.selected_run, "status") in {
+            "completed", "failed", "cancelled", "draft",
+        }:
+            return
+        try:
+            run_id = self._selected_run_id()
+            updated = await self.controller.get_run(self.current_source, run_id)
+        except Exception:
+            return  # transient controller errors must not spam the status line
+        if updated is None:
+            return
+        self.selected_run = updated
+        self._update_detail(updated)
+
     def _set_selected_run(self, run: Any, *, reset_payload_state: bool) -> None:
         self.selected_run = run
         if reset_payload_state:
@@ -316,11 +857,7 @@ class ResearchWindow(Vertical):
     def _render_bundle_detail(self) -> None:
         if not self.is_mounted:
             return
-        renderable = "No bundle loaded."
-        if self.current_bundle is not None:
-            renderable = json.dumps(
-                self.current_bundle, indent=2, sort_keys=True, default=str
-            )
+        renderable = render_bundle_summary(self.current_bundle)
         try:
             self.query_one("#research-bundle-detail", Static).update(renderable)
         except Exception:
@@ -329,15 +866,7 @@ class ResearchWindow(Vertical):
     def _render_artifact_detail(self) -> None:
         if not self.is_mounted:
             return
-        renderable = "No artifact loaded."
-        if self.current_artifact is not None:
-            artifact = self.current_artifact
-            renderable = (
-                f"Artifact: {self._record_get(artifact, 'artifact_name', '')}\n"
-                f"Type: {self._record_get(artifact, 'content_type', '')}\n"
-                f"Version: {self._record_get(artifact, 'artifact_version', 1)}\n"
-                f"Content:\n{self._render_value(self._record_get(artifact, 'content'))}"
-            )
+        renderable = render_artifact(self.current_artifact)
         try:
             self.query_one("#research-artifact-detail", Static).update(renderable)
         except Exception:

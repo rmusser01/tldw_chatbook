@@ -44,12 +44,16 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     RunBudget,
 )
+from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.run_log_format import RunLogRecord, encode_record
 from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Tools.file_operation_tools import GlobFiles, GrepFiles
 
 
@@ -62,7 +66,7 @@ class _AllowGate:
     approval round trip.
     """
 
-    def check(self, tool):
+    def check(self, tool, run_id):
         return None
 
 
@@ -94,9 +98,45 @@ def _workspace_seams(monkeypatch, sandbox: Path, workspace: Path) -> None:
     sandbox.mkdir(parents=True, exist_ok=True)
     workspace.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(file_tools, "_tool_sandbox_root", lambda: sandbox)
-    fake_roots = lambda write=False, sandbox_root=None: (sandbox, workspace)
+
+    def fake_roots(write=False, sandbox_root=None):
+        return sandbox, workspace
+
     monkeypatch.setattr(ws_roots, "allowed_file_roots", fake_roots)
     monkeypatch.setattr(file_tools, "allowed_file_roots", fake_roots)
+
+
+def test_explicit_console_resolution_preserves_writable_workspace_preference(
+    tmp_path,
+    monkeypatch,
+):
+    from tldw_chatbook.Tools import workspace_file_roots as ws_roots
+
+    scratch = tmp_path / "chat"
+    workspace = tmp_path / "workspace"
+    scratch.mkdir()
+    workspace.mkdir()
+    observed = {}
+
+    def roots(*, write, sandbox_root):
+        observed["write"] = write
+        observed["sandbox_root"] = sandbox_root
+        observed["workspace_id"] = ws_roots.current_run_workspace_id()
+        return scratch, workspace
+
+    monkeypatch.setattr(ws_roots, "allowed_file_roots", roots)
+
+    resolved = run_log_module.resolve_log_root(
+        sandbox_root=scratch,
+        workspace_id="ws-a",
+    )
+
+    assert resolved == workspace
+    assert observed == {
+        "write": True,
+        "sandbox_root": scratch.resolve(),
+        "workspace_id": "ws-a",
+    }
 
 
 def _grep(pattern: str) -> list[dict]:
@@ -228,36 +268,45 @@ def test_spawned_subagent_cannot_read_parents_log_via_grep_files_in_bound_worksp
 
     secret = "PARENT_SECRET_API_KEY=sk-live-workspace321"
     task = "search the workspace for anything interesting"
-    script = [
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": (
-                            f"Noting {secret} before delegating.\n"
-                            + _fence(SPAWN_TOOL_NAME, {"task": task})
-                        )
+    # PR2a Task 6.5: the fleet is ON by default, so the child runs on its
+    # own thread -- one ordered queue is no longer deterministic. Addressed
+    # per agent instead; the replies themselves are unchanged.
+    chat = FleetChat(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                f"Noting {secret} before delegating.\n"
+                                + _fence(SPAWN_TOOL_NAME, {"task": task})
+                            )
+                        }
                     }
-                }
+                ]
+            },
+            {"choices": [{"message": {"content": "done"}}]},  # parent's answer
+        ],
+        {
+            task: [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": _fence(
+                                    "grep_files", {"pattern": "PARENT_SECRET"}
+                                )
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [{"message": {"content": "found nothing"}}]
+                },  # child's answer
             ]
         },
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": _fence(
-                            "grep_files", {"pattern": "PARENT_SECRET"}
-                        )
-                    }
-                }
-            ]
-        },
-        {"choices": [{"message": {"content": "found nothing"}}]},  # child's answer
-        {"choices": [{"message": {"content": "done"}}]},  # parent's answer
-    ]
-
-    def chat(**kwargs):
-        return script.pop(0)
+        reply=verbatim,
+    )
 
     service = AgentService(db, reg, chat_call=chat)
     _rid, outcome = service.run_turn(
@@ -271,6 +320,7 @@ def test_spawned_subagent_cannot_read_parents_log_via_grep_files_in_bound_worksp
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
 
     child_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "subagent"]

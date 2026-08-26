@@ -29,8 +29,9 @@ import shutil
 import signal
 import subprocess  # nosec B404 # pipelines invoke probed system binaries with fixed argv
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock, RLock
 from typing import Any, Iterator
 
 
@@ -53,11 +54,7 @@ def playback_tools_available() -> tuple[bool, str]:
     """Whether ffmpeg+ffplay are on PATH; returns (ok, guidance-if-missing)."""
     if shutil.which("ffmpeg") and shutil.which("ffplay"):
         return True, ""
-    missing = [
-        tool
-        for tool in ("ffmpeg", "ffplay")
-        if shutil.which(tool) is None
-    ]
+    missing = [tool for tool in ("ffmpeg", "ffplay") if shutil.which(tool) is None]
     return False, f"Missing {', '.join(missing)}. {PLAYBACK_TOOLS_GUIDANCE}"
 
 
@@ -75,14 +72,16 @@ def probe_file(source: str | Path) -> PlayerProbe:
     """Probe width/height/duration/audio-presence via ffprobe JSON."""
     cmd = [
         "ffprobe",
-        "-v", "error",
+        "-v",
+        "error",
     ]
     if str(source).startswith(("http://", "https://")):
         # task-3401.11: streams get the same reconnect/timeout input options
         # as the playback pipeline so probing a slow host cannot hang.
         cmd += ["-reconnect", "1", "-rw_timeout", "15000000"]
     cmd += [
-        "-print_format", "json",
+        "-print_format",
+        "json",
         "-show_streams",
         "-show_format",
         str(source),
@@ -142,6 +141,34 @@ class SyncStats:
     position_seconds: float = 0.0
 
 
+@dataclass
+class PlayerRun:
+    """State owned by one playback process generation."""
+
+    generation: int
+    stdout: Any | None
+    offset_seconds: float
+    started_wall: float | None = None
+    pause_started: float | None = None
+    paused_total: float = 0.0
+    frame_index: int = 0
+    eof: bool = False
+    stats: SyncStats = field(default_factory=SyncStats)
+    _stdout_lock: Lock = field(default_factory=Lock, repr=False)
+    _stdout_closed: bool = field(default=False, init=False, repr=False)
+
+    def close_stdout_once(self) -> None:
+        """Close this generation's frame pipe at most once across threads."""
+        with self._stdout_lock:
+            if self._stdout_closed:
+                return
+            self._stdout_closed = True
+            stdout = self.stdout
+            self.stdout = None
+        if stdout is not None:
+            stdout.close()
+
+
 def _read_exact(stream: Any, size: int) -> bytes:
     """Read exactly ``size`` bytes (looping over short pipe reads) or b""."""
     parts: list[bytes] = []
@@ -181,190 +208,326 @@ class PlayerPipeline:
         self._spawn = spawn
         self._ffmpeg: subprocess.Popen | None = None
         self._ffplay: subprocess.Popen | None = None
-        self._frame_index = 0
-        self._offset_seconds = 0.0
-        self._eof = False
-        self._started_wall: float | None = None
-        self._pause_started: float | None = None
-        self._paused_total = 0.0
+        self._current_run: PlayerRun | None = None
+        self._idle_stats = SyncStats()
+        self._lifecycle_lock = RLock()
         #: Bumped by every start(); the frame pump treats a generation change
         #: as "seek happened -- re-enter", never as natural EOF.
         self._generation = 0
-        self.stats = SyncStats()
 
     # -- lifecycle ---------------------------------------------------------
 
-    def start(self, *, offset_seconds: float = 0.0) -> None:
+    def start(self, *, offset_seconds: float = 0.0) -> PlayerRun:
         """Start (or restart, for seek) the demux pair at ``offset_seconds``."""
-        self.stop()
-        self._generation += 1
-        self._frame_index = 0
-        self._eof = False
-        self._offset_seconds = max(0.0, offset_seconds)
-        self._started_wall = None
-        self._pause_started = None
-        self._paused_total = 0.0
-        audio_r, audio_w = os.pipe()
-        seek_args = ["-ss", f"{self._offset_seconds:.3f}"] if self._offset_seconds else []
-        http_args: list[str] = []
-        if self._source.startswith(("http://", "https://")):
-            # task-3401.11 (AC3): TermTube's reconnect flags for streams, so
-            # a throttled/dropped connection resumes inside ffmpeg instead
-            # of killing playback, plus a socket timeout to surface stalls.
-            http_args = [
-                "-reconnect", "1",
-                "-reconnect_streamed", "1",
-                "-reconnect_delay_max", "5",
-                "-rw_timeout", "15000000",
+        with self._lifecycle_lock:
+            self.stop()
+            offset = max(0.0, offset_seconds)
+            generation = self._generation + 1
+            audio_r: int | None = None
+            audio_w: int | None = None
+            ffmpeg: subprocess.Popen | None = None
+            ffplay: subprocess.Popen | None = None
+            run: PlayerRun | None = None
+            failure: Exception | None = None
+            if self._probe.has_audio:
+                audio_r, audio_w = os.pipe()
+            seek_args = ["-ss", f"{offset:.3f}"] if offset else []
+            http_args: list[str] = []
+            if self._source.startswith(("http://", "https://")):
+                # task-3401.11 (AC3): TermTube's reconnect flags for streams, so
+                # a throttled/dropped connection resumes inside ffmpeg instead
+                # of killing playback, plus a socket timeout to surface stalls.
+                http_args = [
+                    "-reconnect",
+                    "1",
+                    "-reconnect_streamed",
+                    "1",
+                    "-reconnect_delay_max",
+                    "5",
+                    "-rw_timeout",
+                    "15000000",
+                ]
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                *http_args,
+                *seek_args,
+                "-re",  # pace input at native frame rate (silent sources especially)
+                "-i",
+                self._source,
+                # Video: CFR at the target fps so pts == index / fps exactly.
+                "-map",
+                "0:v:0",
+                "-vf",
+                f"fps={self._target_fps:g}",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
             ]
-        ffmpeg_cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error",
-            *http_args,
-            *seek_args,
-            "-re",  # pace input at native frame rate (silent sources especially)
-            "-i", self._source,
-            # Video: CFR at the target fps so pts == index / fps exactly.
-            "-map", "0:v:0",
-            "-vf", f"fps={self._target_fps:g}",
-            "-f", "rawvideo", "-pix_fmt", "rgb24",
-            "pipe:1",
-        ]
-        pass_fds: tuple[int, ...] = ()
-        if self._probe.has_audio:
-            ffmpeg_cmd += [
-                "-map", "0:a:0",
-                "-f", "s16le", "-ac", str(AUDIO_CHANNELS), "-ar", str(AUDIO_RATE),
-                f"pipe:{audio_w}",
-            ]
-            pass_fds = (audio_w,)
-        else:
-            os.close(audio_w)
-        self._ffmpeg = self._spawn(
-            ffmpeg_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            pass_fds=pass_fds,
-        )
-        if self._probe.has_audio:
-            os.close(audio_w)  # the ffmpeg child holds its own copy now
-            ffplay_cmd = [
-                "ffplay", "-autoexit", "-nodisp", "-loglevel", "error",
-                "-volume", str(self._volume),
-                "-f", "s16le", "-ar", str(AUDIO_RATE), "-ac", str(AUDIO_CHANNELS),
-                "-i", "pipe:0",
-            ]
-            self._ffplay = self._spawn(
-                ffplay_cmd,
-                stdin=audio_r,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        os.close(audio_r)
+            pass_fds: tuple[int, ...] = ()
+            if audio_w is not None:
+                ffmpeg_cmd += [
+                    "-map",
+                    "0:a:0",
+                    "-f",
+                    "s16le",
+                    "-ac",
+                    str(AUDIO_CHANNELS),
+                    "-ar",
+                    str(AUDIO_RATE),
+                    f"pipe:{audio_w}",
+                ]
+                pass_fds = (audio_w,)
+            try:
+                ffmpeg = self._spawn(
+                    ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    pass_fds=pass_fds,
+                )
+                run = PlayerRun(generation, ffmpeg.stdout, offset)
+                if audio_w is not None:
+                    inherited_audio_w = audio_w
+                    audio_w = None
+                    os.close(inherited_audio_w)  # the ffmpeg child has its own copy
+                    ffplay_cmd = [
+                        "ffplay",
+                        "-autoexit",
+                        "-nodisp",
+                        "-loglevel",
+                        "error",
+                        "-volume",
+                        str(self._volume),
+                        "-f",
+                        "s16le",
+                        "-ar",
+                        str(AUDIO_RATE),
+                        "-ac",
+                        str(AUDIO_CHANNELS),
+                        "-i",
+                        "pipe:0",
+                    ]
+                    ffplay = self._spawn(
+                        ffplay_cmd,
+                        stdin=audio_r,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+            except Exception as exc:
+                failure = exc
+            for fd in (audio_r, audio_w):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except Exception as exc:
+                        if failure is None:
+                            failure = exc
+            if failure is not None:
+                if ffplay is not None:
+                    try:
+                        self._stop_process(ffplay)
+                    except Exception:
+                        pass
+                if ffmpeg is not None:
+                    try:
+                        self._stop_process(ffmpeg)
+                    except Exception:
+                        pass
+                if run is not None:
+                    try:
+                        run.close_stdout_once()
+                    except Exception:
+                        pass
+                elif ffmpeg is not None and ffmpeg.stdout is not None:
+                    try:
+                        ffmpeg.stdout.close()
+                    except Exception:
+                        pass
+                self._ffmpeg = None
+                self._ffplay = None
+                self._current_run = None
+                raise failure
+            assert ffmpeg is not None and run is not None
+            self._generation = generation
+            self._ffmpeg = ffmpeg
+            self._ffplay = ffplay
+            self._current_run = run
+            return run
+
+    @staticmethod
+    def _stop_process(proc: subprocess.Popen) -> None:
+        """Terminate and reap a child, escalating to kill on failure."""
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            terminal_failure: Exception | None = None
+            try:
+                proc.kill()
+            except Exception as exc:
+                terminal_failure = exc
+            try:
+                proc.wait()
+            except Exception as exc:
+                if terminal_failure is None:
+                    terminal_failure = exc
+            if terminal_failure is not None:
+                raise terminal_failure
+
+    @property
+    def current_run(self) -> PlayerRun | None:
+        """The published playback generation, if one is active."""
+        with self._lifecycle_lock:
+            return self._current_run
+
+    @property
+    def stats(self) -> SyncStats:
+        """Compatibility view of the current generation's sync counters."""
+        run = self.current_run
+        return run.stats if run is not None else self._idle_stats
 
     # -- sync clock ---------------------------------------------------------
 
-    @property
-    def sync_clock(self) -> float:
+    def sync_clock(self, run: PlayerRun) -> float:
         """Estimated playback position in seconds (pause-adjusted wall time)."""
-        elapsed = 0.0 if self._started_wall is None else time.monotonic() - self._started_wall
+        elapsed = (
+            0.0 if run.started_wall is None else time.monotonic() - run.started_wall
+        )
         lag = AUDIO_BUFFER_LAG_SECONDS if self._probe.has_audio else 0.0
-        return self._offset_seconds + elapsed - self._paused_total - lag
+        return run.offset_seconds + elapsed - run.paused_total - lag
 
-    def frame_due(self, pts: float) -> bool:
+    def frame_due(self, run: PlayerRun, pts: float) -> bool:
         """Whether a frame at ``pts`` should render now (pts <= clock)."""
-        return pts <= self.sync_clock
+        return pts <= self.sync_clock(run)
 
-    def frames_behind(self, pts: float) -> bool:
+    def frames_behind(self, run: PlayerRun, pts: float) -> bool:
         """Whether a frame at ``pts`` is too far behind to bother rendering."""
-        return pts < self.sync_clock - DRIFT_DROP_SECONDS
+        return pts < self.sync_clock(run) - DRIFT_DROP_SECONDS
 
-    def note_rendered(self, pts: float) -> None:
+    def note_rendered(self, run: PlayerRun, pts: float) -> None:
         """Record one rendered frame for the drift/dropped stats."""
-        drift = pts - self.sync_clock
-        self.stats.rendered_frames += 1
-        self.stats.last_drift_ms = drift * 1000.0
-        self.stats.max_drift_ms = max(self.stats.max_drift_ms, abs(drift) * 1000.0)
-        self.stats.position_seconds = max(self.stats.position_seconds, pts)
+        drift = pts - self.sync_clock(run)
+        run.stats.rendered_frames += 1
+        run.stats.last_drift_ms = drift * 1000.0
+        run.stats.max_drift_ms = max(run.stats.max_drift_ms, abs(drift) * 1000.0)
+        run.stats.position_seconds = max(run.stats.position_seconds, pts)
 
-    def note_dropped(self, pts: float) -> None:
+    def note_dropped(self, run: PlayerRun, pts: float) -> None:
         """Record one dropped (too-late-to-render) frame."""
-        self.stats.dropped_frames += 1
+        run.stats.dropped_frames += 1
 
     # -- frame pump ----------------------------------------------------------
 
-    def iter_frames(self) -> Iterator[tuple[float, bytes]]:
+    def iter_frames(self, run: PlayerRun) -> Iterator[tuple[float, bytes]]:
         """Yield ``(pts, rgb24_frame_bytes)`` from the video pipe (blocking).
 
         Runs on the caller's worker thread; ends at EOF or when the pipeline
         is stopped.
         """
-        if self._started_wall is None:
-            self._started_wall = time.monotonic()
+        if run.started_wall is None:
+            run.started_wall = time.monotonic()
         frame_bytes = self._probe.width * self._probe.height * 3
-        stdout = self._ffmpeg.stdout if self._ffmpeg else None
+        stdout = run.stdout
         if stdout is None:
+            run.eof = True
             return
-        while not self._eof:
-            data = _read_exact(stdout, frame_bytes)
-            if not data:
-                self._eof = True
-                break
-            pts = self._offset_seconds + self._frame_index / self._target_fps
-            self._frame_index += 1
-            yield pts, data
+        try:
+            while True:
+                try:
+                    data = _read_exact(stdout, frame_bytes)
+                except (OSError, ValueError):
+                    if not run.eof:
+                        raise
+                    data = b""
+                if not data:
+                    run.eof = True
+                    break
+                pts = run.offset_seconds + run.frame_index / self._target_fps
+                run.frame_index += 1
+                yield pts, data
+                if run.eof:
+                    break
+        finally:
+            run.eof = True
+            run.close_stdout_once()
 
     # -- control -------------------------------------------------------------
 
-    def seek(self, offset_seconds: float) -> None:
+    def seek(self, offset_seconds: float) -> PlayerRun:
         """Restart the demux pair at ``offset_seconds`` (AC3)."""
         duration = self._probe.duration_seconds
         if duration is not None:
             offset_seconds = min(offset_seconds, max(0.0, duration))
-        self.start(offset_seconds=offset_seconds)
+        return self.start(offset_seconds=offset_seconds)
 
     def pause(self) -> None:
         """Freeze both processes and stop the sync clock (POSIX only)."""
-        if self._pause_started is not None:
-            return
-        self._pause_started = time.monotonic()
-        if hasattr(signal, "SIGSTOP"):
-            for proc in (self._ffmpeg, self._ffplay):
-                if proc is not None and proc.poll() is None:
-                    try:
-                        os.kill(proc.pid, signal.SIGSTOP)
-                    except (OSError, ProcessLookupError):
-                        pass
+        with self._lifecycle_lock:
+            run = self._current_run
+            if run is None or run.pause_started is not None:
+                return
+            run.pause_started = time.monotonic()
+            if hasattr(signal, "SIGSTOP"):
+                for proc in (self._ffmpeg, self._ffplay):
+                    if proc is not None and proc.poll() is None:
+                        try:
+                            os.kill(proc.pid, signal.SIGSTOP)
+                        except (OSError, ProcessLookupError):
+                            pass
 
     def resume(self) -> None:
         """Unfreeze both processes; paused wall time is folded out of the clock."""
-        if self._pause_started is None:
-            return
-        self._paused_total += time.monotonic() - self._pause_started
-        self._pause_started = None
-        if hasattr(signal, "SIGCONT"):
-            for proc in (self._ffplay, self._ffmpeg):
-                if proc is not None and proc.poll() is None:
-                    try:
-                        os.kill(proc.pid, signal.SIGCONT)
-                    except (OSError, ProcessLookupError):
-                        pass
+        with self._lifecycle_lock:
+            run = self._current_run
+            if run is None or run.pause_started is None:
+                return
+            run.paused_total += time.monotonic() - run.pause_started
+            run.pause_started = None
+            if hasattr(signal, "SIGCONT"):
+                for proc in (self._ffplay, self._ffmpeg):
+                    if proc is not None and proc.poll() is None:
+                        try:
+                            os.kill(proc.pid, signal.SIGCONT)
+                        except (OSError, ProcessLookupError):
+                            pass
 
     def stop(self) -> None:
         """Terminate the pair (idempotent)."""
-        for attr in ("_ffplay", "_ffmpeg"):
-            proc = getattr(self, attr)
-            if proc is not None:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=2)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                setattr(self, attr, None)
-        self._eof = True
+        with self._lifecycle_lock:
+            ffplay = self._ffplay
+            ffmpeg = self._ffmpeg
+            run = self._current_run
+            self._ffplay = None
+            self._ffmpeg = None
+            self._current_run = None
+            if run is not None:
+                run.eof = True
+        failure: Exception | None = None
+        if ffplay is not None:
+            try:
+                self._stop_process(ffplay)
+            except Exception as exc:
+                failure = exc
+        if ffmpeg is not None:
+            try:
+                self._stop_process(ffmpeg)
+            except Exception as exc:
+                if failure is None:
+                    failure = exc
+        if run is not None:
+            try:
+                run.close_stdout_once()
+            except Exception as exc:
+                if failure is None:
+                    failure = exc
+        if failure is not None:
+            raise failure
 
     @property
     def at_eof(self) -> bool:
-        return self._eof
+        run = self.current_run
+        return run is None or run.eof

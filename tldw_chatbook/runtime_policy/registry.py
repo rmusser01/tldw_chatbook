@@ -179,6 +179,15 @@ SYNC_V2_PULL = _action("pull", "observe")
 SYNC_V2_RESOLVE = _action("resolve", "update")
 SYNC_V2_STORE = _action("store", "create")
 SYNC_V2_RETRIEVE = _action("retrieve", "observe")
+# chunking-agent-tools (spec §6): the chunk-spec save tool's dedicated verb.
+# ``update`` kind -- the tool is create-or-update over the v7 template store.
+SAVE = _action("save", "update")
+# chunking-agent-tools (spec §6, Task 5): the one-item re-chunk tool's
+# dedicated verb. ``launch`` kind -- a regeneration RUN over one media
+# item's derived chunk rows (replace + optional forced re-index), not a
+# CRUD write; deliberately NOT ``rag.admin.launch`` (ADR-003 verb
+# ownership: that verb is the RAG-admin bulk action's).
+RECHUNK = _action("rechunk", "launch")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -207,6 +216,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "collections_reading_list",
         "collections_feed_subscriptions",
         "collections_outputs_templates_artifacts",
+        "library_collections",
         "watchlists",
         "writing_suite",
         "research_sessions_runs",
@@ -514,7 +524,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource(
                 "prompts.collections",
                 actions=(LIST, DETAIL, CREATE, UPDATE),
-                sources=(SERVER_SOURCE,),
+                sources=SEPARATED_SOURCES,
                 domain_id="prompts",
             ),
             _resource(
@@ -620,6 +630,34 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("outputs.render_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
         ),
     ),
+    # task-1337 (plan Task 9): policy home for the local Library Collections
+    # agent tools (`library_list/search/get_collection`). Dedicated local-only
+    # list/detail resource -- deliberately NOT mapped onto
+    # `collections.reading_list.*`, whose CRUD surface models the read-it-later
+    # feature, not read-only agent retrieval over Library collections.
+    # chunking-agent-tools (Tasks 4-5, spec §6): the same capability is the
+    # local Library agent-tools policy home -- `library.templates/save` backs
+    # `library_save_chunk_spec` over the v7 template store (deliberately NOT
+    # `rag.template.*`, the RAG-admin UI seam's verbs, ADR-003 ownership),
+    # and `library.media/rechunk` backs `library_rechunk_media`'s one-item
+    # chunk-row regeneration (deliberately NOT `rag.admin.launch`, the
+    # RAG-admin bulk action's verb -- this is a Library-media item action).
+    # student-workflow (Task 1, spec §4/§6): `library.notes/save` backs
+    # `library_save_note`'s create-or-update over the local notes rows
+    # (deliberately NOT the notes UI's own `notes.*` CRUD verbs -- those
+    # model the screen's row operations; this is the Library write surface).
+    _capability(
+        "library_collections",
+        "Library Collections & agent tools (local)",
+        "library_collections",
+        sources=LOCAL_ONLY_SOURCES,
+        resources=(
+            _resource("library.collections", actions=(LIST, DETAIL)),
+            _resource("library.templates", actions=(SAVE,)),
+            _resource("library.media", actions=(RECHUNK,)),
+            _resource("library.notes", actions=(SAVE,)),
+        ),
+    ),
     _capability(
         "watchlists",
         "Watchlists",
@@ -643,7 +681,9 @@ AUDITED_CAPABILITY_SEEDS = (
             # still needed by the consumers named above.)
             _resource("watchlists.items", actions=(LIST, DETAIL, UPDATE)),
             _resource("watchlists.alert_rules", actions=CRUD_ACTIONS),
-            _resource("watchlists.runs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)),
+            _resource(
+                "watchlists.runs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)
+            ),
         ),
     ),
     _capability(

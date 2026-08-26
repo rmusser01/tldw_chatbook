@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_collections_service import (
     DuplicateLibraryCollectionItem,
     DuplicateLibraryCollectionName,
@@ -91,6 +92,40 @@ def test_delete_collection_hides_record_from_list_and_get(tmp_path: Path) -> Non
 
     assert service.list_collections() == ()
     assert service.get_collection(collection.collection_id) is None
+
+
+def test_collections_user_content_evidence_counts_only_active_local_collections(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    assert service.get_library_user_content_evidence() is LibraryContentEvidence.EMPTY
+
+    collection = service.create_collection("Private collection")
+    evidence = service.get_library_user_content_evidence()
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+
+    assert service.delete_collection(collection.collection_id)
+    assert service.get_library_user_content_evidence() is LibraryContentEvidence.EMPTY
+
+
+def test_restore_collection_revives_record_with_membership(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Research")
+    service.add_item_to_collection(
+        collection.collection_id,
+        source_type="note",
+        source_id="note-1",
+        title="Evidence",
+    )
+    assert service.delete_collection(collection.collection_id) is True
+
+    restored = service.restore_collection(collection.collection_id)
+
+    assert restored.collection_id == collection.collection_id
+    assert restored.name == "Research"
+    assert restored.item_count == 1
+    assert service.list_collections() == (restored,)
 
 
 def test_schema_version_and_foreign_keys_are_initialized(tmp_path: Path) -> None:
@@ -235,3 +270,319 @@ def test_sqlite_errors_are_normalized_to_service_errors(tmp_path: Path) -> None:
         LibraryCollectionsServiceError, match="Library Collections storage failed"
     ):
         service.list_collections()
+
+
+# ---------------------------------------------------------------------------
+# task-1337 (plan Task 4): Library agent read seams for Collections.
+# Bounded list/search pages with exact totals, honest match evidence over
+# name/description/direct stored member titles, and membership pages whose
+# supported source identities map through the shared public-ID codec.
+# ---------------------------------------------------------------------------
+
+SUPPORTED_MEMBER_SOURCE_TYPES = (
+    "media",
+    "note",
+    "prompt",
+    "skill",
+    "conversation",
+    "collection",
+)
+
+
+def test_list_library_collections_exact_total_and_stable_page(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    first = service.create_collection("Alpha")
+    second = service.create_collection("Beta")
+    third = service.create_collection("Gamma")
+
+    page = service.list_library_collections(limit=2, offset=0)
+
+    assert page["total"] == 3
+    assert page["offset"] == 0
+    assert page["limit"] == 2
+    assert [item["collection_id"] for item in page["items"]] == [
+        first.collection_id,
+        second.collection_id,
+    ]
+    assert page["items"][0]["name"] == "Alpha"
+
+    rest = service.list_library_collections(limit=2, offset=2)
+    assert rest["total"] == 3
+    assert [item["collection_id"] for item in rest["items"]] == [third.collection_id]
+
+
+def test_list_library_collections_reports_item_counts(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Counted", description="with members")
+    service.add_item_to_collection(
+        collection.collection_id, source_type="media", source_id="m-1", title="One"
+    )
+    service.add_item_to_collection(
+        collection.collection_id, source_type="note", source_id="n-1", title="Two"
+    )
+
+    page = service.list_library_collections()
+
+    item = page["items"][0]
+    assert item["item_count"] == 2
+    assert item["description"] == "with members"
+    assert set(item) == {
+        "collection_id",
+        "name",
+        "description",
+        "item_count",
+        "created_at",
+        "updated_at",
+    }
+
+
+def test_list_library_collections_excludes_deleted(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    keep = service.create_collection("Keep")
+    drop = service.create_collection("Drop")
+    assert service.delete_collection(drop.collection_id) is True
+
+    page = service.list_library_collections()
+
+    assert page["total"] == 1
+    assert [item["collection_id"] for item in page["items"]] == [keep.collection_id]
+
+
+def test_search_library_collections_match_branches(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    by_name = service.create_collection("Research shelf")
+    by_description = service.create_collection(
+        "Shelf two", description="research backlog"
+    )
+    by_member = service.create_collection("Shelf three")
+    service.add_item_to_collection(
+        by_member.collection_id,
+        source_type="media",
+        source_id="m-1",
+        title="research notes",
+    )
+
+    page = service.search_library_collections(query="research")
+
+    assert page["total"] == 3
+    fields = {item["collection_id"]: item["matched_fields"] for item in page["items"]}
+    assert fields[by_name.collection_id] == ["name"]
+    assert fields[by_description.collection_id] == ["description"]
+    assert fields[by_member.collection_id] == ["member_title"]
+
+
+def test_search_library_collections_counts_multi_member_match_once(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Dedup")
+    service.add_item_to_collection(
+        collection.collection_id,
+        source_type="media",
+        source_id="m-1",
+        title="needle one",
+    )
+    service.add_item_to_collection(
+        collection.collection_id,
+        source_type="media",
+        source_id="m-2",
+        title="needle two",
+    )
+
+    page = service.search_library_collections(query="needle")
+
+    assert page["total"] == 1
+    assert page["items"][0]["collection_id"] == collection.collection_id
+    assert page["items"][0]["matched_fields"] == ["member_title"]
+
+
+def test_search_library_collections_does_not_inspect_member_content(
+    tmp_path: Path,
+) -> None:
+    """Only the stored member *title* participates; the backing source
+    identity (and never the member's content) must not be searchable."""
+    service = _service(tmp_path)
+    collection = service.create_collection("Opaque")
+    service.add_item_to_collection(
+        collection.collection_id,
+        source_type="media",
+        source_id="needle-raw-identity",
+        title="unrelated title",
+    )
+
+    page = service.search_library_collections(query="needle")
+
+    assert page["total"] == 0
+
+
+def test_search_library_collections_exact_name_ranks_first(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    partial = service.create_collection("needle extras")
+    exact = service.create_collection("needle")
+
+    page = service.search_library_collections(query="needle")
+
+    assert [item["collection_id"] for item in page["items"]] == [
+        exact.collection_id,
+        partial.collection_id,
+    ]
+
+
+def test_search_library_collections_like_wildcards_match_literally(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    percent = service.create_collection("100% coverage")
+    service.create_collection("1000 coverage")
+
+    page = service.search_library_collections(query="100%")
+
+    assert [item["collection_id"] for item in page["items"]] == [percent.collection_id]
+
+
+def test_search_library_collections_excludes_deleted(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.create_collection("needle keep")
+    drop = service.create_collection("needle drop")
+    assert service.delete_collection(drop.collection_id) is True
+
+    page = service.search_library_collections(query="needle")
+
+    assert page["total"] == 1
+
+
+def test_get_library_collection_missing_returns_none(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    assert service.get_library_collection("collection-missing") is None
+
+
+def test_get_library_collection_pages_members_with_exact_total(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Members", description="d")
+    membership_ids = [
+        service.add_item_to_collection(
+            collection.collection_id,
+            source_type="media",
+            source_id=f"m-{index}",
+            title=f"Title {index}",
+        )
+        for index in range(3)
+    ]
+
+    first_page = service.get_library_collection(
+        collection.collection_id, limit=2, offset=0
+    )
+
+    assert first_page["collection_id"] == collection.collection_id
+    assert first_page["name"] == "Members"
+    assert first_page["description"] == "d"
+    assert first_page["member_total"] == 3
+    assert first_page["offset"] == 0
+    assert first_page["limit"] == 2
+    assert first_page["has_more"] is True
+    assert [m["membership_id"] for m in first_page["members"]] == membership_ids[:2]
+    assert all(m["title_truncated"] is False for m in first_page["members"])
+
+    second_page = service.get_library_collection(
+        collection.collection_id, limit=2, offset=2
+    )
+    assert second_page["has_more"] is False
+    assert [m["membership_id"] for m in second_page["members"]] == membership_ids[2:]
+
+
+def test_get_library_collection_supported_types_round_trip_public_ids(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Library.library_tool_contract import parse_public_id
+
+    service = _service(tmp_path)
+    collection = service.create_collection("Typed")
+    for source_type in SUPPORTED_MEMBER_SOURCE_TYPES:
+        service.add_item_to_collection(
+            collection.collection_id,
+            source_type=source_type,
+            source_id=f"{source_type}-id-1",
+            title=f"{source_type} member",
+        )
+
+    detail = service.get_library_collection(collection.collection_id)
+
+    members = {member["source_type"]: member for member in detail["members"]}
+    for source_type in SUPPORTED_MEMBER_SOURCE_TYPES:
+        member = members[source_type]
+        assert member["source_ref"] is None
+        parsed_type, parsed_raw = parse_public_id(
+            member["item_id"], expected_type=source_type
+        )
+        assert parsed_type == source_type
+        assert parsed_raw == f"{source_type}-id-1"
+
+
+def test_get_library_collection_normalizes_source_type_case(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Case")
+    service.add_item_to_collection(
+        collection.collection_id, source_type="Media", source_id="m-1", title="t"
+    )
+
+    member = service.get_library_collection(collection.collection_id)["members"][0]
+
+    assert member["item_id"].startswith("media:")
+
+
+def test_get_library_collection_unsupported_type_gets_opaque_ref(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Refs")
+    service.add_item_to_collection(
+        collection.collection_id,
+        source_type="server-doc",
+        source_id="doc-9",
+        title="t",
+    )
+
+    member = service.get_library_collection(collection.collection_id)["members"][0]
+
+    assert member["item_id"] is None
+    assert isinstance(member["source_ref"], str)
+    assert member["source_ref"]
+    assert "doc-9" not in member["source_ref"]
+    assert "server-doc" not in member["source_ref"]
+
+
+def test_get_library_collection_bounds_member_titles(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Titles")
+    service.add_item_to_collection(
+        collection.collection_id, source_type="media", source_id="m-1", title="t" * 300
+    )
+
+    member = service.get_library_collection(collection.collection_id)["members"][0]
+
+    assert member["title_truncated"] is True
+    assert len(member["title"].encode("utf-8")) <= 160
+
+
+def test_get_library_collection_members_expose_no_content_fields(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Lean")
+    service.add_item_to_collection(
+        collection.collection_id, source_type="note", source_id="n-1", title="t"
+    )
+
+    member = service.get_library_collection(collection.collection_id)["members"][0]
+
+    assert set(member) == {
+        "membership_id",
+        "source_type",
+        "item_id",
+        "source_ref",
+        "title",
+        "title_truncated",
+    }

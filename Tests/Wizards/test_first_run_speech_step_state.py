@@ -7,11 +7,15 @@ actually download today -- see SpeechSetupStep in FirstRunSetupWizard.py for
 the live wiring against tldw_chatbook.Model_Artifacts.curated_registry.
 """
 
+from types import SimpleNamespace
+
 from tldw_chatbook.STT.routing import RoutingPolicy
+from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 from tldw_chatbook.UI.Wizards.first_run_speech_step_state import (
     SpeechLanguageOption,
     SpeechPrecisionOption,
     SpeechPrefill,
+    SpeechSelection,
     TRANSCRIPTION_SECTION,
     build_speech_transcription_commit,
     read_speech_prefill,
@@ -37,11 +41,14 @@ class TestRoutingPolicy:
 
 class TestRecommendedSelection:
     def test_recommended_is_parakeet_v2_english_int8(self):
-        provider_id, model_id, language = recommended_speech_selection()
+        selection = recommended_speech_selection()
         policy = routing_policy()
-        assert provider_id == policy.parakeet_provider_id == "parakeet-onnx"
-        assert model_id == policy.parakeet_v2_model_id == "nemo-parakeet-tdt-0.6b-v2"
-        assert language == "en"
+        assert selection == SpeechSelection(
+            provider_id=policy.parakeet_provider_id,
+            model_id=policy.parakeet_v2_model_id,
+            language="en",
+            precision="int8",
+        )
 
 
 class TestSpeechLanguageOptions:
@@ -84,20 +91,39 @@ class TestSpeechLanguageOptions:
 
 class TestSpeechPrecisionOptions:
     def test_int8_selectable_when_curated(self):
-        options = speech_precision_options(curated_precisions=frozenset({"int8"}))
+        policy = routing_policy()
+        options = speech_precision_options(
+            model_id=policy.parakeet_v2_model_id,
+            curated_selections=frozenset({(policy.parakeet_v2_model_id, "int8")}),
+        )
         assert all(isinstance(o, SpeechPrecisionOption) for o in options)
         int8 = next(o for o in options if o.value == "int8")
         assert int8.selectable is True
 
     def test_f32_present_but_not_selectable_without_a_curated_f32_descriptor(self):
-        options = speech_precision_options(curated_precisions=frozenset({"int8"}))
+        policy = routing_policy()
+        options = speech_precision_options(
+            model_id=policy.parakeet_v2_model_id,
+            curated_selections=frozenset({(policy.parakeet_v2_model_id, "int8")}),
+        )
         f32 = next(o for o in options if o.value == "f32")
         assert f32.selectable is False
 
     def test_no_curated_precisions_makes_int8_unselectable_too(self):
-        options = speech_precision_options(curated_precisions=frozenset())
+        options = speech_precision_options(
+            model_id=routing_policy().parakeet_v2_model_id,
+            curated_selections=frozenset(),
+        )
         int8 = next(o for o in options if o.value == "int8")
         assert int8.selectable is False
+
+    def test_f32_selectability_is_scoped_to_the_selected_model(self):
+        policy = routing_policy()
+        options = speech_precision_options(
+            model_id=policy.parakeet_v3_model_id,
+            curated_selections=frozenset({(policy.parakeet_v2_model_id, "f32")}),
+        )
+        assert next(o for o in options if o.value == "f32").selectable is False
 
 
 class TestBuildSpeechTranscriptionCommit:
@@ -106,14 +132,63 @@ class TestBuildSpeechTranscriptionCommit:
             provider_id="parakeet-onnx",
             model_id="nemo-parakeet-tdt-0.6b-v2",
             language="en",
+            precision="f32",
         )
         assert commit == {
             TRANSCRIPTION_SECTION: {
                 "default_provider": "parakeet-onnx",
                 "default_model": "nemo-parakeet-tdt-0.6b-v2",
                 "default_language": "en",
+                "default_precision": "f32",
             }
         }
+
+    def test_external_source_patch_merges_with_all_speech_defaults_without_writing(
+        self,
+    ):
+        """Task 8: the wizard owns the only write; the pure helper only merges."""
+        state = speech_state.SpeechSelection(
+            provider_id="parakeet-onnx",
+            model_id="nemo-parakeet-tdt-0.6b-v3",
+            language="fr",
+            precision="f32",
+        )
+        source_commit = SimpleNamespace(
+            section_values={
+                "transcription": {
+                    "parakeet_external_sources": {
+                        "v3_f32": {
+                            "model_id": "nemo-parakeet-tdt-0.6b-v3",
+                            "precision": "f32",
+                            "directory": "/user-owned/parakeet-v3",
+                            "preferred_source": "external",
+                        }
+                    }
+                }
+            }
+        )
+
+        patch = speech_state.speech_config_patch(state, source_commit)
+
+        assert patch == {
+            "transcription": {
+                "default_provider": "parakeet-onnx",
+                "default_model": "nemo-parakeet-tdt-0.6b-v3",
+                "default_language": "fr",
+                "default_precision": "f32",
+                "parakeet_external_sources": {
+                    "v3_f32": {
+                        "model_id": "nemo-parakeet-tdt-0.6b-v3",
+                        "precision": "f32",
+                        "directory": "/user-owned/parakeet-v3",
+                        "preferred_source": "external",
+                    }
+                },
+            }
+        }
+
+    def test_state_module_does_not_duplicate_speech_selection_type(self):
+        assert not hasattr(speech_state, "SpeechSetupState")
 
 
 class TestResolveSpeechSelection:
@@ -127,15 +202,35 @@ class TestResolveSpeechSelection:
     def test_nothing_selected_falls_back_to_recommended(self):
         """No live radio pressed yet (e.g. the step never mounted, or
         commit() runs before on_show()) -- skip-safe fallback."""
-        assert (
-            resolve_speech_selection(
-                selected_language="",
-                selected_precision="",
-                curated_model_ids=frozenset(),
-                curated_precisions=frozenset(),
-            )
-            == recommended_speech_selection()
+        assert resolve_speech_selection(
+            selected_language="",
+            selected_precision="",
+            curated_selections=frozenset(),
+        ) == recommended_speech_selection()
+
+    def test_non_english_f32_maps_to_exact_v3_artifact(self):
+        policy = routing_policy()
+        language = sorted(policy.validated_v3_languages)[0]
+        result = resolve_speech_selection(
+            selected_language=language,
+            selected_precision="f32",
+            curated_selections=frozenset({(policy.parakeet_v3_model_id, "f32")}),
         )
+        assert result == SpeechSelection(
+            provider_id=policy.parakeet_provider_id,
+            model_id=policy.parakeet_v3_model_id,
+            language=language,
+            precision="f32",
+        )
+
+    def test_unavailable_exact_pair_is_not_resolved(self):
+        policy = routing_policy()
+        language = sorted(policy.validated_v3_languages)[0]
+        assert resolve_speech_selection(
+            selected_language=language,
+            selected_precision="f32",
+            curated_selections=frozenset({(policy.parakeet_v3_model_id, "int8")}),
+        ) is None
 
     def test_todays_only_selectable_combo_is_byte_identical_to_recommended(self):
         """The BYTE-IDENTICAL pin: pressing the one combination that is
@@ -145,11 +240,15 @@ class TestResolveSpeechSelection:
         result = resolve_speech_selection(
             selected_language="en",
             selected_precision="int8",
-            curated_model_ids=frozenset({policy.parakeet_v2_model_id}),
-            curated_precisions=frozenset({"int8"}),
+            curated_selections=frozenset({(policy.parakeet_v2_model_id, "int8")}),
         )
         assert result == recommended_speech_selection()
-        assert result == (policy.parakeet_provider_id, policy.parakeet_v2_model_id, "en")
+        assert result == SpeechSelection(
+            policy.parakeet_provider_id,
+            policy.parakeet_v2_model_id,
+            "en",
+            "int8",
+        )
 
     def test_hypothetical_second_selectable_language_is_honored(self):
         """Divergence-proofing: once a second curated descriptor makes a v3
@@ -165,12 +264,14 @@ class TestResolveSpeechSelection:
         result = resolve_speech_selection(
             selected_language=v3_language,
             selected_precision="int8",
-            curated_model_ids=frozenset(
-                {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
-            ),
-            curated_precisions=frozenset({"int8"}),
+            curated_selections=frozenset({(policy.parakeet_v3_model_id, "int8")}),
         )
-        assert result == (policy.parakeet_provider_id, policy.parakeet_v3_model_id, v3_language)
+        assert result == SpeechSelection(
+            policy.parakeet_provider_id,
+            policy.parakeet_v3_model_id,
+            v3_language,
+            "int8",
+        )
         assert result != recommended_speech_selection()
 
     def test_unselectable_language_falls_back_even_when_curated_elsewhere(self):
@@ -181,10 +282,9 @@ class TestResolveSpeechSelection:
         result = resolve_speech_selection(
             selected_language=v3_language,
             selected_precision="int8",
-            curated_model_ids=frozenset({policy.parakeet_v2_model_id}),  # no v3
-            curated_precisions=frozenset({"int8"}),
+            curated_selections=frozenset({(policy.parakeet_v2_model_id, "int8")}),
         )
-        assert result == recommended_speech_selection()
+        assert result is None
 
     def test_unselectable_precision_falls_back_even_when_language_is_selectable(self):
         """Both radios must resolve to a currently-selectable option --
@@ -195,10 +295,9 @@ class TestResolveSpeechSelection:
         result = resolve_speech_selection(
             selected_language="en",
             selected_precision="f32",
-            curated_model_ids=frozenset({policy.parakeet_v2_model_id}),
-            curated_precisions=frozenset({"int8"}),  # f32 not curated
+            curated_selections=frozenset({(policy.parakeet_v2_model_id, "int8")}),
         )
-        assert result == recommended_speech_selection()
+        assert result is None
 
     def test_unknown_language_code_falls_back(self):
         """A stale/garbage id (should never happen via the real RadioSet)
@@ -207,10 +306,9 @@ class TestResolveSpeechSelection:
         result = resolve_speech_selection(
             selected_language="zz",
             selected_precision="int8",
-            curated_model_ids=frozenset({policy.parakeet_v2_model_id}),
-            curated_precisions=frozenset({"int8"}),
+            curated_selections=frozenset({(policy.parakeet_v2_model_id, "int8")}),
         )
-        assert result == recommended_speech_selection()
+        assert result is None
 
 
 class TestReadSpeechPrefill:
@@ -226,12 +324,14 @@ class TestReadSpeechPrefill:
                 "default_provider": "parakeet-onnx",
                 "default_model": "nemo-parakeet-tdt-0.6b-v2",
                 "default_language": "en",
+                "default_precision": "f32",
             }
         }
         prefill = read_speech_prefill(cfg)
         assert prefill.provider_id == "parakeet-onnx"
         assert prefill.model_id == "nemo-parakeet-tdt-0.6b-v2"
         assert prefill.language == "en"
+        assert prefill.precision == "f32"
 
     def test_shipped_template_defaults_never_read_as_parakeet_onnx(self):
         """The shipped [transcription] template defaults to faster-whisper (or

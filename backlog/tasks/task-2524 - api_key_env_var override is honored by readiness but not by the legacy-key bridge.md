@@ -1,5 +1,5 @@
 ---
-id: task-2524
+id: TASK-2524
 title: api_key_env_var override is honored by readiness but not by the legacy-key bridge
 status: To Do
 assignee: []

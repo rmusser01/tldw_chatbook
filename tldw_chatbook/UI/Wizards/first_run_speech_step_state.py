@@ -6,14 +6,9 @@ every decision).
 
 TASK-1301 / ADR-025: language and precision enumeration is sourced from
 ``tldw_chatbook.STT.routing`` -- the authoritative built-in STT policy and
-catalog -- never a hand-rolled list. ``selectable`` is a SEPARATE concern:
-it reflects what a curated ``Model_Artifacts`` descriptor can actually
-download today (``tldw_chatbook.Model_Artifacts.curated_registry``), which
-the wizard step resolves and passes in. Today only Parakeet v2 (English,
-INT8) has a curated descriptor, so it is the only selectable combination;
-every other catalog-declared language/precision renders present but
-disabled, honestly reflecting the STT policy without offering a control
-nothing can actually fulfil.
+catalog -- never a hand-rolled list. ``selectable`` is a separate concern:
+it reflects the exact model/precision pairs admitted by the curated artifact
+registry, which the wizard resolves and passes in.
 """
 
 from __future__ import annotations
@@ -94,6 +89,16 @@ class SpeechPrecisionOption:
     selectable: bool
 
 
+@dataclass(frozen=True)
+class SpeechSelection:
+    """One exact first-run Parakeet configuration and managed artifact."""
+
+    provider_id: str
+    model_id: str
+    language: str
+    precision: str
+
+
 def speech_language_options(
     *, curated_model_ids: frozenset[str]
 ) -> tuple[SpeechLanguageOption, ...]:
@@ -134,60 +139,65 @@ def speech_language_options(
 
 
 def speech_precision_options(
-    *, curated_precisions: frozenset[str]
+    *,
+    model_id: str,
+    curated_selections: frozenset[tuple[str, str]],
 ) -> tuple[SpeechPrecisionOption, ...]:
-    """Every precision the STT catalog declares for Parakeet v2.
+    """Every precision declared for one selected Parakeet model.
 
     Args:
-        curated_precisions: Precisions with a registered curated Parakeet v2
-            descriptor; only these are ``selectable``.
+        model_id: Selected Parakeet model id.
+        curated_selections: Exact ``(model_id, precision)`` pairs with a
+            registered curated root descriptor.
 
     Returns:
         The declared precisions, the model's own default precision first.
     """
     policy = _ROUTING_POLICY
-    v2 = _REGISTRY.model(policy.parakeet_provider_id, policy.parakeet_v2_model_id)
-    assert v2 is not None
+    model = _REGISTRY.model(policy.parakeet_provider_id, model_id)
+    if model is None:
+        return ()
     return tuple(
         SpeechPrecisionOption(
             value=precision,
             display_name=precision.upper(),
-            selectable=precision in curated_precisions,
+            selectable=(model_id, precision) in curated_selections,
         )
         for precision in sorted(
-            v2.capabilities.precisions, key=lambda p: (p != v2.default_precision, p)
+            model.capabilities.precisions,
+            key=lambda p: (p != model.default_precision, p),
         )
     )
 
 
-def recommended_speech_selection() -> tuple[str, str, str]:
-    """Return ``(provider_id, model_id, language)`` for the recommended default.
+def recommended_speech_selection() -> SpeechSelection:
+    """Return the exact recommended Parakeet v2 English INT8 selection.
 
     Returns:
-        The Parakeet ONNX provider id, Parakeet v2 model id, and "en" --
-        the only combination with a curated, downloadable artifact today.
+        The default selection.
     """
     policy = _ROUTING_POLICY
-    return policy.parakeet_provider_id, policy.parakeet_v2_model_id, "en"
+    return SpeechSelection(
+        provider_id=policy.parakeet_provider_id,
+        model_id=policy.parakeet_v2_model_id,
+        language="en",
+        precision="int8",
+    )
 
 
 def resolve_speech_selection(
     *,
     selected_language: str,
     selected_precision: str,
-    curated_model_ids: frozenset[str],
-    curated_precisions: frozenset[str],
-) -> tuple[str, str, str]:
-    """Resolve the step's PRESSED language/precision radios into a commit tuple.
+    curated_selections: frozenset[tuple[str, str]],
+) -> SpeechSelection | None:
+    """Resolve pressed radios into one exact curated artifact selection.
 
     PR #1184 review (finding 2): ``commit()`` used to persist
     ``recommended_speech_selection()`` unconditionally, even though the step
-    renders selectable language/precision ``RadioSet``s. Only one
-    combination (English, INT8) is selectable today, so no user choice
-    could actually be lost yet -- but the moment a second curated
-    descriptor lands, an unconditional constant would silently diverge from
-    the pressed radio. This is the one place that maps a live selection to
-    what gets persisted, via the same pure catalog helpers
+    renders selectable language/precision ``RadioSet``s. This is the one
+    place that maps a live selection to what gets persisted, via the same
+    pure catalog helpers
     (``speech_language_options``, ``speech_precision_options``) the step
     already renders from.
 
@@ -197,19 +207,15 @@ def resolve_speech_selection(
             ``commit()`` runs before ``on_show()``).
         selected_precision: The value of the pressed precision radio (same
             "empty means nothing pressed" contract).
-        curated_model_ids: Model ids with a registered curated descriptor --
-            see ``speech_language_options``.
-        curated_precisions: Precisions with a registered curated Parakeet v2
-            descriptor -- see ``speech_precision_options``.
+        curated_selections: Exact model/precision pairs with curated roots.
 
     Returns:
-        ``(provider_id, model_id, language)`` for the pressed selection when
-        BOTH the language and precision radios resolve to a currently
-        selectable option. Otherwise ``recommended_speech_selection()`` --
-        the only selection available today, and the safe fallback for an
-        unmounted step, a stale id, or a selection that is no longer (or
-        not yet) selectable.
+        The exact selection, the recommended selection when the step has not
+        mounted yet, or ``None`` for a stale/unavailable explicit selection.
     """
+    if not selected_language and not selected_precision:
+        return recommended_speech_selection()
+    curated_model_ids = frozenset(model for model, _precision in curated_selections)
     language_option = next(
         (
             option
@@ -218,25 +224,31 @@ def resolve_speech_selection(
         ),
         None,
     )
+    if language_option is None:
+        return None
     precision_option = next(
         (
             option
-            for option in speech_precision_options(curated_precisions=curated_precisions)
+            for option in speech_precision_options(
+                model_id=language_option.model_id,
+                curated_selections=curated_selections,
+            )
             if option.value == selected_precision and option.selectable
         ),
         None,
     )
-    if language_option is None or precision_option is None:
-        return recommended_speech_selection()
-    return (
-        _ROUTING_POLICY.parakeet_provider_id,
-        language_option.model_id,
-        language_option.code,
+    if precision_option is None:
+        return None
+    return SpeechSelection(
+        provider_id=_ROUTING_POLICY.parakeet_provider_id,
+        model_id=language_option.model_id,
+        language=language_option.code,
+        precision=precision_option.value,
     )
 
 
 def build_speech_transcription_commit(
-    *, provider_id: str, model_id: str, language: str
+    *, provider_id: str, model_id: str, language: str, precision: str
 ) -> dict[str, dict[str, Any]]:
     """Mutation for the speech transcription step.
 
@@ -244,6 +256,7 @@ def build_speech_transcription_commit(
         provider_id: STT provider id to persist as ``transcription.default_provider``.
         model_id: Model id to persist as ``transcription.default_model``.
         language: Language to persist as ``transcription.default_language``.
+        precision: Precision to persist as ``transcription.default_precision``.
 
     Returns:
         The section/value mapping to persist under ``transcription``.
@@ -253,6 +266,41 @@ def build_speech_transcription_commit(
             "default_provider": provider_id,
             "default_model": model_id,
             "default_language": language,
+            "default_precision": precision,
+        }
+    }
+
+
+def speech_config_patch(
+    state: SpeechSelection,
+    source_commit: Any,
+) -> dict[str, object]:
+    """Merge speech defaults with a prepared external-source config patch.
+
+    This helper is deliberately write-free. The wizard submits its result to
+    its existing single config transaction, then accepts the source commit
+    only after that transaction succeeds.
+
+    Args:
+        state: Exact provider/model/language/precision selected in First Run.
+        source_commit: A source-service prepared commit whose section values
+            contain the complete external-source table.
+
+    Returns:
+        One complete ``transcription`` section mutation.
+    """
+
+    speech_values = build_speech_transcription_commit(
+        provider_id=state.provider_id,
+        model_id=state.model_id,
+        language=state.language,
+        precision=state.precision,
+    )[TRANSCRIPTION_SECTION]
+    source_values = source_commit.section_values[TRANSCRIPTION_SECTION]
+    return {
+        TRANSCRIPTION_SECTION: {
+            **speech_values,
+            **source_values,
         }
     }
 
@@ -264,6 +312,7 @@ class SpeechPrefill:
     provider_id: str = ""
     model_id: str = ""
     language: str = ""
+    precision: str = ""
 
 
 def read_speech_prefill(app_config: Mapping[str, object]) -> SpeechPrefill:
@@ -280,7 +329,7 @@ def read_speech_prefill(app_config: Mapping[str, object]) -> SpeechPrefill:
         app_config: Loaded app configuration.
 
     Returns:
-        The persisted provider/model/language, or a blank prefill when the
+        The persisted provider/model/language/precision, or a blank prefill when the
         section is absent or malformed.
     """
     section = app_config.get(TRANSCRIPTION_SECTION)
@@ -290,6 +339,7 @@ def read_speech_prefill(app_config: Mapping[str, object]) -> SpeechPrefill:
         provider_id=str(section.get("default_provider") or ""),
         model_id=str(section.get("default_model") or ""),
         language=str(section.get("default_language") or ""),
+        precision=str(section.get("default_precision") or ""),
     )
 
 
@@ -299,6 +349,7 @@ def speech_prefill_status(
     installed_active: bool = False,
     acted_this_run: bool = False,
     runtime_installed: bool = True,
+    selected_label: str = "Parakeet v2",
 ) -> str:
     """Human copy describing what is currently persisted, or "" for nothing.
 
@@ -333,6 +384,7 @@ def speech_prefill_status(
             it is not, the "use as default" affordance is (correctly) never
             composed, so the sentence must not direct the user to a button
             that is not on screen (final-review residual of NEW-2).
+        selected_label: Human label for the exact model/precision selection.
 
     Returns:
         Empty when nothing is persisted at all; otherwise a sentence
@@ -346,7 +398,7 @@ def speech_prefill_status(
         return f"Already your default: {prefill.model_id} ({prefill.language})."
     if acted_this_run:
         return (
-            "Parakeet v2 will become your default when you continue "
+            f"{selected_label} will become your default when you continue "
             f"(currently: {prefill.provider_id})."
         )
     if not runtime_installed:
@@ -357,11 +409,11 @@ def speech_prefill_status(
     if installed_active:
         return (
             f"Currently configured: {prefill.provider_id} — choose "
-            '"Use Parakeet v2 as my default" below to switch.'
+            f'"Use {selected_label} as my default" below to switch.'
         )
     return (
         f"Currently configured: {prefill.provider_id} — installing or "
-        "activating here will switch your default to Parakeet v2."
+        f"activating here will switch your default to {selected_label}."
     )
 
 
@@ -399,8 +451,10 @@ __all__ = [
     "SpeechLanguageOption",
     "SpeechPrecisionOption",
     "SpeechPrefill",
+    "SpeechSelection",
     "build_speech_transcription_commit",
     "read_speech_prefill",
+    "speech_config_patch",
     "should_persist_speech_config",
     "speech_prefill_status",
     "recommended_speech_selection",

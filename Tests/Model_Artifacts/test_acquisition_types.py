@@ -8,17 +8,18 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tldw_chatbook.Model_Artifacts import ArtifactRef, closure_fingerprint
+from tldw_chatbook.Model_Artifacts import ArtifactRef, ProvenanceClass
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ACQUISITION_SAFETY_MARGIN_BYTES,
     MAX_FILE_REFETCHES,
     AcquisitionConsent,
-    ArtifactPreflightEntry,
+    ArtifactAcquisitionService,
     CatalogError,
     PreflightNotGrantableError,
     PreflightReport,
     resolve_catalog_closure,
 )
+from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts import ArtifactDescriptor
@@ -29,6 +30,9 @@ def make_descriptor(
     dependencies: tuple[ArtifactRef, ...] = (),
     files_body: bytes | None = None,
     source_url: str | None = None,
+    license_id: str = "test-license",
+    license_url: str = "https://example.test/license",
+    provenance: tuple[ProvenanceClass, ...] | None = None,
 ) -> ArtifactDescriptor:
     """Build a minimal descriptor for testing.
 
@@ -41,6 +45,11 @@ def make_descriptor(
             (defaults to the historical single-byte ``b"x"`` content).
         source_url: Override for ``source_url``, e.g. a fixture server URL
             (defaults to the historical placeholder URL).
+        license_id: Licensing identifier for the descriptor.
+        license_url: Credential-free HTTP(S) licensing URL, or an empty
+            string for a truthful local-integrity descriptor with an unknown
+            license.
+        provenance: Descriptor provenance (defaults to Chatbook-curated).
     """
     from tldw_chatbook.Model_Artifacts import (
         ArtifactDescriptor,
@@ -54,7 +63,9 @@ def make_descriptor(
         ref = ArtifactRef("root", "r" * 40, "int8")
 
     content = files_body if files_body is not None else b"x"
-    files = (ArtifactFile("model.onnx", len(content), hashlib.sha256(content).hexdigest()),)
+    files = (
+        ArtifactFile("model.onnx", len(content), hashlib.sha256(content).hexdigest()),
+    )
 
     return ArtifactDescriptor(
         reference=ref,
@@ -65,16 +76,20 @@ def make_descriptor(
         model_family="test-family",
         upstream_repository="test/repo",
         upstream_revision="main",
-        source_url=source_url if source_url is not None else "https://example.test/model",
+        source_url=source_url
+        if source_url is not None
+        else "https://example.test/model",
         precision="int8",
-        license_id="test-license",
-        license_url="https://example.test/license",
+        license_id=license_id,
+        license_url=license_url,
         usage_notice="Test model",
         runtime_name="test-runtime",
         runtime_version_constraint="==1.0.0",
         supported_os=("linux",),
         supported_architectures=("x86-64",),
-        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,)
+        if provenance is None
+        else provenance,
         files=files,
         expected_installed_bytes=len(content),
         dependencies=dependencies,
@@ -148,6 +163,137 @@ def test_unknown_ref_is_a_typed_error() -> None:
     """Verify resolve_catalog_closure raises CatalogError for unknown refs."""
     with pytest.raises(CatalogError):
         resolve_catalog_closure(_ref("missing"), DictCatalog({}))
+
+
+@pytest.mark.asyncio
+async def test_uninstalled_local_integrity_descriptor_cannot_enter_download_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A path-private local descriptor cannot reach network acquisition."""
+    from tldw_chatbook.Model_Artifacts import ProvenanceClass
+    from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
+
+    local = make_descriptor(
+        source_url="",
+        license_id="unknown",
+        license_url="",
+        provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+    )
+    probe_called = False
+    fetch_called = False
+
+    async def unexpected_probe(*_args: object, **_kwargs: object) -> list[str]:
+        nonlocal probe_called
+        probe_called = True
+        return []
+
+    async def unexpected_fetch(*_args: object, **_kwargs: object) -> object:
+        nonlocal fetch_called
+        fetch_called = True
+        raise AssertionError("local artifact must not be fetched")
+
+    monkeypatch.setattr(ArtifactAcquisitionService, "_probe_gating", unexpected_probe)
+    monkeypatch.setattr(acquisition_module, "stream_fetch", unexpected_fetch)
+    core = ModelArtifactService(tmp_path / "managed")
+    acquisition = ArtifactAcquisitionService(
+        core,
+        free_bytes_probe=lambda _path: 10**12,
+    )
+
+    with pytest.raises(CatalogError, match="local integrity"):
+        await acquisition.preflight(
+            local.reference, DictCatalog({local.reference: local})
+        )
+
+    assert probe_called is False
+    assert fetch_called is False
+
+
+@pytest.mark.asyncio
+async def test_uninstalled_local_integrity_descriptor_rejects_source_map_before_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A source map cannot make a local descriptor acquisition-eligible."""
+    from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
+
+    local = make_descriptor(
+        source_url="",
+        license_id="unknown",
+        license_url="",
+        provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+    )
+    probe_called = False
+    fetch_called = False
+
+    async def unexpected_probe(*_args: object, **_kwargs: object) -> list[str]:
+        nonlocal probe_called
+        probe_called = True
+        return []
+
+    async def unexpected_fetch(*_args: object, **_kwargs: object) -> object:
+        nonlocal fetch_called
+        fetch_called = True
+        raise AssertionError("local artifact must not be fetched")
+
+    monkeypatch.setattr(ArtifactAcquisitionService, "_probe_gating", unexpected_probe)
+    monkeypatch.setattr(acquisition_module, "stream_fetch", unexpected_fetch)
+    core = ModelArtifactService(tmp_path / "managed")
+    acquisition = ArtifactAcquisitionService(
+        core,
+        free_bytes_probe=lambda _path: 10**12,
+    )
+
+    with pytest.raises(CatalogError, match="local integrity"):
+        await acquisition.preflight(
+            local.reference,
+            DictCatalog({local.reference: local}),
+            sources={local.reference: {"model.onnx": "https://example.test/model"}},
+        )
+
+    assert probe_called is False
+    assert fetch_called is False
+
+
+@pytest.mark.asyncio
+async def test_installed_local_integrity_descriptor_remains_inventory_resolvable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An installed local descriptor has no acquisition source requirement."""
+    local = make_descriptor(
+        source_url="",
+        license_id="unknown",
+        license_url="",
+        provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.onnx").write_bytes(b"x")
+    core = ModelArtifactService(tmp_path / "managed")
+    core.install(local, source)
+    acquisition = ArtifactAcquisitionService(
+        core,
+        free_bytes_probe=lambda _path: 10**12,
+    )
+
+    probe_targets: list[object] = []
+
+    async def record_probe(_service: object, targets: object) -> list[str]:
+        probe_targets.extend(targets)  # type: ignore[arg-type]
+        return []
+
+    monkeypatch.setattr(ArtifactAcquisitionService, "_probe_gating", record_probe)
+
+    report = await acquisition.preflight(
+        local.reference,
+        DictCatalog({local.reference: local}),
+    )
+
+    assert report.entries[0].already_installed is True
+    assert report.download_bytes == 0
+    assert probe_targets == []
 
 
 def _report(**overrides: object) -> PreflightReport:

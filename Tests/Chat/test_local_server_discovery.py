@@ -3,6 +3,7 @@
 import httpx
 import pytest
 
+import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
     DEFAULT_OLLAMA_DISCOVERY_URL,
@@ -11,17 +12,65 @@ from tldw_chatbook.Chat.local_server_discovery import (
     build_local_server_candidates,
     discover_local_servers,
     is_localhost_url,
+    model_ids_from_payload,
     normalize_probe_base_url,
     probe_models_endpoint,
 )
+
+# These ARE the tests of the probe implementation, so they opt out of the
+# autouse `_no_local_server_probes` guard (Tests/conftest.py, task-15111).
+# They never touch the network: every client below is an injected
+# httpx.MockTransport, which the socket guard independently confirms.
+pytestmark = pytest.mark.local_server_probe
+_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
 
 
 def _client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+class _TrackingAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, *chunks: bytes) -> None:
+        self.chunks = chunks
+        self.iterated_chunks = 0
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            self.iterated_chunks += 1
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 def _openai_models_payload(*model_ids: str) -> dict:
     return {"object": "list", "data": [{"id": model_id} for model_id in model_ids]}
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    (
+        ({"data": [{"id": ""}]}, None),
+        ({"data": [{"id": " \t "}]}, None),
+        ({"data": [{"id": "\x00\x1f"}]}, None),
+        ([" \t\x00"], None),
+        ({"data": [{"id": "", "name": "fallback-name"}]}, ("fallback-name",)),
+        (
+            {
+                "data": [
+                    {"id": "", "name": "\t", "model": "fallback-model"}
+                ]
+            },
+            ("fallback-model",),
+        ),
+    ),
+)
+def test_model_ids_require_a_usable_sanitized_identifier(
+    payload: object,
+    expected: tuple[str, ...] | None,
+) -> None:
+    assert model_ids_from_payload(payload) == expected
 
 
 # --- candidate building -----------------------------------------------------
@@ -100,6 +149,19 @@ def test_normalize_and_localhost_helpers() -> None:
     assert is_localhost_url("http://127.0.0.1:1234") is True
     assert is_localhost_url("http://127.0.0.2:1234") is False
     assert is_localhost_url("http://example.com") is False
+
+
+def test_normalize_probe_base_url_uses_contract_persistence_shape() -> None:
+    assert (
+        normalize_probe_base_url(
+            "http://127.0.0.1:8080/proxy/v1/chat/completions"
+        )
+        == "http://127.0.0.1:8080/proxy"
+    )
+    assert (
+        normalize_probe_base_url("http://127.0.0.1:8080/models")
+        == "http://127.0.0.1:8080"
+    )
 
 
 # --- discover_local_servers -------------------------------------------------
@@ -218,6 +280,61 @@ async def test_probe_success_returns_model_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_canonicalizes_dotted_local_llamacpp_display_name() -> None:
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=_openai_models_payload("m-a"))
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        provider_key="local llama.cpp",
+        http_client=_client(handler),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == ("m-a",)
+    assert seen == ["http://127.0.0.1:9099/v1/models"]
+
+
+@pytest.mark.asyncio
+async def test_probe_full_chat_url_uses_contract_derived_models_sibling() -> None:
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=_openai_models_payload("m-a"))
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099/proxy/v1/chat/completions",
+        provider_key="llama_cpp",
+        http_client=_client(handler),
+    )
+
+    assert result.ok is True
+    assert seen == ["http://127.0.0.1:9099/proxy/v1/models"]
+
+
+@pytest.mark.asyncio
+async def test_probe_models_url_never_doubles_models_suffix() -> None:
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=_openai_models_payload("m-a"))
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099/proxy/v1/models",
+        provider_key="llama_cpp",
+        http_client=_client(handler),
+    )
+
+    assert result.ok is True
+    assert seen == ["http://127.0.0.1:9099/proxy/v1/models"]
+
+
+@pytest.mark.asyncio
 async def test_probe_success_with_empty_model_list() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"object": "list", "data": []})
@@ -229,6 +346,205 @@ async def test_probe_success_with_empty_model_list() -> None:
 
     assert result.ok is True
     assert result.model_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_probe_accepts_bare_list_string_model_entry() -> None:
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(200, json=["model-a"])
+        ),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == ("model-a",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model_id",
+    ("", " \t ", "\x00\x1f"),
+)
+async def test_local_probe_rejects_listing_with_only_unusable_identifiers(
+    model_id: str,
+) -> None:
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(
+                200,
+                json={"data": [{"id": model_id}]},
+            )
+        ),
+    )
+
+    assert result.ok is False
+    assert result.model_ids == ()
+    assert result.detail == (
+        "No models endpoint at http://127.0.0.1:9099 "
+        "(unrecognized API payload)."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    (
+        ({"id": "", "name": "fallback-name"}, "fallback-name"),
+        (
+            {"id": "", "name": "\t", "model": "fallback-model"},
+            "fallback-model",
+        ),
+    ),
+)
+async def test_local_probe_falls_back_to_next_usable_identifier_field(
+    entry: dict[str, str],
+    expected: str,
+) -> None:
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(200, json={"data": [entry]})
+        ),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == (expected,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"data": [{"foo": "bar"}]},
+        [[]],
+        [123],
+        {"models": [{"foo": "bar"}]},
+    ),
+)
+async def test_probe_rejects_nonempty_listing_without_recognized_entries(
+    payload: object,
+) -> None:
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(200, json=payload)
+        ),
+    )
+
+    assert result.ok is False
+    assert result.model_ids == ()
+    assert result.detail == (
+        "No models endpoint at http://127.0.0.1:9099 "
+        "(unrecognized API payload)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_probe_handles_recursive_json_as_bounded_failure(monkeypatch) -> None:
+    def recursive_loads(body: bytes) -> object:
+        raise RecursionError("secret recursive decoder detail")
+
+    monkeypatch.setattr(local_discovery_module.json, "loads", recursive_loads)
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(200, content=b'{"data": []}')
+        ),
+    )
+
+    assert result.ok is False
+    assert result.model_ids == ()
+    assert result.detail == (
+        "No models endpoint at http://127.0.0.1:9099 (not a JSON API)."
+    )
+    assert "secret" not in repr(result)
+
+
+@pytest.mark.asyncio
+async def test_local_probe_accepts_json_body_at_exact_byte_limit() -> None:
+    prefix = b'{"data":[]}'
+    body = prefix + b" " * (
+        _EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES - len(prefix)
+    )
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(lambda request: httpx.Response(200, content=body)),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_local_probe_rejects_oversized_chunked_body_and_closes_response() -> None:
+    stream = _TrackingAsyncStream(
+        b"x" * _EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES,
+        b"secret-over-limit",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099/secret-endpoint",
+            http_client=client,
+        )
+
+    assert result.ok is False
+    assert result.detail == "Models response is too large."
+    assert "secret" not in result.detail
+    assert stream.iterated_chunks == 2
+    assert stream.closed is True
+
+
+@pytest.mark.parametrize("content_encoding", ("gzip", "deflate", "br"))
+@pytest.mark.asyncio
+async def test_local_probe_rejects_encoded_body_before_decompression(
+    content_encoding: str,
+) -> None:
+    stream = _TrackingAsyncStream(b"compressed-expansion-bomb")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept-encoding"] == "identity"
+        return httpx.Response(
+            200,
+            headers={"content-encoding": content_encoding, "content-length": "24"},
+            stream=stream,
+        )
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+
+    assert result.ok is False
+    assert result.detail == "Compressed models responses are not supported."
+    assert stream.iterated_chunks == 0
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_local_probe_bounds_one_raw_chunk_despite_misleading_length() -> None:
+    stream = _TrackingAsyncStream(b"x" * (_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES + 1))
+
+    async with _client(
+        lambda request: httpx.Response(
+            200, headers={"content-length": "1"}, stream=stream
+        )
+    ) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099", http_client=client
+        )
+
+    assert result.ok is False
+    assert result.detail == "Models response is too large."
+    assert stream.closed is True
 
 
 @pytest.mark.asyncio
@@ -285,6 +601,68 @@ async def test_probe_rejects_unusable_url_without_network() -> None:
 
     assert result.ok is False
     assert result.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entered", "canaries"),
+    (
+        (
+            "https://user:password@example.test/v1?token=unit-test-token",
+            ("user", "password", "token", "unit-test-token"),
+        ),
+        (
+            "https://example.test/path\u202esecret",
+            ("\u202e", "secret"),
+        ),
+        (
+            "https://example.test/path\ud800secret",
+            ("\ud800", "secret"),
+        ),
+    ),
+    ids=("credential-bearing-url", "bidi-control-url", "surrogate-url"),
+)
+async def test_invalid_probe_input_never_retains_raw_endpoint_or_secrets(
+    entered: str,
+    canaries: tuple[str, ...],
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("invalid input must not be requested")
+
+    result = await probe_models_endpoint(entered, http_client=_client(handler))
+    rendered = repr(result)
+
+    assert result.ok is False
+    assert result.base_url == ""
+    assert all(canary not in result.base_url for canary in canaries)
+    assert all(canary not in rendered for canary in canaries)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_key",
+    ("ollama", "Ollama", "local_ollama", "Local Ollama"),
+)
+async def test_local_probe_normalizes_ollama_provider_before_fallback(
+    provider_key: str,
+) -> None:
+    seen_paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/v1/models":
+            return httpx.Response(404)
+        return httpx.Response(200, json={"models": [{"name": "llama3"}]})
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:11434",
+        provider_key=provider_key,
+        http_client=_client(handler),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == ("llama3",)
+    assert seen_paths == ["/v1/models", "/api/tags"]
 
 
 @pytest.mark.asyncio
@@ -419,15 +797,8 @@ async def test_probe_keeps_only_chat_capable_models_from_mixed_server() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_keeps_a_server_whose_other_entries_are_merely_unrecognized() -> None:
-    """A non-chat entry beside odd-shaped entries must not condemn the server.
-
-    Review finding: the reject condition was "no ids AND saw a non-chat entry",
-    which also rejected listings whose remaining entries simply failed to yield
-    an id (non-string ids, unexpected shapes). That turned an
-    unrecognized-but-plausible server into "no models endpoint" and hid a
-    possibly chat-capable host. Only an ALL-non-chat listing is a rejection.
-    """
+async def test_probe_rejects_non_chat_and_unrecognized_only_listing() -> None:
+    """Filtering non-chat entries must leave one recognized model entry."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -446,5 +817,9 @@ async def test_probe_keeps_a_server_whose_other_entries_are_merely_unrecognized(
             "http://127.0.0.1:9099", provider_key="llama_cpp", http_client=client
         )
 
-    assert result.ok is True
+    assert result.ok is False
     assert result.model_ids == ()
+    assert result.detail == (
+        "No models endpoint at http://127.0.0.1:9099 "
+        "(unrecognized API payload)."
+    )

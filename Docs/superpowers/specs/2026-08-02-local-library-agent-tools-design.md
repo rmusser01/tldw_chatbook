@@ -660,6 +660,25 @@ Implementation should land behind the setting and contract tests, with
 documentation listing the 18 tools, their exact-count semantics, the lexical
 search boundary, content limits, and cloud-model privacy consequence.
 
+### Implementation deviations (recorded 2026-08-07)
+
+- **FastMCP-free local MCP surface.** The design assumed the descriptor-backed
+  tools would also register with FastMCP (Existing Boundaries, §2, §10). During
+  implementation the owner directed that FastMCP is deprecated in this
+  repository and must not be used: the `mcp` dependency is absent from the
+  development environment, and `mcp[cli]>=1.0.0` resolves to a release line
+  that removes `mcp.server.fastmcp`. The shipped surface is therefore entirely
+  FastMCP-free: `MCP/server.py` appends the 18 descriptor-derived entries to
+  the local capability manifest (`_describe_local_library_tools`),
+  `MCP/local_runtime_delegate.py` dispatches them to the shared synchronous
+  service via `asyncio.to_thread`, `MCP/local_control_service.py` maps them to
+  policy action IDs, and `runtime_policy/registry.py` carries the
+  `library_collections` capability. The legacy `TldwMCPServer`/`__main__.py`
+  module is untouched; retiring it is separate scope. Every payload and schema
+  parity guarantee is unchanged — both runtimes still derive from the single
+  descriptor table, and the cross-runtime parity tests in
+  `Tests/Library/test_cross_runtime_parity.py` pin that.
+
 ## 13. Alternatives Considered
 
 ### Reuse the existing RAG search service for all queries

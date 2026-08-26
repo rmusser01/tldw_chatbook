@@ -6,12 +6,13 @@ import re
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 from ..Console.console_image_viewer_modal import ClickableAvatarBox
 
+from .personas_messages import ActorPackExportRequested, PersonaBuddyActionRequested
 from .personas_pane_messages import ConversationRowSelected
 
 _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edits."
@@ -44,24 +45,34 @@ _CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_JSON_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_PNG_APPLICABLE_KINDS = {"character"}
 
+# Portrait thumb box in character cells. Must stay in sync with
+# #personas-inspector-avatar-thumb's CSS max-width/max-height below and with
+# AVATAR_THUMB_COLS/AVATAR_THUMB_LINES in personas_screen.py - change one,
+# change all three.
+_THUMB_BOX_COLS = 24
+_THUMB_BOX_LINES = 10
 
-class PersonasInspectorPane(Vertical):
+
+class PersonasInspectorPane(VerticalScroll):
     """Identity, validation, conversations, readiness, and actions."""
 
     # Structure only: colors come from the app stylesheet. The conversations
     # list is CAPPED (scrolls past 10 rows) so the Readiness section and the
     # action buttons below it are always visible when the pane renders.
     # Rows are ListItems in a ListView (keyboard-first, Notes idiom).
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     /* Portrait box for the selected character. Sized like the editor's
        thumbnail rather than the 80x40 transcript image box: this is a single
        always-visible preview, and the rail is narrow. `height: auto` keeps the
-       box from reserving space for selections that have no portrait. */
+       box from reserving space for selections that have no portrait. No
+       horizontal padding: the mosaic renderable is baked at exactly
+       AVATAR_THUMB_COLS columns, and padding used to shrink the content box
+       below that, folding every line into a black continuation stripe
+       (task-3793). */
     PersonasInspectorPane #personas-inspector-avatar-thumb {
         height: auto;
         max-width: 24;
         max-height: 10;
-        padding: 0 1;
     }
 
     PersonasInspectorPane #personas-conversations-list {
@@ -138,6 +149,21 @@ class PersonasInspectorPane(Vertical):
         self._provider_block_reason: str | None = None
         self._conversation_lookup: dict[str, str] = {}
         self._tts_export_available = False
+        self._buddy_source: str | None = None
+        self._buddy_persona_id: str | None = None
+        self._buddy_revision: int | None = None
+        self._buddy_active = False
+        self._buddy_profile_current = False
+        self._buddy_owner_source: str | None = None
+        self._buddy_owner_persona_id: str | None = None
+        self._buddy_enabled = False
+        self._buddy_open = True
+        self._actor_pack_source: str | None = None
+        self._actor_pack_kind: str | None = None
+        self._actor_pack_local_id: str | None = None
+        self._actor_pack_revision: int | None = None
+        self._actor_pack_eligible = False
+        self._actor_pack_reason: str | None = None
         # F-040: marked library rows drive bulk Delete/Export JSON affordances.
         self._marked_count = 0
 
@@ -225,6 +251,30 @@ class PersonasInspectorPane(Vertical):
                 classes="console-action-secondary",
                 tooltip=_NO_SELECTION_GUIDANCE,
             )
+            yield Button(
+                "Use for Buddy",
+                id="personas-buddy-use",
+                disabled=True,
+                classes="console-action-secondary persona-buddy-action",
+            )
+            yield Button(
+                "Show Buddy",
+                id="personas-buddy-show",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
+            )
+            yield Button(
+                "Close Buddy",
+                id="personas-buddy-close",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
+            )
+            yield Button(
+                "Disable Buddy",
+                id="personas-buddy-disable",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
+            )
             tts_checkbox = Checkbox(
                 "Include assigned voice profile",
                 id="personas-export-include-tts",
@@ -250,6 +300,13 @@ class PersonasInspectorPane(Vertical):
                 tooltip=_NO_SELECTION_EXPORT_TOOLTIP,
             )
             yield Button(
+                "Export Actor Pack",
+                id="personas-export-actor-pack",
+                disabled=True,
+                classes="console-action-subdued actor-pack-export-action",
+                tooltip=_NO_SELECTION_EXPORT_TOOLTIP,
+            )
+            yield Button(
                 "Delete",
                 id="personas-delete",
                 disabled=True,
@@ -257,7 +314,17 @@ class PersonasInspectorPane(Vertical):
                 tooltip=_NO_SELECTION_DELETE_TOOLTIP,
             )
 
-    def show_selection(self, *, name: str, kind: str) -> None:
+    def show_selection(
+        self,
+        *,
+        name: str,
+        kind: str,
+        source: str | None = None,
+        entity_id: str | None = None,
+        revision: int | None = None,
+        active: bool = False,
+        profile_current: bool = False,
+    ) -> None:
         """Reflect the selected library item in the inspector summary.
 
         Args:
@@ -268,7 +335,18 @@ class PersonasInspectorPane(Vertical):
         """
         self._has_selection = True
         self._selected_kind = kind
+        self._buddy_source = source
+        self._buddy_persona_id = entity_id
+        self._buddy_revision = revision
+        self._buddy_active = active is True
+        self._buddy_profile_current = profile_current is True
         self._tts_export_available = False
+        self._actor_pack_source = None
+        self._actor_pack_kind = None
+        self._actor_pack_local_id = None
+        self._actor_pack_revision = None
+        self._actor_pack_eligible = False
+        self._actor_pack_reason = None
         self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")
         self.query_one("#personas-selected-kind", Static).update(f"Type: {kind}")
@@ -278,7 +356,18 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind = None
+        self._buddy_source = None
+        self._buddy_persona_id = None
+        self._buddy_revision = None
+        self._buddy_active = False
+        self._buddy_profile_current = False
         self._tts_export_available = False
+        self._actor_pack_source = None
+        self._actor_pack_kind = None
+        self._actor_pack_local_id = None
+        self._actor_pack_revision = None
+        self._actor_pack_eligible = False
+        self._actor_pack_reason = None
         self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
@@ -291,12 +380,48 @@ class PersonasInspectorPane(Vertical):
         self._is_unsaved = is_unsaved
         self._apply_action_state()
 
+    def set_buddy_status(
+        self,
+        *,
+        source: str | None,
+        persona_id: str | None,
+        enabled: bool,
+        open: bool,
+    ) -> None:
+        """Apply the screen-owned Buddy selection and visibility snapshot."""
+
+        self._buddy_owner_source = source
+        self._buddy_owner_persona_id = persona_id
+        self._buddy_enabled = enabled is True
+        self._buddy_open = open is True
+        self._apply_action_state()
+
     def set_tts_export_available(self, available: bool) -> None:
         """Expose explicit inclusion only when the selected card has a profile."""
 
         self._tts_export_available = bool(available)
         if not self._tts_export_available:
             self.query_one("#personas-export-include-tts", Checkbox).value = False
+        self._apply_action_state()
+
+    def set_actor_pack_export_state(
+        self,
+        *,
+        source: str,
+        actor_kind: str,
+        local_actor_id: str,
+        actor_revision: int,
+        eligible: bool,
+        reason: str | None = None,
+    ) -> None:
+        """Apply the screen-owned Actor Pack export eligibility snapshot."""
+
+        self._actor_pack_source = source
+        self._actor_pack_kind = actor_kind
+        self._actor_pack_local_id = local_actor_id
+        self._actor_pack_revision = actor_revision
+        self._actor_pack_eligible = eligible is True
+        self._actor_pack_reason = reason
         self._apply_action_state()
 
     @property
@@ -516,12 +641,10 @@ class PersonasInspectorPane(Vertical):
         # CTA. When a profile IS assigned, the enabled/disabled-with-reason
         # gating below (and the F-041 legibility CSS) covers the shown case.
         tts_checkbox.display = (
-            (kind is None or kind == "character") and self._tts_export_available
-        )
+            kind is None or kind == "character"
+        ) and self._tts_export_available
         tts_checkbox.disabled = not (
-            export_enabled
-            and kind == "character"
-            and self._tts_export_available
+            export_enabled and kind == "character" and self._tts_export_available
         )
         tts_checkbox.tooltip = (
             export_tooltip
@@ -561,15 +684,39 @@ class PersonasInspectorPane(Vertical):
         json_button.display = export_json_applies
         json_button.disabled = (not export_enabled) and marked == 0
         json_button.tooltip = (
-            f"Export the {marked} marked items as JSON."
-            if marked
-            else export_tooltip
+            f"Export the {marked} marked items as JSON." if marked else export_tooltip
         )
         png_button = self.query_one("#personas-export-png", Button)
         png_button.display = export_png_applies
         png_button.disabled = marked > 0 or not (export_enabled and kind == "character")
-        png_button.tooltip = (
-            "Bulk export is JSON only." if marked else export_tooltip
+        png_button.tooltip = "Bulk export is JSON only." if marked else export_tooltip
+        actor_pack_button = self.query_one("#personas-export-actor-pack", Button)
+        actor_pack_applies = selected and kind in {"character", "persona"}
+        actor_pack_enabled = bool(
+            actor_pack_applies
+            and not unsaved
+            and marked == 0
+            and self._actor_pack_eligible
+            and self._actor_pack_source == "local"
+            and self._actor_pack_kind == kind
+            and self._actor_pack_local_id
+            and type(self._actor_pack_revision) is int
+            and self._actor_pack_revision >= 1
+        )
+        actor_pack_button.display = actor_pack_applies
+        actor_pack_button.disabled = not actor_pack_enabled
+        actor_pack_button.tooltip = (
+            None
+            if actor_pack_enabled
+            else (
+                _UNSAVED_TOOLTIP
+                if unsaved
+                else (
+                    "Select one item to export."
+                    if marked
+                    else self._actor_pack_reason or _NO_SELECTION_EXPORT_TOOLTIP
+                )
+            )
         )
         delete_button = self.query_one("#personas-delete", Button)
         delete_button.disabled = (not selected) and marked == 0
@@ -577,6 +724,120 @@ class PersonasInspectorPane(Vertical):
             f"Delete the {marked} marked items."
             if marked
             else (None if selected else _NO_SELECTION_DELETE_TOOLTIP)
+        )
+
+        buddy_applies = selected and kind == "persona"
+        buddy_eligible = (
+            buddy_applies
+            and not unsaved
+            and self._buddy_profile_current
+            and self._buddy_source == "local"
+            and bool(self._buddy_persona_id)
+            and type(self._buddy_revision) is int
+            and self._buddy_revision >= 1
+            and self._buddy_active
+        )
+        if self._buddy_source == "server":
+            buddy_tooltip = "Save a local copy first"
+        elif unsaved:
+            buddy_tooltip = _UNSAVED_TOOLTIP
+        elif not self._buddy_profile_current:
+            buddy_tooltip = "Persona details are unavailable. Refresh and try again."
+        elif not self._buddy_active:
+            buddy_tooltip = "Activate this Persona first."
+        else:
+            buddy_tooltip = "Select a saved local Persona."
+        use_button = self.query_one("#personas-buddy-use", Button)
+        use_button.display = buddy_applies
+        use_button.disabled = not buddy_eligible
+        use_button.tooltip = None if buddy_eligible else buddy_tooltip
+        owner = bool(
+            buddy_eligible
+            and self._buddy_owner_source == "local"
+            and self._buddy_owner_persona_id == self._buddy_persona_id
+        )
+        owner_tooltip = "Select the Persona currently used by Buddy"
+        if not buddy_eligible:
+            state = {
+                "personas-buddy-show": (False, buddy_tooltip),
+                "personas-buddy-close": (False, buddy_tooltip),
+                "personas-buddy-disable": (False, buddy_tooltip),
+            }
+        elif not owner:
+            state = {
+                "personas-buddy-show": (False, owner_tooltip),
+                "personas-buddy-close": (False, owner_tooltip),
+                "personas-buddy-disable": (False, owner_tooltip),
+            }
+        elif not self._buddy_enabled:
+            disabled_tooltip = "Buddy is disabled. Use for Buddy to enable it."
+            state = {
+                "personas-buddy-show": (False, disabled_tooltip),
+                "personas-buddy-close": (False, disabled_tooltip),
+                "personas-buddy-disable": (False, "Buddy is already disabled."),
+            }
+        elif self._buddy_open:
+            state = {
+                "personas-buddy-show": (False, "Buddy is already open."),
+                "personas-buddy-close": (True, None),
+                "personas-buddy-disable": (True, None),
+            }
+        else:
+            state = {
+                "personas-buddy-show": (True, None),
+                "personas-buddy-close": (False, "Buddy is already closed."),
+                "personas-buddy-disable": (True, None),
+            }
+        for button_id, (enabled, tooltip) in state.items():
+            button = self.query_one(f"#{button_id}", Button)
+            button.display = buddy_applies
+            button.disabled = not enabled
+            button.tooltip = tooltip
+
+    @on(Button.Pressed, ".persona-buddy-action")
+    def _buddy_action_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        actions = {
+            "personas-buddy-use": "use",
+            "personas-buddy-show": "show",
+            "personas-buddy-close": "close",
+            "personas-buddy-disable": "disable",
+        }
+        action = actions.get(str(event.button.id or ""))
+        if (
+            action is None
+            or self._buddy_source not in {"local", "server"}
+            or not self._buddy_persona_id
+            or type(self._buddy_revision) is not int
+        ):
+            return
+        self.post_message(
+            PersonaBuddyActionRequested(
+                action=action,
+                source=self._buddy_source,
+                persona_id=self._buddy_persona_id,
+                revision=self._buddy_revision,
+            )
+        )
+
+    @on(Button.Pressed, "#personas-export-actor-pack")
+    def _actor_pack_export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if (
+            event.button.disabled
+            or self._actor_pack_kind not in {"character", "persona"}
+            or self._actor_pack_source not in {"local", "server"}
+            or not self._actor_pack_local_id
+            or type(self._actor_pack_revision) is not int
+        ):
+            return
+        self.post_message(
+            ActorPackExportRequested(
+                actor_kind=self._actor_pack_kind,
+                source=self._actor_pack_source,
+                local_actor_id=self._actor_pack_local_id,
+                actor_revision=self._actor_pack_revision,
+            )
         )
 
     def set_avatar_thumbnail(self, renderable: object | None) -> None:
@@ -601,7 +862,27 @@ class PersonasInspectorPane(Vertical):
             return
         from textual.widget import Widget as _W
 
-        holder.mount(renderable if isinstance(renderable, _W) else Static(renderable))
+        if isinstance(renderable, _W):
+            holder.mount(renderable)
+            return
+        from ...Utils.mosaic_render import explicit_cell_size
+
+        # Explicit cell size from the baked renderable's grid: the Static
+        # default width: 100% folds a full-width mosaic inside any narrower
+        # (or padded) box, painting black continuation stripes (task-3793);
+        # an explicit size degrades a future width mismatch to a crop.
+        thumb = Static(renderable)
+        grid_size = explicit_cell_size(renderable)
+        if grid_size is not None:
+            thumb.styles.width, thumb.styles.height = grid_size
+        else:
+            # Per explicit_cell_size's documented contract, fall back to the
+            # box dimensions when the grid can't be read (e.g. rich_pixels
+            # Pixels, which is baked for the box anyway) - same fallback as
+            # ChatScreen._build_character_avatar_widget.
+            thumb.styles.width = _THUMB_BOX_COLS
+            thumb.styles.height = _THUMB_BOX_LINES
+        holder.mount(thumb)
 
     @on(ListView.Selected, "#personas-conversations-list")
     def _conversation_selected(self, event: ListView.Selected) -> None:

@@ -125,6 +125,192 @@ def test_standalone_json_is_deterministic_and_contains_only_wire_fields() -> Non
         assert forbidden not in encoded.casefold()
 
 
+def test_private_reference_storage_does_not_change_ordinary_wire_v1() -> None:
+    portability = _portability_module()
+    portable = portability.PortableTTSProfile(
+        profile_id=UUID("00000000-0000-4000-8000-000000000000"),
+        draft=TTSProfileDraft(
+            display_name="Character voice",
+            provider_id="audio_cpp",
+            model_id="supertonic-3",
+            voice_id="M1",
+            response_format="wav",
+            speed=1.0,
+            options={},
+        ),
+    )
+
+    payload = portability.portable_profile_payload(portable)
+    encoded = portability.portable_profile_json(portable)
+
+    assert tuple(payload) == (
+        "schema_version",
+        "profile_id",
+        "name",
+        "provider_id",
+        "model_id",
+        "voice_id",
+        "response_format",
+        "speed",
+        "options",
+    )
+    assert payload["schema_version"] == 1
+    for forbidden in (
+        "reference",
+        "reference_id",
+        "reference_text",
+        "wav_bytes",
+        "sha256",
+        "source_path",
+    ):
+        assert forbidden not in payload
+        assert forbidden not in encoded
+
+
+def test_reference_free_ordinary_export_remains_byte_exact_wire_v1() -> None:
+    portability = _portability_module()
+    portable = portability.PortableTTSProfile(
+        profile_id=UUID("00000000-0000-4000-8000-000000000000"),
+        draft=TTSProfileDraft(
+            display_name="Character voice",
+            provider_id="audio_cpp",
+            model_id="supertonic-3",
+            voice_id="M1",
+            response_format="wav",
+            speed=1.0,
+            options={},
+        ),
+    )
+
+    assert portability.portable_profile_json(portable) == json.dumps(
+        _valid_payload(),
+        indent=2,
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def _valid_v2_payload(**overrides: object) -> dict[str, object]:
+    payload = {
+        **_valid_payload(),
+        "schema_version": 2,
+        "reference": {"status": "omitted"},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_reference_bearing_ordinary_export_is_exact_sanitized_v2() -> None:
+    portability = _portability_module()
+    portable = portability.PortableTTSProfile(
+        profile_id=UUID("00000000-0000-4000-8000-000000000000"),
+        draft=TTSProfileDraft(
+            display_name="Character voice",
+            provider_id="audio_cpp",
+            model_id="supertonic-3",
+            voice_id="M1",
+            response_format="wav",
+            speed=1.0,
+            options={},
+        ),
+    )
+
+    payload = portability.portable_profile_payload(portable, reference_present=True)
+
+    assert payload == _valid_v2_payload()
+    assert tuple(payload) == (*tuple(_valid_payload()), "reference")
+    encoded = portability.portable_profile_json(portable, reference_present=True)
+    assert "sha256" not in encoded
+    assert "recipe" not in encoded
+    assert "reference_id" not in encoded
+    assert "private-reference-bytes" not in encoded
+    assert "Private transcript" not in encoded
+
+
+def test_v2_omission_decode_is_skip_without_profile() -> None:
+    portability = _portability_module()
+
+    result = portability.decode_portable_profile(_valid_v2_payload())
+
+    assert result.status is portability.PortableProfileDecodeStatus.REFERENCE_OMITTED
+    assert result.profile is None
+    assert result.warning_code == "reference_omitted"
+
+
+def test_sanitized_v2_remains_unsupported_to_the_frozen_v1_reader_contract() -> None:
+    """An old reader must skip the new omission wire instead of importing it."""
+
+    payload = _valid_v2_payload()
+    legacy_wire_fields = frozenset(_valid_payload())
+
+    legacy_status = (
+        "valid"
+        if payload.get("schema_version") == 1
+        and frozenset(payload) == legacy_wire_fields
+        else "unsupported_version"
+    )
+
+    assert legacy_status == "unsupported_version"
+
+
+@pytest.mark.parametrize(
+    "profile_id",
+    [
+        "{00000000-0000-4000-8000-000000000000}",
+        "A0000000-0000-4000-8000-000000000000",
+    ],
+)
+def test_v2_rejects_noncanonical_profile_id_text(profile_id: str) -> None:
+    portability = _portability_module()
+
+    result = portability.decode_portable_profile(
+        _valid_v2_payload(profile_id=profile_id)
+    )
+
+    assert result.status is portability.PortableProfileDecodeStatus.INVALID
+    assert result.profile is None
+
+
+@pytest.mark.parametrize("missing_field", tuple(_valid_v2_payload()))
+def test_v2_rejects_every_missing_field(missing_field: str) -> None:
+    portability = _portability_module()
+    payload = _valid_v2_payload()
+    del payload[missing_field]
+
+    result = portability.decode_portable_profile(payload)
+
+    assert result.status is portability.PortableProfileDecodeStatus.INVALID
+    assert result.profile is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {**_valid_v2_payload(), "extra": True},
+        _valid_v2_payload(schema_version=True),
+        _valid_v2_payload(profile_id=1),
+        _valid_v2_payload(name="\u200einvisible"),
+        _valid_v2_payload(provider_id="future_tts"),
+        _valid_v2_payload(model_id="x" * 257),
+        _valid_v2_payload(voice_id=object()),
+        _valid_v2_payload(response_format="mp3"),
+        _valid_v2_payload(speed=1.01),
+        _valid_v2_payload(options={"secret": True}),
+        _valid_v2_payload(reference=None),
+        _valid_v2_payload(reference={"status": 1}),
+        _valid_v2_payload(reference={"status": "present"}),
+        _valid_v2_payload(reference={"status": "omitted", "extra": True}),
+    ],
+)
+def test_v2_rejects_every_extra_or_malformed_field(payload: dict[str, object]) -> None:
+    portability = _portability_module()
+
+    result = portability.decode_portable_profile(payload)
+
+    assert result.status is portability.PortableProfileDecodeStatus.INVALID
+    assert result.profile is None
+
+
 def test_valid_payload_decodes_to_an_exact_profile_selection() -> None:
     portability = _portability_module()
 
@@ -199,7 +385,7 @@ def test_portable_profile_value_rejects_hostile_provider() -> None:
 @pytest.mark.parametrize(
     ("overrides", "warning_code"),
     [
-        ({"schema_version": 2}, "unsupported_version"),
+        ({"schema_version": 3}, "unsupported_version"),
         ({"provider_id": "future_tts"}, "unsupported_provider"),
     ],
 )

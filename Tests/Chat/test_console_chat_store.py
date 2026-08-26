@@ -1,20 +1,1035 @@
-import pytest
+import json
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
 
+import pytest
+
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleWorkspaceContext,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicyDefaults,
+    ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    resolve_console_message_presentation,
+)
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.TTS.profile_types import CharacterRef
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
+from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.tldw_api import SyncV2Envelope
+from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
+
+
+def _pristine_defaults(*, model: str = "default-model") -> ConsoleSessionSettings:
+    return ConsoleSessionSettings(provider="openai", model=model)
+
+
+def _library_authority(
+    attempt_id: str,
+    *,
+    auto_retrieve: ConsoleAutoRetrieve = ConsoleAutoRetrieve.AUTOMATIC,
+    assistant_access: ConsoleAssistantLibraryAccess = (
+        ConsoleAssistantLibraryAccess.BLOCKED
+    ),
+) -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=auto_retrieve,
+            assistant_access=assistant_access,
+            policy_revision=1,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "model-a", None),
+        attempt_id=attempt_id,
+    )
+
+
+def _begin_disclosed_library_attempt(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    attempt_id: str = "attempt-active",
+    content: str = "",
+) -> tuple[ConsoleChatMessage, ConsoleResolvedDestination]:
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    baseline = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority("attempt-baseline"),
+        local,
+        baseline.id,
+    )
+    store.append_stream_chunk(baseline.id, "baseline")
+    store.mark_message_complete(baseline.id)
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content=content,
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority(attempt_id),
+        external,
+        assistant.id,
+    )
+    return assistant, external
+
+
+def _pristine_session(
+    store: ConsoleChatStore,
+    defaults: ConsoleSessionSettings,
+    **kwargs,
+) -> ConsoleChatSession:
+    return store.ensure_session(
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+        **kwargs,
+    )
+
+
+def test_create_session_rejects_mismatched_canonical_provenance():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+
+    with pytest.raises(ValueError, match="canonical baseline"):
+        store.create_session(
+            settings=defaults,
+            canonical_settings_baseline=replace(defaults, model="not-the-snapshot"),
+        )
+
+    assert store.sessions() == []
+
+
+def test_initial_chat_one_is_pristine_until_the_user_types():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
+
+    store.set_session_draft(session.id, "typed work")
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_default_library_policy_does_not_dirty_pristine_tab_but_explicit_edit_does():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore(
+        library_policy_defaults=ConsoleLibraryPolicyDefaults(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        )
+    )
+    session = _pristine_session(store, defaults)
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
+
+    store.stage_session_library_policy(
+        session.id,
+        ConsoleLibraryPolicyCandidate(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        ),
+    )
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_message_completed_subscription_emits_first_live_completion_once():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    unsubscribe = store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+
+    store.append_stream_chunk(message.id, "Welcome back.")
+    completed = store.mark_message_complete(message.id)
+
+    assert observed == [(session.id, completed.id)]
+    assert type(observed[0]) is tuple
+    unsubscribe()
+
+
+def test_message_completed_subscription_ignores_complete_append_and_unsubscribe():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    unsubscribe = store.subscribe_message_completed(observed.append)
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Existing greeting.",
+    )
+    unsubscribe()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(message.id, "New reply.")
+    store.mark_message_complete(message.id)
+
+    assert observed == []
+
+
+def test_message_completed_subscription_isolates_callback_failure_and_duplicate_terminalization():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+
+    def raising_callback(_token: tuple[str, str]) -> None:
+        raise RuntimeError("subscriber failed")
+
+    store.subscribe_message_completed(raising_callback)
+    store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(message.id, "New reply.")
+
+    store.mark_message_complete(message.id)
+    with pytest.raises(ValueError):
+        store.mark_message_complete(message.id)
+
+    assert observed == [(session.id, message.id)]
+
+
+def test_message_completed_subscription_emits_each_successful_regeneration() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Original.",
+    )
+
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "First regeneration.")
+    store.finalize_variant_stream(message.id)
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "Second regeneration.")
+    store.finalize_variant_stream(message.id)
+
+    assert observed == [
+        (session.id, message.id),
+        (session.id, message.id),
+    ]
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    ["complete", "failed", "stopped", "variant_complete"],
+)
+def test_assistant_terminal_settlement_clears_runtime_library_disclosure(
+    terminal: str,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message, external = _begin_disclosed_library_attempt(
+        store,
+        session.id,
+        content="original" if terminal == "variant_complete" else "",
+    )
+    assert session.library_destination_runtime.disclosure is not None
+    assert session.library_destination_runtime.owner_attempt_id == "attempt-active"
+    assert session.library_destination_runtime.owner_message_id == message.id
+
+    if terminal == "variant_complete":
+        store.begin_variant_stream(message.id)
+        store.append_stream_chunk(message.id, "replacement")
+        store.finalize_variant_stream(message.id)
+    else:
+        store.append_stream_chunk(message.id, "response")
+        getattr(store, f"mark_message_{terminal}")(message.id)
+
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
+    assert session.library_destination_runtime.owner_message_id is None
+    assert session.library_destination_runtime.resolved_destination == external
+    assert session.library_destination_runtime.last_resolved_identity == (
+        external.identity_key
+    )
+
+
+def test_completion_subscribers_observe_disclosure_already_settled() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message, _external = _begin_disclosed_library_attempt(store, session.id)
+    observed = []
+    store.subscribe_message_completed(
+        lambda _token: observed.append(session.library_destination_runtime.disclosure)
+    )
+    store.append_stream_chunk(message.id, "response")
+
+    store.mark_message_complete(message.id)
+
+    assert observed == [None]
+
+
+def test_older_completed_variant_cannot_settle_a_newer_attempt_disclosure() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    older = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="older answer",
+    )
+    active, _external = _begin_disclosed_library_attempt(store, session.id)
+    disclosure = session.library_destination_runtime.disclosure
+    assert disclosure is not None
+
+    store.add_variant(older.id, "older alternate")
+
+    assert session.library_destination_runtime.disclosure == disclosure
+    assert session.library_destination_runtime.owner_attempt_id == "attempt-active"
+    assert session.library_destination_runtime.owner_message_id == active.id
+
+
+def test_library_destination_settlement_requires_exact_attempt_and_message_owner() -> (
+    None
+):
+    store = ConsoleChatStore()
+    session = store.create_session()
+    active, _external = _begin_disclosed_library_attempt(store, session.id)
+    disclosure = session.library_destination_runtime.disclosure
+
+    wrong_attempt = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-older",
+        expected_message_id=active.id,
+    )
+    wrong_message = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id="older-message",
+    )
+
+    assert wrong_attempt.disclosure == disclosure
+    assert wrong_message.disclosure == disclosure
+    settled = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id=active.id,
+    )
+    assert settled.disclosure is None
+    assert settled.owner_attempt_id is None
+    assert settled.owner_message_id is None
+
+
+def test_older_attempt_cleanup_cannot_clear_replacement_destination_owner() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    older, _external = _begin_disclosed_library_attempt(store, session.id)
+    replacement = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    private = ConsoleResolvedDestination(
+        provider="custom",
+        model="model-b",
+        endpoint_identity="http://10.0.0.9:8080",
+        egress_class=ConsoleEgressClass.PRIVATE_NETWORK,
+    )
+    store.begin_session_library_destination_attempt(
+        session.id,
+        _library_authority("attempt-replacement"),
+        private,
+        replacement.id,
+    )
+
+    store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id=older.id,
+    )
+
+    runtime = session.library_destination_runtime
+    assert runtime.disclosure is not None
+    assert runtime.disclosure.resolved_destination == private
+    assert runtime.owner_attempt_id == "attempt-replacement"
+    assert runtime.owner_message_id == replacement.id
+
+
+def test_runtime_library_disclosure_is_isolated_across_session_navigation() -> None:
+    store = ConsoleChatStore()
+    session_a = store.create_session(title="Session A")
+    session_b = store.create_session(title="Session B")
+    message_a, _external_a = _begin_disclosed_library_attempt(
+        store,
+        session_a.id,
+        attempt_id="attempt-a",
+    )
+    message_b, _external_b = _begin_disclosed_library_attempt(
+        store,
+        session_b.id,
+        attempt_id="attempt-b",
+    )
+
+    store.switch_session(session_b.id)
+    store.switch_session(session_a.id)
+    assert session_a.library_destination_runtime.disclosure is not None
+    assert session_b.library_destination_runtime.disclosure is not None
+
+    store.append_stream_chunk(message_b.id, "response")
+    store.mark_message_complete(message_b.id)
+
+    assert store.active_session_id == session_a.id
+    assert session_a.library_destination_runtime.disclosure is not None
+    assert session_a.library_destination_runtime.owner_message_id == message_a.id
+    assert session_b.library_destination_runtime.disclosure is None
+
+
+def test_completion_generation_remains_monotonic_across_same_id_restore() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Original.",
+    )
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "Before restore.")
+    store.finalize_variant_stream(message.id)
+    before_restore = store.message_completion_generation(message.id)
+    restored_messages = store.messages_for_session(session.id)
+
+    store.restore_state(
+        sessions=[replace(session)],
+        messages_by_session={session.id: restored_messages},
+        active_session_id=session.id,
+    )
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "After restore.")
+    store.finalize_variant_stream(message.id)
+
+    assert store.message_completion_generation(message.id) > before_restore
+
+
+def test_message_completed_subscription_add_variant_emits_but_selection_does_not() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Original.",
+    )
+
+    store.add_variant(message.id, "Regenerated.")
+    store.select_variant(message.id, 0)
+
+    assert observed == [(session.id, message.id)]
+
+
+def test_message_completed_subscription_duplicate_variant_finalize_fails_closed() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Original.",
+    )
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "Regenerated.")
+    store.finalize_variant_stream(message.id)
+
+    with pytest.raises(ValueError, match="active variant stream"):
+        store.finalize_variant_stream(message.id)
+
+    assert observed == [(session.id, message.id)]
+
+
+def test_reply_speech_preference_disqualifies_initial_session_reuse():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    store.set_auto_speak(session.id, True)
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_typed_then_cleared_session_keeps_durable_work_marker():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    store.set_session_draft(session.id, "typed work")
+    store.set_session_draft(session.id, "")
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_pristine_session_rejects_orphan_message_ownership_index():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    message_id = "orphan-message-owned-by-pristine-session"
+    store._message_session_index[message_id] = session.id
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_pristine_session_rejects_owned_tree_node_outside_visible_message_list():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    hidden_message = ConsoleChatMessage(
+        id="hidden-owned-message",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="hidden work",
+    )
+    store._register_tree_node(session.id, hidden_message, parent_native_id=None)
+    assert store.messages_for_session(session.id) == []
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_pristine_session_does_not_assign_unattributed_message_cache_state():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    store._stream_chunks_by_message["unattributed-message"] = ["foreign chunk"]
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_pristine_session_allows_harmless_initialized_empty_cache_entries():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    store._tool_markers_by_session[session.id] = []
+    store._roleplay_system_projection_candidates[session.id] = ()
+    store._payload_revisions[session.id] = 1
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+@pytest.mark.parametrize(
+    "disqualify",
+    [
+        pytest.param(
+            lambda store, session: setattr(session, "title", "Chat 2"), id="title"
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "persisted_conversation_id", "conversation-1"
+            ),
+            id="persisted-conversation",
+        ),
+        pytest.param(
+            lambda store, session: store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="hello",
+                persist=False,
+            ),
+            id="message",
+        ),
+        pytest.param(
+            lambda store, session: store._nodes_by_session[session.id].update(
+                {"orphan": object()}
+            ),
+            id="off-path-tree-node",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "draft", "draft"), id="draft"
+        ),
+        pytest.param(
+            lambda store, session: session.pending_attachments.append(object()),
+            id="attachment",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "one_shot_prefill", "prefill"),
+            id="one-shot-prefill",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session,
+                "settings",
+                replace(session.settings, pinned_prefill="Always:"),
+            ),
+            id="pinned-prefill",
+        ),
+        pytest.param(
+            lambda store, session: session.rag_scope_holder.set(
+                RagScope(
+                    items=(ScopeItem("media", "m1"),),
+                    updated_at="2026-01-01T00:00:00Z",
+                )
+            ),
+            id="rag-scope",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session,
+                "context_policy_overrides",
+                ConsoleContextPolicyOverrides(summary_max_tokens=256),
+            ),
+            id="context-overrides",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "context_policy_error", "bad"),
+            id="context-error",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "runtime_backend", "server"),
+            id="runtime-backend",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "assistant_kind", "character"),
+            id="assistant-kind",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "assistant_id", "7"),
+            id="assistant-id",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "assistant_authority_id", "authority"
+            ),
+            id="assistant-authority",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "character_id", 7),
+            id="character-id",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "character_name", "Alba"),
+            id="character-name",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "user_display_name_override", "Captain"
+            ),
+            id="user-name-override",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "character_system_template", "Stay in character."
+            ),
+            id="character-template",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "identity_revision", 1),
+            id="identity-revision",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "ephemeral", True),
+            id="ephemeral",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "settings", _pristine_defaults(model="changed-model")
+            ),
+            id="altered-settings",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "settings", None),
+            id="missing-settings",
+        ),
+        pytest.param(
+            lambda store, session: session.todo_store.create(content="work"),
+            id="todo-work",
+        ),
+        pytest.param(
+            lambda store, session: store._tool_markers_by_session.update(
+                {session.id: [(None, object())]}
+            ),
+            id="tool-state",
+        ),
+        pytest.param(
+            lambda store, session: store._context_summary_by_session.update(
+                {session.id: ("summary", None)}
+            ),
+            id="context-summary",
+        ),
+        pytest.param(
+            lambda store, session: store._roleplay_system_projection_candidates.update(
+                {session.id: ("prompt",)}
+            ),
+            id="roleplay-work-state",
+        ),
+        pytest.param(
+            lambda store, session: store._conversation_context_epochs.update(
+                {session.id: 1}
+            ),
+            id="provider-context-work-state",
+        ),
+    ],
+)
+def test_pristine_session_rejects_each_work_or_identity_disqualifier(disqualify):
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    disqualify(store, session)
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_pristine_session_predicate_returns_false_for_missing_session():
+    store = ConsoleChatStore()
+
+    assert not store.is_pristine_session(
+        "missing", expected_settings=_pristine_defaults()
+    )
+
+
+def test_refresh_pristine_session_settings_preserves_live_object_identity():
+    prior = _pristine_defaults(model="stale-model")
+    current = _pristine_defaults(model="current-model")
+    store = ConsoleChatStore()
+    session = _pristine_session(store, prior)
+    updated_at_before = session.updated_at
+
+    refreshed = store.refresh_pristine_session_settings(
+        session.id,
+        prior_canonical_settings=prior,
+        current_canonical_settings=current,
+    )
+
+    assert refreshed is session
+    assert store.sessions()[0] is session
+    assert session.settings is current
+    assert session.canonical_settings_baseline is current
+    assert session.updated_at != updated_at_before
+
+
+@pytest.mark.parametrize(
+    "prior_change,current_change",
+    [
+        pytest.param({"source": "user"}, {}, id="prior-not-derived"),
+        pytest.param({}, {"source": "user"}, id="current-not-derived"),
+        pytest.param({}, {"system_prompt": "custom"}, id="current-system-prompt"),
+        pytest.param({}, {"character_label": "Alba"}, id="current-character-label"),
+        pytest.param({}, {"pinned_prefill": "Always:"}, id="current-prefill"),
+    ],
+)
+def test_refresh_pristine_session_settings_rejects_nondefault_baselines(
+    prior_change,
+    current_change,
+):
+    canonical_prior = _pristine_defaults(model="stale-model")
+    prior = replace(canonical_prior, **prior_change)
+    current = replace(
+        _pristine_defaults(model="current-model"),
+        **current_change,
+    )
+    store = ConsoleChatStore()
+    session = _pristine_session(store, prior)
+    before = replace(session)
+
+    with pytest.raises(ValueError, match="derived defaults"):
+        store.refresh_pristine_session_settings(
+            session.id,
+            prior_canonical_settings=prior,
+            current_canonical_settings=current,
+        )
+
+    assert store.sessions()[0] is session
+    assert session == before
+
+
+def test_refresh_pristine_session_settings_revalidation_failure_is_nonmutating(
+    monkeypatch,
+):
+    prior = _pristine_defaults(model="stale-model")
+    current = _pristine_defaults(model="current-model")
+    store = ConsoleChatStore()
+    session = _pristine_session(store, prior)
+    before = replace(session)
+    monkeypatch.setattr(store, "is_pristine_session", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(ValueError, match="pristine"):
+        store.refresh_pristine_session_settings(
+            session.id,
+            prior_canonical_settings=prior,
+            current_canonical_settings=current,
+        )
+
+    assert store.sessions()[0] is session
+    assert session == before
+
+
+def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomically():
+    defaults = _pristine_defaults()
+    roleplay_settings = replace(
+        defaults,
+        system_prompt="You are Alba.",
+        character_label="Alba",
+    )
+    store = ConsoleChatStore()
+    first = store.create_session(
+        title="Other", workspace_id="workspace-before", settings=defaults
+    )
+    target = store.create_session(
+        title="Chat 1",
+        workspace_id="workspace-target",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    order_before = [session.id for session in store.sessions()]
+    updated_at_before = target.updated_at
+    payload_revision_before = store.payload_revision(target.id)
+    identity_revision_before = target.identity_revision
+
+    updated = store.repurpose_pristine_session(
+        target.id,
+        canonical_settings=defaults,
+        trusted_system_prompt="You are Alba.",
+        title="Chat with Alba",
+        settings=roleplay_settings,
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+        character_name="Alba",
+    )
+
+    assert updated is target
+    assert store.sessions()[1] is target
+    assert updated.id == target.id
+    assert updated.workspace_id == "workspace-target"
+    assert [session.id for session in store.sessions()] == order_before
+    assert store.sessions()[0] is first
+    assert updated.title == "Chat with Alba"
+    assert updated.settings == roleplay_settings
+    assert updated.runtime_backend == "local"
+    assert updated.assistant_kind == "character"
+    assert updated.assistant_id == "7"
+    assert updated.assistant_authority_id == "local-authority"
+    assert updated.character_id == 7
+    assert updated.character_name == "Alba"
+    assert updated.persisted_conversation_id is None
+    assert updated.canonical_settings_baseline is None
+    assert updated.updated_at != updated_at_before
+    assert updated.identity_revision == identity_revision_before + 1
+    assert store.payload_revision(updated.id) == payload_revision_before + 1
+    presentation = store.presentation_context(updated.id, "User")
+    assert presentation.character_name == "Alba"
+    assert presentation.assistant_kind == "character"
+    assert presentation.revision == updated.identity_revision
+
+
+@pytest.mark.parametrize(
+    "system_template,greeting_template,expected_identity_revision,expected_payload_revision",
+    [
+        pytest.param("", "", 1, 1, id="identity-only"),
+        pytest.param("Stay {{char}}.", "", 2, 2, id="template"),
+        pytest.param("Stay {{char}}.", "Hello.", 2, 3, id="template-and-greeting"),
+    ],
+)
+def test_repurpose_and_seed_revision_contracts(
+    system_template,
+    greeting_template,
+    expected_identity_revision,
+    expected_payload_revision,
+):
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    store.repurpose_pristine_session(
+        session.id,
+        canonical_settings=defaults,
+        trusted_system_prompt="You are Alba.",
+        title="Chat with Alba",
+        settings=replace(
+            defaults,
+            system_prompt="You are Alba.",
+            character_label="Alba",
+        ),
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+        character_name="Alba",
+    )
+    store.seed_character_roleplay(
+        session.id,
+        system_template=system_template,
+        greeting_template=greeting_template,
+        global_default="User",
+    )
+
+    assert session.identity_revision == expected_identity_revision
+    assert store.payload_revision(session.id) == expected_payload_revision
+    assert store.presentation_context(session.id, "User").revision == (
+        expected_identity_revision
+    )
+    assert len(store.messages_for_session(session.id)) == int(bool(greeting_template))
+
+
+def test_repurpose_pristine_session_revalidation_failure_is_nonmutating(monkeypatch):
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    before = replace(session)
+    payload_revision_before = store.payload_revision(session.id)
+    payload_revisions_before = dict(store._payload_revisions)
+    monkeypatch.setattr(store, "is_pristine_session", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(ValueError, match="pristine"):
+        store.repurpose_pristine_session(
+            session.id,
+            canonical_settings=defaults,
+            trusted_system_prompt="You are Alba.",
+            title="Chat with Alba",
+            settings=replace(
+                defaults,
+                system_prompt="You are Alba.",
+                character_label="Alba",
+            ),
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="7",
+            assistant_authority_id="local-authority",
+            character_id=7,
+            character_name="Alba",
+        )
+
+    assert store.sessions() == [before]
+    assert store.sessions()[0] is session
+    assert session == before
+    assert store.payload_revision(session.id) == payload_revision_before
+    assert store._payload_revisions == payload_revisions_before
+
+
+@pytest.mark.parametrize(
+    "settings_change",
+    [
+        pytest.param({"provider": "anthropic"}, id="provider"),
+        pytest.param({"model": "different-model"}, id="model"),
+        pytest.param({"source": "user"}, id="source"),
+        pytest.param({"temperature": 0.1}, id="temperature"),
+        pytest.param({"pinned_prefill": "Always:"}, id="pinned-prefill"),
+        pytest.param({"character_label": "Not Alba"}, id="character-label"),
+        pytest.param({"system_prompt": "Arbitrary prompt"}, id="system-prompt"),
+    ],
+)
+def test_repurpose_rejects_noncanonical_roleplay_settings_without_mutation(
+    settings_change,
+):
+    defaults = _pristine_defaults()
+    trusted_prompt = "You are Alba."
+    valid_settings = replace(
+        defaults,
+        system_prompt=trusted_prompt,
+        character_label="Alba",
+    )
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    before = replace(session)
+    payload_revision_before = store.payload_revision(session.id)
+    payload_revisions_before = dict(store._payload_revisions)
+
+    with pytest.raises(ValueError):
+        store.repurpose_pristine_session(
+            session.id,
+            canonical_settings=defaults,
+            trusted_system_prompt=trusted_prompt,
+            title="Chat with Alba",
+            settings=replace(valid_settings, **settings_change),
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="7",
+            assistant_authority_id="local-authority",
+            character_id=7,
+            character_name="Alba",
+        )
+
+    assert store.sessions() == [before]
+    assert store.sessions()[0] is session
+    assert session == before
+    assert store.payload_revision(session.id) == payload_revision_before
+    assert store._payload_revisions == payload_revisions_before
+
+
+def test_repurpose_rejects_mismatched_roleplay_title_without_mutation():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    before = replace(session)
+
+    with pytest.raises(ValueError):
+        store.repurpose_pristine_session(
+            session.id,
+            canonical_settings=defaults,
+            trusted_system_prompt="You are Alba.",
+            title="Alba roleplay",
+            settings=replace(
+                defaults,
+                system_prompt="You are Alba.",
+                character_label="Alba",
+            ),
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="7",
+            assistant_authority_id="local-authority",
+            character_id=7,
+            character_name="Alba",
+        )
+
+    assert store.sessions() == [before]
 
 
 def test_session_character_ref_projects_complete_local_and_server_identities():
@@ -594,12 +1609,44 @@ class FakePersistence:
         self.updated_messages = []
         self.updated_system_prompts = []
         self.updated_pinned_prefills = []
+        self.roleplay_updates = []
+        self.speech_updates = []
+        self.conversation_version = 1
+        self.speech_update_result = True
+        self.restored_speech_preferences = None
         self.last_create_kwargs = None
 
     def create_conversation(self, **kwargs):
         self.created_conversations.append(kwargs)
         self.last_create_kwargs = kwargs
         return "conv-1"
+
+    def promote_console_conversation_bundle(
+        self,
+        *,
+        conversation_id,
+        policy_candidate,
+        conversation_kwargs,
+        messages,
+        active_leaf_message_id,
+        context_summary=None,
+        context_summary_boundary_message_id=None,
+        contributions=(),
+    ):
+        if contributions:
+            raise RuntimeError("FakePersistence does not execute contributions")
+        self.created_conversations.append(
+            {"conversation_id": conversation_id, **dict(conversation_kwargs)}
+        )
+        self.last_create_kwargs = dict(conversation_kwargs)
+        for prepared in messages:
+            self.created_messages.append(dict(prepared["create_kwargs"]))
+        return ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy_candidate.auto_retrieve,
+            assistant_access=policy_candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
 
     def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
         self.updated_system_prompts.append(
@@ -610,6 +1657,40 @@ class FakePersistence:
     def update_conversation_pinned_prefill(self, *, conversation_id, pinned_prefill):
         self.updated_pinned_prefills.append((conversation_id, pinned_prefill))
         return True
+
+    def update_conversation_roleplay_context(
+        self,
+        *,
+        conversation_id,
+        user_name_override,
+        character_system_template,
+    ):
+        self.roleplay_updates.append(
+            {
+                "conversation_id": conversation_id,
+                "user_name_override": user_name_override,
+                "character_system_template": character_system_template,
+            }
+        )
+        return True
+
+    def get_conversation_version(self, conversation_id):
+        return self.conversation_version
+
+    def update_conversation_speech_preferences(
+        self, *, conversation_id, preferences, expected_version
+    ):
+        self.speech_updates.append(
+            {
+                "conversation_id": conversation_id,
+                "preferences": preferences,
+                "expected_version": expected_version,
+            }
+        )
+        return self.speech_update_result
+
+    def get_conversation_speech_preferences(self, conversation_id):
+        return self.restored_speech_preferences
 
     def create_message(
         self,
@@ -622,6 +1703,7 @@ class FakePersistence:
         message_id=None,
         parent_message_id=None,
         feedback=None,
+        metadata_json=None,
     ):
         kwargs = {
             "conversation_id": conversation_id,
@@ -632,6 +1714,7 @@ class FakePersistence:
             "message_id": message_id,
             "parent_message_id": parent_message_id,
             "feedback": feedback,
+            "metadata_json": metadata_json,
         }
         self.created_messages.append(kwargs)
         return f"msg-{len(self.created_messages)}"
@@ -647,6 +1730,7 @@ class FakePersistence:
         feedback=None,
         update_parent=False,
         update_feedback=False,
+        metadata_json=None,
     ):
         self.updated_messages.append(
             {
@@ -658,6 +1742,7 @@ class FakePersistence:
                 "feedback": feedback,
                 "update_parent": update_parent,
                 "update_feedback": update_feedback,
+                "metadata_json": metadata_json,
             }
         )
         return True
@@ -685,6 +1770,586 @@ class FailingChatSyncProducer:
         raise RuntimeError("sync unavailable")
 
 
+def test_new_session_defaults_reply_speech_off():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    session = ConsoleChatStore().ensure_session()
+
+    assert session.speech_preferences == ConsoleSpeechPreferences()
+
+
+def test_unsaved_session_stages_all_reply_speech_preferences():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    destination = "sha256:" + "a" * 64
+
+    assert store.set_auto_speak(session.id, True) == (session, True)
+    assert store.pause_auto_speak(session.id) == (session, True)
+    assert store.confirm_auto_speak_destination(session.id, destination) == (
+        session,
+        True,
+    )
+    assert session.speech_preferences == ConsoleSpeechPreferences(
+        auto_speak=True,
+        paused=True,
+        consent_destination=destination,
+    )
+    assert store.resume_auto_speak(session.id) == (session, True)
+    assert session.speech_preferences.paused is False
+
+
+def test_reply_speech_preference_epoch_advances_only_after_successful_mutation() -> None:
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+
+    assert store.speech_preference_epoch(session.id) == 0
+    store.set_auto_speak(session.id, True)
+    assert store.speech_preference_epoch(session.id) == 1
+    store.set_auto_speak(session.id, True)
+    assert store.speech_preference_epoch(session.id) == 1
+    store.confirm_auto_speak_destination(session.id, "sha256:" + "a" * 64)
+    assert store.speech_preference_epoch(session.id) == 2
+    store.set_auto_speak(session.id, False)
+    store.set_auto_speak(session.id, True)
+    assert store.speech_preference_epoch(session.id) == 4
+
+
+def test_active_session_epoch_advances_across_a_b_a_and_restore() -> None:
+    store = ConsoleChatStore()
+    first = store.create_session(title="A")
+    created_a = store.active_session_epoch()
+    second = store.create_session(title="B")
+    created_b = store.active_session_epoch()
+
+    store.switch_session(first.id)
+    switched_a = store.active_session_epoch()
+    store.switch_session(second.id)
+    switched_b = store.active_session_epoch()
+    store.switch_session(first.id)
+    returned_a = store.active_session_epoch()
+    store.restore_state(sessions=[replace(first)], active_session_id=first.id)
+    restored_a = store.active_session_epoch()
+
+    assert created_a < created_b < switched_a < switched_b < returned_a < restored_a
+
+
+def test_restore_state_replacement_advances_speech_epoch_monotonically() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    store.set_auto_speak(session.id, True)
+    before_restore = store.speech_preference_epoch(session.id)
+    restored = replace(session)
+
+    store.restore_state(sessions=[restored], active_session_id=session.id)
+    first_restore = store.speech_preference_epoch(session.id)
+    store.restore_state(sessions=[restored], active_session_id=session.id)
+    second_restore = store.speech_preference_epoch(session.id)
+
+    assert before_restore < first_restore < second_restore
+
+
+def test_failed_reply_speech_preference_write_does_not_advance_epoch() -> None:
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    persistence.update_conversation_speech_preferences = lambda **_kwargs: False
+
+    _session, persisted = store.set_auto_speak(session.id, True)
+
+    assert persisted is False
+    assert store.speech_preference_epoch(session.id) == 0
+
+
+def test_persisted_reply_speech_mutation_updates_memory_only_after_versioned_write():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    observed_before_write = []
+
+    def write(**kwargs):
+        observed_before_write.append(session.speech_preferences.auto_speak)
+        persistence.speech_updates.append(kwargs)
+        return True
+
+    persistence.update_conversation_speech_preferences = write
+
+    updated, persisted = store.set_auto_speak(session.id, True)
+
+    assert updated is session
+    assert persisted is True
+    assert observed_before_write == [False]
+    assert session.speech_preferences.auto_speak is True
+    assert persistence.speech_updates[0]["expected_version"] == 1
+
+
+@pytest.mark.parametrize("failure", [False, RuntimeError("write failed")])
+def test_persisted_reply_speech_conflict_or_failure_is_nonmutating(failure):
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    before = session.speech_preferences
+
+    def write(**kwargs):
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    persistence.update_conversation_speech_preferences = write
+
+    updated, persisted = store.set_auto_speak(session.id, True)
+
+    assert updated is session
+    assert persisted is False
+    assert session.speech_preferences is before
+
+
+def test_persisted_reply_speech_missing_version_is_nonmutating():
+    persistence = FakePersistence()
+    persistence.conversation_version = None
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    before = session.speech_preferences
+
+    updated, persisted = store.pause_auto_speak(session.id)
+
+    assert updated is session
+    assert persisted is False
+    assert session.speech_preferences is before
+    assert persistence.speech_updates == []
+
+
+def test_persisted_reply_speech_noop_reconciles_external_durable_change(tmp_path):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "speech-stale-noop.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        conversation_id = service.create_conversation(conversation_title="Saved")
+        store = ConsoleChatStore(persistence=service)
+        session = store.restore_persisted_session(
+            title="Saved",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+        )
+        assert session.speech_preferences == ConsoleSpeechPreferences()
+
+        assert service.update_conversation_speech_preferences(
+            conversation_id=conversation_id,
+            preferences=ConsoleSpeechPreferences(auto_speak=True),
+            expected_version=1,
+        )
+
+        updated, persisted = store.set_auto_speak(session.id, False)
+
+        assert updated is session
+        assert persisted is True
+        assert session.speech_preferences == ConsoleSpeechPreferences()
+        assert service.get_conversation_speech_preferences(
+            conversation_id
+        ) == ConsoleSpeechPreferences()
+        assert db.get_conversation_by_id(conversation_id)["version"] == 3
+    finally:
+        db.close_connection()
+
+
+def test_first_persist_includes_staged_reply_speech_preferences():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    store.set_auto_speak(session.id, True)
+
+    store.persist_session_if_needed(session.id)
+
+    assert persistence.created_conversations[0]["speech_preferences"] == (
+        ConsoleSpeechPreferences(auto_speak=True)
+    )
+
+
+def test_restore_persisted_session_round_trips_reply_speech_preferences():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    persistence = FakePersistence()
+    persistence.restored_speech_preferences = ConsoleSpeechPreferences(
+        auto_speak=True,
+        paused=True,
+        consent_destination="sha256:" + "b" * 64,
+    )
+    store = ConsoleChatStore(persistence=persistence)
+
+    session = store.restore_persisted_session(
+        title="Saved",
+        workspace_id=None,
+        persisted_conversation_id="conv-1",
+        all_nodes=[],
+    )
+
+    assert session.speech_preferences == persistence.restored_speech_preferences
+
+
+def test_real_persistence_round_trips_roleplay_and_reply_speech_metadata(tmp_path):
+    from tldw_chatbook.Chat.console_roleplay_metadata import (
+        parse_console_roleplay_context,
+    )
+
+    db = CharactersRAGDB(tmp_path / "speech-preferences.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session()
+        session.user_display_name_override = "Rowan"
+        store.set_auto_speak(session.id, True)
+        store.confirm_auto_speak_destination(session.id, "sha256:" + "c" * 64)
+
+        conversation_id = store.persist_session_if_needed(session.id)
+        record = db.get_conversation_by_id(conversation_id)
+        restored = ConsoleChatStore(persistence=service).restore_persisted_session(
+            title="Saved",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+        )
+
+        assert restored.speech_preferences == session.speech_preferences
+        assert parse_console_roleplay_context(record["metadata"]).user_name_override == (
+            "Rowan"
+        )
+    finally:
+        db.close_connection()
+
+
+def test_initial_reply_speech_is_inserted_at_version_one_with_sibling_metadata(
+    tmp_path,
+):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "speech-create-metadata.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        roleplay = {
+            "version": 1,
+            "user_name_override": "Rowan",
+        }
+
+        conversation_id = service.create_conversation(
+            conversation_title="Speech setup",
+            metadata={
+                "console_roleplay_context": roleplay,
+                "other": {"keep": True},
+            },
+            speech_preferences=ConsoleSpeechPreferences(auto_speak=True),
+        )
+
+        record = db.get_conversation_by_id(conversation_id)
+        metadata = json.loads(record["metadata"])
+        assert record["version"] == 1
+        assert metadata["console_roleplay_context"] == roleplay
+        assert metadata["other"] == {"keep": True}
+        assert metadata["console_speech"]["auto_speak"] is True
+        events = db.execute_query(
+            "SELECT operation, payload FROM sync_log "
+            "WHERE entity = 'conversations' AND entity_id = ?",
+            (conversation_id,),
+        ).fetchall()
+        assert len(events) == 1
+        assert events[0]["operation"] == "create"
+        assert json.loads(events[0]["payload"])["metadata"] == record["metadata"]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        pytest.param("{", id="malformed-json"),
+        pytest.param("[]", id="array-json"),
+        pytest.param('"scalar"', id="string-json"),
+        pytest.param("null", id="null-json"),
+        pytest.param('{"bad": NaN}', id="non-finite-json"),
+        pytest.param(["unsupported"], id="unsupported-type"),
+        pytest.param({"bad": {"not-json"}}, id="unserializable-mapping"),
+        pytest.param({"bad": float("nan")}, id="non-finite-mapping"),
+        pytest.param({1: "coerced-key"}, id="non-string-mapping-key"),
+    ],
+)
+@pytest.mark.parametrize("with_speech", [False, True])
+def test_create_conversation_rejects_non_object_metadata_before_db_add(
+    tmp_path,
+    monkeypatch,
+    metadata,
+    with_speech,
+):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(
+        tmp_path / f"speech-invalid-service-{with_speech}.db",
+        "speech-test",
+    )
+    try:
+        service = ChatPersistenceService(db)
+        add_calls = []
+        original_add = db.add_conversation
+
+        def recording_add(conversation_data):
+            add_calls.append(conversation_data)
+            return original_add(conversation_data)
+
+        monkeypatch.setattr(db, "add_conversation", recording_add)
+        before_rows = db.execute_query(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        before_events = db.execute_query(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0]
+        speech_preferences = (
+            ConsoleSpeechPreferences(auto_speak=True) if with_speech else None
+        )
+
+        with pytest.raises(ValueError, match="metadata.*JSON object"):
+            service.create_conversation(
+                conversation_title="Invalid metadata",
+                metadata=metadata,
+                speech_preferences=speech_preferences,
+            )
+
+        assert add_calls == []
+        assert (
+            db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == before_rows
+        )
+        assert (
+            db.execute_query(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+            ).fetchone()[0]
+            == before_events
+        )
+    finally:
+        db.close_connection()
+
+
+def test_service_metadata_rejection_is_nonmutating_in_caller_transaction(tmp_path):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "speech-invalid-service-outer.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        connection = db.get_connection()
+        before_rows = connection.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        before_events = connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0]
+        connection.execute("BEGIN")
+
+        with pytest.raises(ValueError, match="metadata.*JSON object"):
+            service.create_conversation(
+                conversation_title="Invalid metadata",
+                metadata="not-json",
+                speech_preferences=ConsoleSpeechPreferences(auto_speak=True),
+            )
+
+        connection.commit()
+        assert connection.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0] == before_rows
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0] == before_events
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        pytest.param("{", id="malformed-json"),
+        pytest.param("[]", id="array-json"),
+        pytest.param("1", id="number-json"),
+        pytest.param("null", id="null-json"),
+        pytest.param('{"bad": NaN}', id="non-finite-json"),
+        pytest.param({"unsupported": True}, id="mapping-type"),
+        pytest.param(["unsupported"], id="list-type"),
+        pytest.param(1, id="number-type"),
+    ],
+)
+def test_add_conversation_rejects_non_object_metadata_without_writes(
+    tmp_path,
+    metadata,
+):
+    db = CharactersRAGDB(tmp_path / "speech-invalid-db.db", "speech-test")
+    try:
+        before_rows = db.execute_query(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        before_events = db.execute_query(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0]
+
+        with pytest.raises(InputError, match="metadata.*JSON object"):
+            db.add_conversation({"title": "Invalid metadata", "metadata": metadata})
+
+        assert (
+            db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == before_rows
+        )
+        assert (
+            db.execute_query(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+            ).fetchone()[0]
+            == before_events
+        )
+    finally:
+        db.close_connection()
+
+
+def test_direct_metadata_rejection_is_nonmutating_in_caller_transaction(tmp_path):
+    db = CharactersRAGDB(tmp_path / "speech-invalid-db-outer.db", "speech-test")
+    try:
+        connection = db.get_connection()
+        before_rows = connection.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        before_events = connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0]
+        connection.execute("BEGIN")
+
+        with pytest.raises(InputError, match="metadata.*JSON object"):
+            db.add_conversation({"title": "Invalid metadata", "metadata": "[]"})
+
+        connection.commit()
+        assert connection.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0] == before_rows
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0] == before_events
+    finally:
+        db.close_connection()
+
+
+def test_add_conversation_accepts_object_metadata_in_one_create_event(tmp_path):
+    db = CharactersRAGDB(tmp_path / "speech-valid-db.db", "speech-test")
+    try:
+        expected = {"other": {"keep": True}}
+
+        conversation_id = db.add_conversation(
+            {
+                "title": "Valid metadata",
+                "metadata": json.dumps(expected),
+            }
+        )
+
+        record = db.get_conversation_by_id(conversation_id)
+        events = db.execute_query(
+            "SELECT operation, payload FROM sync_log "
+            "WHERE entity = 'conversations' AND entity_id = ?",
+            (conversation_id,),
+        ).fetchall()
+        assert record["version"] == 1
+        assert json.loads(record["metadata"]) == expected
+        assert len(events) == 1
+        assert events[0]["operation"] == "create"
+        assert json.loads(events[0]["payload"])["metadata"] == record["metadata"]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("caller_owned_transaction", [False, True])
+def test_initial_future_speech_metadata_failure_never_creates_a_row(
+    tmp_path,
+    caller_owned_transaction,
+):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(
+        tmp_path / f"speech-create-failure-{caller_owned_transaction}.db",
+        "speech-test",
+    )
+    try:
+        service = ChatPersistenceService(db)
+        before = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        connection = db.get_connection()
+        if caller_owned_transaction:
+            connection.execute("BEGIN")
+
+        with pytest.raises(ValueError, match="version 2"):
+            service.create_conversation(
+                conversation_title="Failed speech setup",
+                metadata={
+                    "console_speech": {
+                        "auto_speak": True,
+                        "paused": False,
+                        "consent_destination": None,
+                        "consent_version": 2,
+                    }
+                },
+                speech_preferences=ConsoleSpeechPreferences(auto_speak=True),
+            )
+
+        if caller_owned_transaction:
+            connection.commit()
+        after = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        assert after == before
+    finally:
+        db.close_connection()
+
+
+def test_future_speech_metadata_blocks_store_mutation_without_state_change(tmp_path):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "speech-future-version.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        conversation_id = service.create_conversation(conversation_title="Future")
+        future_metadata = {
+            "console_speech": {
+                "auto_speak": True,
+                "paused": False,
+                "consent_destination": None,
+                "consent_version": 2,
+                "future_flag": "keep",
+            }
+        }
+        assert db.update_conversation(
+            conversation_id,
+            {"metadata": json.dumps(future_metadata, sort_keys=True)},
+            expected_version=1,
+        )
+        before_record = db.get_conversation_by_id(conversation_id)
+        store = ConsoleChatStore(persistence=service)
+        session = store.restore_persisted_session(
+            title="Future",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+        )
+        before_preferences = session.speech_preferences
+
+        updated, persisted = store.set_auto_speak(session.id, True)
+
+        after_record = db.get_conversation_by_id(conversation_id)
+        assert updated is session
+        assert persisted is False
+        assert session.speech_preferences is before_preferences
+        assert after_record["version"] == before_record["version"]
+        assert json.loads(after_record["metadata"]) == future_metadata
+        assert service.get_conversation_speech_preferences(
+            conversation_id
+        ) == ConsoleSpeechPreferences()
+    finally:
+        db.close_connection()
+
+
 def test_store_can_persist_user_and_assistant_messages_through_adapter():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -701,6 +2366,42 @@ def test_store_can_persist_user_and_assistant_messages_through_adapter():
     assert persistence.created_messages[0]["content"] == "hello"
     assert persistence.created_messages[0]["image_data"] is None
     assert persistence.created_messages[0]["image_mime_type"] is None
+
+
+def test_durable_resume_starts_with_a_fresh_empty_todo_store():
+    """Session tasks are process-navigation state, not durable Chat data."""
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    live = store.ensure_session(title="Chat with tasks")
+    live.todo_store.create(content="private-task-record-one")
+    live.todo_store.create(content="private-task-record-deleted")
+    live.todo_store.create(content="private-task-record-three")
+    live.todo_store.update(task_id="2", expected_version=1, status="deleted")
+    assert live.todo_store.export_snapshot()["next_id"] == 4
+
+    conversation_id = store.persist_session_if_needed(live.id)
+
+    durable_kwargs = persistence.created_conversations[0]
+    assert persistence.last_create_kwargs == durable_kwargs
+    durable_projection = repr(durable_kwargs)
+    for forbidden in (
+        "todo_state",
+        "next_id",
+        "private-task-record-one",
+        "private-task-record-deleted",
+        "private-task-record-three",
+    ):
+        assert forbidden not in durable_projection
+
+    restored = store.restore_persisted_session(
+        title=live.title,
+        workspace_id=live.workspace_id,
+        persisted_conversation_id=conversation_id,
+        all_nodes=[],
+    )
+
+    assert restored.todo_store.list_after(None) == []
+    assert restored.todo_store.create(content="Fresh after restart")["id"] == "1"
 
 
 def test_persist_session_if_needed_passes_system_prompt_from_settings():
@@ -1043,7 +2744,9 @@ def test_set_session_system_prompt_normalizes_blank_to_none():
     ]
 
 
-def test_set_session_system_prompt_survives_persistence_failure():
+def test_set_session_system_prompt_survives_persistence_failure_without_log_leak(
+    caplog: pytest.LogCaptureFixture,
+):
     """A persistence error (e.g. the conversation was deleted, or a DB
     conflict) must not escape `set_session_system_prompt`, and the
     in-memory session keeps the applied value (this store's existing
@@ -1052,9 +2755,20 @@ def test_set_session_system_prompt_survives_persistence_failure():
     surface the failure honestly instead of assuming the change was saved.
     """
 
+    import logging
+
+    from loguru import logger as loguru_logger
+
+    system_sentinel = "TASK199_SYSTEM_BODY_MUST_NOT_LEAK"
+    fingerprint_sentinel = "TASK199_SYSTEM_FINGERPRINT_MUST_NOT_LEAK"
+    exception_sentinel = "TASK199_ADAPTER_EXCEPTION_MUST_NOT_LEAK"
+
     class RaisingPersistence(FakePersistence):
         def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
-            raise RuntimeError("conversation vanished")
+            raise RuntimeError(
+                f"{exception_sentinel}: system_prompt={system_prompt!r}; "
+                f"fingerprint={fingerprint_sentinel}"
+            )
 
     persistence = RaisingPersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -1064,11 +2778,42 @@ def test_set_session_system_prompt_survives_persistence_failure():
     )
     store.persist_session_if_needed(session.id)
 
-    updated, persisted = store.set_session_system_prompt(session.id, "New prompt")
+    captured_logs: list[object] = []
+    caplog.set_level(logging.ERROR, logger="task199.console_store")
+
+    def capture_loguru(message: object) -> None:
+        captured_logs.append(message)
+        logging.getLogger("task199.console_store").error(str(message))
+
+    sink_id = loguru_logger.add(capture_loguru, level="ERROR")
+    try:
+        updated, persisted = store.set_session_system_prompt(
+            session.id,
+            system_sentinel,
+        )
+    finally:
+        loguru_logger.remove(sink_id)
 
     assert persisted is False
-    assert updated.settings.system_prompt == "New prompt"
-    assert store.session_settings(session.id).system_prompt == "New prompt"
+    assert updated.settings.system_prompt == system_sentinel
+    assert store.session_settings(session.id).system_prompt == system_sentinel
+    assert captured_logs
+    rendered_logs = "\n".join(
+        rendered
+        for message in captured_logs
+        for rendered in (str(message), repr(message))
+    )
+    for sentinel in (
+        system_sentinel,
+        fingerprint_sentinel,
+        exception_sentinel,
+    ):
+        assert sentinel not in rendered_logs
+        assert sentinel not in caplog.text
+    assert "Traceback" not in rendered_logs
+    assert "operation=set_session_system_prompt" in rendered_logs
+    assert "context=durable_write" in rendered_logs
+    assert "exception_category=RuntimeError" in rendered_logs
 
 
 def test_set_session_pinned_prefill_updates_memory_and_writes_through():
@@ -2194,6 +3939,7 @@ def test_one_shot_prefill_is_per_session():
     store.set_session_one_shot_prefill(session_a.id, "only A")
     assert store.session_one_shot_prefill(session_b.id) is None
 
+
 def test_rename_session_persists_conversation_title_when_saved():
     """TASK-341: renaming a saved conversation's tab must rename the
     persisted conversation, not just the ephemeral tab label."""
@@ -2519,9 +4265,7 @@ def test_tool_markers_survive_the_next_message():
 
     assert len(markers()) == 2, "precondition: both markers present during the run"
 
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="follow-up"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="follow-up")
     assert markers() == ["⚙ read_file → data", "⚙ search → 3 hits"], (
         "the follow-up message erased the tool trace"
     )
@@ -2615,7 +4359,9 @@ def test_set_message_usage_on_a_streaming_message_defers_persistence():
         session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
     )
     store.append_stream_chunk(message.id, "hi")
-    usage = ProviderUsage(uncached_input=10, output=5, provider="openai", model="gpt-4o")
+    usage = ProviderUsage(
+        uncached_input=10, output=5, provider="openai", model="gpt-4o"
+    )
 
     updated = store.set_message_usage(message.id, usage)
 
@@ -2833,7 +4579,8 @@ def test_regenerating_again_after_a_stopped_regenerate_records_usage_normally():
     store.begin_variant_stream(message.id)
     store.mark_message_stopped(message.id)
     store.set_message_usage(
-        message.id, ProviderUsage(output=7, provider="anthropic", model="m", partial=True)
+        message.id,
+        ProviderUsage(output=7, provider="anthropic", model="m", partial=True),
     )
 
     # Second regenerate, this one succeeds.
@@ -2866,7 +4613,8 @@ def test_failed_regenerate_keeps_the_original_answers_usage():
     store.append_stream_chunk(message.id, "half a")
     store.mark_message_failed(message.id)
     store.set_message_usage(
-        message.id, ProviderUsage(output=7, provider="anthropic", model="m", partial=True)
+        message.id,
+        ProviderUsage(output=7, provider="anthropic", model="m", partial=True),
     )
 
     assert store.get_message(message.id).usage == original_usage
@@ -3063,10 +4811,35 @@ def test_set_message_metadata_on_an_unpersisted_row_rides_the_later_create():
         message.id,
         MessageMetadata(engine="realtime", transcript_status="final"),
     )
-    store.update_message_content(message.id, "what the user said")
+    store.finalize_deferred_user_message_content(message.id, "what the user said")
 
     assert persistence.created[-1]["content"] == "what the user said"
     assert '"transcript_status": "final"' in persistence.created[-1]["metadata_json"]
+
+
+def test_finalize_deferred_user_message_content_preserves_reply_descendant():
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    user = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="",
+        persist=True,
+    )
+    reply = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+    )
+
+    store.finalize_deferred_user_message_content(user.id, "what the user said")
+
+    rows = store.messages_for_session(session.id)
+    assert [row.id for row in rows] == [user.id, reply.id]
+    assert rows[0].content == "what the user said"
+    assert store.get_message(reply.id).role is ConsoleMessageRole.ASSISTANT
 
 
 def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
@@ -3076,9 +4849,9 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
     create a message with neither text nor an image at all
     (`CharactersRAGDB.add_message`) -- so a metadata-only "empty" record can
     never durably exist. Writing a short, honest placeholder as the row's
-    real content -- through the SAME `update_message_content` call the
-    "final" transcript case uses above -- flushes the deferred create, and
-    a follow-up metadata-only patch (mirroring the "final" case's own
+    real content -- through the same `finalize_deferred_user_message_content`
+    call used by the "final" transcript case above -- flushes the deferred
+    create, and a follow-up metadata-only patch (mirroring the "final" case's own
     two-step order: content write, then status write) marks it "empty"."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.UI.Screens.chat_screen import (
@@ -3098,7 +4871,7 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
     )
     assert persistence.created == [], "an empty row has nothing to persist yet"
 
-    store.update_message_content(message.id, placeholder)
+    store.finalize_deferred_user_message_content(message.id, placeholder)
     assert persistence.created[-1]["content"] == placeholder, (
         "the row must be durably created once its emptiness is final, not "
         "left stranded in memory"
@@ -3123,11 +4896,12 @@ def test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_cre
     though, and `Tests/UI/test_console_resume_active_path.py::test_resume_
     restores_an_empty_transcript_row_and_its_explanation` -- the existing
     real-DB coverage for this exact row shape -- HAND-SEEDS the row directly
-    via `db.add_message(...)`; it never exercises `update_message_content`'s
-    deferred-create flush at all, so it does not close this gap either. This
-    test does: drives the real flow (deferred row -> content write -> status
-    write) against a real `ChatPersistenceService`/`CharactersRAGDB` pair and
-    reads the row straight back off the DB, mirroring this file's own
+    via `db.add_message(...)`; it never exercises
+    `finalize_deferred_user_message_content`'s deferred-create flush at all,
+    so it does not close this gap either. This test does: drives the real flow
+    (deferred row -> content write -> status write) against a real
+    `ChatPersistenceService`/`CharactersRAGDB` pair and reads the row straight
+    back off the DB, mirroring this file's own
     established real-DB pattern (`test_persist_session_if_needed_flushes_
     held_rag_scope_through_real_db`, `test_stop_path_usage_flush_uses_local_
     write_and_leaves_version_unchanged`) for exactly this kind of durability
@@ -3151,7 +4925,7 @@ def test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_cre
         )
         assert message.persisted_message_id is None, "deferred, not yet durable"
 
-        store.update_message_content(
+        store.finalize_deferred_user_message_content(
             message.id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
         )
         store.set_message_metadata(
@@ -3212,3 +4986,870 @@ def test_set_message_metadata_flushes_locally_and_leaves_the_version_alone():
         )
     finally:
         db.close_connection()
+
+
+def _seeded_roleplay_store():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        title="Chat with Alraune",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Hello User.",
+        persist=True,
+        metadata=MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{user}}.",
+        ),
+    )
+    session.character_system_template = "Speak with {{user}}."
+    session.settings = ConsoleSessionSettings(
+        provider="llama_cpp", system_prompt="Speak with User."
+    )
+    return store, persistence, session, greeting
+
+
+def test_session_override_is_not_console_session_settings():
+    session = ConsoleChatSession(user_display_name_override="Rowan")
+
+    assert session.user_display_name_override == "Rowan"
+    assert not hasattr(
+        ConsoleSessionSettings(provider="llama_cpp"), "user_display_name_override"
+    )
+
+
+def test_first_persist_flushes_roleplay_context_after_conversation_exists():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
+    session.user_display_name_override = "Rowan"
+    session.character_system_template = "Speak with {{user}}."
+
+    conversation_id = store.persist_session_if_needed(session.id)
+
+    assert persistence.roleplay_updates == [
+        {
+            "conversation_id": conversation_id,
+            "user_name_override": "Rowan",
+            "character_system_template": "Speak with {{user}}.",
+        }
+    ]
+
+
+def test_temporary_session_keeps_override_without_durable_write():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(ephemeral=True)
+
+    updated, persisted = store.set_session_user_display_name_override(
+        session.id, "Rowan", global_default="User"
+    )
+
+    assert updated.user_display_name_override == "Rowan"
+    assert persisted is True
+    assert persistence.roleplay_updates == []
+
+
+def test_rename_rematerializes_system_and_seeded_greeting():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+
+    _updated, persisted = store.set_session_user_display_name_override(
+        session.id, "Captain Rowan", global_default="User"
+    )
+
+    assert persisted is True
+    assert session.settings.system_prompt == "Speak with Captain Rowan."
+    assert store.get_message(greeting.id).content == "Hello Captain Rowan."
+    assert persistence.updated_messages[-1]["content"] == "Hello Captain Rowan."
+
+
+def test_editing_derived_greeting_clears_template_provenance():
+    store, _persistence, _session, greeting = _seeded_roleplay_store()
+
+    edited = store.update_message_content(greeting.id, "Hello there.")
+
+    assert edited.metadata is not None
+    assert edited.metadata.template_kind == ""
+    assert edited.metadata.template_source == ""
+
+
+def test_editing_system_prompt_clears_character_template_source():
+    store, persistence, session, _greeting = _seeded_roleplay_store()
+
+    updated, persisted = store.set_session_system_prompt(session.id, "Be concise.")
+
+    assert persisted is True
+    assert updated.character_system_template is None
+    assert persistence.roleplay_updates[-1]["character_system_template"] is None
+
+
+def test_refresh_roleplay_projections_is_idempotent_when_values_are_current():
+    store, persistence, session, _greeting = _seeded_roleplay_store()
+    store.set_session_user_display_name_override(
+        session.id, "Rowan", global_default="User"
+    )
+    revision = store.payload_revision(session.id)
+    update_count = len(persistence.updated_messages)
+
+    persisted = store.refresh_session_roleplay_projections(
+        session.id, global_default="User"
+    )
+
+    assert persisted is True
+    assert store.payload_revision(session.id) == revision
+    assert len(persistence.updated_messages) == update_count
+
+
+def test_editing_derived_greeting_persists_cleared_metadata():
+    store, persistence, _session, greeting = _seeded_roleplay_store()
+
+    store.update_message_content(greeting.id, "Hello there.")
+
+    assert (
+        persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    )
+
+
+def test_falsy_projection_write_reports_unpersisted_without_sync():
+    class RefusingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            super().update_message_content(**kwargs)
+            return False
+
+    persistence = RefusingPersistence()
+    store, _unused, session, _greeting = _seeded_roleplay_store()
+    store.persistence = persistence
+
+    _updated, persisted = store.set_session_user_display_name_override(
+        session.id, "Rowan", global_default="User"
+    )
+
+    assert persisted is False
+
+
+def test_falsy_system_prompt_write_reports_unpersisted():
+    class RefusingPersistence(FakePersistence):
+        def update_conversation_system_prompt(self, **kwargs):
+            return False
+
+    persistence = RefusingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp")
+    )
+    store.persist_session_if_needed(session.id)
+
+    _updated, persisted = store.set_session_system_prompt(session.id, "Be concise.")
+
+    assert persisted is False
+
+
+def test_successful_regeneration_clears_greeting_provenance():
+    store, persistence, _session, greeting = _seeded_roleplay_store()
+
+    store.begin_variant_stream(greeting.id)
+    store.append_stream_chunk(greeting.id, "A generated reply.")
+    completed = store.finalize_variant_stream(greeting.id)
+
+    assert completed.metadata == MessageMetadata()
+    assert (
+        persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    )
+
+
+def test_stopped_regeneration_restores_greeting_provenance():
+    store, _persistence, _session, greeting = _seeded_roleplay_store()
+
+    store.begin_variant_stream(greeting.id)
+    restored = store.mark_message_stopped(greeting.id)
+
+    assert restored.metadata is not None
+    assert restored.metadata.template_kind == "character_greeting"
+
+
+def test_identity_revisions_track_provenance_and_character_name_changes():
+    store, _persistence, session, greeting = _seeded_roleplay_store()
+    identity_before = session.identity_revision
+    payload_before = store.payload_revision(session.id)
+
+    store.update_message_content(greeting.id, "Manual greeting.")
+
+    assert session.identity_revision == identity_before + 1
+    assert store.payload_revision(session.id) == payload_before + 1
+    store.set_session_character_name(session.id, "Nyx", global_default="User")
+    assert session.identity_revision == identity_before + 2
+    assert store.payload_revision(session.id) == payload_before + 2
+
+
+def test_character_name_and_seed_are_idempotent_when_unchanged():
+    store, _persistence, session, _greeting = _seeded_roleplay_store()
+    revision = session.identity_revision
+    payload = store.payload_revision(session.id)
+
+    store.set_session_character_name(session.id, "Alraune", global_default="User")
+    store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="",
+        global_default="User",
+    )
+
+    assert session.identity_revision == revision
+    assert store.payload_revision(session.id) == payload
+    assert (
+        store.presentation_context(session.id, "Captain Rowan").character_name
+        == "Alraune"
+    )
+
+
+def test_character_roleplay_swap_persists_only_the_final_projection_and_context():
+    """Separate name/template mutations expose a hybrid durable projection."""
+    store, persistence, session, _greeting = _seeded_roleplay_store()
+    persistence.updated_system_prompts.clear()
+    persistence.roleplay_updates.clear()
+
+    updated, greeting, persisted = store.swap_session_character_roleplay(
+        session.id,
+        character_name="Brynn",
+        system_template="Serve {{user}} as {{character}}.",
+        greeting_template="",
+        global_default="Captain Rowan",
+    )
+
+    assert persisted is True
+    assert greeting is None
+    assert updated.character_name == "Brynn"
+    assert updated.character_system_template == "Serve {{user}} as {{character}}."
+    assert updated.settings.system_prompt == "Serve Captain Rowan as Brynn."
+    assert persistence.updated_system_prompts == [
+        {
+            "conversation_id": "conv-1",
+            "system_prompt": "Serve Captain Rowan as Brynn.",
+        }
+    ]
+    assert persistence.roleplay_updates == [
+        {
+            "conversation_id": "conv-1",
+            "user_name_override": None,
+            "character_system_template": "Serve {{user}} as {{character}}.",
+        }
+    ]
+
+
+def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_path():
+    class RefusingPersistence(FakePersistence):
+        def update_conversation_roleplay_context(self, **kwargs):
+            return False
+
+    persistence = RefusingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    saved = store.create_session()
+    saved.user_display_name_override = "Rowan"
+    assert store.persist_session_if_needed(saved.id) == "conv-1"
+    assert saved.persisted_conversation_id == "conv-1"
+
+    temporary = store.create_session(ephemeral=True)
+    temporary.user_display_name_override = "Rowan"
+    conversation_id = store.promote_ephemeral_session(temporary.id)
+
+    assert conversation_id is not None
+    assert temporary.ephemeral is False
+    assert temporary.persisted_conversation_id == conversation_id
+    roleplay = persistence.last_create_kwargs["metadata"]["console_roleplay_context"]
+    assert roleplay["user_name_override"] == "Rowan"
+
+
+def test_identical_real_seed_does_not_append_a_duplicate_greeting():
+    store, _persistence, session, _greeting = _seeded_roleplay_store()
+    message_count = len(store.messages_for_session(session.id))
+    identity = session.identity_revision
+    payload = store.payload_revision(session.id)
+
+    duplicate = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="User",
+    )
+
+    assert duplicate is None
+    assert len(store.messages_for_session(session.id)) == message_count
+    assert session.identity_revision == identity
+    assert store.payload_revision(session.id) == payload
+
+
+def test_changed_seed_source_can_append_a_new_greeting():
+    store, _persistence, session, _greeting = _seeded_roleplay_store()
+    message_count = len(store.messages_for_session(session.id))
+
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Respond warmly to {{user}}.",
+        greeting_template="Welcome {{user}}.",
+        global_default="User",
+    )
+
+    assert greeting is not None
+    assert len(store.messages_for_session(session.id)) == message_count + 1
+
+
+def test_falsy_projection_write_does_not_enqueue_sync():
+    class RefusingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            super().update_message_content(**kwargs)
+            return False
+
+    store, _unused, session, _greeting = _seeded_roleplay_store()
+    sync = FakeChatSyncProducer()
+    store.persistence = RefusingPersistence()
+    store.sync_v2_chat_producer = sync
+    store.sync_v2_server_profile_id = "profile-1"
+
+    _updated, persisted = store.set_session_user_display_name_override(
+        session.id, "Rowan", global_default="User"
+    )
+
+    assert persisted is False
+    assert sync.enqueued == []
+
+
+def test_durable_clear_replaces_previously_persisted_greeting_provenance():
+    store, persistence, _session, greeting = _seeded_roleplay_store()
+    original = persistence.created_messages[-1]["metadata_json"]
+    assert original == greeting.metadata.to_json()
+
+    store.update_message_content(greeting.id, "Manual greeting.")
+
+    assert (
+        persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    )
+
+
+def test_stale_refresh_rematerializes_and_reports_success_once():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+
+    assert (
+        store.refresh_session_roleplay_projections(session.id, global_default="Rowan")
+        is True
+    )
+    assert store.get_message(greeting.id).content == "Hello Rowan."
+    writes = len(persistence.updated_messages)
+    revision = store.payload_revision(session.id)
+    assert (
+        store.refresh_session_roleplay_projections(session.id, global_default="Rowan")
+        is True
+    )
+    assert len(persistence.updated_messages) == writes
+    assert store.payload_revision(session.id) == revision
+
+
+def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+    persistence.updated_messages.clear()
+    persistence.updated_system_prompts.clear()
+
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Captain Rowan"
+    )
+
+    assert plan is not None
+    assert session.settings.system_prompt == "Speak with Captain Rowan."
+    assert store.get_message(greeting.id).content == "Hello Captain Rowan."
+    assert persistence.updated_system_prompts == []
+    assert persistence.updated_messages == []
+    with pytest.raises(FrozenInstanceError):
+        plan.generation = -1
+
+    store.close_session(session.id)
+    result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
+
+    assert result.persisted is True
+    assert persistence.updated_system_prompts[-1]["system_prompt"] == (
+        "Speak with Captain Rowan."
+    )
+    assert persistence.updated_messages[-1]["content"] == "Hello Captain Rowan."
+    assert store.accept_roleplay_projection_persistence_result(result) is False
+
+
+def test_forced_roleplay_repair_snapshots_current_sources_without_revision_bumps():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+    identity_revision = session.identity_revision
+    payload_revision = store.payload_revision(session.id)
+    speech_revision = store._message_speech_revisions.get(greeting.id)
+    persistence.updated_system_prompts.clear()
+    persistence.updated_messages.clear()
+
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id,
+        global_default="User",
+        force_persistence=True,
+    )
+
+    assert plan is not None
+    assert plan.system_prompt_write is not None
+    assert len(plan.message_writes) == 1
+    assert session.identity_revision == identity_revision
+    assert store.payload_revision(session.id) == payload_revision
+    assert store._message_speech_revisions.get(greeting.id) == speech_revision
+    result = store.persist_roleplay_projection_plan(plan)
+    assert store.accept_roleplay_projection_persistence_result(result) is True
+    assert persistence.updated_system_prompts[-1]["system_prompt"] == (
+        "Speak with User."
+    )
+    assert persistence.updated_messages[-1]["content"] == "Hello User."
+
+
+def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
+    db = CharactersRAGDB(tmp_path / "restored-roleplay-repair.db", "task-5")
+    try:
+        service = ChatPersistenceService(db)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            system_prompt="Speak with Alpha.",
+        )
+        assert (
+            service.update_conversation_roleplay_context(
+                conversation_id=conversation_id,
+                user_name_override=None,
+                character_system_template="Speak with {{user}}.",
+            )
+            is True
+        )
+        greeting_metadata = MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{user}}.",
+        )
+        persisted_message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Hello Alpha.",
+            metadata_json=greeting_metadata.to_json(),
+        )
+        stale_store = ConsoleChatStore(persistence=service)
+        stale_session = stale_store.create_session(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp", system_prompt="Speak with Bravo."
+            ),
+            assistant_kind="character",
+            character_name="Alraune",
+        )
+        stale_session.persisted_conversation_id = conversation_id
+        stale_session.character_system_template = "Speak with {{user}}."
+        stale_greeting = stale_store.append_message(
+            stale_session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Hello Bravo.",
+            persist=False,
+            metadata=greeting_metadata,
+        )
+        stale_store._nodes_by_session[stale_session.id][
+            stale_greeting.id
+        ].persisted_message_id = persisted_message_id
+        stale_plan = stale_store.prepare_session_roleplay_projection_refresh(
+            stale_session.id,
+            global_default="Bravo",
+            force_persistence=True,
+        )
+        assert stale_plan is not None
+        assert stale_plan.system_prompt_write is not None
+        assert stale_plan.system_prompt_write.source_owned_repair is True
+        assert stale_plan.message_writes[0].source_owned_repair is True
+
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp", system_prompt="Speak with Cecelia."
+            ),
+            assistant_kind="character",
+            character_name="Alraune",
+        )
+        session.persisted_conversation_id = conversation_id
+        session.character_system_template = "Speak with {{user}}."
+        greeting = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Hello Cecelia.",
+            persist=False,
+            metadata=greeting_metadata,
+        )
+        store._nodes_by_session[session.id][
+            greeting.id
+        ].persisted_message_id = persisted_message_id
+
+        plan = store.prepare_session_roleplay_projection_refresh(
+            session.id,
+            global_default="Cecelia",
+            force_persistence=True,
+        )
+        assert plan is not None
+        assert len(plan.message_writes) == 1
+        result = store.persist_roleplay_projection_plan(plan)
+
+        assert result.persisted is True
+        assert store.accept_roleplay_projection_persistence_result(result) is True
+        assert db.get_conversation_by_id(conversation_id)["system_prompt"] == (
+            "Speak with Cecelia."
+        )
+        assert db.get_message_by_id(persisted_message_id)["content"] == (
+            "Hello Cecelia."
+        )
+        stale_result = stale_store.persist_roleplay_projection_plan(stale_plan)
+        assert stale_result.persisted is False
+        assert db.get_conversation_by_id(conversation_id)["system_prompt"] == (
+            "Speak with Cecelia."
+        )
+        assert db.get_message_by_id(persisted_message_id)["content"] == (
+            "Hello Cecelia."
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("execute_b", (True, False), ids=("b-applied", "b-skipped"))
+def test_accepted_roleplay_sync_rebases_c_from_latest_owned_outbox_hash(
+    tmp_path, execute_b
+):
+    class ChatTarget:
+        def __init__(self) -> None:
+            self.hashes: dict[str, str] = {}
+            self.messages: dict[str, dict] = {}
+            self.conflicts: list[dict] = []
+
+        def get_chat_message_hash(self, stable_key: str) -> str | None:
+            return self.hashes.get(stable_key)
+
+        def append_chat_message(
+            self, stable_key: str, payload: dict, payload_hash: str
+        ) -> None:
+            self.hashes[stable_key] = payload_hash
+            self.messages[stable_key] = payload
+
+        def record_conflict(self, conflict: dict) -> None:
+            self.conflicts.append(conflict)
+
+    store, _persistence, session, greeting = _seeded_roleplay_store()
+    dataset_key = generate_dataset_key()
+    repository = SyncStateRepository(tmp_path / "roleplay-sync-state.db")
+    repository.set_sync_v2_profile_state(
+        server_profile_id="profile-1",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    producer = ChatSyncV2OutboxProducer(
+        state_repository=repository,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+    store.sync_v2_chat_producer = producer
+    store.sync_v2_server_profile_id = "profile-1"
+    stable_key = f"{session.persisted_conversation_id}:{greeting.persisted_message_id}"
+    baseline = producer.enqueue_chat_message(
+        server_profile_id="profile-1",
+        conversation_id=session.persisted_conversation_id,
+        message_id=greeting.persisted_message_id,
+        role="assistant",
+        content="Hello User.",
+    )
+    baseline_envelope = baseline["outbox_entry"]["envelope"]
+    store._sync_v2_message_versions[stable_key] = baseline_envelope["payload_hash"]
+
+    plan_b = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Bravo"
+    )
+    assert plan_b is not None
+    result_b = store.persist_roleplay_projection_plan(plan_b)
+    assert (
+        len(
+            repository.list_pending_sync_v2_outbox_envelopes(
+                server_profile_id="profile-1",
+                authenticated_principal_id=None,
+                workspace_scope=None,
+                dataset_id="dataset-1",
+            )
+        )
+        == 1
+    )
+    if execute_b:
+        assert store.accept_roleplay_projection_persistence_result(result_b) is True
+    plan_c = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Commander Cecelia"
+    )
+    assert plan_c is not None
+    if not execute_b:
+        assert store.accept_roleplay_projection_persistence_result(result_b) is False
+    result_c = store.persist_roleplay_projection_plan(plan_c)
+    assert store.accept_roleplay_projection_persistence_result(result_c) is True
+
+    entries = repository.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="profile-1",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        dataset_id="dataset-1",
+    )
+    envelopes = [entry["envelope"] for entry in entries]
+    assert len(envelopes) == (3 if execute_b else 2)
+    for previous, current in zip(envelopes, envelopes[1:]):
+        assert current["base_version"] == previous["payload_hash"]
+
+    target = ChatTarget()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=target)
+    assert [
+        applier.apply(SyncV2Envelope.model_validate(envelope))["status"]
+        for envelope in envelopes
+    ] == ["applied"] * len(envelopes)
+    assert target.messages[stable_key]["content"] == "Hello Commander Cecelia."
+    assert target.conflicts == []
+
+
+def test_stale_projection_after_manual_greeting_edit_never_enqueues_sync(tmp_path):
+    class ChatTarget:
+        def __init__(self) -> None:
+            self.hashes: dict[str, str] = {}
+            self.messages: dict[str, dict] = {}
+            self.conflicts: list[dict] = []
+
+        def get_chat_message_hash(self, stable_key: str) -> str | None:
+            return self.hashes.get(stable_key)
+
+        def append_chat_message(
+            self, stable_key: str, payload: dict, payload_hash: str
+        ) -> None:
+            self.hashes[stable_key] = payload_hash
+            self.messages[stable_key] = payload
+
+        def record_conflict(self, conflict: dict) -> None:
+            self.conflicts.append(conflict)
+
+    store, _persistence, session, greeting = _seeded_roleplay_store()
+    repository = SyncStateRepository(tmp_path / "manual-edit-sync-state.db")
+    dataset_key = generate_dataset_key()
+    repository.set_sync_v2_profile_state(
+        server_profile_id="profile-1",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    producer = ChatSyncV2OutboxProducer(
+        state_repository=repository,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+    store.sync_v2_chat_producer = producer
+    store.sync_v2_server_profile_id = "profile-1"
+    stable_key = f"{session.persisted_conversation_id}:{greeting.persisted_message_id}"
+    baseline = producer.enqueue_chat_message(
+        server_profile_id="profile-1",
+        conversation_id=session.persisted_conversation_id,
+        message_id=greeting.persisted_message_id,
+        role="assistant",
+        content="Hello User.",
+    )
+    store._sync_v2_message_versions[stable_key] = baseline["outbox_entry"]["envelope"][
+        "payload_hash"
+    ]
+
+    plan_b = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Bravo"
+    )
+    assert plan_b is not None
+    result_b = store.persist_roleplay_projection_plan(plan_b)
+    store.update_message_content(greeting.id, "Manual greeting.")
+    assert store.accept_roleplay_projection_persistence_result(result_b) is False
+
+    entries = repository.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="profile-1",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        dataset_id="dataset-1",
+    )
+    envelopes = [entry["envelope"] for entry in entries]
+    assert len(envelopes) == 2
+    assert envelopes[1]["base_version"] == envelopes[0]["payload_hash"]
+    target = ChatTarget()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=target)
+    assert [
+        applier.apply(SyncV2Envelope.model_validate(envelope))["status"]
+        for envelope in envelopes
+    ] == ["applied", "applied"]
+    assert target.messages[stable_key]["content"] == "Manual greeting."
+    assert target.conflicts == []
+
+
+@pytest.mark.parametrize(
+    "failed_component",
+    ("system", "message"),
+    ids=("system-fails", "message-fails"),
+)
+def test_partial_projection_failure_retains_real_durable_ancestor_for_repair(
+    tmp_path, failed_component
+):
+    db = CharactersRAGDB(tmp_path / f"partial-{failed_component}.db", "task-5")
+    service = ChatPersistenceService(db)
+    conversation_id = service.create_conversation(
+        assistant_kind="generic",
+        assistant_id="console",
+        system_prompt="Speak with Alpha.",
+    )
+    service.update_conversation_roleplay_context(
+        conversation_id=conversation_id,
+        user_name_override=None,
+        character_system_template="Speak with {{user}}.",
+    )
+    metadata = MessageMetadata(
+        template_kind="character_greeting",
+        template_source="Hello {{user}}.",
+    )
+
+    class PartialPersistence:
+        def __init__(self) -> None:
+            self.fail_system = failed_component == "system"
+            self.fail_message = failed_component == "message"
+
+        def create_message(self, **kwargs):
+            return service.create_message(**kwargs)
+
+        def update_conversation_system_prompt(self, **kwargs):
+            if self.fail_system:
+                return False
+            return service.update_conversation_system_prompt(**kwargs)
+
+        def update_message_content(self, **kwargs):
+            if self.fail_message:
+                return False
+            return service.update_message_content(**kwargs)
+
+    persistence = PartialPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Speak with Alpha."
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.persisted_conversation_id = conversation_id
+    session.character_system_template = "Speak with {{user}}."
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Hello Alpha.",
+        persist=True,
+        metadata=metadata,
+    )
+    persisted_message_id = greeting.persisted_message_id
+    assert persisted_message_id is not None
+
+    plan_b = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Bravo"
+    )
+    assert plan_b is not None
+    result_b = store.persist_roleplay_projection_plan(plan_b)
+    assert result_b.persisted is False
+    assert store.accept_roleplay_projection_persistence_result(result_b) is True
+    durable_b_system = db.get_conversation_by_id(conversation_id)["system_prompt"]
+    durable_b_message = db.get_message_by_id(persisted_message_id)["content"]
+    assert (durable_b_system, durable_b_message) == (
+        ("Speak with Alpha.", "Hello Bravo.")
+        if failed_component == "system"
+        else ("Speak with Bravo.", "Hello Alpha.")
+    )
+
+    persistence.fail_system = False
+    persistence.fail_message = False
+    plan_c = store.prepare_session_roleplay_projection_refresh(
+        session.id, global_default="Cecelia"
+    )
+    assert plan_c is not None
+    result_c = store.persist_roleplay_projection_plan(plan_c)
+    assert result_c.persisted is True
+    assert store.accept_roleplay_projection_persistence_result(result_c) is True
+    assert db.get_conversation_by_id(conversation_id)["system_prompt"] == (
+        "Speak with Cecelia."
+    )
+    assert db.get_message_by_id(persisted_message_id)["content"] == ("Hello Cecelia.")
+    db.close_connection()
+
+
+def test_stale_refresh_keeps_live_projection_when_durable_write_refuses_or_raises():
+    class RefusingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            return False
+
+    store, _unused, session, greeting = _seeded_roleplay_store()
+    store.persistence = RefusingPersistence()
+    assert (
+        store.refresh_session_roleplay_projections(session.id, global_default="Rowan")
+        is False
+    )
+    assert store.get_message(greeting.id).content == "Hello Rowan."
+
+    class RaisingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            raise RuntimeError("locked")
+
+    store, _unused, session, greeting = _seeded_roleplay_store()
+    store.persistence = RaisingPersistence()
+    assert (
+        store.refresh_session_roleplay_projections(session.id, global_default="Rowan")
+        is False
+    )
+    assert store.get_message(greeting.id).content == "Hello Rowan."
+
+
+def test_failed_regeneration_restores_greeting_provenance():
+    store, _persistence, _session, greeting = _seeded_roleplay_store()
+
+    store.begin_variant_stream(greeting.id)
+    restored = store.mark_message_failed(greeting.id)
+
+    assert restored.metadata is not None
+    assert restored.metadata.template_kind == "character_greeting"
+
+
+def test_presentation_context_resolves_override_identity_and_roleplay_row():
+    store, _persistence, session, greeting = _seeded_roleplay_store()
+    session.user_display_name_override = "Captain Rowan"
+    session.identity_revision = 9
+
+    context = store.presentation_context(session.id, "Global User")
+    presentation = resolve_console_message_presentation(greeting, context)
+
+    assert context.user_name == "Captain Rowan"
+    assert context.assistant_kind == "character"
+    assert context.character_name == "Alraune"
+    assert context.revision == 9
+    assert presentation.row_class == "console-transcript-message-roleplay-character"
+
+
+def test_atomic_promotion_adapter_failure_preserves_ephemeral_fake_state():
+    class FailingAtomicPersistence(FakePersistence):
+        def promote_console_conversation_bundle(self, **kwargs):
+            raise RuntimeError("atomic bundle failure")
+
+    persistence = FailingAtomicPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(ephemeral=True)
+    session.user_display_name_override = "Rowan"
+
+    with pytest.raises(RuntimeError, match="atomic bundle failure"):
+        store.promote_ephemeral_session(session.id)
+
+    assert persistence.created_conversations == []
+    assert session.ephemeral is True

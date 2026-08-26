@@ -9,6 +9,9 @@ They stay behind the SAME config gates that already govern them, which default
 to disabled — wiring them in changes reachability, not the default posture.
 """
 
+import errno
+from pathlib import Path
+
 import pytest
 
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
@@ -31,6 +34,67 @@ def tools_config(monkeypatch):
 
 def _names(provider):
     return {entry.name for entry in provider.list_catalog()}
+
+
+_SYMLINK_CAPABILITY_ERRNOS = frozenset(
+    error_code
+    for error_code in (
+        errno.EACCES,
+        errno.EPERM,
+        errno.ENOSYS,
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+    )
+    if error_code is not None
+)
+_WINDOWS_PRIVILEGE_NOT_HELD_ERROR = 1314
+
+
+def _create_directory_symlink_or_skip(link: Path, target: Path) -> None:
+    """Create a directory symlink or skip when the host cannot support it."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except NotImplementedError:
+        pytest.skip("directory symlinks are unavailable on this platform")
+    except OSError as exc:
+        if (
+            getattr(exc, "winerror", None) == _WINDOWS_PRIVILEGE_NOT_HELD_ERROR
+            or exc.errno in _SYMLINK_CAPABILITY_ERRNOS
+        ):
+            pytest.skip(
+                "directory symlinks are unavailable at this account's privilege level"
+            )
+        raise
+
+
+def test_directory_symlink_fixture_skips_capability_errors(tmp_path, monkeypatch):
+    link = tmp_path / "link"
+    target = tmp_path / "target"
+    requested_directory_link = False
+
+    def deny_symlink(_self, _target, *, target_is_directory=False):
+        nonlocal requested_directory_link
+        requested_directory_link = target_is_directory
+        raise PermissionError(errno.EACCES, "symlink privilege unavailable")
+
+    monkeypatch.setattr(Path, "symlink_to", deny_symlink)
+
+    with pytest.raises(pytest.skip.Exception, match="privilege level"):
+        _create_directory_symlink_or_skip(link, target)
+    assert requested_directory_link is True
+
+
+def test_directory_symlink_fixture_reraises_unrelated_errors(tmp_path, monkeypatch):
+    link = tmp_path / "link"
+    target = tmp_path / "target"
+
+    def fail_symlink(_self, _target, *, target_is_directory=False):
+        raise OSError(errno.ENOSPC, "disk full")
+
+    monkeypatch.setattr(Path, "symlink_to", fail_symlink)
+
+    with pytest.raises(OSError, match="disk full"):
+        _create_directory_symlink_or_skip(link, target)
 
 
 def test_file_tools_absent_by_default(tools_config):
@@ -94,7 +158,7 @@ async def test_list_directory_does_not_follow_symlinks_out_of_the_sandbox(
     sandbox.mkdir()
     outside.mkdir()
     (outside / "OUTSIDE_SECRET.txt").write_text("x", encoding="utf-8")
-    (sandbox / "escape").symlink_to(outside)
+    _create_directory_symlink_or_skip(sandbox / "escape", outside)
     (sandbox / "legit").mkdir()
     (sandbox / "legit" / "inside.txt").write_text("y", encoding="utf-8")
 

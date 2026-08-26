@@ -31,6 +31,7 @@ from textual.widgets import Input, Select, Static
 from tldw_chatbook.UI.stts_playground_catalog import (
     LOADING_SELECT_VALUE,
 )
+from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
 
 from .speech_playground_model import AXIS_CONTROLS
 
@@ -189,7 +190,7 @@ class SpeechAxisRow(Grid):
             # at that point states a fact not yet in evidence, and the shared
             # catalog code overwrites it with UNAVAILABLE if the catalog
             # really does come back empty.
-            return Select(
+            return PruneSafeSelect(
                 [(AXIS_LOADING_LABELS[axis], LOADING_SELECT_VALUE)],
                 id=axis,
                 classes="speech-axis-control",
@@ -197,7 +198,7 @@ class SpeechAxisRow(Grid):
                 value=LOADING_SELECT_VALUE,
                 prompt=AXIS_EMPTY_PROMPTS[axis],
             )
-        select: Select[str] = Select(
+        select: Select[str] = PruneSafeSelect(
             [(label, value) for label, value in options],
             id=axis,
             classes="speech-axis-control",
@@ -247,6 +248,19 @@ class SpeechAxisRow(Grid):
                 else "Matches the saved default "
                 f"({self.defaults.get(axis, UNSET_VALUE)})"
             )
+
+    def update_defaults(self, defaults: dict[str, str]) -> None:
+        """Replace the row's persisted-default copy before its next repaint.
+
+        The pane and row deliberately own detached dictionaries. Global
+        preference refreshes must therefore update both copies; otherwise
+        labels and tooltips compare fresh values with stale defaults.
+
+        Args:
+            defaults: Fresh persisted defaults per comparison axis.
+        """
+
+        self.defaults = dict(defaults)
 
     def compose(self) -> ComposeResult:
         """Yield a labelled, editable control per axis, marking overrides."""
