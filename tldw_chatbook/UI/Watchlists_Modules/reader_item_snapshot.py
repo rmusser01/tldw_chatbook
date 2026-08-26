@@ -122,7 +122,7 @@ class ReaderItemSnapshot:
             value = item.get("id")
         if value is None or (isinstance(value, str) and not value.strip()):
             return None
-        if explicit and isinstance(value, str):
+        if isinstance(value, str):
             try:
                 return int(value)
             except ValueError:
