@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from rich.cells import cell_len
+from textual.app import App, ComposeResult
+from textual.widgets import Button
 
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.citation_evidence_models import (
@@ -20,6 +23,10 @@ from tldw_chatbook.UI.Console_Modules.send_price import (
     ConsoleNextSendPrice,
     ConsoleSendPriceController,
     build_next_send_price,
+)
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    BASE_ACTIONS_WIDTH,
+    ConsoleComposerBar,
 )
 
 
@@ -45,6 +52,18 @@ class _Catalog:
 
     def get_pricing(self, provider, model):
         return self.pricing
+
+
+class _PriceComposerApp(App[None]):
+    def __init__(self, tooltip_provider=None):
+        super().__init__()
+        self.tooltip_provider = tooltip_provider
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleComposerBar(
+            id="console-native-composer",
+            send_price_tooltip_provider=self.tooltip_provider,
+        )
 
 
 def _controller_fixture(*, rows=(("system", "system"), ("user", "history"))):
@@ -95,6 +114,149 @@ def _staged_launch(text="staged evidence"):
         title="Evidence",
         payload={"evidence_bundle": bundle.to_payload()},
     )
+
+
+@pytest.mark.asyncio
+async def test_composer_price_affordance_tracks_send_queue_attachment_and_width():
+    calls = []
+
+    def tooltip_provider(draft):
+        calls.append(draft)
+        return f"Next request: up to ~$0.01\nDraft: {draft or '(attachment only)'}"
+
+    app = _PriceComposerApp(tooltip_provider)
+    async with app.run_test(size=(100, 24)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+        actions = composer.query_one("#console-composer-actions")
+
+        assert send_button.label.plain == "Send"
+        assert send_button.styles.width.value == 6
+        assert send_button.tooltip == "Type a message to send."
+        assert calls == []
+
+        composer.load_draft("priced draft")
+        assert send_button.label.plain == "Send | $"
+        assert send_button.tooltip == (
+            "Next request: up to ~$0.01\nDraft: priced draft"
+        )
+        assert send_button.styles.width.value == cell_len("Send | $") + 2
+        assert actions.styles.width.value == BASE_ACTIONS_WIDTH + 4
+
+        composer._sync_current_action_state()
+        composer._sync_current_action_state()
+        assert send_button.label.plain == "Send | $"
+        assert composer._send_label == "Send"
+
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=True,
+            can_save_chatbook=False,
+            send_blocked=False,
+            send_label="Queue",
+        )
+        assert send_button.label.plain == "Queue | $"
+        assert send_button.styles.width.value == cell_len("Queue | $") + 2
+        assert composer._send_label == "Queue"
+
+        composer.clear_draft()
+        composer.sync_action_state(
+            has_draft=False,
+            run_active=False,
+            can_save_chatbook=False,
+            send_blocked=False,
+            send_label="Send",
+        )
+        composer.set_pending_attachment_label("photo.png · 5 B")
+        composer._sync_current_action_state()
+        await pilot.pause()
+        assert send_button.label.plain == "Send | $"
+        assert send_button.tooltip == (
+            "Next request: up to ~$0.01\nDraft: (attachment only)"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("setup_reason", "wake_turn_active", "expected_tooltip"),
+    [
+        (
+            "Choose a model in Console Settings before sending.",
+            False,
+            "Choose a model in Console Settings before sending.",
+        ),
+        (
+            "",
+            True,
+            "A background sub-agent result is being delivered. Wait for it to finish.",
+        ),
+        ("", False, "Wait for the active Console run to finish before sending."),
+    ],
+)
+async def test_composer_blocker_tooltip_and_unsuffixed_label_win_over_price(
+    setup_reason,
+    wake_turn_active,
+    expected_tooltip,
+):
+    calls = []
+
+    def tooltip_provider(draft):
+        calls.append(draft)
+        return "Next request: up to ~$0.01"
+
+    app = _PriceComposerApp(tooltip_provider)
+    async with app.run_test(size=(100, 24)):
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+        composer.load_draft("sendable")
+        calls_before_block = len(calls)
+
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=True,
+            can_save_chatbook=False,
+            send_blocked=True,
+            setup_blocked_reason=setup_reason,
+            send_label="Queue",
+            wake_turn_active=wake_turn_active,
+        )
+
+        assert send_button.disabled is True
+        assert send_button.label.plain == "Queue"
+        assert send_button.styles.width.value == 7
+        assert send_button.tooltip == expected_tooltip
+        assert calls_before_block == len(calls)
+
+
+@pytest.mark.asyncio
+async def test_composer_without_price_provider_keeps_existing_send_behavior():
+    app = _PriceComposerApp()
+    async with app.run_test(size=(100, 24)):
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.load_draft("ordinary draft")
+
+        assert send_button.label.plain == "Send"
+        assert send_button.styles.width.value == 6
+        assert send_button.tooltip == "Send the active Console session draft."
+
+
+@pytest.mark.asyncio
+async def test_composer_price_provider_failure_never_blocks_send():
+    def broken_provider(_draft):
+        raise RuntimeError("pricing unavailable")
+
+    app = _PriceComposerApp(broken_provider)
+    async with app.run_test(size=(100, 24)):
+        composer = app.query_one(ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.load_draft("still sendable")
+
+        assert send_button.disabled is False
+        assert send_button.label.plain == "Send | $"
+        assert send_button.tooltip == "Next request: cost unavailable"
 
 
 def test_console_send_price_controller_counts_canonical_draft_and_staged_context_once():
