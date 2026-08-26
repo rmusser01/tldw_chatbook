@@ -335,6 +335,19 @@ async def test_mounted_resume_never_focuses_setup_modal_before_final_opener(
         await _wait_for_selector(screen, pilot, "#console-setup-modal")
         await asyncio.wait_for(worker_started.wait(), timeout=2)
         await pilot.pause(0.05)
+        composer = screen.query_one("#console-native-composer")
+        composer.can_focus = True
+        composer.focus()
+        await pilot.pause()
+        assert host.focused is composer
+
+        screen._sync_console_transcript_guidance()
+        await pilot.pause()
+        assert composer.can_focus is False
+        assert host.focused is not composer
+        assert host.focused is None
+        await pilot.press("x")
+        assert composer.draft_text() == ""
         assert focus_events == []
 
         release_worker.set()
@@ -468,6 +481,32 @@ async def test_mounted_resume_worker_is_cancelled_and_timers_stop_on_unmount() -
     assert events == ["chat-handoff", "cancelled"]
     assert screen._pending_resume_local_conversation_id is None
     assert screen._resume_navigation_startup_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_mounted_no_resume_keeps_blocking_modal_focus_transfer() -> None:
+    app = _build_test_app()
+    host = _MountedNavigationConsoleHarness(
+        app,
+        conversation_id=None,
+        configure=lambda _screen: None,
+    )
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        screen = host.chat_screen
+        assert screen is not None
+        await _wait_for_selector(screen, pilot, "#console-setup-modal")
+        composer = screen.query_one("#console-native-composer")
+        composer.can_focus = True
+        composer.focus()
+        await pilot.pause()
+        assert host.focused is composer
+
+        screen._sync_console_transcript_guidance()
+        await pilot.pause()
+
+        assert composer.can_focus is False
+        assert host.focused is screen.query_one("#console-setup-modal-action")
 
 
 @pytest.mark.asyncio

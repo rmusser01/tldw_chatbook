@@ -9963,11 +9963,10 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         composer.can_focus = not blocking and not self._console_composer_collapsed
-        if (
-            blocking
-            and not self._resume_navigation_startup_in_progress
-            and self._is_descendant_or_self(self.app.focused, composer)
-        ):
+        if blocking and self._is_descendant_or_self(self.app.focused, composer):
+            if self._resume_navigation_startup_in_progress:
+                self.set_focus(None)
+                return
             # Pull keyboard focus off the covered composer so typing can't tunnel.
             try:
                 self.query_one(
