@@ -28,7 +28,7 @@ from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.events import DescendantFocus, Key
 from textual.css.query import NoMatches, QueryError
 from textual.errors import NoWidget
@@ -521,6 +521,7 @@ from ...Widgets.Library import (
 from ...Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
 )
+from ...Widgets.Library.library_media_content import LibraryMediaContentBody
 from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
@@ -36994,9 +36995,12 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         try:
-            content = self.query_one("#library-media-viewer-content", VerticalScroll)
+            body = self.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            )
         except (NoMatches, QueryError):
             return
+        content = body.scroller
         offset = (int(content.scroll_x), int(content.scroll_y))
         self._library_media_read_scroll_by_id[loaded_id] = offset
         service = getattr(self.app_instance, "media_reading_scope_service", None)
@@ -37109,10 +37113,12 @@ class LibraryScreen(BaseAppScreen):
         if offset is None:
             return
         try:
-            content = self.query_one("#library-media-viewer-content", VerticalScroll)
+            body = self.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            )
         except (NoMatches, QueryError):
             return
-        content.scroll_to(x=offset[0], y=offset[1], animate=False, force=True)
+        body.scroller.scroll_to(x=offset[0], y=offset[1], animate=False, force=True)
 
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
@@ -37352,25 +37358,30 @@ class LibraryScreen(BaseAppScreen):
         self.call_after_refresh(self._scroll_library_media_content_to_line, line_index)
 
     def _scroll_library_media_content_to_line(self, line_index: int) -> None:
-        """Scroll the content region so the given line index is visible.
+        """Scroll the content region so the given source line is visible.
 
-        Uses the content ``VerticalScroll``'s ``scroll_to`` on the Y axis
-        as an approximation of "the matched line" -- the content renders
-        as a single ``Static``, so this is not pixel-perfect line
-        targeting, but it reliably brings the matched line into (or near)
-        view, which is the required bar for this feature.
+        When the virtualized Raw view is mounted, ``line_index`` (a SOURCE
+        line index) is mapped to its virtual row through the view's wrap
+        index -- scrolling to the source-line index directly, as if it
+        were already a screen row, drifts once any line wraps. Otherwise
+        (Rendered mode, or Raw not yet mounted) this falls back to
+        scrolling the active scroller's Y axis by that index directly.
 
         Args:
             line_index: 0-based line index within the content text to
                 reveal.
         """
         try:
-            content_scroll = self.query_one(
-                "#library-media-viewer-content", VerticalScroll
+            body = self.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
             )
         except (NoMatches, QueryError):
             return
-        content_scroll.scroll_to(y=line_index, animate=False)
+        raw_view = body.raw_view
+        if raw_view is not None:
+            raw_view.scroll_to_source_line(line_index)
+            return
+        body.scroller.scroll_to(y=line_index, animate=False)
 
     @on(Button.Pressed, "#library-media-read-later")
     def handle_library_media_read_later(self, event: Button.Pressed) -> None:

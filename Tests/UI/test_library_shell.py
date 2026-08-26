@@ -10971,7 +10971,20 @@ async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_
 async def test_library_shell_media_viewer_inplace_scroll_waits_for_refresh_boundary(
     monkeypatch,
 ):
-    """Catch match navigation scrolling synchronously before refreshed layout settles."""
+    """Catch match navigation scrolling synchronously before refreshed layout settles.
+
+    task-22500: match scrolling now targets the mounted virtualized Raw view
+    (``VirtualizedRawContent``, a ``ScrollView``) via
+    ``scroll_to_source_line`` rather than the old plain ``VerticalScroll``
+    content region -- ``ScrollView`` overrides ``scroll_to`` itself (it is
+    NOT ``Widget.scroll_to``, so patching ``VerticalScroll.scroll_to`` would
+    silently observe nothing here). Patching the real target is also what
+    makes this a REAL regression guard for ``library_screen.py``'s
+    ``_scroll_library_media_content_to_line``: if that site's ``query_one``
+    lookup goes back to silently no-op-ing (e.g. the ``VerticalScroll`` type
+    it used before TASK-22500), this ``scroll_to`` is never called and the
+    test fails on ``scroll_calls == []`` after the refresh boundary.
+    """
     app = _build_test_app()
     _seed_conversations(
         app, _two_conversations(), media=_media_item_with_multiline_content()
@@ -10985,21 +10998,21 @@ async def test_library_shell_media_viewer_inplace_scroll_waits_for_refresh_bound
         body = screen.query_one(
             "#library-media-viewer-content", LibraryMediaContentBody
         )
+        raw_view = body.raw_view
+        assert raw_view is not None, "Raw view was not mounted for the default mode."
         scroll_calls: list[tuple[int | None, bool]] = []
-        original_scroll_to = VerticalScroll.scroll_to
+        original_scroll_to = VirtualizedRawContent.scroll_to
 
-        def recording_scroll_to(
-            scroll: VerticalScroll,
-            *,
-            y: int | None = None,
-            animate: bool = True,
-            **kwargs,
-        ):
-            if scroll is body:
+        def recording_scroll_to(scroll: VirtualizedRawContent, *args, **kwargs):
+            if scroll is raw_view:
+                y = kwargs.get("y", args[1] if len(args) > 1 else None)
+                animate = kwargs.get("animate", True)
                 scroll_calls.append((y, animate))
-            return original_scroll_to(scroll, y=y, animate=animate, **kwargs)
+            return original_scroll_to(scroll, *args, **kwargs)
 
-        monkeypatch.setattr(VerticalScroll, "scroll_to", recording_scroll_to)
+        monkeypatch.setattr(
+            VirtualizedRawContent, "scroll_to", recording_scroll_to
+        )
 
         screen.query_one("#library-media-content-search-next", Button).press()
         assert scroll_calls == []
