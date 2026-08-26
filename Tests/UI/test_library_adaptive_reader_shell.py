@@ -232,6 +232,44 @@ async def test_hiding_focused_pane_moves_focus_to_truthful_restore_grip():
 
 
 @pytest.mark.asyncio
+async def test_reopening_items_moves_focus_from_its_grip_into_the_items_pane():
+    app = _ProbeApp(_layout(items_open=False), focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        items_action = shell.query_one("#probe-items-action", Button)
+        shell.items_grip.focus()
+        await pilot.pause()
+        assert shell.items_grip.has_focus
+
+        shell.sync_layout(_layout(items_open=True))
+        await pilot.pause()
+
+        assert shell.items.display
+        assert items_action.has_focus
+
+
+@pytest.mark.asyncio
+async def test_collapsing_focused_items_moves_focus_to_its_grip():
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        items_action = shell.query_one("#probe-items-action", Button)
+        items_action.focus()
+        await pilot.pause()
+        assert items_action.has_focus
+
+        shell.sync_layout(_layout(items_open=False))
+        await pilot.pause()
+
+        assert not shell.items.display
+        assert shell.items_grip.has_focus
+
+
+@pytest.mark.asyncio
 async def test_both_hidden_panes_keep_reachable_restore_controls_and_work_mounted():
     app = _ProbeApp(_layout(library_open=False, items_open=False))
 
@@ -285,9 +323,7 @@ def test_shared_shell_structure_is_owned_by_shared_tcss_selectors():
     source = CSS_SOURCE.read_text(encoding="utf-8")
 
     assert ".library-adaptive-reader-shell {" in source
-    assert (
-        ".library-adaptive-reader-shell > .library-adaptive-reader-work {" in source
-    )
+    assert ".library-adaptive-reader-shell > .library-adaptive-reader-work {" in source
     assert (
         ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {"
         in source
@@ -305,6 +341,4 @@ def test_shared_tcss_is_structural_while_media_keeps_its_visual_contract():
     assert "color:" not in shared_grip
     assert "text-style:" not in shared_grip
     assert "#library-media-reader-shell > .library-media-pane-grip {" in source
-    assert (
-        "#library-media-reader-shell > .library-media-pane-grip:focus {" in source
-    )
+    assert "#library-media-reader-shell > .library-media-pane-grip:focus {" in source

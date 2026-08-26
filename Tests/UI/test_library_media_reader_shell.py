@@ -72,7 +72,9 @@ def _build_media_test_app():
     return app
 
 
-async def _open_media_shell(host, pilot) -> tuple[LibraryScreen, LibraryMediaReaderShell]:
+async def _open_media_shell(
+    host, pilot
+) -> tuple[LibraryScreen, LibraryMediaReaderShell]:
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
     screen.query_one("#library-row-browse-media", Button).press()
@@ -209,8 +211,10 @@ async def test_compact_reader_keeps_every_toolbar_action_inside_reader():
         shell.items.query_one("#library-media-row-0", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.pending_request is None
-            and screen._library_media_reader_session.loaded_id is not None,
+            lambda: (
+                screen._library_media_reader_session.pending_request is None
+                and screen._library_media_reader_session.loaded_id is not None
+            ),
             message="Compact Reader detail never settled.",
         )
         await pilot.pause()
@@ -260,9 +264,10 @@ async def test_row_activation_keeps_items_mounted_and_loads_permanent_reader():
         assert shell.query_one("#library-media-canvas") is items
         assert service.detail_calls
         assert session.selected_id == session.loaded_id == "local:media:2"
-        assert str(
-            shell.query_one("#library-media-viewer-title").renderable
-        ) == "Product Demo Video"
+        assert (
+            str(shell.query_one("#library-media-viewer-title").renderable)
+            == "Product Demo Video"
+        )
 
 
 @pytest.mark.asyncio
@@ -273,9 +278,7 @@ async def test_non_media_library_routes_keep_the_existing_shell():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        assert screen.query_one(
-            "#library-rail-handle", LibraryNavigationRailHandle
-        )
+        assert screen.query_one("#library-rail-handle", LibraryNavigationRailHandle)
         assert screen.query_one("#library-canvas")
         assert not screen.query("#library-media-reader-shell")
         assert not screen.query(".library-media-pane-grip")
@@ -307,10 +310,13 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
         await pilot.resize_terminal(*size)
         await _wait_for_condition(
             pilot,
-            lambda: shell.effective_layout == resolve_media_reader_layout(
-                shell.region.width,
-                screen._library_media_reader_preferences,
-                previous=shell.effective_layout,
+            lambda: (
+                shell.effective_layout
+                == resolve_media_reader_layout(
+                    shell.region.width,
+                    screen._library_media_reader_preferences,
+                    previous=shell.effective_layout,
+                )
             ),
             message=f"Media shell did not settle at {size}",
         )
@@ -380,9 +386,10 @@ async def test_two_grips_leave_fifty_columns_for_reader_at_sixty_shell_columns()
         assert shell.region.width == 60
         assert reader.region.width == 50
         assert reader.region.right <= shell.region.right
-        assert sum(
-            grip.region.width for grip in shell.query(".library-media-pane-grip")
-        ) == 10
+        assert (
+            sum(grip.region.width for grip in shell.query(".library-media-pane-grip"))
+            == 10
+        )
 
 
 @pytest.mark.asyncio
@@ -402,7 +409,7 @@ async def test_manual_grip_persists_preference_but_responsive_collapse_does_not(
             "items_open": True,
             "items_width": 40,
             "future_media": "keep",
-        }
+        },
     }
     writes = []
 
@@ -584,8 +591,7 @@ async def test_failed_manual_grip_persistence_restores_previous_preference(
         assert screen._library_media_reader_preferences.library_open is False
         assert app.app_config["library"]["reader"]["library_open"] is False
         assert (
-            app.app_config["library"]["media_reader"]["library_open"]
-            == "legacy-keep"
+            app.app_config["library"]["media_reader"]["library_open"] == "legacy-keep"
         )
         assert shell.effective_layout.library_open is False
         assert notices[-1][1]["severity"] == "warning"
@@ -636,8 +642,7 @@ async def test_rapid_manual_grip_changes_persist_in_order(monkeypatch):
         ]
         assert app.app_config["library"]["reader"]["library_open"] is False
         assert (
-            app.app_config["library"]["media_reader"]["library_open"]
-            == "legacy-keep"
+            app.app_config["library"]["media_reader"]["library_open"] == "legacy-keep"
         )
 
 
@@ -738,8 +743,7 @@ async def test_shared_library_pane_double_failure_restores_durable_choice(
             media.library_grip.press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_reader_persistence_generations["library"]
-                == 2,
+                lambda: screen._library_reader_persistence_generations["library"] == 2,
                 message="Newer shared Library-pane intent was not claimed.",
             )
         finally:
@@ -1315,6 +1319,7 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
             ("library.reader", "library_open", False),
             ("library.media_reader", "items_open", False),
             ("library.conversations_reader", "items_open", True),
+            ("library.notes_reader", "items_open", True),
         }
 
         app.app_config["library"]["media_reader"]["items_open"] = True
@@ -1326,3 +1331,4 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         assert writes.count(("library.reader", "library_open", False)) == 2
         assert writes.count(("library.media_reader", "items_open", True)) == 1
         assert writes.count(("library.conversations_reader", "items_open", True)) == 2
+        assert writes.count(("library.notes_reader", "items_open", True)) == 2

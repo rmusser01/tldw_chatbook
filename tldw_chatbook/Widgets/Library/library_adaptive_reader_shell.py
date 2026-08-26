@@ -65,9 +65,13 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         """Patch arrow and action copy without changing geometry."""
         action = "Collapse" if open else "Expand"
         copy = f"{action} {self.pane_label} pane"
-        self.label = "<---" if open else "--->"
-        self._name = copy
-        self.tooltip = copy
+        label = "<---" if open else "--->"
+        if self.label != label:
+            self.label = label
+        if self._name != copy:
+            self._name = copy
+        if self.tooltip != copy:
+            self.tooltip = copy
 
     @on(Button.Pressed)
     def request_toggle(self, event: Button.Pressed) -> None:
@@ -117,6 +121,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             id=f"{id_prefix}-items-grip",
         )
         self.effective_layout = layout
+        self._applied_layout: AdaptiveReaderEffectiveLayout | None = None
 
     def compose(self) -> ComposeResult:
         """Compose retained Library, Items, grips, and Work widgets."""
@@ -137,17 +142,39 @@ class LibraryAdaptiveReaderShell(Horizontal):
 
     def sync_layout(self, layout: AdaptiveReaderEffectiveLayout) -> None:
         """Patch pane display and exact cell widths in place."""
+        previous_layout = self._applied_layout
         self.effective_layout = layout
         focused = self.app.focused if self.is_mounted else None
         restore_focus: Widget | None = None
-        for pane, grip, open, width in (
+        for pane, grip, open, width, was_open, previous_width in (
             (
                 self.library,
                 self.library_grip,
                 layout.library_open,
                 layout.library_width,
+                (
+                    previous_layout.library_open
+                    if previous_layout is not None
+                    else layout.library_open
+                ),
+                (
+                    previous_layout.library_width
+                    if previous_layout is not None
+                    else None
+                ),
             ),
-            (self.items, self.items_grip, layout.items_open, layout.items_width),
+            (
+                self.items,
+                self.items_grip,
+                layout.items_open,
+                layout.items_width,
+                (
+                    previous_layout.items_open
+                    if previous_layout is not None
+                    else layout.items_open
+                ),
+                (previous_layout.items_width if previous_layout is not None else None),
+            ),
         ):
             if (
                 not open
@@ -155,16 +182,30 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 and (focused is pane or pane in focused.ancestors)
             ):
                 restore_focus = grip
-            pane.display = open
-            pane.disabled = not open
-            pane.styles.width = width
-            pane.styles.min_width = width
-            pane.styles.max_width = width
-            pane.styles.height = "100%"
+            if open and not was_open and focused is grip:
+                restore_focus = next(
+                    (
+                        child
+                        for child in pane.walk_children()
+                        if child.can_focus and child.display and not child.disabled
+                    ),
+                    pane,
+                )
+            if previous_layout is None or was_open != open:
+                pane.display = open
+                pane.disabled = not open
+            if previous_layout is None or previous_width != width:
+                pane.styles.width = width
+                pane.styles.min_width = width
+                pane.styles.max_width = width
+            if previous_layout is None:
+                pane.styles.height = "100%"
             grip.sync_open(open)
-        self.work.display = True
-        self.work.styles.width = "1fr"
-        self.work.styles.min_width = 0
-        self.work.styles.height = "100%"
+        if previous_layout is None:
+            self.work.display = True
+            self.work.styles.width = "1fr"
+            self.work.styles.min_width = 0
+            self.work.styles.height = "100%"
+        self._applied_layout = layout
         if restore_focus is not None:
             restore_focus.focus(scroll_visible=False)
