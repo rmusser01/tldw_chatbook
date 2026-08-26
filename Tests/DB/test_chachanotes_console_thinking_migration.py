@@ -104,6 +104,34 @@ def _thinking(text: str = "thinkingonlycanary") -> str:
     return raw
 
 
+def _active_continuation() -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["private continuation"],
+                    "calls": [
+                        {
+                            "call_id": "call_1",
+                            "name": "calculator",
+                            "arguments": '{"expression":"2+2"}',
+                            "state": "pending",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
 def _schema_version(db: CharactersRAGDB) -> int:
     row = (
         db.get_connection()
@@ -672,6 +700,35 @@ def test_content_edit_tombstones_descendant_thinking_only(
     assert child["deleted"] == 1
     assert child["thinking_blocks_json"] is None
     assert child["provider_continuation_json"] == "descendant-continuation"
+
+
+def test_continuation_discard_tombstone_clears_thinking_in_raw_storage(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "continuation discard"})
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "",
+            "thinking_blocks_json": _thinking("discarded thought"),
+            "provider_continuation_json": _active_continuation(),
+        }
+    )
+    assert message_id is not None
+
+    assert db.update_provider_continuation(
+        message_id=message_id,
+        expected_message_version=1,
+        provider_continuation_json=None,
+    )
+
+    assert db.get_message_by_id(message_id) is None
+    tombstone = _raw_message(db, message_id)
+    assert tombstone["deleted"] == 1
+    assert tombstone["version"] == 2
+    assert tombstone["provider_continuation_json"] is None
+    assert tombstone["thinking_blocks_json"] is None
 
 
 def test_v49_to_v50_requires_exact_entry_version(db: CharactersRAGDB) -> None:

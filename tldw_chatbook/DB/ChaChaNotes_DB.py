@@ -11602,6 +11602,9 @@ UPDATE db_schema_version
                     """
                     UPDATE messages
                        SET provider_continuation_json = ?, content = ?, deleted = ?,
+                           thinking_blocks_json = CASE
+                               WHEN ? THEN NULL ELSE thinking_blocks_json
+                           END,
                            assistant_generation_state = ?,
                            last_modified = ?, version = ?, client_id = ?
                      WHERE id = ? AND version = ?
@@ -11609,6 +11612,7 @@ UPDATE db_schema_version
                     (
                         canonical,
                         next_content,
+                        int(next_deleted),
                         int(next_deleted),
                         next_state,
                         now,
