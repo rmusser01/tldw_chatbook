@@ -3793,6 +3793,30 @@ class ConsoleChatStore:
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             return self._durable_effects_by_preparation.get(preparation_id)
 
+    def durable_completed_effects_for(
+        self,
+        preparation_id: str,
+        *,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> frozenset[str]:
+        """Return completed effect names from the live ledger OR a tombstone.
+
+        TASK-22587: recovery needs to know whether the checkpoint transition
+        ran, and it asks *after* a failure -- by which point the user may have
+        closed the chat and retired the preparation. Reading the ledger
+        directly raises there, which masked the original failure. The tombstone
+        retains `completed` for exactly this reason, so the answer survives a
+        close instead of becoming an exception.
+        """
+
+        with self._preparation_lock:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                tombstone = self._durable_tombstones.get(preparation_id)
+                return tombstone.completed if tombstone is not None else frozenset()
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
+            effects = self._durable_effects_by_preparation.get(preparation_id)
+            return effects.completed if effects is not None else frozenset()
+
     def durable_turn_commit_for(
         self,
         preparation_id: str,
@@ -3902,6 +3926,12 @@ class ConsoleChatStore:
         with self._preparation_lock:
             current = self._durable_fingerprint_by_preparation.get(preparation_id)
             if current != fingerprint:
+                if self._durable_retired_locked(preparation_id, fingerprint):
+                    # TASK-22587: closing a chat retires the preparation, and
+                    # the postcommit sequence retires it again when it ends.
+                    # Retiring what is already retired is a no-op, not a bug --
+                    # the tombstone proves this is the SAME acceptance.
+                    return
                 raise RuntimeError("Durable acceptance fingerprint changed.")
             effects = self._durable_effects_by_preparation.get(preparation_id)
             completed = effects.completed if effects is not None else frozenset()

@@ -5853,6 +5853,43 @@ class ConsoleChatController:
             )
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
+    def _postcommit_stopped_by_close(
+        self,
+        *,
+        preparation_id: str,
+        session_id: str,
+        commit: Any,
+        continuation: Any,
+    ) -> ConsoleSubmitResult:
+        """Terminal benign outcome when the chat closed mid-postcommit.
+
+        TASK-22587. Runs the same continuation cleanup the normal tail runs --
+        settle, drop the continuation, release prepared evidence -- but not the
+        owner-changed check (the owner is legitimately gone) and not `retire`
+        (closing already did it, and it is idempotent besides).
+        """
+
+        logger.debug("Durable postcommit sequence stopped: session closed")
+        self._settle_accepted_preparation(preparation_id)
+        with self.store.durable_preparation_lock:
+            current = self._durable_postcommit_continuations.pop(preparation_id, None)
+            if current is not None:
+                self._release_retired_prepared_evidence(current)
+        return ConsoleSubmitResult(
+            True,
+            True,
+            "",
+            session_id=session_id,
+            user_message_id=commit.user_message_id,
+            assistant_message_id=commit.assistant_message_id,
+            terminal_status=self.run_state_for(session_id).status,
+            origin=continuation.origin,
+            queue_entry_id=continuation.queue_entry_id,
+            committed_context_epoch=continuation.committed_context_epoch,
+            preparation_id=preparation_id,
+            provider_started=True,
+        )
+
     async def resume_durable_postcommit(
         self,
         preparation_id: str,
@@ -5883,10 +5920,21 @@ class ConsoleChatController:
         commit = continuation.commit
         fingerprint = continuation.fingerprint
         session_id = continuation.session_id
-        existing_effects = self.store.durable_postcommit_effects_for(
-            preparation_id,
-            fingerprint=fingerprint,
-        )
+        try:
+            existing_effects = self.store.durable_postcommit_effects_for(
+                preparation_id,
+                fingerprint=fingerprint,
+            )
+        except ConsoleDurableAcceptanceRetired:
+            # TASK-22587: the chat was closed before this resume began, so the
+            # whole sequence is moot. This lookup sits BEFORE the try block
+            # below, which is why guarding only the sequence was not enough.
+            return self._postcommit_stopped_by_close(
+                preparation_id=preparation_id,
+                session_id=session_id,
+                commit=commit,
+                continuation=continuation,
+            )
         if (
             existing_effects is not None
             and "checkpoint_transition" in existing_effects.completed
@@ -6148,6 +6196,17 @@ class ConsoleChatController:
                 ),
                 fingerprint=fingerprint,
             )
+        except ConsoleDurableAcceptanceRetired:
+            # TASK-22587: the user closed the chat mid-sequence. Every REMAINING
+            # effect validates against a preparation that no longer exists, so
+            # retirement is terminal-benign for the whole orchestration, not
+            # just the effect that noticed it first.
+            return self._postcommit_stopped_by_close(
+                preparation_id=preparation_id,
+                session_id=session_id,
+                commit=commit,
+                continuation=continuation,
+            )
         except ConsoleDispatchSettlementError:
             self._restore_dispatch_recovery_after_settlement_failure(
                 session_id,
@@ -6170,12 +6229,14 @@ class ConsoleChatController:
                 provider_started=True,
             )
         except BaseException:
-            state = self.store.durable_postcommit_effects_for(
+            # TASK-22587: this lookup runs inside the failure handler, so it
+            # must not raise -- a close mid-turn retires the ledger and the
+            # raise would REPLACE the failure being handled. The tombstone
+            # keeps `completed`, so the answer survives the close.
+            completed = self.store.durable_completed_effects_for(
                 preparation_id, fingerprint=fingerprint
             )
-            provider_started = bool(
-                state is not None and "checkpoint_transition" in state.completed
-            )
+            provider_started = "checkpoint_transition" in completed
             if self.store.dispatch_recovery_for_session(session_id) is None:
                 self.store.publish_durable_recovery_owner(
                     session_id,
