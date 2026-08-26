@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pathlib
+import tempfile
+
 import gc
 import asyncio
 import logging
@@ -65,6 +68,12 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from Tests.console_provider_doubles import provider_resolution, with_destination
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationFingerprintCodec,
+    CitationProvenanceRuntimePolicy,
+    CitationTraceRepository,
+    load_local_citation_identity_context,
+)
 
 
 def _first(matches, *, what: str):
@@ -211,8 +220,36 @@ class _ReadyCitationPersistence:
 
     def __init__(self) -> None:
         self.create_calls: list[dict[str, Any]] = []
-        self.db = CharactersRAGDB(":memory:", "citation-boundary")
-        self._service = ChatPersistenceService(self.db)
+        # FILE-backed, not ":memory:" (TASK-22301). `CharactersRAGDB` opens a
+        # THREAD-LOCAL connection, and TASK-22205 offloads durable DB calls to a
+        # worker thread -- with ":memory:" that worker gets its OWN empty
+        # database, so writes made there are invisible to assertions on this
+        # thread. Measured: citation traces wrote successfully and
+        # `rag_citation_traces` still read 0 rows.
+        self._db_dir = tempfile.mkdtemp(prefix="citation-boundary-")
+        self.db = CharactersRAGDB(
+            pathlib.Path(self._db_dir) / "boundary.sqlite", "citation-boundary"
+        )
+        # The old fake hard-coded `canonical_citation_writes_ready = True`. The
+        # real service COMPUTES it, and a service built without a citation
+        # repository reports False -- which silently skips every citation write,
+        # so the traces these tests exist to observe were never written at all.
+        # Measured: `trace_rows` was 0 until this stack was wired.
+        identity = load_local_citation_identity_context(self.db)
+        assert identity is not None, (
+            "harness precondition: the DB must carry a local citation identity"
+        )
+        self._service = ChatPersistenceService(
+            self.db,
+            citation_repository=CitationTraceRepository(
+                self.db,
+                policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+                identity_context=identity,
+                fingerprint_codec=CitationFingerprintCodec(
+                    b"task-22301-citation-boundary-key"
+                ),
+            ),
+        )
 
     @property
     def canonical_citation_writes_ready(self) -> bool:
@@ -258,6 +295,70 @@ class _ReadyCitationPersistence:
 
     def update_message_content(self, **kwargs: Any) -> bool:
         return self._service.update_message_content(**kwargs)
+
+    # ---- Row-level observation (TASK-22301) -------------------------------
+    #
+    # The durable dispatch checkpoint writes its user and assistant rows with
+    # raw SQL in `insert_with_messages`, bypassing `create_message` entirely.
+    # Counting calls therefore cannot see a durable turn at all -- which is why
+    # 29 assertions here read `0 == 1`. These read what was actually COMMITTED,
+    # which is both the real invariant and refactor-proof: a future change to
+    # the write path cannot make them silently stop observing.
+
+    def message_rows(self, *, sender: str | None = None) -> list[dict[str, Any]]:
+        """Every committed message row, oldest first."""
+
+        sql = (
+            "SELECT id, conversation_id, parent_message_id, sender, content "
+            "FROM messages WHERE deleted = 0"
+        )
+        params: tuple[Any, ...] = ()
+        if sender is not None:
+            sql += " AND sender = ?"
+            params = (sender,)
+        sql += " ORDER BY rowid"
+        cursor = self.db.get_connection().execute(sql, params)
+        return [
+            {
+                "message_id": row[0],
+                "conversation_id": row[1],
+                "parent_message_id": row[2],
+                "sender": row[3],
+                "content": row[4],
+            }
+            for row in cursor.fetchall()
+        ]
+
+    def citation_trace_rows(self) -> list[dict[str, Any]]:
+        """Sealed citation traces, joined to the message each belongs to."""
+
+        cursor = self.db.get_connection().execute(
+            "SELECT trace_id, legacy_message_id, lifecycle, visibility_state "
+            "FROM rag_citation_traces ORDER BY rowid"
+        )
+        return [
+            {
+                "trace_id": row[0],
+                "message_id": row[1],
+                "lifecycle": row[2],
+                "visibility_state": row[3],
+            }
+            for row in cursor.fetchall()
+        ]
+
+    def cited_message_rows(self) -> list[dict[str, Any]]:
+        """Committed rows that carry a sealed citation trace.
+
+        This is the row-level equivalent of the old
+        ``[c for c in create_calls if c["citation_write"] is not None]``.
+        """
+
+        cited = {
+            trace["message_id"]
+            for trace in self.citation_trace_rows()
+            if trace["message_id"] is not None
+        }
+        return [row for row in self.message_rows() if row["message_id"] in cited]
 
 
 class _CancelRowFailingPersistence(_ReadyCitationPersistence):
