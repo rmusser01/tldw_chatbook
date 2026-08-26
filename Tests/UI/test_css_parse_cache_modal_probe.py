@@ -45,7 +45,6 @@ EXTRA_CONVERSION_TARGETS = [
     ("tldw_chatbook.UI.Screens.trajectory_screen", "TrajectoryScreen"),
     ("tldw_chatbook.UI.Widgets.trajectory_timeline", "TrajectoryTimeline"),
     ("tldw_chatbook.UI.Wizards.first_run_recovery_dialog", "SetupRecoveryDialog"),
-    ("tldw_chatbook.Widgets.Console.console_changed_files_section", "ConsoleChangedFilesSection"),
     ("tldw_chatbook.Widgets.Console.console_conversation_inspector", "ConsoleConversationInspector"),
     ("tldw_chatbook.Widgets.Console.console_project_instructions", "ConsoleProjectInstructionContextPanel"),
     ("tldw_chatbook.Widgets.Console.console_project_instructions", "ConsoleProjectInstructionStatusRow"),

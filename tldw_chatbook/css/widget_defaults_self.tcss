@@ -1659,35 +1659,6 @@
     }
 
 
-/* ===== WIDGET: ConsoleChangedFilesSection (Widgets/Console/console_changed_files_section.py) ===== */
-
-    ConsoleChangedFilesSection {
-        height: auto;
-        min-height: 0;
-    }
-    ConsoleChangedFilesSection .console-changed-files-header {
-        height: 1;
-        width: 100%;
-        text-style: bold;
-    }
-    ConsoleChangedFilesSection .console-changed-files-row {
-        height: 1;
-        min-height: 1;
-        width: 100%;
-        text-align: left;
-    }
-    ConsoleChangedFilesSection .console-changed-files-tail {
-        height: 1;
-        width: 100%;
-        text-style: italic;
-    }
-    ConsoleChangedFilesSection .console-changed-files-pruned {
-        height: 1;
-        width: 100%;
-        text-style: dim;
-    }
-
-
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 
     ConsoleConversationInspector { align: center middle; }
@@ -2011,6 +1982,7 @@
         text-style: bold;
     }
     ConsoleTurnFileCard .console-turn-file-toggle-all-btn,
+    ConsoleTurnFileCard .console-turn-file-undo-all-btn,
     ConsoleTurnFileCard .console-turn-file-review-btn {
         min-width: 3;
     }
