@@ -153,8 +153,12 @@ class PersonasConversationsController:
         self._open_conversation_truncated = False
         self._loaded_conversation_id = None
         self._failed_conversation_id = None
-        self._resume_in_flight_conversation_id = None
-        self._set_resume_button_busy(False)
+        target_id = str(conversation_id).strip()
+        if self._resume_in_flight_conversation_id != target_id:
+            self._resume_in_flight_conversation_id = None
+        self._set_resume_button_busy(
+            self._resume_in_flight_conversation_id == target_id
+        )
         try:
             view = screen.query_one(PersonasConversationTranscriptWidget)
             view.set_title(self._open_conversation_title or "Conversation")

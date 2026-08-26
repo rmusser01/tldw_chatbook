@@ -3675,6 +3675,12 @@ class _NavCaptureApp(PersonasTestApp):
         self.nav_contexts.append(dict(getattr(message, "screen_context", {}) or {}))
 
 
+class _StyledNavCaptureApp(_NavCaptureApp):
+    """Navigation-capture harness using the production consolidated CSS."""
+
+    CSS_PATH = StyledPersonasTestApp.CSS_PATH
+
+
 class TestConversationsPanel:
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -4005,6 +4011,28 @@ class TestConversationsPanel:
                 assert button.region.bottom <= actions.content_region.bottom
             assert screen.query_one("#personas-transcript-scroll").region.height > 0
 
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            send = screen.query_one(
+                "#personas-conversation-continue-console", Button
+            )
+            navigation = screen.query_one(
+                "#personas-conversation-navigation-actions"
+            )
+            back = screen.query_one("#personas-conversation-back", Button)
+            library = screen.query_one(
+                "#personas-conversation-open-library", Button
+            )
+            assert [
+                resume.region.height,
+                send.region.height,
+                navigation.region.height,
+                back.region.height,
+                library.region.height,
+            ] == [3, 3, 3, 3, 3]
+            assert send.region.y - resume.region.y == 3
+            assert navigation.region.y - send.region.y == 3
+            assert back.region.y == navigation.region.y == library.region.y
+
     async def test_conversation_preview_f6_and_tab_order_start_at_resume(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
@@ -4026,7 +4054,7 @@ class TestConversationsPanel:
                 await pilot.pause()
                 assert pilot.app.focused.id == focus_id
 
-    async def test_conversation_resume_posts_id_only_and_ignores_same_target_repeat(
+    async def test_conversation_resume_posts_normalized_id_only(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
         callbacks = []
@@ -4041,7 +4069,6 @@ class TestConversationsPanel:
                 lambda _delay, callback, **_kwargs: callbacks.append(callback),
             )
             screen.conversations.resume_in_console()
-            screen.conversations.resume_in_console()
             await pilot.pause()
             resume = screen.query_one("#personas-conversation-resume", Button)
             assert resume.disabled is True
@@ -4053,13 +4080,67 @@ class TestConversationsPanel:
             app.open_chat_with_handoff.assert_not_called()
 
             assert len(callbacks) == 1
-            screen.conversations._open_conversation_id = "conv-2"
+            callbacks[0]()
+            assert resume.disabled is False
+            assert str(resume.label) == "Resume chat"
+
+    async def test_conversation_resume_reselection_keeps_same_target_single_flight(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"},
+                {"id": "conv-2", "title": "Second case"},
+            ],
+        )
+        callbacks = []
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            monkeypatch.setattr(
+                screen,
+                "set_timer",
+                lambda _delay, callback, **_kwargs: callbacks.append(callback),
+            )
+
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"}
+            ]
+
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert resume.disabled is True
+            assert str(resume.label) == "Opening Console…"
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"}
+            ]
+
+            await pilot.click("#personas-conversation-row-conv-2")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert resume.disabled is False
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"},
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-2"},
+            ]
+
+            assert len(callbacks) == 2
             callbacks[0]()
             assert resume.disabled is True
             assert str(resume.label) == "Opening Console…"
-
-            screen.conversations._open_conversation_id = "  conv-1  "
-            callbacks[0]()
+            callbacks[1]()
             assert resume.disabled is False
             assert str(resume.label) == "Resume chat"
 
