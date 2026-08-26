@@ -507,7 +507,7 @@ def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() ->
         assert "background: $ds-surface-panel;" in inspector_handle
 
 
-def test_library_compact_shell_and_emergency_return_reach_generated_bundle() -> None:
+def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -> None:
     """Production CSS owns the narrow box model and its visible return seam."""
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
