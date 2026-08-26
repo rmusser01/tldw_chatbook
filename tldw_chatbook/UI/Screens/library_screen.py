@@ -5614,6 +5614,14 @@ class LibraryScreen(BaseAppScreen):
             return
         rail_handles = self.query("#library-rail-handle")
         rail_handle = rail_handles.first(Widget) if rail_handles else None
+        # Only the grid and canvas host participate in compact CSS selectors;
+        # tagging the rail and inner Notes canvas forced two needless global
+        # stylesheet matches on every breakpoint crossing. Apply these before
+        # the emergency stage can return so a just-recomposed ordinary route
+        # cannot retain wide padding/borders at the narrow stage.
+        for widget in (shell, canvas):
+            if widget.has_class("library-notes-compact") != self._library_notes_compact:
+                widget.set_class(self._library_notes_compact, "library-notes-compact")
         if self._apply_library_emergency_geometry(
             shell=shell,
             rail=rail,
@@ -5622,12 +5630,6 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         adaptive_notes = bool(self.query("#library-notes-reader-shell"))
-        # Only the grid and canvas host participate in compact CSS selectors;
-        # tagging the rail and inner Notes canvas forced two needless global
-        # stylesheet matches on every breakpoint crossing.
-        for widget in (shell, canvas):
-            if widget.has_class("library-notes-compact") != self._library_notes_compact:
-                widget.set_class(self._library_notes_compact, "library-notes-compact")
         try:
             notes_canvas = canvas.query_one("#library-notes-canvas", LibraryNotesCanvas)
         except (NoMatches, QueryError):
