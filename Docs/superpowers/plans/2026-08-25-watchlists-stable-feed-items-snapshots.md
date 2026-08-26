@@ -854,11 +854,11 @@ git commit -m "feat(watchlists): commit reader scope atomically"
 - Modify: `Tests/Watchlists/test_watchlists_collections_screen.py`
 - Modify: `Tests/Watchlists/test_watchlists_pagination.py`
 
-- [ ] **Step 1: Write RED widget tests for snapshot-owned copy**
+- [x] **Step 1: Write RED widget tests for snapshot-owned copy**
 
 Add plain reactives `snapshot_count` and keep `new_items_note` screen-seeded. Assert the toolbar renders `50 items in snapshot` (singular for 1), a pane rebuild retains `3 new items`, and clicking the pill posts `RefreshItemsRequested` without clearing the note before the screen reports success.
 
-- [ ] **Step 2: Write RED screen tests for exact arrivals**
+- [x] **Step 2: Write RED screen tests for exact arrivals**
 
 Prove:
 
@@ -873,13 +873,13 @@ Prove:
 - cached Next after Previous replays the exact page with no backend call;
 - explicit Refresh preserves Reader content but removes an out-of-predicate action-pinned row from Feed Items.
 
-- [ ] **Step 3: Run the exact widget/arrival tests and verify RED**
+- [x] **Step 3: Run the exact widget/arrival tests and verify RED**
 
 Run the new nodes with `-k "snapshot_count or new_items or arrivals"` in the three listed files.
 
 Expected: failures show the pill is pane-local/unconditionally dismissed and the screen has no watermark-based arrival query.
 
-- [ ] **Step 4: Make count and arrival state screen-owned**
+- [x] **Step 4: Make count and arrival state screen-owned**
 
 Add:
 
@@ -891,13 +891,13 @@ self._items_arrival_generation = 0
 
 Seed `ArticleListPane.snapshot_count` and `new_items_note` in `_build_detail_pane()`, and push them in the same in-place pager update path. `ArticleListPane.on_click()` posts refresh but does not clear the note; only a successful replacement snapshot clears it.
 
-- [ ] **Step 5: Reconcile arrivals against the committed snapshot query**
+- [x] **Step 5: Reconcile arrivals against the committed snapshot query**
 
 Add `_refresh_items_pending_arrivals()` that captures the committed snapshot object and calls `controller.count_reader_item_arrivals()` with the snapshot watermark plus `snapshot.query.as_kwargs()`. It must never rebuild kwargs from `_items_status_filter`, `_items_search_query`, a pending scope, or other mutable attempted intent. Publish only if generation, snapshot object identity, backend, and Read section still match. Invoke it after terminal tree-data refreshes and after refresh-all completes. It updates the pill only; it never mutates rows or the snapshot-bounded count.
 
 Replace `_refresh_all_worker()`'s global unread-delta pill calculation with this exact arrival reconciliation. The aggregate toast may still report the check batch's unread delta for its existing behavior, but the Reader pill authority is the creation-watermark count.
 
-- [ ] **Step 6: Run focused arrival and pagination tests and verify GREEN**
+- [x] **Step 6: Run focused arrival and pagination tests and verify GREEN**
 
 Run:
 
@@ -911,7 +911,7 @@ Run:
 
 Expected: selected widget, arrival, refresh, and pagination tests pass.
 
-- [ ] **Step 7: Commit honest arrival presentation**
+- [x] **Step 7: Commit honest arrival presentation**
 
 ```bash
 git add \
