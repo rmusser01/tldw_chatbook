@@ -1475,7 +1475,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
                 "#settings-appearance-library-media-items-open", Button
             ).label
         )
-        assert "Custom widths" in str(
+        assert "Custom width" in str(
             screen.query_one(
                 "#settings-appearance-library-media-custom-widths", Button
             ).label
@@ -1514,9 +1514,17 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             f"{label}: {value}"
             for label, value in screen._appearance_field_guidance_rows()
         )
-        assert "Shared Library reader geometry" in guide_text
+        assert "Shared Library rail" in guide_text
         assert "library.reader" in guide_text
         assert "library.<destination>_reader" in guide_text
+        visible = _visible_text(screen)
+        assert "Automatic: 3:13, bounded to 24–34 cells." in visible
+        assert "Custom: preferred 24–48 cells" in visible
+        assert "keep 40 content cells" in visible
+        assert "Adaptive readers may collapse panes" in visible
+        assert "below 64 columns" in visible
+        assert "‹ Library" in visible
+        assert "< Library" in visible
 
         await pilot.click("#settings-appearance-library-media-reset")
         await pilot.pause()
@@ -1526,7 +1534,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
                 "#settings-appearance-library-media-library-open", Button
             ).label
         )
-        assert "Fixed default widths" in str(
+        assert "Automatic width" in str(
             screen.query_one(
                 "#settings-appearance-library-media-custom-widths", Button
             ).label
@@ -1547,7 +1555,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "future_shared": "keep",
             "library_open": True,
             "custom_widths_enabled": False,
-            "library_width": 28,
+            "library_width": 31,
         },
         "media_reader": {
             "items_open": True,
@@ -1563,6 +1571,61 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
         },
     }
     assert app._library_reader_layout_refresh_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_keeps_dormant_library_width_through_resize_mode_and_generation(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["library"] = {
+        "reader": {
+            "library_open": True,
+            "custom_widths_enabled": False,
+            "library_width": 48,
+        }
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        selector = "#settings-appearance-library-media-library-width"
+
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert field.disabled
+
+        await pilot.resize_terminal(70, 40)
+        await pilot.resize_terminal(190, 55)
+        app._library_reader_layout_refresh_generation = (
+            int(getattr(app, "_library_reader_layout_refresh_generation", 0)) + 1
+        )
+        screen.refresh(layout=True)
+        await pilot.pause()
+
+        await _open_settings_category(pilot, "#settings-category-overview")
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(selector, Input)
+
+        assert field.value == "48"
+        assert field.disabled
+
+    assert saved == []
+    assert app.app_config["library"]["reader"] == {
+        "library_open": True,
+        "custom_widths_enabled": False,
+        "library_width": 48,
+    }
 
 
 @pytest.mark.asyncio

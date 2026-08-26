@@ -16,10 +16,12 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
     ITEMS_TARGET_WIDTH,
-    LIBRARY_MAX_WIDTH,
-    LIBRARY_MIN_WIDTH,
-    LIBRARY_TARGET_WIDTH,
     normalize_adaptive_reader_preferences,
+)
+from tldw_chatbook.Library.library_rail_width import (
+    LIBRARY_CUSTOM_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    LIBRARY_REFERENCE_WIDTH,
 )
 
 from .settings_config_models import SettingsValidationResult
@@ -62,7 +64,7 @@ class SettingsAppearanceDefaults:
     console_transcript_style: str = DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE
     library_reader_library_open: bool = True
     library_reader_custom_widths_enabled: bool = False
-    library_reader_library_width: int = LIBRARY_TARGET_WIDTH
+    library_reader_library_width: int = LIBRARY_REFERENCE_WIDTH
     library_media_items_open: bool = True
     library_media_items_width: int = ITEMS_TARGET_WIDTH
     library_conversations_items_open: bool = True
@@ -312,11 +314,12 @@ def validate_appearance_defaults(
     library_width = _strict_int(values.library_reader_library_width)
     if (
         library_width is None
-        or not LIBRARY_MIN_WIDTH <= library_width <= LIBRARY_MAX_WIDTH
+        or not LIBRARY_MIN_WIDTH <= library_width <= LIBRARY_CUSTOM_MAX_WIDTH
     ):
         return SettingsValidationResult(
             False,
-            f"Library width must be between {LIBRARY_MIN_WIDTH} and {LIBRARY_MAX_WIDTH}.",
+            "Library width must be between "
+            f"{LIBRARY_MIN_WIDTH} and {LIBRARY_CUSTOM_MAX_WIDTH}.",
         )
     for label, open_value, width_value in (
         (

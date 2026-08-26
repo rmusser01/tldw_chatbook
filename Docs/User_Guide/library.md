@@ -118,6 +118,19 @@ did not choose a newer rail target in the meantime.
 +-----------------------------------------------------------------+
 ```
 
+When the rail is beside content, its automatic width follows the existing
+3:13 Library-to-canvas proportion and stays between 24 and 34 cells. An
+explicit custom preference can be 24–48 cells; ordinary two-pane views may
+temporarily shrink it to preserve 40 content cells, while adaptive readers
+may collapse or prioritize panes. These responsive changes never overwrite
+the saved preference.
+
+Below 64 columns an ordinary Library route shows one stage at a time: either
+the rail or the canvas. Activating a rail destination opens its canvas; use
+**‹ Library** (or **< Library** with ASCII glyphs) to return. Widening restores
+the co-present layout and prior focus/scroll position when no newer action has
+replaced it.
+
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
 - **Left rail**, top to bottom. A new empty profile first sees the compact

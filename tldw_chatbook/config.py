@@ -3260,7 +3260,8 @@ ingest_url_preflight_probe = false
 library_open = true
 items_open = true
 custom_widths_enabled = false
-library_width = 28
+# Compatibility fallback for fresh profiles; matches LIBRARY_REFERENCE_WIDTH.
+library_width = 31
 items_width = 40
 
 [library.conversations_reader]

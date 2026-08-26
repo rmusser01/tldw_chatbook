@@ -18,6 +18,7 @@ def test_load_appearance_defaults_uses_safe_defaults():
     assert defaults.animations_enabled is True
     assert defaults.smooth_scrolling is True
     assert defaults.console_transcript_style == "role_accents"
+    assert defaults.library_reader_library_width == 31
 
 
 def test_load_appearance_defaults_reads_general_web_and_appearance_sections():
@@ -175,7 +176,7 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
             "reader": {
                 "library_open": True,
                 "custom_widths_enabled": False,
-                "library_width": 28,
+                "library_width": 31,
             },
             "media_reader": {
                 "items_open": True,
@@ -298,6 +299,43 @@ def test_load_appearance_defaults_falls_back_to_legacy_media_per_shared_key():
     assert defaults.library_reader_library_width == 24
     assert defaults.library_media_items_open is True
     assert defaults.library_media_items_width == 72
+
+
+def test_custom_width_toggle_keeps_saved_width_dormant_and_unchanged():
+    dormant = load_appearance_defaults(
+        {
+            "library": {
+                "reader": {
+                    "custom_widths_enabled": False,
+                    "library_width": 48,
+                }
+            }
+        }
+    )
+    enabled = load_appearance_defaults(
+        {
+            "library": {
+                "reader": {
+                    "custom_widths_enabled": True,
+                    "library_width": dormant.library_reader_library_width,
+                }
+            }
+        }
+    )
+
+    assert dormant.library_reader_custom_widths_enabled is False
+    assert dormant.library_reader_library_width == 48
+    assert enabled.library_reader_custom_widths_enabled is True
+    assert enabled.library_reader_library_width == 48
+
+
+def test_validate_appearance_defaults_keeps_custom_range_24_through_48():
+    for width in (24, 34, 35, 48):
+        result = validate_appearance_defaults(
+            SettingsAppearanceDefaults(library_reader_library_width=width)
+        )
+
+        assert result.valid is True
 
 
 def test_validate_appearance_defaults_rejects_media_reader_types_and_widths():
