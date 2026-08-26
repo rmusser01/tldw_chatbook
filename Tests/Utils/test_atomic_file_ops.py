@@ -10,6 +10,7 @@ encryption measured 0600 -> 0644 -> (still) 0644 with plaintext keys.
 import stat
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 
@@ -72,3 +73,39 @@ def test_preserve_existing_mode_false_keeps_legacy_behavior(tmp_path):
     atomic_write_text(target, "hello again\n")
 
     assert _mode(target) == 0o644
+
+
+def test_privacy_safe_failure_log_contains_only_category_and_exception_class(
+    tmp_path, monkeypatch
+):
+    path_canary = "PATH-CANARY-22507"
+    body_canary = "BODY-CANARY-22507"
+    exception_canary = "EXCEPTION-CANARY-22507"
+    target = tmp_path / path_canary
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+
+    class PrivateWriteError(OSError):
+        pass
+
+    def fail_replace(*_args):
+        raise PrivateWriteError(exception_canary)
+
+    monkeypatch.setattr("os.replace", fail_replace)
+    try:
+        with pytest.raises(PrivateWriteError):
+            atomic_write_text(
+                target,
+                body_canary,
+                privacy_safe_log=True,
+            )
+    finally:
+        logger.remove(sink)
+
+    log_text = "".join(messages)
+    assert "atomic_write_failed" in log_text
+    assert "PrivateWriteError" in log_text
+    assert path_canary not in log_text
+    assert body_canary not in log_text
+    assert exception_canary not in log_text
+    assert "Traceback" not in log_text

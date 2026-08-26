@@ -45,6 +45,7 @@ def atomic_write_text(
     encoding: str = "utf-8",
     mode: int = 0o644,
     preserve_existing_mode: bool = False,
+    privacy_safe_log: bool = False,
 ) -> None:
     """
     Write text content to a file atomically.
@@ -64,6 +65,8 @@ def atomic_write_text(
             ``mode``. Use this for secrets-bearing files (e.g. the app config)
             so a rewrite never widens permissions a user has tightened.
             Defaults to False to keep existing callers' behavior unchanged.
+        privacy_safe_log: Emit only a stable category and exception class at
+            this disclosure boundary. Defaults to False for existing callers.
 
     Raises:
         OSError: If the write or rename operation fails
@@ -101,7 +104,10 @@ def atomic_write_text(
         # os.replace is atomic on POSIX and does best-effort on Windows
         os.replace(temp_path, str(file_path))
 
-        logger.debug(f"Atomically wrote {len(content)} chars to {file_path}")
+        if privacy_safe_log:
+            logger.debug("atomic_write_succeeded")
+        else:
+            logger.debug(f"Atomically wrote {len(content)} chars to {file_path}")
 
     except Exception as e:
         # Clean up temp file if it exists
@@ -110,7 +116,10 @@ def atomic_write_text(
                 os.unlink(temp_path)
             except Exception:
                 pass
-        logger.error(f"Failed to atomically write to {file_path}: {e}")
+        if privacy_safe_log:
+            logger.error(f"atomic_write_failed: {type(e).__name__}")
+        else:
+            logger.error(f"Failed to atomically write to {file_path}: {e}")
         raise
 
 

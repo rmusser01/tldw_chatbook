@@ -9,9 +9,9 @@ from typing import Awaitable, Callable
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, RadioButton, RadioSet, Static
+from textual.widgets import Button, Checkbox, RadioButton, RadioSet, Static
 
 from tldw_chatbook.Chat.console_chat_controller import (
     CapturePolicyMutationResult,
@@ -73,6 +73,10 @@ FULL_CAPTURE_WARNING = (
     "outputs, and local paths. Credentials remain structurally blocked, but "
     "ordinary text may still contain secrets."
 )
+GLOBAL_FULL_CAPTURE_WARNING = (
+    f"{FULL_CAPTURE_WARNING} Global Full affects all Console conversations "
+    "and survives restart."
+)
 OFF_TO_ON_WARNING = (
     "Turning capture On resumes the stored detail. The dormant Full setting "
     "will become active for future exchanges."
@@ -94,6 +98,69 @@ def full_capture_confirmation(*, scope_label: str) -> ConfirmationDialog:
     )
 
 
+class GlobalFullCaptureConfirmation(SafeModalDismissMixin, ModalScreen[bool]):
+    """Require an explicit restart-aware acknowledgement for Global Full."""
+
+    SAFE_MODAL_CONTENT = "#global-full-confirmation"
+    message = GLOBAL_FULL_CAPTURE_WARNING
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
+    DEFAULT_CSS = """
+    GlobalFullCaptureConfirmation { align: center middle; }
+    #global-full-confirmation {
+        width: 72; max-width: 96%; height: 18; max-height: 96%;
+        border: thick $error; background: $surface; padding: 1 2;
+    }
+    #global-full-title { text-style: bold; text-align: center; }
+    #global-full-body { height: 1fr; scrollbar-gutter: stable; }
+    #global-full-message, #global-full-ack { height: auto; margin-top: 1; }
+    #global-full-actions { height: 3; min-height: 3; align-horizontal: right; }
+    #global-full-actions Button { min-width: 14; margin-left: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Container(id="global-full-confirmation"):
+            yield Static("Enable Global Full capture?", id="global-full-title")
+            with VerticalScroll(id="global-full-body"):
+                yield Static(
+                    GLOBAL_FULL_CAPTURE_WARNING,
+                    id="global-full-message",
+                    markup=False,
+                )
+                yield Checkbox(
+                    "I understand this affects every Console conversation and survives restart",
+                    id="global-full-ack",
+                )
+            with Horizontal(id="global-full-actions"):
+                yield Button("Keep current policy", id="global-full-cancel")
+                yield Button(
+                    "Enable Global Full",
+                    id="global-full-confirm",
+                    variant="error",
+                    disabled=True,
+                )
+
+    @on(Checkbox.Changed, "#global-full-ack")
+    def _acknowledgement_changed(self, event: Checkbox.Changed) -> None:
+        self.query_one("#global-full-confirm", Button).disabled = not event.value
+
+    @on(Button.Pressed)
+    async def _button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "global-full-confirm" and not event.button.disabled:
+            self.dismiss(True)
+        elif event.button.id == "global-full-cancel":
+            await self.request_safe_cancel(source="button")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self.dismiss_safe_once(False)
+
+
+def global_full_capture_confirmation() -> GlobalFullCaptureConfirmation:
+    """Build the shared stronger acknowledgement for Global Full."""
+    return GlobalFullCaptureConfirmation()
+
+
 def off_to_on_confirmation() -> ConfirmationDialog:
     """Build the shared dormant-Full resume warning."""
     return ConfirmationDialog(
@@ -110,9 +177,12 @@ __all__ = [
     "CaptureScope",
     "ConsoleCapturePolicyDialog",
     "FULL_CAPTURE_WARNING",
+    "GLOBAL_FULL_CAPTURE_WARNING",
+    "GlobalFullCaptureConfirmation",
     "OFF_TO_ON_WARNING",
     "PURGE_FULL_WARNING",
     "full_capture_confirmation",
+    "global_full_capture_confirmation",
     "off_to_on_confirmation",
 ]
 
@@ -262,11 +332,17 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             detail = fresh.global_detail
         self.preview = self.preview_for(scope, detail)
         if self.preview.requires_confirmation and not full_confirmation_done:
-            if not await self._confirm(
-                FULL_CAPTURE_WARNING,
-                title=f"Enable Full capture for {scope.value.replace('_', ' ')}?",
-                confirm_label="Enable Full",
-            ):
+            if scope is CaptureScope.GLOBAL:
+                confirmed = bool(
+                    await self.app.push_screen_wait(global_full_capture_confirmation())
+                )
+            else:
+                confirmed = await self._confirm(
+                    FULL_CAPTURE_WARNING,
+                    title=f"Enable Full capture for {scope.value.replace('_', ' ')}?",
+                    confirm_label="Enable Full",
+                )
+            if not confirmed:
                 self._set_status("Full policy change cancelled")
                 return None
         self._applying = True
@@ -385,7 +461,19 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             else:
                 self._set_status("Failed — stored captures were not deleted", error=True)
             return result
-        except Exception:
+        except Exception as exc:
+            from tldw_chatbook.UI.Console_Modules.capture_policy_bindings import (
+                CapturePurgeRefreshError,
+            )
+
+            if isinstance(exc, CapturePurgeRefreshError):
+                self.full_capture_count = 0
+                self._set_status(
+                    f"Deleted {exc.result.removed_count} Full capture logical "
+                    "records; refresh failed",
+                    error=True,
+                )
+                return exc.result
             self._set_status("Failed — stored captures were not deleted", error=True)
             return None
         finally:
@@ -423,6 +511,11 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             self.selected_detail = self.snapshot.conversation_detail
         else:
             self.selected_detail = self.snapshot.global_detail
+        self._sync_detail_selection()
+        self.preview = self.preview_for(self.selected_scope, self.selected_detail)
+        self.query_one("#capture-policy-effective", Static).update(
+            self._effective_text()
+        )
 
     @on(RadioSet.Changed, "#capture-policy-details")
     def _detail_changed(self, event: RadioSet.Changed) -> None:
@@ -432,6 +525,17 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             "capture-policy-detail-full": CaptureDetail.FULL,
         }.get(event.pressed.id or "", self.selected_detail)
         self.preview = self.preview_for(self.selected_scope, self.selected_detail)
+        self.query_one("#capture-policy-effective", Static).update(
+            self._effective_text()
+        )
+
+    def _sync_detail_selection(self) -> None:
+        for detail, selector in (
+            (None, "#capture-policy-detail-inherit"),
+            (CaptureDetail.SAFE, "#capture-policy-detail-safe"),
+            (CaptureDetail.FULL, "#capture-policy-detail-full"),
+        ):
+            self.query_one(selector, RadioButton).value = self.selected_detail is detail
 
     @on(Button.Pressed, "#capture-policy-apply")
     def _apply_pressed(self, event: Button.Pressed) -> None:
@@ -466,9 +570,21 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
     def _effective_text(self) -> str:
         snapshot = self.snapshot
         if not snapshot.enabled:
-            text = f"Future exchange capture: Off · Dormant {snapshot.global_detail.value.title()}"
+            dormant = resolve_capture_policy(
+                enabled=True,
+                next_send=snapshot.next_detail,
+                conversation=snapshot.conversation_detail,
+                global_default=snapshot.global_detail,
+            )
+            text = (
+                "Future exchange capture: Off · Dormant "
+                f"{dormant.detail.value.title()} ({dormant.source.value.replace('_', ' ')})"
+            )
         else:
-            text = f"Future exchange capture: {snapshot.effective.detail.value.title()}"
+            text = (
+                f"Future exchange capture: {snapshot.effective.detail.value.title()} · "
+                f"Prospective {self.preview.effective_detail.value.title()}"
+            )
         if snapshot.active_run_detail is not None:
             text += f"\nActive run frozen at {snapshot.active_run_detail.value.title()}"
         elif snapshot.queued_consumer:

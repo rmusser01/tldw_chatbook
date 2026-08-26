@@ -289,6 +289,11 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
                 self._set_status("Export cancelled; the existing file was kept.")
                 return False
 
+        # Confirmations yield to the app. Fence the immutable capture again at
+        # the last possible moment before projection begins.
+        if not self._revision_is_current():
+            return False
+
         self._exporting = True
         self._set_controls_disabled(True)
         self._set_status("Preparing governed export…")
@@ -302,7 +307,10 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
                 self._set_status("Export copied to clipboard.")
             else:
                 await asyncio.to_thread(
-                    atomic_write_text, destination, projection.json_text
+                    atomic_write_text,
+                    destination,
+                    projection.json_text,
+                    privacy_safe_log=True,
                 )
                 self._set_status(f"Export written to {destination.name}.")
             return True

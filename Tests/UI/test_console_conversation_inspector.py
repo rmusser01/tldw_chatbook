@@ -13,11 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from collections.abc import Callable
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 from textual.app import ComposeResult
@@ -1068,152 +1066,9 @@ async def test_ephemeral_call_uses_only_governed_export_action() -> None:
         )
 
 
-@pytest.mark.asyncio
-async def test_save_exchange_capture_direct_call_still_blocked_when_ephemeral(
-    monkeypatch,
-) -> None:
-    """Review finding M7: ``_save_exchange_capture`` used to write
-    unconditionally -- the Save button's own ``disabled=`` state
-    (asserted by the test above) was the ONLY enforcement of the ephemeral
-    save-block. A direct call bypassing the button (e.g. a future caller)
-    must still be blocked. Patches this module's own ``Path`` name to
-    raise if ``Path.home()`` is ever reached -- proving the method returns
-    before touching the filesystem at all."""
-    cap = _capture("r1", 0, "t", "m")
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(
-            exchanges_loader=loader, initial_tab=TAB_EXCHANGE, ephemeral=True
-        )
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(Button)))
-
-        import tldw_chatbook.Widgets.Console.console_conversation_inspector as inspector_module
-
-        class _BoomPath:
-            @staticmethod
-            def home():
-                raise AssertionError(
-                    "Path.home() must not be reached when save is blocked"
-                )
-
-        monkeypatch.setattr(inspector_module, "Path", _BoomPath)
-
-        modal._save_exchange_capture("0-0")  # must not raise, must not write
-
-
-@pytest.mark.asyncio
-async def test_save_exchange_capture_rejected_destination_does_not_write(
-    monkeypatch,
-) -> None:
-    """Qodo PR #1883 finding 2: ``_save_exchange_capture`` (like its Next
-    Send-tab sibling ``_save_json``) now runs its Downloads-bound
-    destination through ``path_validation.validate_path`` before
-    ``mkdir``/``write_text``. When that check rejects the destination,
-    the capture must not be written -- ``mkdir``/``write_text`` below
-    raise ``AssertionError`` if ever reached, proving the short-circuit
-    -- and the toast must surface only the failure class + path, never
-    the raw ``path_validation`` exception body."""
-    cap = _capture("r1", 0, "t", "m")
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(Button)))
-
-        import tldw_chatbook.Widgets.Console.console_conversation_inspector as inspector_module
-
-        class _RejectedSaveGuardPath:
-            """``home()``/``__truediv__`` succeed (so path construction
-            reaches the validation call); ``mkdir``/``write_text`` must
-            never be reached once ``validate_path`` (patched below)
-            rejects."""
-
-            def __str__(self) -> str:
-                return "/guard/Downloads/rejected.json"
-
-            @classmethod
-            def home(cls) -> "_RejectedSaveGuardPath":
-                return cls()
-
-            def __truediv__(self, other: str) -> "_RejectedSaveGuardPath":
-                return self
-
-            def mkdir(self, **kwargs: object) -> None:
-                raise AssertionError(
-                    "must not mkdir when destination is rejected"
-                )
-
-            def write_text(self, *args: object, **kwargs: object) -> None:
-                raise AssertionError(
-                    "must not write when destination is rejected"
-                )
-
-        monkeypatch.setattr(inspector_module, "Path", _RejectedSaveGuardPath)
-
-        sentinel = "SENTINEL-VALIDATE-boom-must-not-leak-71ab"
-
-        def _reject(*_args: object, **_kwargs: object) -> None:
-            raise ValueError(sentinel)
-
-        monkeypatch.setattr(inspector_module, "validate_path", _reject)
-
-        notifications: list[tuple[str, str | None]] = []
-        monkeypatch.setattr(
-            modal,
-            "notify",
-            lambda message, *a, **k: notifications.append(
-                (str(message), k.get("severity"))
-            ),
-        )
-
-        modal._save_exchange_capture("0-0")  # must not raise, must not write
-
-        assert notifications, "expected a rejection toast"
-        message, severity = notifications[-1]
-        assert severity == "error"
-        assert sentinel not in message
-        assert "ValueError" in message
-        assert "/guard/Downloads/rejected.json" in message
-
-
 # ---------------------------------------------------------------------------
-# C1 (CRITICAL): the Exchange tab's per-call Copy JSON / Save to File must
-# never carry an automatically-injected project-instruction body. The fix
-# lives one layer down, in ``build_request_capture`` (``console_exchange_
-# capture.py``) -- these two tests exercise the REAL function to build the
-# capture's ``request``, then drive the REAL ``_copy_exchange_capture``/
-# ``_save_exchange_capture`` methods end-to-end, proving the redaction
-# survives being loaded into the Inspector and serialized back out, not
-# just that the standalone unit test passes in isolation.
+# The governed Export action retains the redacted captured request and is
+# the only disclosure path offered by the Exchange tab.
 # ---------------------------------------------------------------------------
 
 _EXCHANGE_EXPORT_SENTINEL = (
@@ -1660,8 +1515,8 @@ async def test_late_snapshot_completion_does_not_steal_focus_from_costs_tab() ->
     [8, None],
     ids=["purged", "purge-lease-held"],
 )
-async def test_stale_capture_revision_blocks_expansion_copy_and_save(
-    monkeypatch, current_revision,
+async def test_stale_capture_revision_blocks_expansion_and_export(
+    current_revision,
 ) -> None:
     revision = SimpleNamespace(value=7)
     cap = _capture(
@@ -1676,8 +1531,6 @@ async def test_stale_capture_revision_blocks_expansion_copy_and_save(
     async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
         return [(cap, False)]
 
-    fake_copy = SimpleNamespace(copy=Mock())
-    monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
     app = InspectorHarness(
         **_default_kwargs(
             exchanges_loader=loader,
@@ -1698,14 +1551,11 @@ async def test_stale_capture_revision_blocks_expansion_copy_and_save(
         revision.value = current_revision
 
         assert modal._mount_exchange_call_body(call, "0-0") is False
-        assert modal._copy_exchange_capture("0-0") is False
-        assert modal._save_exchange_capture("0-0") is False
+        assert modal._open_exchange_export("0-0") is False
         assert modal._exchange_capture_by_call_key == {}
         assert modal._loaded_exchange_call_keys == set()
         status = modal.query_one("#console-inspector-capture-status", Static)
         assert "Refresh required" in str(status.renderable)
-
-    fake_copy.copy.assert_not_called()
 
 
 @pytest.mark.asyncio

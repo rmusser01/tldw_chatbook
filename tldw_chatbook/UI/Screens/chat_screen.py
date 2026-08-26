@@ -104,6 +104,10 @@ from ..Console_Modules.prompt_queue import (
 )
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
+from ..Console_Modules.capture_policy_bindings import (
+    build_capture_policy_bindings,
+    build_inspector_capture_policy_wiring,
+)
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
@@ -121,12 +125,7 @@ from ..Console_Modules.session import (
     _is_empty_select_value,
 )
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
-from ...Chat.console_chat_controller import (
-    CapturePolicyMutationResult,
-    CapturePolicyMutationStatus,
-    CapturePurgeStatus,
-    ConsoleChatController,
-)
+from ...Chat.console_chat_controller import ConsoleChatController
 from ...Chat.console_runtime import ensure_console_runtime, leave_console_runtime
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
@@ -452,7 +451,6 @@ from ...Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
     InspectorTurn,
 )
-from ...Widgets.Console.console_capture_policy_dialog import CapturePolicyBindings
 from ...Widgets.Console.console_citation_sources_modal import (
     selected_valid_evidence_ordinals,
 )
@@ -1739,74 +1737,6 @@ def _build_console_inspector_exchanges_loader(
         return await asyncio.to_thread(_read)
 
     return _exchanges_loader
-
-
-def _build_capture_policy_bindings(
-    controller: Any,
-    session_id: str,
-    conversation_id: str | None,
-    *,
-    purge_success: Callable[[], Awaitable[None]] | None = None,
-) -> CapturePolicyBindings:
-    """Freeze policy/count/purge callbacks to one live Console session."""
-
-    def read():
-        return controller.capture_policy_snapshot(session_id)
-
-    def apply_next(detail, expected_policy_revision):
-        return controller.set_next_capture_detail(
-            session_id,
-            detail,
-            expected_policy_revision=expected_policy_revision,
-        )
-
-    async def apply_conversation(detail, expected_policy_revision):
-        return await controller.replace_conversation_capture_detail(
-            session_id,
-            detail,
-            expected_policy_revision=expected_policy_revision,
-        )
-
-    def apply_global(enabled, detail, config_generation, policy_revision):
-        if controller.store.active_session_id != session_id:
-            return CapturePolicyMutationResult(
-                CapturePolicyMutationStatus.TARGET_MISSING,
-                read(),
-                True,
-                "opener_session_not_active",
-            )
-        return controller.apply_global_capture_settings(
-            enabled=enabled,
-            detail=detail,
-            expected_config_generation=config_generation,
-            expected_policy_revision=policy_revision,
-        )
-
-    async def count_full() -> int:
-        stage = await asyncio.to_thread(
-            controller.store.stage_full_capture_purge, session_id
-        )
-        return stage.removed_count
-
-    async def purge_full(expected_capture_revision):
-        result = await controller.purge_full_captures(
-            session_id, expected_capture_revision
-        )
-        if result.status is CapturePurgeStatus.DELETED and purge_success is not None:
-            await purge_success()
-        return result
-
-    return CapturePolicyBindings(
-        target_session_id=session_id,
-        target_conversation_id=conversation_id,
-        read=read,
-        apply_next=apply_next,
-        apply_conversation=apply_conversation,
-        apply_global=apply_global,
-        count_full=count_full,
-        purge_full=purge_full,
-        capture_revision=lambda: controller.capture_revision(session_id),
-    )
 
 
 class _ControllerState:
@@ -3423,7 +3353,7 @@ class ChatScreen(BaseAppScreen):
         runtime = self._console_runtime()
         capture_policy_bindings = None
         if hasattr(runtime, "chat_controller"):
-            capture_policy_bindings = _build_capture_policy_bindings(
+            capture_policy_bindings = build_capture_policy_bindings(
                 self._ensure_console_chat_controller(),
                 target_session_id,
                 conv_id,
@@ -7495,34 +7425,9 @@ class ChatScreen(BaseAppScreen):
             self._build_console_inspector_cost_data()
         )
         controller = self._ensure_console_chat_controller()
-        target_session_id = controller.store.active_session_id
-        target_session = next(
-            (
-                session
-                for session in controller.store.sessions()
-                if session.id == target_session_id
-            ),
-            None,
-        )
-        target_conversation_id = (
-            target_session.persisted_conversation_id
-            if target_session is not None
-            else None
-        )
-        if target_session_id is None:
+        capture_policy_wiring = build_inspector_capture_policy_wiring(controller)
+        if capture_policy_wiring is None:
             return
-        inspector_holder: list[ConsoleConversationInspector] = []
-
-        async def purge_success() -> None:
-            if inspector_holder:
-                await inspector_holder[0]._invalidate_stale_exchange_mounts()
-
-        capture_policy_bindings = _build_capture_policy_bindings(
-            controller,
-            target_session_id,
-            target_conversation_id,
-            purge_success=purge_success,
-        )
         inspector = ConsoleConversationInspector(
             rows=rows,
             totals=totals,
@@ -7538,22 +7443,12 @@ class ChatScreen(BaseAppScreen):
             project_instruction_state_factory=project_instruction_state_factory,
             project_instruction_session_id=project_instruction_session_id,
             project_instruction_recovery=project_instruction_recovery,
-            target_session_id=target_session_id,
-            target_conversation_id=target_conversation_id,
-            capture_revision_provider=(
-                (
-                    lambda session_id=target_session_id: (
-                        None
-                        if controller.store.capture_quiescent(session_id)
-                        else controller.capture_revision(session_id)
-                    )
-                )
-                if target_session_id is not None
-                else None
-            ),
-            capture_policy_bindings=capture_policy_bindings,
+            target_session_id=capture_policy_wiring.target_session_id,
+            target_conversation_id=capture_policy_wiring.target_conversation_id,
+            capture_revision_provider=capture_policy_wiring.capture_revision,
+            capture_policy_bindings=capture_policy_wiring.bindings,
         )
-        inspector_holder.append(inspector)
+        capture_policy_wiring.bind_inspector(inspector)
         self.app.push_screen(inspector)
 
     def _build_console_inspector_cost_data(

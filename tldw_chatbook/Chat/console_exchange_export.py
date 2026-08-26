@@ -94,12 +94,27 @@ def project_exchange_export(
             if profile is TraceExportProfile.FULL_TRACE
             else CaptureDetail.SAFE
         )
+        request_source = {
+            key: value
+            for key, value in capture.request.items()
+            if key != "truncation_inventory"
+        }
+        conservatively_redacted: tuple[str, ...] = ()
+        if (
+            profile is TraceExportProfile.REDACTED_DIAGNOSTIC
+            and capture.capture_detail is CaptureDetail.FULL
+            and "system_message" in request_source
+        ):
+            # Provider preparation may have joined ordinary and automatic
+            # system rows. Their origin markers are intentionally absent
+            # from the wire-shaped capture, so the safe export cannot
+            # distinguish them later and must redact the combined field.
+            request_source["system_message"] = (
+                "[system message omitted by redacted diagnostic export]"
+            )
+            conservatively_redacted = ("system_message",)
         request, redacted_paths = build_request_capture(
-            {
-                key: value
-                for key, value in capture.request.items()
-                if key != "truncation_inventory"
-            },
+            request_source,
             capture_detail=detail,
         )
         request["truncation_inventory"] = list(
@@ -108,7 +123,9 @@ def project_exchange_export(
         payload["request"] = request
         payload["response"] = sanitize_capture_value(capture.response)
         payload["omitted_keys"] = sorted(
-            set(capture.omitted_keys).union(redacted_paths)
+            set(capture.omitted_keys)
+            .union(redacted_paths)
+            .union(conservatively_redacted)
         )
 
     payload = sanitize_capture_value(payload)

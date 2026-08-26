@@ -66,6 +66,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17727, 593),
 }
 
+# Task 22507.4 started from this reviewed measurement. The repository-wide
+# ratchet predates concurrent Console growth, so this explicit comparison
+# proves this task does not add to that debt while the stale ceiling is fixed
+# independently.
+_TASK_22507_4_CHAT_SCREEN_BASE = (20099, 633)
+
 
 @lru_cache(maxsize=None)
 def _measure(rel_path: str, class_name: str) -> tuple[int, int]:
@@ -169,3 +175,16 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
         f"{class_name} is {max_methods - methods} methods under its budget "
         f"({methods} vs {max_methods}). Set it to {methods}."
     )
+
+
+@pytest.mark.unit
+def test_task_22507_4_does_not_worsen_chat_screen_base() -> None:
+    """Task 4 must not exceed its reviewed screen line or method counts."""
+
+    lines, methods = _measure(
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "ChatScreen",
+    )
+
+    assert lines <= _TASK_22507_4_CHAT_SCREEN_BASE[0]
+    assert methods <= _TASK_22507_4_CHAT_SCREEN_BASE[1]

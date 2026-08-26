@@ -66,7 +66,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -178,8 +178,6 @@ _EXCHANGE_TURN_ID_PREFIX = "console-inspector-exchange-turn-"
 _EXCHANGE_CALL_ID_PREFIX = "console-inspector-exchange-call-"
 _EXCHANGE_SECTION_ID_PREFIX = "console-inspector-exchange-section-"
 _EXCHANGE_MESSAGE_ID_PREFIX = "console-inspector-exchange-message-"
-_EXCHANGE_COPY_BUTTON_PREFIX = "console-inspector-exchange-copy-"
-_EXCHANGE_SAVE_BUTTON_PREFIX = "console-inspector-exchange-save-"
 _EXCHANGE_EXPORT_BUTTON_PREFIX = "console-inspector-exchange-export-"
 
 # Section keys, in render order. "toolcalls" (the response's own tool
@@ -1459,15 +1457,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed)
     def _on_exchange_call_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
-        if button_id.startswith(_EXCHANGE_COPY_BUTTON_PREFIX):
-            event.stop()
-            call_key = button_id[len(_EXCHANGE_COPY_BUTTON_PREFIX) :]
-            self._copy_exchange_capture(call_key)
-        elif button_id.startswith(_EXCHANGE_SAVE_BUTTON_PREFIX):
-            event.stop()
-            call_key = button_id[len(_EXCHANGE_SAVE_BUTTON_PREFIX) :]
-            self._save_exchange_capture(call_key)
-        elif button_id.startswith(_EXCHANGE_EXPORT_BUTTON_PREFIX):
+        if button_id.startswith(_EXCHANGE_EXPORT_BUTTON_PREFIX):
             event.stop()
             call_key = button_id[len(_EXCHANGE_EXPORT_BUTTON_PREFIX) :]
             self._open_exchange_export(call_key)
@@ -1495,43 +1485,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         )
         return True
 
-    def _copy_exchange_capture(self, call_key: str) -> bool:
-        """Verbatim idiom from the retired standalone context modal's own
-        ``_copy_json`` (that sibling interpolated ``exc``'s own message
-        text into its log line; this copy does NOT -- ``pyperclip.copy(text)``
-        failing (e.g. a codec error while encoding ``text``) can embed a
-        fragment of the very payload ``text`` was built from inside
-        ``str(exc)``, and this is the one call in this file review
-        finding 1's "no capture content, no exception message body" rule
-        would otherwise miss), applied to one call's ``ExchangeCapture``
-        instead of the whole snapshot."""
-        if not self._capture_revision_is_current():
-            return False
-        capture = self._exchange_capture_by_call_key.get(call_key)
-        if capture is None:
-            return False
-        text = json.dumps(asdict(capture), indent=2, default=str)
-        try:
-            import pyperclip
-
-            pyperclip.copy(text)
-            self.notify("JSON copied to clipboard.")
-            return True
-        except Exception as exc:
-            logger.warning(
-                f"Failed to copy exchange capture JSON to clipboard: "
-                f"{type(exc).__name__}"
-            )
-            self.notify("Copy failed: pyperclip unavailable.", severity="warning")
-            return False
-
     def _validated_export_destination(self, path: Path) -> Path | None:
         """Validate a Downloads-bound export path through the repo's
         centralized ``path_validation`` module before any write.
 
-        Both Save-to-file actions in this modal (``_save_json`` for the
-        Next Send tab, ``_save_exchange_capture`` for the Exchange tab)
-        build ``Path.home() / "Downloads" / filename`` themselves; this
+        The Next Send tab's ``_save_json`` action builds
+        ``Path.home() / "Downloads" / filename`` itself; this
         confirms that resolved destination actually stays inside Downloads
         (Qodo PR #1883 finding 2 -- repo rule: file paths go through
         ``path_validation.py``) before ``mkdir``/``write_text`` run.
@@ -1576,67 +1535,6 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 f"Save failed ({type(exc).__name__}): {path}", severity="error"
             )
             return None
-
-    def _save_exchange_capture(self, call_key: str) -> bool:
-        """Verbatim idiom from the retired standalone context modal's own
-        ``_save_json``, applied to one call's ``ExchangeCapture``.
-
-        Review finding M7: the Save button's own ``disabled=`` state (set
-        in ``_mount_exchange_call_body``) was previously the ONLY
-        enforcement of ``self._save_blocked_reason`` -- a direct call here
-        (e.g. a future caller that bypasses the button) still wrote to
-        disk. Re-checked here as defense in depth on a privacy contract."""
-        if not self._capture_revision_is_current():
-            return False
-        if self._save_blocked_reason is not None:
-            return False
-        capture = self._exchange_capture_by_call_key.get(call_key)
-        if capture is None:
-            return False
-        text = json.dumps(asdict(capture), indent=2, default=str)
-        filename = f"chatbook_exchange_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        path = Path.home() / "Downloads" / filename
-        validated_path = self._validated_export_destination(path)
-        if validated_path is None:
-            return False
-        path = validated_path
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
-            self.notify(f"Saved to {path}")
-            return True
-        except OSError as exc:
-            # No exception text, no traceback: this frame's locals include
-            # `text` -- the FULL capture payload (system prompt, messages,
-            # tool schemas, response) -- and loguru's diagnose formatter
-            # would otherwise annotate the failing source line's names
-            # (including `text`) with their values. type(exc).__name__ is
-            # enough to diagnose an OSError (permissions, disk full, path
-            # too long) without echoing content; an OSError's own str() can
-            # also embed the offending path/filename, which is fine, but we
-            # skip it here for the same reason app.py's own file-write
-            # error handlers do (see app.py's three "No traceback" comments).
-            logger.error(
-                f"Failed to save exchange capture to {path}: {type(exc).__name__}"
-            )
-            # Class name + path, not the raw exception body (task-10
-            # review finding 4 -- brought to the same standard as the
-            # sibling Next Send tab's own ``_save_json`` below; an
-            # OSError's str() can echo the payload-adjacent path, but
-            # nothing about the capture content itself).
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
-            return False
-        except Exception as exc:
-            logger.error(
-                f"Unexpected error saving exchange capture to {path}: "
-                f"{type(exc).__name__}"
-            )
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
-            return False
 
     # -- Next Send tab (task-10, ported from the retired context modal) -
 
@@ -1976,8 +1874,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             # (hard constraint 2/3 -- the retired standalone context
             # modal's own ``_copy_json`` interpolated ``exc`` itself into
             # the log line; this is the same fix already applied to this
-            # file's own ``_copy_exchange_capture``, carried to its
-            # sibling).
+            # retired raw Exchange disclosure path).
             logger.warning(
                 f"Failed to copy context JSON to clipboard: {type(exc).__name__}"
             )
@@ -1987,8 +1884,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     def _save_json(self, event: Button.Pressed) -> None:
         event.stop()
         # M5: re-check here as defense in depth on a privacy contract, same
-        # rationale as this file's own ``_save_exchange_capture`` (Exchange
-        # tab review finding M7) -- this button's own ``disabled=`` state
+        # rationale as the retired raw Exchange save path -- this button's
+        # own ``disabled=`` state
         # (set from ``self._save_blocked_reason`` in ``compose``) was
         # previously the ONLY enforcement of the ephemeral save-block for
         # THIS tab; a direct call bypassing the button (e.g. a future
@@ -2011,7 +1908,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self.notify(f"Saved to {path}")
         except OSError as exc:
             # No exception text, no traceback -- same rationale as this
-            # file's ``_save_exchange_capture``: ``text`` in this frame is
+            # retired Exchange save path: ``text`` in this frame is
             # the export-scrubbed next-send payload, and an OSError's own
             # str() can also embed the offending path. type(exc).__name__
             # plus the path we attempted is enough to diagnose (permissions,

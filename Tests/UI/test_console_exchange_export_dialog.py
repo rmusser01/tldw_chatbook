@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import ComposeResult
@@ -123,6 +124,48 @@ async def test_every_full_clipboard_action_requires_fresh_confirmation() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("confirmation", ["full", "overwrite"])
+async def test_revision_change_during_confirmation_blocks_projection(
+    confirmation: str, tmp_path: Path
+) -> None:
+    revision = 1
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleExchangeExportDialog(
+            _capture(),
+            expected_capture_revision=1,
+            capture_revision_provider=lambda: revision,
+        )
+        await app.push_screen(dialog)
+        await pilot.pause()
+        if confirmation == "full":
+            await dialog.select_profile(TraceExportProfile.FULL_TRACE)
+
+            async def confirm_full() -> bool:
+                nonlocal revision
+                revision = 2
+                return True
+
+            dialog._confirm_full_export = confirm_full
+        else:
+            target = tmp_path / "existing.json"
+            target.write_text("keep", encoding="utf-8")
+            await dialog.select_destination("file")
+            dialog.query_one("#exchange-export-path", Input).value = str(target)
+
+            async def confirm_overwrite(_path: Path) -> bool:
+                nonlocal revision
+                revision = 2
+                return True
+
+            dialog._confirm_overwrite = confirm_overwrite
+        dialog._project_async = AsyncMock()
+
+        assert await dialog.export_selected() is False
+        dialog._project_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_file_export_validates_overwrite_and_uses_atomic_writer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -131,7 +174,7 @@ async def test_file_export_validates_overwrite_and_uses_atomic_writer(
     writes: list[tuple[Path, str]] = []
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.Console.console_exchange_export_dialog.atomic_write_text",
-        lambda path, text: writes.append((Path(path), text)),
+        lambda path, text, **_kwargs: writes.append((Path(path), text)),
     )
     app = _Harness()
     async with app.run_test() as pilot:

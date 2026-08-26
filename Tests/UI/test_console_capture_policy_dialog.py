@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 from textual.app import ComposeResult
-from textual.widgets import Static
+from textual.widgets import Button, Checkbox, RadioButton, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_controller import (
@@ -24,6 +24,10 @@ from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
     CapturePolicyBindings,
     CaptureScope,
     ConsoleCapturePolicyDialog,
+    GlobalFullCaptureConfirmation,
+)
+from tldw_chatbook.UI.Console_Modules.capture_policy_bindings import (
+    build_capture_policy_bindings,
 )
 
 
@@ -206,7 +210,77 @@ async def test_inherit_that_reveals_full_requires_confirmation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_off_blocks_full_scope_edits_but_preserves_dormant_global_full() -> None:
+async def test_global_full_requires_restart_aware_distinct_acknowledgement() -> None:
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        modal = GlobalFullCaptureConfirmation()
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        message = str(modal.query_one("#global-full-message", Static).render())
+        confirm = modal.query_one("#global-full-confirm", Button)
+        assert "all Console conversations" in message
+        assert "survives restart" in message
+        assert confirm.disabled
+        assert modal.query_one("#global-full-body").region.height > 0
+        actions = modal.query_one("#global-full-actions")
+        assert actions.region.height > 0 and actions.region.bottom <= 24
+
+        modal.query_one("#global-full-ack", Checkbox).value = True
+        await pilot.pause()
+        assert not confirm.disabled
+
+
+@pytest.mark.asyncio
+async def test_scope_change_syncs_detail_radios_and_prospective_preview() -> None:
+    host = _PolicyHost(
+        _snapshot(
+            next_detail=CaptureDetail.FULL,
+            conversation_detail=CaptureDetail.SAFE,
+            global_detail=CaptureDetail.SAFE,
+        )
+    )
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        await pilot.click("#capture-policy-scope-next")
+        await pilot.pause()
+
+        assert dialog.query_one("#capture-policy-detail-full", RadioButton).value
+        assert not dialog.query_one("#capture-policy-detail-safe", RadioButton).value
+        effective = str(dialog.query_one("#capture-policy-effective", Static).render())
+        assert "Prospective Full" in effective
+
+
+@pytest.mark.asyncio
+async def test_off_preview_resolves_dormant_one_shot_precedence() -> None:
+    host = _PolicyHost(
+        _snapshot(
+            enabled=False,
+            next_detail=CaptureDetail.FULL,
+            conversation_detail=CaptureDetail.SAFE,
+            global_detail=CaptureDetail.SAFE,
+            effective=CapturePolicyResolution(
+                False, CaptureDetail.SAFE, CapturePolicySource.DISABLED, ()
+            ),
+        )
+    )
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        effective = str(dialog.query_one("#capture-policy-effective", Static).render())
+        assert "Dormant Full" in effective
+        assert "next send" in effective.lower()
+
+
+@pytest.mark.asyncio
+async def test_off_blocks_full_scope_edits_and_shows_dormant_precedence() -> None:
     host = _PolicyHost(
         _snapshot(
             enabled=False,
@@ -225,7 +299,7 @@ async def test_off_blocks_full_scope_edits_but_preserves_dormant_global_full() -
         assert await dialog.apply(CaptureScope.CONVERSATION, CaptureDetail.FULL) is None
         assert host.calls == []
         assert "Capture Off" in dialog.status_text
-        assert "Dormant Full" in str(
+        assert "Dormant Safe (conversation)" in str(
             dialog.query_one("#capture-policy-effective", Static).render()
         )
 
@@ -327,6 +401,47 @@ async def test_purge_confirmation_names_logical_deletion_wal_and_policy() -> Non
         assert "WAL" in messages[0]
         assert "capture policy remains Full" in messages[0]
         assert "Deleted 2" in dialog.status_text
+
+
+@pytest.mark.asyncio
+async def test_committed_purge_survives_post_commit_refresh_failure() -> None:
+    host = _PolicyHost(_snapshot())
+    controller = type(
+        "Controller",
+        (),
+        {
+            "store": type("Store", (), {"active_session_id": "session-a"})(),
+            "purge_full_captures": lambda _self, _session, _revision: host.bindings().purge_full(_revision),
+            "capture_revision": lambda _self, _session: 5,
+            "capture_policy_snapshot": lambda _self, _session: host.snapshot,
+        },
+    )()
+
+    async def refresh_failure() -> None:
+        raise RuntimeError("paint failed")
+
+    bindings = build_capture_policy_bindings(
+        controller,
+        "session-a",
+        "conversation-a",
+        purge_success=refresh_failure,
+    )
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(bindings)
+        await app.push_screen(dialog)
+        await pilot.pause()
+        dialog._confirm = lambda *_args, **_kwargs: _async_true()
+
+        result = await dialog.delete_full_captures()
+
+        assert result is not None and result.removed_count == 2
+        assert "Deleted 2" in dialog.status_text
+        assert "refresh failed" in dialog.status_text
+
+
+async def _async_true() -> bool:
+    return True
 
 
 @pytest.mark.asyncio

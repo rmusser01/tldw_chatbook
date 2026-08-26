@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 import pytest
 from loguru import logger
 
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     ExchangeCapture,
-    build_request_capture,
-    build_response_capture,
     capture_from_storage,
-    capture_to_blob,
 )
 from tldw_chatbook.Chat.console_exchange_export import (
     ExchangeExportUnavailable,
@@ -21,7 +22,11 @@ from tldw_chatbook.Chat.console_exchange_export import (
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.trajectory_export import TraceExportProfile
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
+)
 
 
 def _capture(detail: CaptureDetail) -> ExchangeCapture:
@@ -138,7 +143,8 @@ def test_non_full_profiles_report_why_full_is_unavailable_for_safe_capture() -> 
     )
 
 
-def test_production_shaped_anthropic_sentinels_across_storage_and_exports(
+@pytest.mark.asyncio
+async def test_real_gateway_controller_store_sentinels_across_all_owners(
     tmp_path,
 ) -> None:
     semantic = {
@@ -159,115 +165,151 @@ def test_production_shaped_anthropic_sentinels_across_storage_and_exports(
         "endpoint-fragment-22507",
         "QUJD" * 2000,
     )
-    raw_request = {
-        "api_endpoint": "anthropic",
-        "api_base_url": (
-            "https://endpoint-user-22507:endpoint-pass-22507@example.test/v1"
-            "?api_key=endpoint-query-22507#endpoint-fragment-22507"
-        ),
-        "api_key": structured[0],
-        "system_message": semantic["system"],
-        "messages_payload": [
-            {
-                "role": "system",
-                "content": semantic["instructions"],
-                EPHEMERAL_ORIGIN_KEY: "project_instructions",
-            },
-            {
-                "role": "user",
-                "content": f'{semantic["rag"]} {semantic["ordinary_secret"]}',
-            },
-        ],
-        "tools": [
-            {
+    endpoint = (
+        "https://endpoint-user-22507:endpoint-pass-22507@example.test/v1"
+        "?api_key=endpoint-query-22507#endpoint-fragment-22507"
+    )
+    messages = [
+        {"role": "system", "content": semantic["system"]},
+        {
+            "role": "system",
+            "content": semantic["instructions"],
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+        {
+            "role": "user",
+            "content": f'{semantic["rag"]} {semantic["ordinary_secret"]}',
+        },
+        {
+            "role": "tool",
+            "content": semantic["result"],
+            "tool_call_id": "call-1",
+        },
+    ]
+    tools = [
+        {
+            "type": "function",
+            "function": {
                 "name": "lookup",
                 "description": semantic["schema"],
-                "input_schema": {"api_key": structured[1], "type": "object"},
-            }
-        ],
-    }
-    raw_tool_calls = [
-        {
-            "name": "lookup",
-            "arguments": json.dumps(
-                {"query": semantic["arguments"], "api_key": structured[1]}
-            ),
-            "result": json.dumps(
-                {
-                    "value": semantic["result"],
-                    "password": structured[1],
-                    "nested_image": "data:image/png;base64," + structured[-1],
-                }
-            ),
+                "parameters": {
+                    "api_key": structured[1],
+                    "type": "object",
+                    "example_image": "data:image/png;base64," + structured[-1],
+                },
+            },
         }
     ]
 
-    captures: list[ExchangeCapture] = []
-    for seq, detail in enumerate((CaptureDetail.SAFE, CaptureDetail.FULL)):
-        request, omitted = build_request_capture(
-            raw_request, capture_detail=detail
-        )
-        captures.append(
-            ExchangeCapture(
-                run_tag=f"sentinel-{detail.value}",
-                seq=seq,
-                created_at="2026-08-26T00:00:00Z",
-                provider="anthropic",
-                model="claude-test",
-                endpoint=raw_request["api_base_url"],
-                request=request,
-                response=build_response_capture(
-                    content="answer", tool_calls=raw_tool_calls
-                ),
-                status="complete",
-                usage_json='{"input_tokens": 12, "output_tokens": 7}',
-                omitted_keys=omitted,
-                capture_detail=detail,
-            )
-        )
+    def provider_call(**_kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "answer",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup",
+                                    "arguments": json.dumps(
+                                        {
+                                            "query": semantic["arguments"],
+                                            "api_key": structured[1],
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=provider_call)
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url=endpoint,
+        model="gpt-test",
+        ready=True,
+        execution_key="openai",
+        api_key=structured[0],
+        streaming=False,
+    )
+
+    class Persistence:
+        def __init__(self) -> None:
+            self.rows: list[dict] = []
+            self._message_count = 0
+
+        def create_conversation(self, **_kwargs):
+            return "conversation-sentinel"
+
+        def create_message(self, **_kwargs):
+            self._message_count += 1
+            return f"message-{self._message_count}"
+
+        def update_message_content(self, **_kwargs):
+            return True
+
+        def append_message_exchanges(self, *, message_id, rows):
+            assert message_id == "message-1"
+            self.rows = list(rows)
+            return True
+
+    persistence = Persistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session(title="sentinel inspection")
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+    )
+    store.append_stream_chunk(assistant.id, "answer")
+    store.mark_message_complete(assistant.id)
 
     log_path = tmp_path / "capture-inspection.log"
     sink_id = logger.add(log_path, diagnose=False)
-    db = CharactersRAGDB(":memory:", client_id="capture-sentinel-inspection")
     try:
-        conversation_id = db.add_conversation({"title": "sentinel inspection"})
-        message_id = db.add_message(
-            {
-                "conversation_id": conversation_id,
-                "sender": "user",
-                "content": "sentinel inspection",
-            }
-        )
-        db.append_message_exchanges_local(
-            message_id,
-            [
-                {
-                    "run_tag": capture.run_tag,
-                    "seq": capture.seq,
-                    "status": capture.status,
-                    "abandoned": False,
-                    "capture_detail": capture.capture_detail.value,
-                    "capture_blob": capture_to_blob(capture),
-                    "created_at": capture.created_at,
-                }
-                for capture in captures
-            ],
-        )
-        decoded = tuple(
-            capture_from_storage(row["capture_blob"], row["capture_detail"])
-            for row in db.get_message_exchanges(message_id)
-        )
-        memory_owner = tuple(decoded)
-        cache_owner = {capture.run_tag: capture for capture in memory_owner}
+        signal_owners = []
+        for detail in (CaptureDetail.SAFE, CaptureDetail.FULL):
+            signals = ConsoleProviderStreamSignals(
+                exchange_capture_enabled=True,
+                capture_detail=detail,
+            )
+            _ = [
+                chunk
+                async for chunk in gateway.stream_chat(
+                    resolution, messages, tools=tools, signals=signals
+                )
+            ]
+            signal_owners.extend(signals.exchange_captures())
+            controller._attach_stream_usage(
+                assistant.id, signals, resolution, partial=False
+            )
 
-        safe_text = json.dumps(cache_owner["sentinel-safe"].request)
-        full_text = json.dumps(cache_owner["sentinel-full"].request)
+        store_owner = store.get_message(assistant.id).exchanges
+        cache_owner = tuple(store._exchange_blob_cache[assistant.id].values())
+        storage_owner = tuple(
+            capture_from_storage(row["capture_blob"], row["capture_detail"])
+            for row in persistence.rows
+        )
+        assert signal_owners and store_owner and cache_owner and storage_owner
+        assert signal_owners is not store_owner
+        safe = next(c for c in store_owner if c.capture_detail is CaptureDetail.SAFE)
+        full = next(c for c in store_owner if c.capture_detail is CaptureDetail.FULL)
+
+        safe_text = json.dumps(asdict(safe), default=str)
+        full_text = json.dumps(asdict(full), default=str)
         redacted = project_exchange_export(
-            cache_owner["sentinel-full"],
+            full,
             TraceExportProfile.REDACTED_DIAGNOSTIC,
         ).json_text
         full_export = project_exchange_export(
-            cache_owner["sentinel-full"], TraceExportProfile.FULL_TRACE
+            full, TraceExportProfile.FULL_TRACE
         ).json_text
 
         assert semantic["instructions"] not in safe_text
@@ -277,14 +319,19 @@ def test_production_shaped_anthropic_sentinels_across_storage_and_exports(
         for value in semantic.values():
             if value != semantic["instructions"]:
                 assert value in full_export
+        owner_texts = [
+            *(json.dumps(asdict(c), default=str) for c in signal_owners),
+            *(json.dumps(asdict(c), default=str) for c in store_owner),
+            *(json.dumps(asdict(c), default=str) for c in storage_owner),
+            redacted,
+            full_export,
+        ]
         for value in structured:
-            assert value not in safe_text
-            assert value not in full_text
-            assert value not in redacted
-            assert value not in full_export
+            for owner_index, owner in enumerate(owner_texts):
+                assert value not in owner, (value, owner_index)
+            assert all(value.encode() not in blob for blob in cache_owner)
         assert "sha256:" in full_export
     finally:
-        db.close_connection()
         logger.remove(sink_id)
 
     log_text = log_path.read_text(encoding="utf-8")

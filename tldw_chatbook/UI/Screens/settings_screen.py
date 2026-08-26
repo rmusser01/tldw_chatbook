@@ -52,7 +52,8 @@ from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
-from ...Chat.console_exchange_capture import CaptureDetail
+from ...Chat.console_chat_controller import CapturePolicyMutationStatus
+from ...Chat.console_exchange_capture import CaptureDetail, resolve_capture_policy
 from ...Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextBudgetMode,
@@ -108,7 +109,7 @@ from ...Workspaces.registry_service import (
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_capture_policy_dialog import (
-    full_capture_confirmation,
+    global_full_capture_confirmation,
     off_to_on_confirmation,
 )
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -19173,25 +19174,91 @@ class SettingsScreen(BaseAppScreen):
             self._set_console_capture_status("Failed — choose Safe or Full")
             return
         current = self._console_capture_policy
-        if enabled and not current.enabled and detail is CaptureDetail.FULL:
+        console_runtime = getattr(self.app_instance, "console_runtime", None)
+        controller = getattr(console_runtime, "chat_controller", None)
+        session_id = (
+            getattr(getattr(controller, "store", None), "active_session_id", None)
+            if controller is not None
+            else None
+        )
+        live_snapshot = (
+            controller.capture_policy_snapshot(session_id)
+            if controller is not None and session_id is not None
+            else None
+        )
+        dormant = (
+            resolve_capture_policy(
+                enabled=True,
+                next_send=live_snapshot.next_detail,
+                conversation=live_snapshot.conversation_detail,
+                global_default=detail,
+            )
+            if live_snapshot is not None
+            else None
+        )
+        needs_global_ack = enabled and detail is CaptureDetail.FULL
+        was_enabled = live_snapshot.enabled if live_snapshot is not None else current.enabled
+        resumes_override_full = (
+            enabled
+            and not was_enabled
+            and dormant is not None
+            and dormant.detail is CaptureDetail.FULL
+            and not needs_global_ack
+        )
+        if needs_global_ack:
+            confirmed = await self.app.push_screen_wait(
+                global_full_capture_confirmation()
+            )
+            if not confirmed:
+                self._set_console_capture_status("Full policy change cancelled")
+                return
+        elif resumes_override_full:
             confirmed = await self.app.push_screen_wait(
                 off_to_on_confirmation()
             )
             if not confirmed:
                 self._set_console_capture_status("Full capture resume cancelled")
                 return
-        elif enabled and detail is CaptureDetail.FULL:
-            confirmed = await self.app.push_screen_wait(
-                full_capture_confirmation(scope_label="globally")
-            )
-            if not confirmed:
-                self._set_console_capture_status("Full policy change cancelled")
-                return
 
         self._console_capture_applying = True
         event.button.disabled = True
         self._set_console_capture_status("Applying")
         try:
+            if live_snapshot is not None:
+                mutation = await asyncio.to_thread(
+                    controller.apply_global_capture_settings,
+                    enabled=bool(enabled),
+                    detail=detail,
+                    expected_config_generation=live_snapshot.config_generation,
+                    expected_policy_revision=live_snapshot.policy_revision,
+                )
+                if mutation.status is CapturePolicyMutationStatus.STALE:
+                    self._set_console_capture_status(
+                        "Failed — settings changed; reload and try again"
+                    )
+                    return
+                if mutation.status is CapturePolicyMutationStatus.FAILED:
+                    self._set_console_capture_status(
+                        "Failed — Full capture was not activated"
+                    )
+                    return
+                if mutation.status is CapturePolicyMutationStatus.SAFE_SESSION_ONLY:
+                    self._set_console_capture_status(
+                        "Failed — Safe state is active for this session; file save failed"
+                    )
+                    return
+                if mutation.status is not CapturePolicyMutationStatus.APPLIED:
+                    self._set_console_capture_status(
+                        "Failed — active Console changed; reload and try again"
+                    )
+                    return
+                self._console_capture_policy = runtime_capture_policy()
+                self._set_console_capture_status(
+                    "Saved and active — settings cache refresh degraded"
+                    if mutation.reason_code == "cache_refresh_degraded"
+                    else "Saved and active"
+                )
+                return
             result = await asyncio.to_thread(
                 apply_console_capture_settings,
                 enabled=bool(enabled),

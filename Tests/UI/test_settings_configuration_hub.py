@@ -5,7 +5,7 @@ import builtins
 from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -57,6 +57,14 @@ from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.Chat.console_chat_controller import (
+    CapturePolicyMutationResult,
+    CapturePolicyMutationStatus,
+)
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CapturePolicyResolution,
+    CapturePolicySource,
+)
 from tldw_chatbook.Home.dashboard_state import (
     HomeDashboardInput,
     summarize_home_dashboard,
@@ -192,6 +200,79 @@ async def test_console_capture_settings_full_uses_shared_confirmation(monkeypatc
         modal = confirmation.await_args.args[0]
         assert "ordinary text may still contain secrets" in modal.message
         assert calls and calls[0]["detail"] is CaptureDetail.FULL
+
+
+@pytest.mark.asyncio
+async def test_console_capture_settings_uses_live_coordinator_and_dormant_override_warning(
+    monkeypatch,
+):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+        snapshot = SimpleNamespace(
+            enabled=False,
+            next_detail=CaptureDetail.FULL,
+            conversation_detail=None,
+            global_detail=CaptureDetail.SAFE,
+            config_generation=8,
+            policy_revision=11,
+        )
+        applied_snapshot = SimpleNamespace(
+            **snapshot.__dict__,
+            effective=CapturePolicyResolution(
+                True, CaptureDetail.FULL, CapturePolicySource.NEXT_SEND, ()
+            ),
+        )
+        coordinator = Mock(
+            return_value=CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.APPLIED,
+                applied_snapshot,
+                False,
+                None,
+            )
+        )
+        controller = SimpleNamespace(
+            store=SimpleNamespace(active_session_id="session-a"),
+            capture_policy_snapshot=lambda _session: snapshot,
+            apply_global_capture_settings=coordinator,
+        )
+        app.console_runtime = SimpleNamespace(chat_controller=controller)
+        screen._console_capture_policy = SimpleNamespace(
+            enabled=False, detail=CaptureDetail.SAFE, generation=8
+        )
+        screen.query_one(
+            "#settings-console-exchange-capture-enabled", Checkbox
+        ).value = True
+        screen.query_one(
+            "#settings-console-exchange-capture-detail", Select
+        ).value = CaptureDetail.SAFE.value
+        confirmation = AsyncMock(return_value=True)
+        monkeypatch.setattr(host, "push_screen_wait", confirmation)
+        monkeypatch.setattr(
+            settings_screen_module,
+            "runtime_capture_policy",
+            lambda: SimpleNamespace(
+                enabled=True, detail=CaptureDetail.SAFE, generation=9
+            ),
+        )
+        button = screen.query_one(
+            "#settings-console-exchange-capture-apply", Button
+        )
+
+        await screen.handle_console_exchange_capture_apply(
+            SimpleNamespace(stop=lambda: None, button=button)
+        )
+
+        assert "dormant Full" in confirmation.await_args.args[0].message
+        coordinator.assert_called_once_with(
+            enabled=True,
+            detail=CaptureDetail.SAFE,
+            expected_config_generation=8,
+            expected_policy_revision=11,
+        )
 
 
 def _capture_provider_settings_mutations(monkeypatch):
