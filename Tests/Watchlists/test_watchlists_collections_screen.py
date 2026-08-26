@@ -228,8 +228,7 @@ async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None
     async with host.run_test(size=(180, 50)) as pilot:
         screen = host.screen_stack[-1]
         screen.post_message(ViewSnapshotRequested(item, "previous"))
-        await host.workers.wait_for_complete()
-        await pilot.pause()
+        assert await _wait_until(pilot, lambda: pushed.await_count == 1)
 
         app.local_watchlists_service.get_url_snapshots.assert_awaited_once_with(
             11, "https://example.com/changed", limit=2
