@@ -20,6 +20,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches, QueryError
 from textual.css.styles import StylesBase
+from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -4836,6 +4837,38 @@ async def test_library_emergency_real_wheel_uses_widget_under_pointer() -> None:
         await pilot.pause()
 
         assert screen._library_stage_interaction_generation > receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_no_widget_pointer_does_not_invalidate(
+    monkeypatch,
+) -> None:
+    """A boundary pointer event with no widget is an inert user input."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        monkeypatch.setattr(screen, "get_widget_at", Mock(side_effect=NoWidget))
+
+        screen.post_message(
+            events.MouseDown(None, -1, -1, 0, 0, 1, False, False, False)
+        )
+        await pilot.pause()
+
+        assert screen._library_stage_interaction_generation == receipt.generation
 
 
 @pytest.mark.asyncio

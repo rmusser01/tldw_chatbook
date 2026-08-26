@@ -31,6 +31,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import DescendantFocus, Key
 from textual.css.query import NoMatches, QueryError
+from textual.errors import NoWidget
 from textual.geometry import Region
 from textual.timer import Timer
 from textual.widget import Widget
@@ -6902,7 +6903,7 @@ class LibraryScreen(BaseAppScreen):
         """Let click-driven focus changes supersede resize memory."""
         try:
             target, _ = self.get_widget_at(event.screen_x, event.screen_y)
-        except NoMatches:
+        except (NoMatches, NoWidget):
             target = None
         self._advance_library_ordinary_emergency_user_interaction(target)
         self._mark_library_notes_user_interaction()
