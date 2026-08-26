@@ -308,7 +308,7 @@ git commit -m "feat(watchlists): define stable reader snapshot state"
 - Modify: `tldw_chatbook/Subscriptions/watchlist_normalizers.py:549-620`
 - Modify: `Tests/Subscriptions/test_watchlist_normalizers.py`
 
-- [ ] **Step 1: Write real-SQLite RED tests for ordering, ties, NULL sink, high-water exclusion, and lookahead**
+- [x] **Step 1: Write real-SQLite RED tests for ordering, ties, NULL sink, high-water exclusion, and lookahead**
 
 Use the existing DB fixtures from `Tests/DB/test_subscriptions_db_watchlists_agent_search.py`, but call the new Reader API and assert the Reader's descending id tie-break:
 
@@ -356,7 +356,7 @@ Also add focused cases that prove:
 - `count_reader_item_arrivals()` counts only matching rows with ids above the snapshot watermark.
 - SQLite page order/cursor boundaries and Python `Subscriptions.item_dates.effective_date()` order agree for aware-offset, naive, date-only, missing, and malformed publication/creation fixtures, including the descending id tie-break and NULL sink.
 
-- [ ] **Step 2: Add the normalizer RED assertion**
+- [x] **Step 2: Add the normalizer RED assertion**
 
 ```python
 def test_normalize_watchlist_item_carries_effective_date_for_reader_cursor() -> None:
@@ -368,7 +368,7 @@ def test_normalize_watchlist_item_carries_effective_date_for_reader_cursor() -> 
     assert item["effective_date"] == "2026-08-25 12:00:00"
 ```
 
-- [ ] **Step 3: Run the new DB and exact normalizer tests and verify RED**
+- [x] **Step 3: Run the new DB and exact normalizer tests and verify RED**
 
 Run:
 
@@ -381,13 +381,13 @@ Run:
 
 Expected: failures because `get_reader_items_page()`, `count_reader_item_arrivals()`, and normalized `effective_date` do not exist.
 
-- [ ] **Step 4: Extend the list projection and parameterize the private search ordering helper**
+- [x] **Step 4: Extend the list projection and parameterize the private search ordering helper**
 
 Add `i.effective_date` to `_LIST_ITEM_COLUMNS`. Extend `_search_items_rows()` with a fixed, caller-supplied `order_by` keyword whose default remains `i.effective_date DESC, i.id ASC`; interpolate only the method's internal constants, never user data. `get_new_items()` and `search_items_for_agent()` therefore keep their current behavior, while the Reader passes `i.effective_date DESC, i.id DESC`.
 
 Factor a private helper that builds the full Reader predicates (`subscription_id`, `status`/`statuses`, `run_id`, `watchlist_id`, `unassigned_only`, `is_flagged`, `since`, and search). Reuse it for page, initial matching high-water/count, and arrival count so no dimension can drift.
 
-- [ ] **Step 5: Implement `get_reader_items_page()` with one transaction and no OFFSET**
+- [x] **Step 5: Implement `get_reader_items_page()` with one transaction and no OFFSET**
 
 Required signature:
 
@@ -436,7 +436,7 @@ On a first page, within the same `transaction()`:
 
 Return `snapshot_count` on that first page only. On continuation, reuse the supplied watermark and return `snapshot_count=None` rather than re-counting mutable status/search membership; reject a cursor without a positive item id and reject a watermark below the cursor id. Derive `next_cursor` from the last returned row only when `has_more` is true. Keep every value parameterized.
 
-- [ ] **Step 6: Implement exact matching arrival counts**
+- [x] **Step 6: Implement exact matching arrival counts**
 
 ```python
 def count_reader_item_arrivals(
@@ -450,13 +450,13 @@ def count_reader_item_arrivals(
 
 This query must use `i.id > ?` plus the same scope/status/star/search/since predicates. It must not use unread-count differences, because marking an existing item read is not a new arrival.
 
-- [ ] **Step 7: Export normalized `effective_date` and run GREEN tests**
+- [x] **Step 7: Export normalized `effective_date` and run GREEN tests**
 
 Run the Step 3 command.
 
 Expected: all new DB and normalizer tests pass.
 
-- [ ] **Step 8: Prove the established agent cursor remains unchanged**
+- [x] **Step 8: Prove the established agent cursor remains unchanged**
 
 Run:
 
@@ -469,7 +469,7 @@ Run:
 
 Expected: both existing ASC-tie agent tests pass unchanged.
 
-- [ ] **Step 9: Commit the database slice**
+- [x] **Step 9: Commit the database slice**
 
 ```bash
 git add \
