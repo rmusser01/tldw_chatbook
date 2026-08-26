@@ -378,7 +378,6 @@ class ConsoleWorkspaceController:
         refresh_effective_scope_and_sync: Callable[[Any], Any],
         messages_from_conversation_tree_accessor: Callable[[dict], list],
         session_settings_for_resume_accessor: Callable[[Any], Any],
-        resolve_resumed_character_name: Callable[[int], Any],
         inject_resume_agent_markers_accessor: Callable[[list, str], list],
         resolve_effective_scope_state: Callable[[Any], Any],
         sync_retrieval_scope_row: Callable[[], None],
@@ -436,7 +435,6 @@ class ConsoleWorkspaceController:
             refresh_effective_scope_and_sync: Refresh effective retrieval scope.
             messages_from_conversation_tree_accessor: Convert a saved message tree.
             session_settings_for_resume_accessor: Resolve resumed session settings.
-            resolve_resumed_character_name: Resolve a resumed character label.
             inject_resume_agent_markers_accessor: Add agent markers on resume.
             resolve_effective_scope_state: Resolve effective scope state.
             sync_retrieval_scope_row: Refresh the retrieval-scope row.
@@ -486,7 +484,6 @@ class ConsoleWorkspaceController:
         self._session_settings_for_resume_accessor = (
             session_settings_for_resume_accessor
         )
-        self._resolve_resumed_character_name_fn = resolve_resumed_character_name
         self._inject_resume_agent_markers_accessor = (
             inject_resume_agent_markers_accessor
         )
@@ -801,10 +798,6 @@ class ConsoleWorkspaceController:
     @property
     def _console_session_settings_for_resume(self) -> Any:
         return self._session_settings_for_resume_accessor
-
-    @property
-    def _resolve_resumed_character_name(self) -> Any:
-        return self._resolve_resumed_character_name_fn
 
     @property
     def _inject_resume_agent_markers(self) -> Any:
@@ -3946,30 +3939,6 @@ class ConsoleWorkspaceController:
                 store.messages_for_session(session.id), target
             ),
         )
-        # Local presentation remains keyed only by the numeric local
-        # projection. Opaque server identity never enters local card/avatar/
-        # dictionary lookup paths.
-        if (
-            session.runtime_backend == "local"
-            and session.assistant_kind == "character"
-            and session.character_id is not None
-        ):
-            character_name = await self._resolve_resumed_character_name(
-                session.character_id
-            )
-            if character_name:
-                session.character_name = character_name
-            # Always (re)set the label on a local character resume -- to the
-            # resolved name, or clear it when unresolved. ``settings`` are
-            # otherwise inherited from the currently active session, so
-            # leaving an inherited ``character_label`` in place would make
-            # a card-less resume show a *different* character's name.
-            if session.settings is not None:
-                session.settings = replace(
-                    session.settings, character_label=character_name
-                )
-        elif session.settings is not None:
-            session.settings = replace(session.settings, character_label="")
         self._set_active_workspace_for_console_session(session.id)
         # task-9/task-13: warm the EFFECTIVE (conversation ∩ workspace)
         # scope cache for this session now (off-loop) so the Inspector row

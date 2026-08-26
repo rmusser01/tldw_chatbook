@@ -8159,10 +8159,17 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         await pilot.pause(0.1)
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Selected Conversation" in inspector_text
-        assert "Selected conversation: Saved research chat" in inspector_text
-        assert "Conversation source: saved conversation" in inspector_text
-        assert "Resume state: restored from persisted-chat-1" in inspector_text
-        assert "Workspace: Default" in inspector_text
+        # Selected Conversation lives behind the Inspector's collapsed More
+        # disclosure at this width. Its state must still carry the resumed
+        # conversation details even though only its section heading is visible.
+        inspector_rows = {
+            row.text
+            for row in console.query_one("#console-run-inspector-state").state.rows
+        }
+        assert "Selected conversation: Saved research chat" in inspector_rows
+        assert "Conversation source: saved conversation" in inspector_rows
+        assert "Resume state: restored from persisted-chat-1" in inspector_rows
+        assert "Workspace: Default" in inspector_rows
         assert app.chat_conversation_scope_service.calls == [
             {
                 "conversation_id": "persisted-chat-1",
@@ -8248,11 +8255,6 @@ async def test_console_resume_restores_server_character_identity_without_local_l
             provider="llama_cpp",
             character_label="Wrong active character",
         )
-        local_lookup = AsyncMock(
-            side_effect=AssertionError("server identity must not use local cards")
-        )
-        console._resolve_resumed_character_name = local_lookup
-
         assert (
             await console._workspace._resume_console_workspace_conversation(
                 "server-scoped"
@@ -8312,7 +8314,6 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert noncanonical.assistant_authority_id == "local-authority"
         assert noncanonical.character_id is None
         assert noncanonical.character_ref() is None
-        local_lookup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -8354,9 +8355,6 @@ async def test_console_resume_rejects_character_identity_without_valid_source(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        local_lookup = AsyncMock(return_value="Must not resolve")
-        console._resolve_resumed_character_name = local_lookup
-
         assert (
             await console._workspace._resume_console_workspace_conversation(
                 "invalid-source"
@@ -8372,12 +8370,11 @@ async def test_console_resume_rejects_character_identity_without_valid_source(
         assert session.assistant_authority_id == "local-authority"
         assert session.character_id is None
         assert session.character_ref() is None
-        local_lookup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_console_resume_rehydrates_local_character_name_from_local_projection():
-    """Only a local character row drives the local card/name lookup."""
+async def test_console_resume_rehydrates_local_character_name_from_saved_snapshot():
+    """Saved roleplay metadata, not a current card, owns resumed identity."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.chat_conversation_scope_service = StaticConversationTreeService(
@@ -8391,6 +8388,12 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
                     "assistant_id": "7",
                     "assistant_authority_id": "local-authority",
                     "character_id": 7,
+                    "metadata": {
+                        "console_roleplay_context": {
+                            "version": 2,
+                            "character_name_snapshot": "Alraune",
+                        }
+                    },
                 },
                 "root_threads": [],
             }
@@ -8401,9 +8404,6 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        name_lookup = AsyncMock(return_value="Elara")
-        console._resolve_resumed_character_name = name_lookup
-
         assert (
             await console._workspace._resume_console_workspace_conversation(
                 "local-character"
@@ -8418,8 +8418,8 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
         assert session.assistant_id == "7"
         assert session.assistant_authority_id == "local-authority"
         assert session.character_id == 7
-        assert session.character_name == "Elara"
-        name_lookup.assert_awaited_once_with(7)
+        assert session.character_name == "Alraune"
+        assert session.settings.character_label == "Alraune"
 
 
 @pytest.mark.asyncio
@@ -8674,7 +8674,11 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         assert "Model:" not in left_rail_text
         assert "Session Settings" in inspector_text
         assert "Provider:" in inspector_text
-        assert "Selected conversation: Real saved chat" in inspector_text
+        inspector_rows = {
+            row.text
+            for row in console.query_one("#console-run-inspector-state").state.rows
+        }
+        assert "Selected conversation: Real saved chat" in inspector_rows
         saved_state = console.save_state()
 
     restored_host = RestoredConsoleHarness(app, saved_state)

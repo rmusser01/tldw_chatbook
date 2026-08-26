@@ -1072,7 +1072,7 @@ def test_character_screen_state_restore_discards_invalid_user_display_name(
 
 
 @pytest.mark.asyncio
-async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
+async def test_durable_resume_restores_only_guarded_roleplay_context():
     """Absent, invalid, and future metadata must never invent template provenance."""
     from Tests.UI.test_console_native_chat_flow import (
         StaticConversationTreeService,
@@ -1089,11 +1089,16 @@ async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
                 "id": "valid-roleplay",
                 "title": "Valid roleplay",
                 "system_prompt": "Speak with Captain Rowan.",
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": "7",
+                "character_id": 7,
                 "metadata": {
                     "console_roleplay_context": {
-                        "version": 1,
+                        "version": 2,
                         "user_name_override": "Captain Rowan",
                         "character_system_template": "Speak with {{user}}.",
+                        "character_name_snapshot": "Alraune",
                     }
                 },
             },
@@ -1130,7 +1135,7 @@ async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
                 "system_prompt": "Ordinary safe future fallback.",
                 "metadata": {
                     "console_roleplay_context": {
-                        "version": 2,
+                        "version": 3,
                         "user_name_override": "Future Name",
                         "character_system_template": "Future {{user}}.",
                     }
@@ -1157,6 +1162,8 @@ async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
         assert valid.user_display_name_override == "Captain Rowan"
         assert valid.character_system_template == "Speak with {{user}}."
         assert valid.settings.system_prompt == "Speak with Captain Rowan."
+        assert valid.character_name == "Alraune"
+        assert valid.settings.character_label == "Alraune"
 
         assert await console._workspace._resume_console_workspace_conversation(
             "invalid-roleplay"

@@ -105,7 +105,6 @@ def _workspace_controller(
         refresh_effective_scope_and_sync=_noop,
         messages_from_conversation_tree_accessor=_noop,
         session_settings_for_resume_accessor=_noop,
-        resolve_resumed_character_name=_noop,
         inject_resume_agent_markers_accessor=_noop,
         resolve_effective_scope_state=_noop,
         sync_retrieval_scope_row=_noop,

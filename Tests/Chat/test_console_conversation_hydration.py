@@ -23,6 +23,7 @@ failure the plan named ("rather than duplicating it").
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -53,16 +54,19 @@ FIXTURE_TREE = {
     "conversation": {
         "id": CONVERSATION_ID,
         "title": "Fixture conversation",
-        "system_prompt": "  you are a careful assistant\n",
+        "system_prompt": "  You are Alraune.\n",
         "workspace_id": "ws-fixture",
         "runtime_backend": "local",
-        "assistant_kind": "generic",
-        "assistant_id": "console",
+        "assistant_kind": "character",
+        "assistant_id": "7",
+        "assistant_authority_id": "local-authority",
+        "character_id": 7,
         "metadata": {
             "console_roleplay_context": {
-                "version": 1,
+                "version": 2,
                 "user_name_override": "Robert",
-                "character_system_template": "You are {{char}}.",
+                "character_system_template": "  You are {{char}}.\n",
+                "character_name_snapshot": "Alraune",
             },
             "pinned_response_prefill": "Certainly,",
         },
@@ -230,6 +234,7 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
         "assistant_id",
         "assistant_authority_id",
         "character_id",
+        "character_name",
         "user_display_name_override",
         "character_system_template",
     ):
@@ -244,7 +249,7 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
     )
     assert launch_session.settings is not None
     assert launch_session.settings.system_prompt == (
-        "  you are a careful assistant\n"
+        "  You are Alraune.\n"
     ), (
         "the saved system prompt must be restored VERBATIM -- the comparison "
         "above is worthless if both sides restored nothing"
@@ -253,6 +258,8 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
         "the roleplay overlay never reached either session, so comparing them "
         "proved nothing"
     )
+    assert launch_session.character_name == "Alraune"
+    assert launch_session.settings.character_label == "Alraune"
     assert launch_session.id != screen_session.id, (
         "session ids are per-session uuids; equal ids would mean the two "
         "stores are the same object and this test is not comparing two callers"
@@ -288,3 +295,144 @@ async def test_production_hydration_never_activates_placeholder_authority(
     assert observed == [(prior.id, session.id), (prior.id, session.id)]
     assert session.library_policy_hydrated is True
     assert store.active_session_id == session.id
+
+
+@pytest.mark.asyncio
+async def test_hydration_restores_v2_local_character_snapshot_for_future_projections(
+    tmp_path,
+):
+    """A saved name, not a mutable character card, owns resumed identity."""
+    app = _fixture_app(tmp_path)
+    store = app.console_runtime.ensure_chat_store()
+    tree = {
+        "conversation": {
+            "id": "v2-character",
+            "title": "Saved Alraune",
+            "system_prompt": "Saved prompt for Alraune.",
+            "runtime_backend": "local",
+            "assistant_kind": "character",
+            "assistant_id": "7",
+            "assistant_authority_id": "local-authority",
+            "character_id": 7,
+            "metadata": {
+                "console_roleplay_context": {
+                    "version": 2,
+                    "user_name_override": "Captain Rowan",
+                    "character_system_template": "{{char}} speaks with {{user}}.",
+                    "character_name_snapshot": "Alraune",
+                }
+            },
+        },
+        "root_threads": [],
+    }
+
+    session = await hydrate_console_session(
+        app=app,
+        store=store,
+        conversation_id="v2-character",
+        tree=tree,
+        settings=replace(
+            apply_resume_settings_overrides(
+                default_console_session_settings(app.app_config), tree["conversation"]
+            ),
+            character_label="Renamed current card",
+        ),
+    )
+
+    assert session.character_name == "Alraune"
+    assert session.settings is not None
+    assert session.settings.character_label == "Alraune"
+    assert session.settings.system_prompt == "Saved prompt for Alraune."
+    store._materialize_roleplay_projections_live(
+        session.id, global_default="User"
+    )
+    assert session.settings.system_prompt == "Alraune speaks with Captain Rowan."
+    assert "Renamed current card" not in session.settings.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_hydration_keeps_v1_roleplay_without_unsaved_character_identity(tmp_path):
+    """Legacy templates survive, but v1 never guesses a current card name."""
+    app = _fixture_app(tmp_path)
+    store = app.console_runtime.ensure_chat_store()
+    tree = {
+        "conversation": {
+            "id": "v1-character",
+            "title": "Legacy character",
+            "system_prompt": "Saved legacy prompt.",
+            "runtime_backend": "local",
+            "assistant_kind": "character",
+            "assistant_id": "7",
+            "character_id": 7,
+            "metadata": {
+                "console_roleplay_context": {
+                    "version": 1,
+                    "user_name_override": "Captain Rowan",
+                    "character_system_template": "{{char}} speaks with {{user}}.",
+                }
+            },
+        },
+        "root_threads": [],
+    }
+
+    session = await hydrate_console_session(
+        app=app,
+        store=store,
+        conversation_id="v1-character",
+        tree=tree,
+        settings=replace(
+            apply_resume_settings_overrides(
+                default_console_session_settings(app.app_config), tree["conversation"]
+            ),
+            character_label="Renamed current card",
+        ),
+    )
+
+    assert session.character_name is None
+    assert session.settings is not None
+    assert session.settings.character_label == ""
+    assert session.settings.system_prompt == "Saved legacy prompt."
+    assert session.user_display_name_override == "Captain Rowan"
+    assert session.character_system_template == "{{char}} speaks with {{user}}."
+
+
+@pytest.mark.asyncio
+async def test_hydration_keeps_generic_sessions_without_character_identity(tmp_path):
+    """A snapshot never grants a generic conversation character authority."""
+    app = _fixture_app(tmp_path)
+    store = app.console_runtime.ensure_chat_store()
+    tree = {
+        "conversation": {
+            "id": "generic-session",
+            "title": "Generic session",
+            "system_prompt": "Saved generic prompt.",
+            "runtime_backend": "local",
+            "assistant_kind": "generic",
+            "assistant_id": "console",
+            "metadata": {
+                "console_roleplay_context": {
+                    "version": 2,
+                    "character_name_snapshot": "Alraune",
+                }
+            },
+        },
+        "root_threads": [],
+    }
+
+    session = await hydrate_console_session(
+        app=app,
+        store=store,
+        conversation_id="generic-session",
+        tree=tree,
+        settings=replace(
+            apply_resume_settings_overrides(
+                default_console_session_settings(app.app_config), tree["conversation"]
+            ),
+            character_label="Inherited label",
+        ),
+    )
+
+    assert session.assistant_kind == "generic"
+    assert session.character_name is None
+    assert session.settings is not None
+    assert session.settings.character_label == ""

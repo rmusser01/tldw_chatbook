@@ -13,7 +13,7 @@ callers share one policy instead of two:
 
 | Caller | View work it keeps |
 |---|---|
-| `ChatScreen._resume_console_workspace_conversation` | draft snapshot, both failure toasts, resume-marker overlay, character-name/label resolution, scope warm, UI sync, focus |
+| `ChatScreen._resume_console_workspace_conversation` | draft snapshot, both failure toasts, resume-marker overlay, scope warm, UI sync, focus |
 | the launch wake (`console_launch_wake.py`) | none -- it has no view |
 
 **What is deliberately NOT here.** The screen's base settings come from
@@ -351,8 +351,9 @@ async def hydrate_console_session(
     settings: ConsoleSessionSettings | None,
     target_scope_type: str | None = None,
     target_workspace_id: str | None = None,
+    activate: bool = True,
 ) -> Any:
-    """Create and activate a Console session from a persisted tree.
+    """Create a Console session from a persisted tree.
 
     Moved verbatim out of `_resume_console_workspace_conversation`: the
     workspace resolution, the title fallback, the whole-tree node build,
@@ -370,14 +371,18 @@ async def hydrate_console_session(
         target_scope_type: ``"global"`` pins the global workspace.
         target_workspace_id: Requested workspace, used only when the
             conversation carries none.
+        activate: Whether to activate the hydrated session after its policy
+            state has been restored.
 
     Returns:
-        The newly created and ACTIVATED `ConsoleChatSession`.
+        The newly created `ConsoleChatSession`, activated when ``activate``
+        is true.
     """
     target = str(conversation_id or "").strip()
     conversation = tree.get("conversation")
     if not isinstance(conversation, dict):
         conversation = {}
+    roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
     active_workspace_id = str(
         store.workspace_context.active_workspace_id or ""
     ).strip()
@@ -436,6 +441,13 @@ async def hydrate_console_session(
         )
         else None
     )
+    character_name = (
+        roleplay_context.character_name_snapshot
+        if assistant_kind == "character"
+        else None
+    )
+    if settings is not None:
+        settings = replace(settings, character_label=character_name or "")
     session = store.restore_persisted_session(
         title=title,
         workspace_id=workspace_id,
@@ -448,12 +460,13 @@ async def hydrate_console_session(
         assistant_id=assistant_id,
         assistant_authority_id=assistant_authority_id,
         character_id=character_id,
+        character_name=character_name,
         activate=False,
     )
     await store.hydrate_session_library_policy(session.id)
     await store.reconcile_pending_workspace_projection(session.id)
-    roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
     session.user_display_name_override = roleplay_context.user_name_override
     session.character_system_template = roleplay_context.character_system_template
-    store.switch_session(session.id)
+    if activate:
+        store.switch_session(session.id)
     return session
