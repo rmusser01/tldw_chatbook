@@ -5830,10 +5830,6 @@ class LibraryScreen(BaseAppScreen):
             return
         width = shell.region.width
         if not self._library_adaptive_reader_allocation_is_current(shell):
-            self.call_after_refresh(
-                self._sync_library_notes_reader_layout_from_shell,
-                priority,
-            )
             return
         previous = self._library_notes_reader_layout
         if (
@@ -5880,10 +5876,6 @@ class LibraryScreen(BaseAppScreen):
             return
         width = shell.region.width
         if not self._library_adaptive_reader_allocation_is_current(shell):
-            self.call_after_refresh(
-                self._sync_library_conversation_reader_layout_from_shell,
-                priority,
-            )
             return
         previous = self._library_conversation_reader_layout
         if (
@@ -6214,11 +6206,6 @@ class LibraryScreen(BaseAppScreen):
             return
         width = shell.region.width
         if not self._library_adaptive_reader_allocation_is_current(shell):
-            self.call_after_refresh(
-                self._sync_library_media_reader_layout_from_shell,
-                priority,
-                focus_intent,
-            )
             return
         previous = self._library_media_reader_layout
         # ``__init__`` resolves a zero-width sentinel before Textual has

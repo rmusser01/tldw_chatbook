@@ -5784,6 +5784,35 @@ def _task6_track_style_writes(patcher, *widgets) -> list[str]:
     return writes
 
 
+@pytest.mark.parametrize(
+    "sync_name",
+    (
+        "_sync_library_media_reader_layout_from_shell",
+        "_sync_library_conversation_reader_layout_from_shell",
+        "_sync_library_notes_reader_layout_from_shell",
+    ),
+)
+def test_library_resize_geometry_rejects_transient_without_polling(
+    sync_name: str,
+    monkeypatch,
+) -> None:
+    """Every reader rejects a transient without scheduling a polling loop."""
+    screen = LibraryScreen(_build_test_app())
+    shell = SimpleNamespace(region=SimpleNamespace(width=96))
+    monkeypatch.setattr(screen, "query_one", Mock(return_value=shell))
+    monkeypatch.setattr(
+        screen,
+        "_library_adaptive_reader_allocation_is_current",
+        Mock(return_value=False),
+    )
+    retry = Mock()
+    monkeypatch.setattr(screen, "call_after_refresh", retry)
+
+    getattr(screen, sync_name)()
+
+    retry.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
     monkeypatch,
@@ -5854,6 +5883,16 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
         await screen.workers.wait_for_complete()
         await pilot.pause()
         reader = screen.query_one("#library-notes-reader-shell")
+        with monkeypatch.context() as transient:
+            transient.setattr(
+                screen,
+                "_library_adaptive_reader_allocation_is_current",
+                Mock(return_value=False),
+            )
+            retry = Mock()
+            transient.setattr(screen, "call_after_refresh", retry)
+            screen._sync_library_notes_reader_layout_from_shell()
+            retry.assert_not_called()
         phases = (
             (170, (True, True, 48, 40, 68)),
             (149, (False, True, 0, 56, 79)),
