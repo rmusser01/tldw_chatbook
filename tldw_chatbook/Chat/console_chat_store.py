@@ -9049,7 +9049,10 @@ class ConsoleChatStore:
         previous_generation = self._generation_variant(message)
         on_active_path = self._message_is_on_active_path(message.id)
         durably_committed, committed_version = self._persist_generation_variant(
-            message, new_generation
+            message,
+            new_generation,
+            current=previous_generation,
+            append_variant=True,
         )
         self._apply_generation_variant(message, new_generation)
         if not durably_committed:
@@ -9108,6 +9111,50 @@ class ConsoleChatStore:
             assistant_generation_state=message.assistant_generation_state,
         )
 
+    def _generation_owner_candidate(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        current: ConsoleVariant,
+        target: ConsoleVariant,
+        selected_index: int | None,
+        append_variant: bool,
+    ) -> ConsoleChatMessage:
+        """Build a detached post-projection owner without touching live state."""
+        candidate = replace(message)
+        if append_variant:
+            if message.variants is None:
+                generations = [current, target]
+                candidate_index = 1
+                turn_id = message.turn_id or message.id
+            else:
+                generations = [*message.variants.variants, target]
+                candidate_index = len(generations) - 1
+                turn_id = message.variants.turn_id
+            candidate.variants = ConsoleVariantSet.from_generations(
+                turn_id=turn_id,
+                generations=generations,
+                selected_index=candidate_index,
+            )
+        elif message.variants is not None:
+            candidate_index = (
+                message.variants.selected_index
+                if selected_index is None
+                else selected_index
+            )
+            candidate.variants = ConsoleVariantSet.from_generations(
+                turn_id=message.variants.turn_id,
+                generations=list(message.variants.variants),
+                selected_index=candidate_index,
+            )
+        self._apply_generation_variant(candidate, target)
+        candidate.status = (
+            target.assistant_generation_state
+            if target.assistant_generation_state in {"complete", "stopped", "failed"}
+            else "complete"
+        )
+        return candidate
+
     @staticmethod
     def _generation_has_durable_evidence(variant: ConsoleVariant) -> bool:
         return any(
@@ -9138,12 +9185,25 @@ class ConsoleChatStore:
             variant.usage.to_json()
 
     def _persist_generation_variant(
-        self, message: ConsoleChatMessage, variant: ConsoleVariant
+        self,
+        message: ConsoleChatMessage,
+        variant: ConsoleVariant,
+        *,
+        current: ConsoleVariant | None = None,
+        selected_index: int | None = None,
+        append_variant: bool = False,
     ) -> tuple[bool, int | None]:
         """Persist a candidate without changing its live row owner."""
-        current = self._generation_variant(message)
+        current = current or self._generation_variant(message)
         self._validate_generation_variant(message, current)
         self._validate_generation_variant(message, variant)
+        candidate = self._generation_owner_candidate(
+            message,
+            current=current,
+            target=variant,
+            selected_index=selected_index,
+            append_variant=append_variant,
+        )
         if self.persistence is None or message.persisted_message_id is None:
             return False, None
         writer = getattr(
@@ -9154,8 +9214,6 @@ class ConsoleChatStore:
                 current
             ) or self._generation_has_durable_evidence(variant):
                 raise RuntimeError("Generation projection persistence is unavailable.")
-            candidate = replace(message)
-            self._apply_generation_variant(candidate, variant)
             if not self._persist_existing_message(candidate):
                 raise RuntimeError("Generation projection persistence did not commit.")
             return True, candidate.provider_continuation_message_version
@@ -9172,8 +9230,6 @@ class ConsoleChatStore:
         )
         if type(committed_version) is not int or committed_version <= 0:
             raise RuntimeError("Selected generation persistence did not commit.")
-        candidate = replace(message)
-        self._apply_generation_variant(candidate, variant)
         candidate.provider_continuation_message_version = committed_version
         candidate.provider_continuation_remote = False
         self._enqueue_sync_v2_message_if_ready(candidate)
@@ -9425,7 +9481,10 @@ class ConsoleChatStore:
         previous_status = message.status
         on_active_path = self._message_is_on_active_path(message.id)
         durably_committed, committed_version = self._persist_generation_variant(
-            message, target
+            message,
+            target,
+            current=previous_generation,
+            selected_index=selected_index,
         )
         message.variants.selected_index = selected_index
         self._apply_generation_variant(message, target)
@@ -10629,8 +10688,9 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages own generation projections.")
+        current = self._generation_variant(message)
         durably_committed, committed_version = self._persist_generation_variant(
-            message, self._generation_variant(message)
+            message, current, current=current
         )
         if not durably_committed:
             return False

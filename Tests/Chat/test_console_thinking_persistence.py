@@ -369,6 +369,107 @@ def test_successful_variant_projection_discards_superseded_pending_stream(
 
 
 @pytest.mark.parametrize("action", ["add", "select"])
+def test_generation_outbox_candidate_owns_exact_target_variant_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    db, conversation_id, repository = _database(
+        tmp_path / f"candidate-variants-{action}.sqlite"
+    )
+    _insert(db, repository, _acceptance(conversation_id))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (dump_thinking_blocks_json(_thinking("original reasoning")),),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    if action == "select":
+        live.variants = ConsoleVariantSet.from_generations(
+            turn_id="assistant-1",
+            generations=[
+                store._generation_variant(live),
+                ConsoleVariant(
+                    content="alternative answer",
+                    thinking=_thinking("alternative reasoning"),
+                    assistant_generation_state="complete",
+                ),
+            ],
+            selected_index=0,
+        )
+    captured: list[tuple[str, int, tuple[ConsoleVariant, ...]]] = []
+
+    def capture_candidate(candidate: ConsoleChatMessage, **_kwargs: object) -> None:
+        owner = store._message_or_raise("assistant-1")
+        assert owner.content == "original answer"
+        assert owner.thinking == _thinking("original reasoning")
+        if action == "add":
+            assert owner.variants is None
+        else:
+            assert owner.variants is not None
+            assert owner.variants.selected_index == 0
+        assert candidate.variants is not None
+        captured.append(
+            (
+                candidate.variants.turn_id,
+                candidate.variants.selected_index,
+                tuple(candidate.variants.variants),
+            )
+        )
+
+    monkeypatch.setattr(store, "_enqueue_sync_v2_message_if_ready", capture_candidate)
+
+    if action == "add":
+        result = store.add_variant("assistant-1", "manual alternative")
+    else:
+        result = store.select_variant("assistant-1", 1)
+
+    assert len(captured) == 1
+    assert result.variants is not None
+    assert captured[0] == (
+        result.variants.turn_id,
+        result.variants.selected_index,
+        tuple(result.variants.variants),
+    )
+
+
+def test_add_variant_writer_failure_keeps_live_variant_owner_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "candidate-add-fail.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (dump_thinking_blocks_json(_thinking("original reasoning")),),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    before_generation = store._generation_variant(live)
+    before_row = dict(db.get_message_by_id("assistant-1"))
+
+    def fail_projection(**_kwargs: object) -> int:
+        raise RuntimeError("injected projection failure")
+
+    monkeypatch.setattr(
+        store.persistence,
+        "replace_assistant_generation_projection",
+        fail_projection,
+    )
+
+    with pytest.raises(RuntimeError, match="injected projection failure"):
+        store.add_variant("assistant-1", "manual alternative")
+
+    unchanged = store._message_or_raise("assistant-1")
+    after_generation = store._generation_variant(unchanged)
+    assert replace(after_generation, id=before_generation.id) == before_generation
+    assert unchanged.variants is None
+    assert dict(db.get_message_by_id("assistant-1")) == before_row
+
+
+@pytest.mark.parametrize("action", ["add", "select"])
 def test_content_only_fallback_rejects_clearing_current_generation_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
