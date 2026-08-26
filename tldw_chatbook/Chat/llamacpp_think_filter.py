@@ -195,6 +195,9 @@ class StartAnchoredThinkSplitter:
         for text, start, end in ranges:
             for index in range(start, end):
                 codepoint = ord(text[index])
+                if 0xD800 <= codepoint <= 0xDFFF:
+                    self._terminal_capture_failure()
+                    return None
                 total += (
                     1
                     if codepoint <= 0x7F

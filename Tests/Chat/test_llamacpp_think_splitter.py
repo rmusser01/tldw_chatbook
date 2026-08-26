@@ -31,6 +31,17 @@ _UNCONFIRMED_PREFIX_CASES = [
     for cut in range(len(raw) + 1)
 ]
 
+_SURROGATE_CASES = [
+    pytest.param(surrogate, raw, cut, id=f"{kind}-{position}-{cut}")
+    for kind, surrogate in (("high", "\ud800"), ("low", "\udfff"))
+    for position, raw in (
+        ("start", f"<think>{surrogate}tail</think>answer"),
+        ("middle", f"<think>head{surrogate}tail</think>answer"),
+        ("close-prefix", f"<think>head</thi{surrogate}tail"),
+    )
+    for cut in range(len(raw) + 1)
+]
+
 
 def _split_chunks(*chunks: str) -> ThinkSplitChunk:
     splitter = StartAnchoredThinkSplitter()
@@ -290,6 +301,79 @@ def test_helper_clears_private_locals_when_held_suffix_overflows_at_flush(
                 assert canary not in value
             assert not (isinstance(value, ThinkSplitChunk) and canary in value.thinking)
         traceback = traceback.tb_next
+
+
+@pytest.mark.parametrize(("surrogate", "raw", "cut"), _SURROGATE_CASES)
+def test_surrogates_fail_content_free_at_every_position_and_partition(
+    surrogate: str, raw: str, cut: int
+) -> None:
+    splitter = StartAnchoredThinkSplitter()
+
+    with pytest.raises(ThinkingEnvelopeValidationError) as raised:
+        splitter.feed(raw[:cut])
+        splitter.feed(raw[cut:])
+
+    assert surrogate not in str(raised.value)
+    assert surrogate not in repr(raised.value)
+    assert all(
+        surrogate not in value
+        for value in vars(splitter).values()
+        if isinstance(value, str)
+    )
+    assert splitter.flush() == ThinkSplitChunk(status="failed")
+    assert splitter.flush() == ThinkSplitChunk(status="failed")
+    with pytest.raises(RuntimeError, match="already closed"):
+        splitter.feed("later")
+
+
+@pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"], ids=("high", "low"))
+def test_surrogate_after_held_close_prefix_clears_buffer(surrogate: str) -> None:
+    splitter = StartAnchoredThinkSplitter()
+    assert splitter.feed("<think>reason</thi").thinking == "reason"
+    assert splitter._buffer == "</thi"
+
+    with pytest.raises(ThinkingEnvelopeValidationError):
+        splitter.feed(surrogate)
+
+    assert splitter._buffer == ""
+    assert splitter.flush() == ThinkSplitChunk(status="failed")
+
+
+@pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"], ids=("high", "low"))
+def test_surrogate_failure_traceback_retains_no_private_text(surrogate: str) -> None:
+    raw = f"<think>PRIVATE_CANARY{surrogate}tail</think>"
+
+    with pytest.raises(ThinkingEnvelopeValidationError) as raised:
+        split_start_anchored_thinking(raw)
+
+    # The first frame is this caller and necessarily owns the test input.
+    traceback = raised.value.__traceback__.tb_next
+    while traceback is not None:
+        for value in traceback.tb_frame.f_locals.values():
+            if isinstance(value, str):
+                assert surrogate not in value
+                assert "PRIVATE_CANARY" not in value
+            elif isinstance(value, ThinkSplitChunk):
+                assert surrogate not in value.thinking
+                assert "PRIVATE_CANARY" not in value.thinking
+            elif isinstance(value, StartAnchoredThinkSplitter):
+                assert all(
+                    surrogate not in item and "PRIVATE_CANARY" not in item
+                    for item in vars(value).values()
+                    if isinstance(item, str)
+                )
+        traceback = traceback.tb_next
+
+
+def test_valid_astral_text_preserves_exact_utf8_byte_cap() -> None:
+    thinking = chr(0x1F600) * (MAX_THINKING_TEXT_BYTES // 4)
+    result = split_start_anchored_thinking(f"<think>{thinking}</think>answer")
+
+    assert result == ThinkSplitChunk(
+        thinking=thinking,
+        content="answer",
+        status="complete",
+    )
 
 
 def test_split_chunk_repr_hides_captured_values() -> None:
