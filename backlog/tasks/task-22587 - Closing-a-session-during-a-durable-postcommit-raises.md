@@ -1,11 +1,11 @@
 ---
 id: TASK-22587
 title: Closing a session during a durable postcommit raises
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: ''
-updated_date: '2026-08-26 20:48'
+updated_date: '2026-08-26 21:11'
 labels:
   - console
   - durable-turns
@@ -41,10 +41,10 @@ durable turn is in flight takes the same path.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Closing a session during an in-flight durable turn does not raise
-- [ ] #2 The in-flight effect is released (or deliberately abandoned) without an
+- [x] #1 Closing a session during an in-flight durable turn does not raise
+- [x] #2 The in-flight effect is released (or deliberately abandoned) without an
       unhandled exception
-- [ ] #3 A test covers close-during-collection on a DURABLE session
+- [x] #3 A test covers close-during-collection on a DURABLE session
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,20 +61,19 @@ durable turn is in flight takes the same path.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-The fingerprint guard is correct in intent — an effect must not commit against a
-retired preparation. What is missing is a defined outcome for "the preparation
-was retired underneath me", distinct from "the fingerprint changed
-unexpectedly". A retired preparation is an ordinary consequence of the user
-closing a chat; a *changed* one is a bug. Those two currently share a raise.
+Reproduced at store level first: claim a postcommit effect, close the session, release the claim -> RuntimeError('Durable postcommit fingerprint changed.').
 
-Related: TASK-22301 (converting that module's assertions to row queries needs
-durable sessions, so this blocks it).
+The bug was worse than filed. That raise comes out of the RELEASE path, which runs inside `except BaseException:`, so it REPLACED the exception that sent us there -- a genuine failure during a turn the user happened to close was reported as a fingerprint message.
 
-## Renumbering provenance
+Fix rests on a fact already in the code rather than a guess: retire_durable_acceptance leaves a tombstone carrying the SAME fingerprint, so 'retired' is decidable from 'changed'. New `_durable_retired_locked` reads it; retirement raises the distinct `ConsoleDurableAcceptanceRetired`; a real mismatch still raises the generic RuntimeError (pinned by a negative-control test, since narrowing a guard is only safe if it still fires for its original case).
 
-Filed as task-22303; renumbered to task-22587 under the 2026-08-21 owner rule
-(TASK-19601) after a same-id collision with
-`task-22303 - Restore-priced-Console-cost-chip-harness-readiness`, which
-arrived first and keeps the id. No dependencies or doc references pointed at the
-old number.
+Release-after-retirement is a no-op. Safe rather than merely quiet: retirement has already dropped every in-flight key for the preparation, so there is nothing left to release -- asserted in a test so the no-op cannot silently start leaking claims if that stops holding.
+
+Controller: the release call can no longer replace the original failure, and retirement during a SUCCESSFUL effect is a non-event (work done, no ledger left to record it in).
+
+MUTATION TESTING CAUGHT A TEST THAT COULD NOT FAIL -- mine. The first 'not masked by the release path' test passed with the controller guard removed, because the store fix already stops abandon from raising there. Split into one honest end-to-end test (which documents what it does NOT cover) and one that forces abandon to raise and does go red without the guard. That also made a '# pragma: no cover' I had written false, so it was removed. All 4 changes are now individually mutation-proven.
+
+Verification: A/B of Tests/Chat against merge-base 65cf855371 -- 0 newly broken, +7 collected, 111 failures both sides. Preflight green; the +2 diagnostics were reviewed before regenerating (internal effect names only, exception TYPE not message, per TASK-22251).
+
+Files: tldw_chatbook/Chat/console_chat_store.py, tldw_chatbook/Chat/console_chat_controller.py, Tests/Chat/test_console_close_during_durable_postcommit.py (new), Docs/security/production-diagnostic-inventory.json
 <!-- SECTION:NOTES:END -->
