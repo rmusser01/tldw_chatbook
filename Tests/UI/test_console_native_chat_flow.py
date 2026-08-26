@@ -8157,19 +8157,26 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         assert selected_row.has_class("console-workspace-conversation-row-selected")
         console._set_console_rail_preference(right_open=True, notify_on_failure=False)
         await pilot.pause(0.1)
+        console.query_one("#console-inspector-more-toggle", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Selected Conversation" in inspector_text
-        # Selected Conversation lives behind the Inspector's collapsed More
-        # disclosure at this width. Its state must still carry the resumed
-        # conversation details even though only its section heading is visible.
-        inspector_rows = {
-            row.text
-            for row in console.query_one("#console-run-inspector-state").state.rows
-        }
-        assert "Selected conversation: Saved research chat" in inspector_rows
-        assert "Conversation source: saved conversation" in inspector_rows
-        assert "Resume state: restored from persisted-chat-1" in inspector_rows
-        assert "Workspace: Default" in inspector_rows
+        assert "Where: Default › Saved research chat" in inspector_text
+        conversation_source = console.query_one(
+            "#console-inspector-conversation-source", Static
+        )
+        resume_state = console.query_one("#console-inspector-resume-state", Static)
+        assert conversation_source.display
+        assert resume_state.display
+        assert (
+            str(conversation_source.renderable)
+            == "Conversation source: saved conversation"
+        )
+        assert (
+            str(resume_state.renderable)
+            == "Resume state: restored from persisted-chat-1"
+        )
         assert app.chat_conversation_scope_service.calls == [
             {
                 "conversation_id": "persisted-chat-1",
@@ -8669,16 +8676,23 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         left_rail_text = _visible_text(console.query_one("#console-left-rail"))
         console._set_console_rail_preference(right_open=True, notify_on_failure=False)
         await pilot.pause(0.1)
+        console.query_one("#console-inspector-more-toggle", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Provider:" not in left_rail_text
         assert "Model:" not in left_rail_text
         assert "Session Settings" in inspector_text
         assert "Provider:" in inspector_text
-        inspector_rows = {
-            row.text
-            for row in console.query_one("#console-run-inspector-state").state.rows
-        }
-        assert "Selected conversation: Real saved chat" in inspector_rows
+        assert "Where: Real Workspace › Real saved chat" in inspector_text
+        conversation_source = console.query_one(
+            "#console-inspector-conversation-source", Static
+        )
+        assert conversation_source.display
+        assert (
+            str(conversation_source.renderable)
+            == "Conversation source: saved conversation"
+        )
         saved_state = console.save_state()
 
     restored_host = RestoredConsoleHarness(app, saved_state)
