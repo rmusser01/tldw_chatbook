@@ -231,7 +231,9 @@ class _RailHarness(App[None]):
             agent_drilldown_active=False,
             agent_full_log_available=False,
             show_character_section=self.show_character,
-            character_avatar_widget_builder=lambda _box=None: Static("avatar"),
+            character_avatar_widget_builder=(
+                lambda _box=None, **_kwargs: Static("avatar")
+            ),
             character_avatar_name="Samira",
         )
 

@@ -7,9 +7,14 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Markdown, Static
 
+import tldw_chatbook.Widgets.Library.library_media_content as media_content_module
+from tldw_chatbook.Library.library_media_viewer_state import find_content_matches
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
+    RawContentHighlightPlan,
+    build_raw_content_highlight_plan,
+    build_raw_content_renderable,
 )
 
 
@@ -376,3 +381,218 @@ async def test_search_refresh_still_repaints_the_active_match() -> None:
         assert first.plain == second.plain  # same characters: no relayout owed
         assert first_active and second_active
         assert first_active[0].start != second_active[0].start
+
+
+# ---------------------------------------------------------------------------
+# TASK-22209: one document pass per (document, query), not per click
+# ---------------------------------------------------------------------------
+
+
+def _reference_renderable(content: str, query: str, match_index: int) -> Text | str:
+    """The pre-task-22209 highlighter, kept verbatim as the equivalence oracle.
+
+    The plan-based builder must produce byte-identical text and identical
+    spans to this -- the point of task-22209 was to stop RUNNING it per
+    click, not to change what it draws.
+    """
+    display_content = content or "No stored content."
+    normalized_query = query.strip()
+    if not normalized_query or not content:
+        return display_content
+    matches = find_content_matches(content, normalized_query)
+    if not matches:
+        return display_content
+    current_line = matches[match_index % len(matches)]
+    needle = normalized_query.lower()
+    text = Text()
+    for line_index, line in enumerate(display_content.split("\n")):
+        if line_index:
+            text.append("\n")
+        hit = line.lower().find(needle)
+        if hit < 0:
+            text.append(line)
+            continue
+        text.append(line[:hit])
+        text.append(
+            line[hit : hit + len(needle)],
+            style="reverse bold" if line_index == current_line else "reverse",
+        )
+        text.append(line[hit + len(needle) :])
+    return text
+
+
+EQUIVALENCE_DOCUMENTS = {
+    "plain": "alpha needle\nbeta\ngamma needle\n",
+    "crlf": "alpha needle\r\nbeta\r\nneedle at line start\r\n",
+    "no-trailing-newline": "needle first\nlast needle",
+    "mixed-case": "NEEDLE shouting\nneedle whispering\nNeEdLe wobbling",
+    "repeated-on-one-line": "needle needle needle\nplain\nneedle",
+    "unicode": "café needle ☕\nnaïve\nneedle — em dash",
+    "blank-lines": "\n\nneedle\n\n\nneedle\n\n",
+    "needle-only": "needle",
+    "no-match": "nothing to see here\nmove along",
+    "empty": "",
+}
+
+
+@pytest.mark.parametrize("label", sorted(EQUIVALENCE_DOCUMENTS))
+@pytest.mark.parametrize("match_index", [0, 1, 5])
+def test_highlight_plan_matches_the_previous_renderer(label, match_index) -> None:
+    """Catch a plan rebuild that draws anything different from the old loop."""
+    content = EQUIVALENCE_DOCUMENTS[label]
+    expected = _reference_renderable(content, "needle", match_index)
+    actual = build_raw_content_renderable(content, "needle", match_index)
+
+    if isinstance(expected, str):
+        assert actual == expected
+        return
+    assert isinstance(actual, Text)
+    assert actual.plain == expected.plain
+    assert list(actual.spans) == list(expected.spans)
+
+
+def test_highlight_plan_match_lines_agree_with_the_shared_matcher() -> None:
+    """The plan's own match list must equal ``find_content_matches``'.
+
+    The plan derives its matches in the SAME pass that builds the spans (so
+    span ``i`` belongs to match ``i``); if that ever drifted from the
+    matcher the screen's status count and scroll target would point at
+    different lines than the highlights.
+    """
+    for content in EQUIVALENCE_DOCUMENTS.values():
+        plan = build_raw_content_highlight_plan(content, "  NeEdLe ")
+        expected = find_content_matches(content, "needle")
+        if isinstance(plan, str):
+            assert expected == ()
+            continue
+        assert plan.matches == expected
+
+
+def test_highlight_plan_moves_only_the_active_span() -> None:
+    """Navigating between matches restyles two spans and rebuilds nothing."""
+    plan = build_raw_content_highlight_plan(
+        "needle one\nplain\nneedle two\nneedle three", "needle"
+    )
+    assert isinstance(plan, RawContentHighlightPlan)
+
+    first = plan.renderable(0)
+    assert [str(span.style) for span in first.spans] == [
+        "reverse bold",
+        "reverse",
+        "reverse",
+    ]
+
+    second = plan.renderable(1)
+    assert second is first
+    assert [str(span.style) for span in second.spans] == [
+        "reverse",
+        "reverse bold",
+        "reverse",
+    ]
+
+    # Wrapping past the end lands back on the first match.
+    wrapped = plan.renderable(3)
+    assert [str(span.style) for span in wrapped.spans] == [
+        "reverse bold",
+        "reverse",
+        "reverse",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_body_reuses_one_plan_per_query_and_rebuilds_on_a_new_one(
+    monkeypatch,
+) -> None:
+    """Catch a body that rebuilds its highlight plan per match-nav click."""
+    body = LibraryMediaContentBody(
+        content="alpha needle\nbeta beacon\ngamma needle\ndelta beacon",
+        is_markdown=False,
+        mode="raw",
+        query="",
+        match_index=0,
+        id="body",
+    )
+    app = BodyHarness(body)
+
+    async with app.run_test(size=(60, 12)):
+        raw_widget = body._raw_widget
+        assert raw_widget is not None
+
+        builds: list[tuple[str, str]] = []
+        real_builder = build_raw_content_highlight_plan
+
+        def counting_builder(content: str, query: str):
+            builds.append((content, query))
+            return real_builder(content, query)
+
+        monkeypatch.setattr(
+            media_content_module,
+            "build_raw_content_highlight_plan",
+            counting_builder,
+        )
+
+        body.sync_search("needle", 0)
+        first = raw_widget.renderable
+        body.sync_search("needle", 1)
+        body.sync_search("needle", 0)
+        assert raw_widget.renderable is first
+        assert len(builds) == 1, (
+            f"The body rebuilt its highlight plan {len(builds)} times for "
+            "one (document, query) pair."
+        )
+
+        # A padded restatement of the same query is the same needle.
+        body.sync_search("  needle ", 1)
+        assert raw_widget.renderable is first
+        assert len(builds) == 1
+
+        body.sync_search("beacon", 0)
+        assert len(builds) == 2
+        second = raw_widget.renderable
+        assert second is not first
+        assert isinstance(second, Text)
+        assert {
+            second.plain[span.start : span.end] for span in second.spans
+        } == {"beacon"}
+
+
+@pytest.mark.asyncio
+async def test_body_replacing_its_document_rebuilds_the_plan() -> None:
+    """The plan key holds the document, not just the query.
+
+    The mounted screen never does this -- a content change recomposes the
+    viewer and builds a FRESH body -- so this pins the widget's own
+    contract rather than a live screen path: a body asked to highlight a
+    document it was not holding before must not answer from the previous
+    document's spans.
+    """
+    body = LibraryMediaContentBody(
+        content="alpha needle\nbeta",
+        is_markdown=False,
+        mode="raw",
+        query="",
+        match_index=0,
+        id="body",
+    )
+    app = BodyHarness(body)
+
+    async with app.run_test(size=(60, 12)):
+        raw_widget = body._raw_widget
+        assert raw_widget is not None
+
+        body.sync_search("needle", 0)
+        first = raw_widget.renderable
+        assert isinstance(first, Text)
+        assert first.plain == "alpha needle\nbeta"
+
+        body.content = "gamma needle\ndelta needle\nepsilon"
+        body.sync_search("needle", 1)
+
+        second = raw_widget.renderable
+        assert isinstance(second, Text)
+        assert second is not first
+        assert second.plain == "gamma needle\ndelta needle\nepsilon"
+        assert [str(span.style) for span in second.spans] == [
+            "reverse",
+            "reverse bold",
+        ]

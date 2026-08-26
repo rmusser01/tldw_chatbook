@@ -3324,6 +3324,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
+        # task-22209: in-content match list for the open item, memoized on
+        # (detail object identity, query). Both the query submit and every
+        # Prev/Next click need it, and deriving it costs a full content
+        # copy (``build_library_media_viewer_state``) plus a full scan --
+        # per click, on a document that has not changed. The detail is only
+        # ever replaced wholesale (a fetch settles) or cleared to None,
+        # never mutated in place, so its identity is a sound document
+        # marker; the None sentinel guarantees the first lookup misses.
+        self._library_media_content_match_memo: (
+            tuple[Any, str, tuple[int, ...]] | None
+        ) = None
         # LIB-13: "rendered" (Markdown, via the same render path Notes
         # Preview uses) or "raw" (plain/highlighted text). Reseeded per
         # item by ``_refresh_library_media_detail`` from the freshly built
@@ -34690,15 +34701,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_content_query = submitted
         self._library_media_content_match_index = 0
-        detail = (
-            self._library_media_detail
-            if isinstance(self._library_media_detail, Mapping)
-            else None
-        )
-        content = (
-            self._library_media_viewer_state_cached(detail).content if detail else ""
-        )
-        matches = find_content_matches(content, self._library_media_content_query)
+        matches = self._library_media_content_matches()
         viewer = self._mounted_library_media_viewer()
         if viewer is None:
             return
@@ -35462,6 +35465,58 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._advance_library_media_content_match(-1)
 
+    def _library_media_content_matches(self) -> tuple[int, ...]:
+        """Return the open item's matching line indexes for the active query.
+
+        task-22209: this used to run per Prev/Next click -- a full content
+        copy out of ``build_library_media_viewer_state`` plus a full
+        ``find_content_matches`` scan -- for a document and a query that
+        had not changed since the previous click. The result now lives in a
+        one-slot memo.
+
+        Memo key, and why each part is in it:
+
+        * the DETAIL OBJECT, by identity -- it is the document. A detail is
+          only ever replaced wholesale (a settling fetch builds a fresh
+          dict) or cleared to None, never mutated in place, so a new
+          arrival always misses. Arrow-key traversal swaps the document
+          while a submitted query stays live (only a row *press* blanks the
+          query), so this component is load-bearing, not defensive.
+        * the QUERY -- the same document answers differently per needle.
+
+        ``match_index`` is deliberately NOT in the key: navigation moves
+        the index over a match list that does not change.
+
+        Returns:
+            Ascending source-line indexes of the matching lines; empty when
+            no item is open, the query is blank, or nothing matches.
+        """
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
+        if detail is None:
+            # Nothing to search -- and dropping the entry here means the
+            # first lookup after a reader exit that cleared the detail
+            # (rail switch, delete) releases the PREVIOUS document instead
+            # of pinning its content behind the memo.
+            self._library_media_content_match_memo = None
+            return ()
+        query = self._library_media_content_query
+        memo = self._library_media_content_match_memo
+        if memo is not None and memo[0] is detail and memo[1] == query:
+            return memo[2]
+        matches = find_content_matches(
+            # task-22208 memoizes the viewer state per detail arrival; going
+            # through it keeps this memo's miss path from re-copying the whole
+            # document that 22208 already built for this same arrival.
+            self._library_media_viewer_state_cached(detail).content,
+            query,
+        )
+        self._library_media_content_match_memo = (detail, query, matches)
+        return matches
+
     def _advance_library_media_content_match(self, step: int) -> None:
         """Move the current content-search match index and scroll to it.
 
@@ -35472,15 +35527,7 @@ class LibraryScreen(BaseAppScreen):
             step: ``1`` to move to the next match, ``-1`` for the previous
                 one; wraps around the match count either direction.
         """
-        detail = (
-            self._library_media_detail
-            if isinstance(self._library_media_detail, Mapping)
-            else None
-        )
-        content = (
-            self._library_media_viewer_state_cached(detail).content if detail else ""
-        )
-        matches = find_content_matches(content, self._library_media_content_query)
+        matches = self._library_media_content_matches()
         if not matches:
             return
         self._library_media_content_match_index = (
