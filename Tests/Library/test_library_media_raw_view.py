@@ -376,9 +376,20 @@ async def test_mount_indexes_synchronously_without_debounce():
 
 
 @pytest.mark.asyncio
-async def test_pending_reindex_does_not_fire_after_unmount():
+async def test_pending_reindex_does_not_fire_after_unmount_via_textual_cleanup():
     """A debounce timer armed just before unmount must not touch the
-    widget once it has been removed from the DOM."""
+    widget once it has been removed from the DOM, via the ordinary path.
+
+    NOTE: this alone does not prove `_fire_pending_reindex`'s own
+    `is_attached` guard (or `on_unmount`'s `timer.stop()`) does anything --
+    Textual's `MessagePump._close_messages` keeps every `set_timer` timer in
+    a `WeakSet` and auto-cancels them on widget shutdown, independent of
+    this widget's code, so this test stays green even with both guards
+    deleted. It is kept as a test of the ordinary, real-world path; the
+    guard itself is proven by
+    `test_fire_pending_reindex_noops_when_called_directly_after_unmount`
+    below, which bypasses Textual's timer cleanup entirely.
+    """
     app = _Harness(DOC)
     async with app.run_test(size=(100, 40)) as pilot:
         widget = app.query_one("#raw", VirtualizedRawContent)
@@ -394,6 +405,40 @@ async def test_pending_reindex_does_not_fire_after_unmount():
         widget._request_reindex(42)
         await widget.remove()
         await pilot.pause(0.3)
+        assert builds["n"] == 0, "reindex fired into a detached widget"
+
+
+@pytest.mark.asyncio
+async def test_fire_pending_reindex_noops_when_called_directly_after_unmount():
+    """Proves `_fire_pending_reindex`'s own `is_attached` guard, not
+    Textual's timer cleanup.
+
+    Textual's `MessagePump._close_messages` (`message_pump.py`) auto-cancels
+    every `set_timer` timer on widget shutdown via a `WeakSet`, entirely
+    independent of this widget's code -- so a test that only removes the
+    widget and waits for the REAL timer to (not) fire can pass even with
+    both of this widget's own defenses (`on_unmount`'s `timer.stop()` and
+    `_fire_pending_reindex`'s `is_attached` check) deleted. This test
+    bypasses that cleanup by calling `_fire_pending_reindex()` directly
+    after removal -- exactly what would happen if a timer ever fired
+    through a path Textual itself did not clean up -- so it reds if the
+    `is_attached` guard is ever removed.
+    """
+    app = _Harness(DOC)
+    async with app.run_test(size=(100, 40)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+        builds = {"n": 0}
+        original = widget._build_index_now
+
+        def counting(width):
+            builds["n"] += 1
+            return original(width)
+
+        widget._build_index_now = counting
+        widget._request_reindex(42)
+        await widget.remove()
+        widget._fire_pending_reindex()
         assert builds["n"] == 0, "reindex fired into a detached widget"
 
 
