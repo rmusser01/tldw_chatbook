@@ -1,14 +1,16 @@
 ---
 id: TASK-18932
 title: 'Console: toggleable live reasoning display'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-19 09:55'
-updated_date: '2026-08-19 09:55'
+updated_date: '2026-08-26 00:00'
 labels:
   - console
   - ux
   - streaming
+  - persistence
+  - privacy
 dependencies: []
 priority: high
 ---
@@ -16,28 +18,43 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Surface provider reasoning/thinking streams in the Console transcript — identified as a major gap in the 2026-08-19 hermes-release review (hermes streams thinking live by default; chatbook discards the display entirely). Render reasoning as a visually distinct, dim, collapsible block attached to its assistant reply while it streams. Gated by a persisted toggle (Settings ▸ Console Behavior), default decided in implementation (recommendation: ON where the provider streams reasoning on the wire). Scope honestly per provider: only providers that return reasoning content on the wire can display anything (e.g. GLM reasoning via the hosted path); Kimi K3 preserved-thinking is private by existing contract and must never be displayed; no placeholder or fabricated "thinking" for providers without wire reasoning. Must not disturb the existing private continuation-data design (reasoning replay stays omitted from transcript/logs/exports per the QwenCloud/Kimi/Z.ai contracts).
+Surface actual model-provided reasoning in the Console as durable, dim, collapsible Thinking blocks inside the owning Assistant turn. Displayable thinking streams expanded and auto-collapses when visible answer/tool activity begins. Actual proprietary-reasoning evidence renders a content-free `Thinking · unavailable` disclosure with the exact notice `Proprietary thinking obfuscated - not available`; provider capability alone never creates a block. Keep displayable thinking separate from ADR-063 private continuation, persist it with the selected assistant generation, and offer provider-resolved Auto/Include/Exclude replay for compatible model history. The global Show model thinking setting defaults On and remains presentation-only. Importable conversation exports preserve thinking while human-readable, search, summary, title, usage, speech, and logging surfaces exclude it.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A persisted setting toggles reasoning display; changing it applies to subsequent streams without an app restart
-- [ ] #2 While streaming, reasoning renders live in a dim, visually distinct collapsible block attached to its assistant reply; the collapsed-by-default or expanded-by-default choice is pinned and tested
-- [ ] #3 Display is presentation-only: shown reasoning never changes what is sent to the provider beyond what the provider's own replay contract already requires, and it never appears in exports, summaries, search, or usage displays unless it is already stored content today (pin the storage rule: recommendation — display-only, not persisted, unless a provider contract requires storage)
-- [ ] #4 Provider honesty: models/providers without wire-level reasoning show nothing (no placeholder); private reasoning (Kimi preserved thinking) is excluded by contract and covered by an explicit test
-- [ ] #5 Tests cover toggle persistence, live render, collapse interaction, per-provider gating, and non-leakage into exports/search
-- [ ] #6 The user guide documents the toggle and the per-provider honesty rules (which providers can show reasoning, which never can and why)
+- [ ] #1 `Show model thinking` is a device-local persisted canonical Console setting that defaults On, applies immediately without restart, stays out of conversation sync/export, and changes presentation only.
+- [ ] #2 Actual displayable reasoning streams inside its owning Assistant turn, starts expanded live, auto-collapses once when answer/tool activity begins (or at terminal fallback), restores collapsed, and honors manual disclosure choices.
+- [ ] #3 A current-turn proprietary-evidence event renders `Thinking · unavailable` with exactly `Proprietary thinking obfuscated - not available`, follows the same live/collapse/manual lifecycle, and exposes or retains no raw private content there.
+- [ ] #4 Provider/model capability, settings, timing, or absence of visible answer content never fabricates a Thinking block; a turn with no actual displayable or proprietary evidence shows none.
+- [ ] #5 Displayable/proprietary blocks persist in a bounded versioned envelope separate from answer content and ADR-063 continuation, remain paired with the selected generation through regeneration/edit/delete/recovery/sync, and never transfer between variants or branches.
+- [ ] #6 Every conversation offers Auto/Include/Exclude optional thinking history plus effective read-only Required when continuation mandates replay; the user can save a default for new conversations.
+- [ ] #7 Replay is adapter-resolved for the frozen target and exact compatible encoding, uses one owner-atomic serializer/budget projection, never sends proprietary markers, never duplicates reasoning/continuation, and fails before provider contact when an eligible Include block is incompatible.
+- [ ] #8 Importable round-trip conversation formats and capable persistence/sync backends preserve thinking and replay policy with sensitivity warnings; unsupported persistent backends fail before send instead of silently losing data.
+- [ ] #9 Human-readable exports, FTS/search, titles, summaries, diagnostics, logs, errors, usage, and speech exclude model thinking by default, with decoded negative tests across every default durable owner.
+- [ ] #10 Existing safe intermediate model-step summaries are presented as Planning when no actual Thinking block owns that round, preventing duplicate or misleading chain-of-thought claims.
+- [ ] #11 Focused provider, stream-boundary, migration, persistence, history, import/export, privacy, and painted Textual tests cover positive, negative, stopped, failed, restored, variant, edit, and no-evidence paths.
+- [ ] #12 The user guide documents visibility, proprietary evidence, replay policy, persistence/backend requirements, export behavior, and provider honesty boundaries.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no.
-ADR path: N/A.
-Reason: presentation-layer change over reasoning content that already flows through the provider seams (zai/moonshot/hosted_chat reasoning_content handling); the existing provider contracts (ADR-063 hosted-provider wire and durable tool continuation) already govern what reasoning is retained and replayed — this task displays only what those contracts already allow.
+ADR required: yes
+ADR path: backlog/decisions/090-console-thinking-block-ownership-and-replay.md
+Reason: the approved feature changes message/variant storage, schema and migration behavior, sync/conflict ownership, provider streaming contracts, optional history replay, privacy/export boundaries, and long-lived Console interaction structure. ADR-090 extends ADR-063 and ADR-066 without exposing or duplicating private continuation.
 
-1. Inventory which providers surface reasoning_content on the streaming path today and thread it into the transcript stream events
-2. Transcript block (dim, collapsible) + streaming render
-3. Settings toggle (Console Behavior) with persistence
-4. Privacy tests (no export/search/summary leakage, Kimi exclusion), provider gating tests, docs
+1. Finalize and approve the linked Console Thinking Blocks specification and ADR-090.
+2. Create dependency-ordered atomic child tasks for persistence/sync, provider/history, UI/settings, and import/export/privacy integration.
+3. Produce exact implementation plans with test-first seams and targeted verification commands for each child.
+4. Implement and verify the child tasks without widening TASK-18932 beyond its approved acceptance criteria.
+5. Complete joined privacy, migration, backend-compatibility, and live Console verification before closing the feature parent.
 <!-- SECTION:PLAN:END -->
+
+## Child Tasks and Plans
+
+- [TASK-18932.1](task-18932.1%20-%20Persist-selected-generation-thinking-and-replay-policy.md) — [persistence foundation](../../Docs/superpowers/plans/2026-08-26-console-thinking-blocks-foundation.md)
+- [TASK-18932.2](task-18932.2%20-%20Normalize-provider-thinking-events-and-history-replay.md) — [provider and history](../../Docs/superpowers/plans/2026-08-26-console-thinking-blocks-provider-history.md)
+- [TASK-18932.3](task-18932.3%20-%20Render-collapsible-Console-thinking-and-settings.md) — [UI and settings](../../Docs/superpowers/plans/2026-08-26-console-thinking-blocks-ui-settings.md)
+- [TASK-18932.4](task-18932.4%20-%20Complete-thinking-exchange-privacy-and-integration.md) — [exchange and integration](../../Docs/superpowers/plans/2026-08-26-console-thinking-blocks-exchange-integration.md)
+- [Master implementation plan](../../Docs/superpowers/plans/2026-08-26-console-thinking-blocks.md)
