@@ -65,15 +65,19 @@ PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/Chat/test_llamacpp_think_spl
 GREEN result: 692 passed, 51 deselected, 1 pre-existing Requests dependency
 warning, in 24.41s.
 
-Static commands:
+Original static commands with reproducible passing results:
 
 ```text
-../../.venv/bin/python -m ruff format --check tldw_chatbook/Chat/console_provider_gateway.py tldw_chatbook/LLM_Calls/hosted_chat.py tldw_chatbook/LLM_Calls/moonshot.py tldw_chatbook/LLM_Calls/zai.py Tests/Chat/test_console_provider_gateway.py Tests/Chat/test_kimi_zai_native_tools.py Tests/Chat/test_kimi_zai_provider_contract.py Tests/Chat/test_local_adapter_thinking_dispatch.py Tests/Chat/test_local_thinking_wire_formats.py Tests/LLM_Calls/test_hosted_chat.py Tests/LLM_Calls/test_moonshot.py Tests/LLM_Calls/test_zai.py
 ../../.venv/bin/python -m ruff check tldw_chatbook/Chat/console_provider_gateway.py tldw_chatbook/LLM_Calls/hosted_chat.py tldw_chatbook/LLM_Calls/moonshot.py tldw_chatbook/LLM_Calls/zai.py Tests/Chat/test_console_provider_gateway.py Tests/Chat/test_kimi_zai_native_tools.py Tests/Chat/test_kimi_zai_provider_contract.py Tests/Chat/test_local_adapter_thinking_dispatch.py Tests/Chat/test_local_thinking_wire_formats.py Tests/LLM_Calls/test_hosted_chat.py Tests/LLM_Calls/test_moonshot.py Tests/LLM_Calls/test_zai.py
 git diff --check 4e5a04c2d2
 ```
 
-Static result: formatting, Ruff, and diff checks passed.
+Original static result: Ruff lint and diff checks passed. No whole-file Ruff
+format result is attributed to the original closeout: a later base replay showed
+that the production gateway was format-clean at `4e5a04c2d2`, while
+`Tests/Chat/test_console_provider_gateway.py` was already non-green at that same
+base. The Task 2 production edits subsequently introduced format drift, corrected
+in Review Fix Round 2 below without churning the test module's unrelated baseline.
 
 ## Changed Files
 
@@ -153,6 +157,68 @@ Splitter/capability regressions remained 692 passed and 51 deselected with the
 same warning in 25.45s.
 
 Fix static result: Ruff lint and `git diff --check` passed for the two changed
-files. Ruff format-check is already non-green on both files at the `5bb018c7e3`
-fix base and proposes unrelated whole-file rewrites; those baseline-only rewrites
-were deliberately excluded from this focused fix.
+files. At the `5bb018c7e3` fix base, the production file was non-green because the
+Task 2 changes had introduced format drift even though the `4e5a04c2d2` production
+base was clean. The test module's whole-file format baseline was already non-green
+at `4e5a04c2d2`. Production formatting is corrected in Review Fix Round 2; the
+unrelated test baseline remains intentionally unchanged.
+
+## Review Fix Round 2/5
+
+Addressed the remaining auxiliary-normalization and static-evidence findings
+against `33cbd31a5e`.
+
+- Auxiliary completions now normalize local thinking solely from the frozen
+  `thinking_stream_disposition`. Explicitly displayable vLLM/local-vLLM results
+  use the review-clean start-anchored splitter and return only assistant-visible
+  text; the auxiliary consumer intentionally discards the typed thinking event.
+  Ignored resolutions on the same backends preserve literal tags. The auxiliary
+  contract remains one-shot and non-streaming regardless of the captured session's
+  streaming value; no provider-name or execution-key inference was added.
+- Direct llama.cpp auxiliary results use the same final normalization boundary.
+  A confirmed unclosed capture is surfaced as a content-free `ChatProviderError`
+  instead of returning or logging captured text.
+- `tldw_chatbook/Chat/console_provider_gateway.py` was mechanically Ruff-formatted.
+  A whitespace-insensitive review confirmed that the only semantic production
+  changes are the auxiliary normalization described above.
+
+Fix RED command:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/Chat/test_console_provider_gateway.py -q -k 'auxiliary_vllm'
+```
+
+Fix RED result: 5 failed and 2 passed. Four displayable vLLM/local-vLLM cases
+returned raw start-anchored tags, and the terminal capture-failure case did not
+raise; both ignored-disposition controls passed.
+
+Fix GREEN slice:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/Chat/test_console_provider_gateway.py -q -k 'auxiliary_vllm or auxiliary_direct_llama'
+```
+
+Fix GREEN result: 9 passed and 322 deselected.
+
+The final exact provider matrix above passed 604 tests with the one pre-existing
+Requests dependency warning in 33.98s. The first sandboxed attempt could not bind
+the suites' loopback scripted servers; the exact command was rerun with loopback
+permission and passed. Splitter/capability regressions passed 692 tests with 51
+deselected and the same warning in 24.51s.
+
+Final static commands and results:
+
+```text
+../../.venv/bin/python -m ruff format --check tldw_chatbook/Chat/console_provider_gateway.py
+# 1 file already formatted
+../../.venv/bin/python -m ruff format --check Tests/Chat/test_console_provider_gateway.py
+# Exit 1: would reformat the pre-existing whole-file test baseline
+../../.venv/bin/python -m ruff check tldw_chatbook/Chat/console_provider_gateway.py Tests/Chat/test_console_provider_gateway.py
+# All checks passed
+git diff --check
+# Passed
+```
+
+The production format check, Ruff lint, and diff check are green. The test
+module's known whole-file format baseline remains non-green and was not churned;
+the new tests are locally Ruff-styled and lint-clean.

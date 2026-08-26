@@ -414,11 +414,15 @@ class ConsoleProviderStreamSignals:
     # and capture unconditionally, for output nobody ever reads).
     exchange_capture_enabled: bool = False
     capture_detail: CaptureDetail = field(default=CaptureDetail.SAFE, repr=False)
-    completed_exchanges: list["ExchangeCapture"] = field(default_factory=list, repr=False)
+    completed_exchanges: list["ExchangeCapture"] = field(
+        default_factory=list, repr=False
+    )
     _active_exchanges: dict[object, dict[str, Any]] = field(
-        default_factory=dict, init=False, repr=False)
+        default_factory=dict, init=False, repr=False
+    )
     _exchange_lock: threading.Lock = field(
-        default_factory=threading.Lock, init=False, repr=False)
+        default_factory=threading.Lock, init=False, repr=False
+    )
 
     def _begin_scoped_exchange(self, token: object, flight: dict[str, Any]) -> None:
         with self._exchange_lock:
@@ -458,10 +462,14 @@ class ConsoleProviderStreamSignals:
                 if flight is not None:
                     flight["synthetic_fallback"] = True
         except Exception as exc:
-            logger.warning(f"exchange_capture_mark_synthetic_failed: {type(exc).__name__}")
+            logger.warning(
+                f"exchange_capture_mark_synthetic_failed: {type(exc).__name__}"
+            )
 
     def _complete_scoped_exchange(
-        self, token: object, status: str,
+        self,
+        token: object,
+        status: str,
         usage_payload: dict[str, Any] | None,
     ) -> None:
         """Never raises (review finding M4) -- same "never break send"
@@ -477,9 +485,15 @@ class ConsoleProviderStreamSignals:
                 flight = self._active_exchanges.pop(token, None)
                 if flight is None:
                     return
-                self.completed_exchanges.append(_flight_capture(
-                    self.run_tag, len(self.completed_exchanges), flight,
-                    status, usage_payload))
+                self.completed_exchanges.append(
+                    _flight_capture(
+                        self.run_tag,
+                        len(self.completed_exchanges),
+                        flight,
+                        status,
+                        usage_payload,
+                    )
+                )
         except Exception as exc:
             logger.warning(f"exchange_capture_complete_failed: {type(exc).__name__}")
 
@@ -490,8 +504,11 @@ class ConsoleProviderStreamSignals:
         with self._exchange_lock:
             captures = list(self.completed_exchanges)
             for flight in self._active_exchanges.values():
-                captures.append(_flight_capture(
-                    self.run_tag, len(captures), flight, "stopped", None))
+                captures.append(
+                    _flight_capture(
+                        self.run_tag, len(captures), flight, "stopped", None
+                    )
+                )
             return captures
 
 
@@ -614,15 +631,23 @@ class ConsoleProviderCallSignals:
                 endpoint = canonical_provider_endpoint_identity(endpoint)
             except ValueError:
                 endpoint = "[invalid endpoint]"
-        self._aggregate._begin_scoped_exchange(self._token, {
-            "provider": provider, "model": model, "endpoint": endpoint,
-            "request": request, "omitted_keys": omitted_keys,
-            "content": [], "tool_calls": [], "synthetic_fallback": False,
-            "response_truncation_inventory": [],
-            "capture_detail": self.capture_detail,
-            "capture_budget": capture_budget or CaptureBudget(),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
+        self._aggregate._begin_scoped_exchange(
+            self._token,
+            {
+                "provider": provider,
+                "model": model,
+                "endpoint": endpoint,
+                "request": request,
+                "omitted_keys": omitted_keys,
+                "content": [],
+                "tool_calls": [],
+                "synthetic_fallback": False,
+                "response_truncation_inventory": [],
+                "capture_detail": self.capture_detail,
+                "capture_budget": capture_budget or CaptureBudget(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
     def record_exchange_content(self, text: str, *, synthetic: bool = False) -> None:
         """Append one content chunk to this call's in-flight capture.
@@ -647,13 +672,15 @@ class ConsoleProviderCallSignals:
         # `close_exchange`/`_flight_capture`, seconds later on a real turn.
         # `deepcopy` closes that window permanently.
         self._aggregate._mutate_scoped_exchange(
-            self._token, "tool_calls", [deepcopy(dict(c)) for c in calls])
+            self._token, "tool_calls", [deepcopy(dict(c)) for c in calls]
+        )
 
     def close_exchange(self, status: str = "complete") -> None:
         """Publish this call's capture exactly once (token pop = move
         semantics; a second close finds nothing)."""
         self._aggregate._complete_scoped_exchange(
-            self._token, status, self.usage_snapshot())
+            self._token, status, self.usage_snapshot()
+        )
 
 
 _ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
@@ -686,8 +713,13 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
 
 
-def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
-                    status: str, usage_payload: dict[str, Any] | None) -> ExchangeCapture:
+def _flight_capture(
+    run_tag: str,
+    seq: int,
+    flight: dict[str, Any],
+    status: str,
+    usage_payload: dict[str, Any] | None,
+) -> ExchangeCapture:
     """Build the immutable capture for one call's in-flight record.
 
     Normalizes THIS call's usage payload on its own (never a cross-call
@@ -697,14 +729,19 @@ def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
     if usage_payload:
         try:
             usage = ProviderUsage.from_provider_payload(
-                usage_payload, provider=flight["provider"], model=flight["model"])
+                usage_payload, provider=flight["provider"], model=flight["model"]
+            )
             usage_json = usage.to_json() if usage is not None else None
         except Exception:
             usage_json = None
     return ExchangeCapture(
-        run_tag=run_tag, seq=seq, created_at=flight["created_at"],
-        provider=flight["provider"], model=flight["model"],
-        endpoint=flight["endpoint"], request=flight["request"],
+        run_tag=run_tag,
+        seq=seq,
+        created_at=flight["created_at"],
+        provider=flight["provider"],
+        model=flight["model"],
+        endpoint=flight["endpoint"],
+        request=flight["request"],
         response={
             # Sanitize once more after aggregation: individually harmless
             # sub-threshold chunks can form one data URI/base64 body.
@@ -715,7 +752,8 @@ def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
                 flight.get("response_truncation_inventory", ())
             ),
         },
-        status=status, usage_json=usage_json,
+        status=status,
+        usage_json=usage_json,
         omitted_keys=flight["omitted_keys"],
         capture_detail=flight["capture_detail"],
     )
@@ -1591,12 +1629,8 @@ class ConsoleProviderGateway:
                     # re-treated as "unclaimed" by this branch.
                     current_client = self.http_client
                     self._client_ever_claimed = True
-            others: list[
-                tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]
-            ] = []
-            still_live: list[
-                tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]
-            ] = []
+            others: list[tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]] = []
+            still_live: list[tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]] = []
             for other_loop, other_client in self._loop_clients.items():
                 if other_client is current_client:
                     continue
@@ -1664,9 +1698,7 @@ class ConsoleProviderGateway:
         if continuation_target is not None and (
             continuation_target.provider,
             continuation_target.model,
-            normalize_generic_endpoint_for_compare(
-                continuation_target.api_base_url
-            ),
+            normalize_generic_endpoint_for_compare(continuation_target.api_base_url),
         ) != (
             provider_config_key(resolution.provider),
             resolution.model or "",
@@ -2528,8 +2560,7 @@ class ConsoleProviderGateway:
                 # act on and, unlike a traceback, cannot carry payload from
                 # the frame's locals.
                 logger.warning(
-                    "exchange_capture_fallback_failed: "
-                    f"{type(exc).__name__}"
+                    f"exchange_capture_fallback_failed: {type(exc).__name__}"
                 )
         if fallback_items:
             for item in fallback_items:
@@ -2719,6 +2750,7 @@ class ConsoleProviderGateway:
                         thinking_stream_disposition=(
                             resolution.thinking_stream_disposition
                         ),
+                        include_thinking_events=True,
                     )
                 else:
                     kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
@@ -2748,17 +2780,47 @@ class ConsoleProviderGateway:
                     model=model,
                 )
 
-        if not isinstance(text, str):
+        if not isinstance(text, (str, _LocalCompletionResult)):
             raise ChatProviderError(
                 "Provider returned an unsupported auxiliary response.",
                 provider=provider,
             )
+        try:
+            text = self._normalize_auxiliary_thinking(text, resolution)
+        except ProviderThinkingCaptureError as exc:
+            raise ChatProviderError(
+                safe_provider_error_copy(provider, exc),
+                provider=provider,
+                status_code=502,
+            ) from None
         return AuxiliaryCompletionResult(
             provider=provider,
             model=model,
             text=text,
             usage=usage,
         )
+
+    @staticmethod
+    def _normalize_auxiliary_thinking(
+        text: str | _LocalCompletionResult,
+        resolution: ConsoleProviderResolution,
+    ) -> str:
+        """Return assistant-visible text under the frozen adapter disposition."""
+
+        if isinstance(text, _LocalCompletionResult):
+            result = text
+        elif resolution.thinking_stream_disposition == "displayable":
+            result = _split_local_completion_items(
+                text,
+                provider=resolution.provider,
+                model=cast(str, resolution.model),
+                protocol=_thinking_protocol(resolution),
+            )
+        else:
+            return text
+        if result.capture_failed:
+            raise ProviderThinkingCaptureError("Provider thinking capture failed.")
+        return "".join(item for item in result.items if isinstance(item, str))
 
     def _complete_sensitive_sync(self, kwargs: Mapping[str, Any]) -> Any:
         """Invoke the final synchronous adapter under the sensitive policy."""
@@ -3095,8 +3157,7 @@ class ConsoleProviderGateway:
                         else {"truncated": True}
                     )
                     capture_request["retry_of"] = (
-                        "llama.cpp stream produced no content; "
-                        "retried non-streaming"
+                        "llama.cpp stream produced no content; retried non-streaming"
                     )
                     retry_signals.begin_exchange(
                         provider=str(resolution.provider or ""),
@@ -3168,7 +3229,9 @@ class ConsoleProviderGateway:
                 return
         finally:
             if call_signals is not None:
-                call_signals.close_exchange(status="complete" if completed else "stopped")
+                call_signals.close_exchange(
+                    status="complete" if completed else "stopped"
+                )
                 call_signals.close_usage_call()
 
     async def _stream_generic_chat(

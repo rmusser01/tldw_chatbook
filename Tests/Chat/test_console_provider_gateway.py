@@ -6774,6 +6774,78 @@ async def test_auxiliary_direct_llama_rejects_malformed_completion_shape() -> No
     await client.aclose()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["vllm", "local_vllm"])
+@pytest.mark.parametrize("requested_streaming", [True, False])
+async def test_auxiliary_vllm_displayable_disposition_returns_visible_answer_only(
+    provider: str,
+    requested_streaming: bool,
+) -> None:
+    canary = "AUXILIARY-VLLM-THINKING-CANARY"
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": f"<think>{canary}</think>Answer"}}]}
+
+    resolution = _auxiliary_resolution(
+        provider=provider,
+        execution_key=provider,
+        readiness_key=provider,
+        streaming=requested_streaming,
+        thinking_stream_disposition="displayable",
+        thinking_round_trip_version=1,
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+
+    result = await gateway.complete_auxiliary(_auxiliary_request(resolution=resolution))
+
+    assert result.text == "Answer"
+    assert calls[0]["streaming"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["vllm", "local_vllm"])
+async def test_auxiliary_vllm_ignored_disposition_preserves_literal_tags(
+    provider: str,
+) -> None:
+    wire_text = "<think>ordinary markup</think>Answer"
+    resolution = _auxiliary_resolution(
+        provider=provider,
+        execution_key=provider,
+        readiness_key=provider,
+        thinking_stream_disposition="ignored",
+        thinking_round_trip_version=None,
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=lambda **_kwargs: wire_text)
+
+    result = await gateway.complete_auxiliary(_auxiliary_request(resolution=resolution))
+
+    assert resolution.may_emit_thinking is False
+    assert result.text == wire_text
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_vllm_terminal_capture_failure_is_content_free() -> None:
+    canary = "AUXILIARY-UNCLOSED-THINKING-CANARY"
+    resolution = _auxiliary_resolution(
+        provider="vllm",
+        execution_key="vllm",
+        readiness_key="vllm",
+        thinking_stream_disposition="displayable",
+        thinking_round_trip_version=1,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: f"<think>{canary}"
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        await gateway.complete_auxiliary(_auxiliary_request(resolution=resolution))
+
+    assert canary not in str(exc_info.value)
+    assert canary not in repr(exc_info.value)
+
+
 # -- PR3a-1 Task 6b (audit F5, first half) ---------------------------------
 #
 # `aclose()`'s stale sweep skips only loops that are already `is_closed()`.
