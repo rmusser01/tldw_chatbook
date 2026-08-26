@@ -493,7 +493,7 @@ git commit -m "feat(watchlists): add reader keyset item pages"
 - Modify: `Tests/Watchlists/test_watchlist_scope_service.py`
 - Modify: `Tests/Watchlists/test_watchlists_backend_controller.py`
 
-- [ ] **Step 1: Write RED tests for normalization and forwarding**
+- [x] **Step 1: Write RED tests for normalization and forwarding**
 
 Add tests that assert:
 
@@ -530,21 +530,21 @@ Also prove:
 - `WatchlistsBackendController` returns the `WatchlistItemPage` unchanged rather than coercing the dataclass through `list()`/`dict()`;
 - the legacy `list_items()` route remains unchanged for Runs and existing callers.
 
-- [ ] **Step 2: Run the exact service/controller RED tests**
+- [x] **Step 2: Run the exact service/controller RED tests**
 
 Run the new test nodes with `-k "reader_items_page or reader_item_arrivals"` in the four listed files.
 
 Expected: failures because the Reader methods do not exist.
 
-- [ ] **Step 3: Add `LocalWatchlistsService.list_reader_items_page()` and `.count_reader_item_arrivals()`**
+- [x] **Step 3: Add `LocalWatchlistsService.list_reader_items_page()` and `.count_reader_item_arrivals()`**
 
 Both methods convert namespaced/bare ids exactly as `list_items()` does, call the DB off-loop, and rebuild only the page's `items` tuple through `normalize_watchlist_item("local", row)`. Copy `has_more`, watermark, count, and cursor exactly.
 
-- [ ] **Step 4: Add local-only scope service routing**
+- [x] **Step 4: Add local-only scope service routing**
 
 Mirror the existing `list_items()` policy path, but call the new local methods. The Server branch must raise the same honest local-only error before touching the server service. Keep explicit keyword signatures so future filter additions cannot disappear silently.
 
-- [ ] **Step 5: Add controller passthroughs without shape coercion**
+- [x] **Step 5: Add controller passthroughs without shape coercion**
 
 ```python
 async def list_reader_items_page(
@@ -561,7 +561,7 @@ async def list_reader_items_page(
 
 Add the analogous integer-returning arrival method. Do not modify `list_items()`.
 
-- [ ] **Step 6: Run the focused service/controller tests and verify GREEN**
+- [x] **Step 6: Run the focused service/controller tests and verify GREEN**
 
 Run:
 
@@ -576,7 +576,7 @@ Run:
 
 Expected: selected Reader and legacy list routing tests pass.
 
-- [ ] **Step 7: Commit the service seam**
+- [x] **Step 7: Commit the service seam**
 
 ```bash
 git add \
