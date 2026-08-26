@@ -33,6 +33,7 @@ def test_declared_widths_orders_and_default_priorities():
         Region.RIGHT_RAIL: 30,
     }
     assert region_layout.CENTRE_COMFORT_WIDTH == 44
+    assert region_layout.LAYOUT_HYSTERESIS_WIDTH == 4
     assert region_layout.READ_SIDE_PANE_ORDER == (
         Region.LEFT_RAIL,
         Region.ITEMS,
@@ -344,3 +345,243 @@ def test_no_previous_state_resolves_exactly_as_before():
     assert resolve(
         preferred, 60, previous=resolve(preferred, 200)
     ).collapsed == frozenset(region_layout.COLLAPSIBLE_REGIONS)
+@pytest.mark.parametrize(
+    ("read_mode", "threshold", "preferred_collapsed", "responsive_region"),
+    [
+        (True, 145, frozenset(), Region.RIGHT_RAIL),
+        (True, 115, frozenset({Region.RIGHT_RAIL}), Region.LEFT_RAIL),
+        (
+            True,
+            91,
+            frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}),
+            Region.ITEMS,
+        ),
+        (False, 108, frozenset(), Region.RIGHT_RAIL),
+        (False, 78, frozenset({Region.RIGHT_RAIL}), Region.LEFT_RAIL),
+    ],
+)
+def test_each_boundary_has_bidirectional_four_column_hysteresis(
+    read_mode: bool,
+    threshold: int,
+    preferred_collapsed: frozenset[Region],
+    responsive_region: Region,
+):
+    preferred = RegionLayout(collapsed=preferred_collapsed)
+    current = resolve(preferred, threshold, read_mode=read_mode)
+    assert not current.is_collapsed(responsive_region)
+
+    current = resolve(
+        preferred,
+        threshold - 1,
+        read_mode=read_mode,
+        previous=current,
+    )
+    assert current.is_collapsed(responsive_region)
+
+    for width in range(threshold, threshold + region_layout.LAYOUT_HYSTERESIS_WIDTH):
+        current = resolve(
+            preferred,
+            width,
+            read_mode=read_mode,
+            previous=current,
+        )
+        assert current.is_collapsed(responsive_region)
+
+    current = resolve(
+        preferred,
+        threshold + region_layout.LAYOUT_HYSTERESIS_WIDTH,
+        read_mode=read_mode,
+        previous=current,
+    )
+    assert not current.is_collapsed(responsive_region)
+
+    for width in range(
+        threshold + region_layout.LAYOUT_HYSTERESIS_WIDTH - 1,
+        threshold - 1,
+        -1,
+    ):
+        current = resolve(
+            preferred,
+            width,
+            read_mode=read_mode,
+            previous=current,
+        )
+        assert not current.is_collapsed(responsive_region)
+
+    current = resolve(
+        preferred,
+        threshold - 1,
+        read_mode=read_mode,
+        previous=current,
+    )
+    assert current.is_collapsed(responsive_region)
+
+
+@pytest.mark.parametrize(
+    ("read_mode", "widths", "expected_open"),
+    [
+        (
+            True,
+            (95, 119, 149),
+            (
+                frozenset({Region.ITEMS}),
+                frozenset({Region.LEFT_RAIL, Region.ITEMS}),
+                frozenset(region_layout.COLLAPSIBLE_REGIONS),
+            ),
+        ),
+        (
+            False,
+            (82, 112),
+            (
+                frozenset({Region.LEFT_RAIL}),
+                frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}),
+            ),
+        ),
+    ],
+)
+def test_multiple_panes_reopen_in_reverse_collapse_order(
+    read_mode: bool,
+    widths: tuple[int, ...],
+    expected_open: tuple[frozenset[Region], ...],
+):
+    preferred = RegionLayout()
+    mounted = set(
+        region_layout.READ_SIDE_PANE_ORDER
+        if read_mode
+        else region_layout.MANAGEMENT_SIDE_PANE_ORDER
+    )
+    current = RegionLayout(collapsed=frozenset(mounted))
+
+    for width, expected in zip(widths, expected_open):
+        current = resolve(
+            preferred,
+            width,
+            read_mode=read_mode,
+            previous=current,
+        )
+        assert mounted.difference(current.collapsed) == expected
+
+
+@pytest.mark.parametrize(
+    ("read_mode", "width", "expected_collapsed"),
+    [
+        (True, 149, frozenset()),
+        (False, 112, frozenset()),
+    ],
+)
+def test_large_width_jump_reopens_every_crossed_buffered_boundary(
+    read_mode: bool,
+    width: int,
+    expected_collapsed: frozenset[Region],
+):
+    mounted = (
+        region_layout.READ_SIDE_PANE_ORDER
+        if read_mode
+        else region_layout.MANAGEMENT_SIDE_PANE_ORDER
+    )
+    previous = RegionLayout(collapsed=frozenset(mounted))
+
+    assert resolve(
+        RegionLayout(),
+        width,
+        read_mode=read_mode,
+        previous=previous,
+    ).collapsed == expected_collapsed
+
+
+def test_priority_adjustment_is_reversed_for_reopening_candidates():
+    preferred = RegionLayout()
+    previous = RegionLayout(
+        collapsed=frozenset(region_layout.COLLAPSIBLE_REGIONS)
+    )
+
+    before_buffer = resolve(
+        preferred,
+        92,
+        priority_target=Region.RIGHT_RAIL,
+        previous=previous,
+    )
+    first_reopened = resolve(
+        preferred,
+        93,
+        priority_target=Region.RIGHT_RAIL,
+        previous=before_buffer,
+    )
+    second_reopened = resolve(
+        preferred,
+        125,
+        priority_target=Region.RIGHT_RAIL,
+        previous=first_reopened,
+    )
+
+    assert before_buffer.collapsed == frozenset(region_layout.COLLAPSIBLE_REGIONS)
+    assert first_reopened.collapsed == frozenset({Region.LEFT_RAIL, Region.ITEMS})
+    assert second_reopened.collapsed == frozenset({Region.LEFT_RAIL})
+
+
+@pytest.mark.parametrize(
+    ("read_mode", "priority_target", "width", "expected_collapsed"),
+    [
+        (True, None, 145, frozenset()),
+        (True, None, 144, frozenset({Region.RIGHT_RAIL})),
+        (
+            True,
+            Region.RIGHT_RAIL,
+            114,
+            frozenset({Region.LEFT_RAIL, Region.ITEMS}),
+        ),
+        (False, None, 108, frozenset()),
+        (False, None, 107, frozenset({Region.RIGHT_RAIL})),
+    ],
+)
+def test_previous_none_preserves_nominal_resolution(
+    read_mode: bool,
+    priority_target: Region | None,
+    width: int,
+    expected_collapsed: frozenset[Region],
+):
+    assert resolve(
+        RegionLayout(),
+        width,
+        read_mode=read_mode,
+        priority_target=priority_target,
+        previous=None,
+    ).collapsed == expected_collapsed
+
+
+def test_preferred_collapses_never_reopen_from_previous_state():
+    preferred = RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL}))
+    previous = RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL}))
+
+    effective = resolve(preferred, 200, previous=previous)
+
+    assert effective.collapsed == frozenset({Region.RIGHT_RAIL})
+
+
+def test_management_never_reopens_unmounted_feed_items():
+    previous = RegionLayout(
+        collapsed=frozenset(region_layout.COLLAPSIBLE_REGIONS)
+    )
+
+    effective = resolve(
+        RegionLayout(),
+        200,
+        read_mode=False,
+        previous=previous,
+    )
+
+    assert effective.collapsed == frozenset()
+    assert not effective.is_collapsed(Region.ITEMS)
+
+
+def test_article_focus_remains_authoritative_over_hysteresis():
+    previous = RegionLayout()
+
+    effective = resolve(
+        RegionLayout(),
+        200,
+        article_focus=True,
+        previous=previous,
+    )
+
+    assert effective.collapsed == frozenset(region_layout.COLLAPSIBLE_REGIONS)

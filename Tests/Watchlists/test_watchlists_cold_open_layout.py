@@ -43,6 +43,7 @@ from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from tldw_chatbook import config as config_module
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    ResponsivePriorityLease,
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Watchlists_Modules import region_layout_store
@@ -355,14 +356,20 @@ async def test_preferred_layout_survives_an_isolated_fresh_restart(
             {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
         )
     )
-    first._responsive_priority_target = Region.RIGHT_RAIL
+    first._responsive_region_layout = RegionLayout(
+        collapsed=frozenset({Region.RIGHT_RAIL})
+    )
+    first._responsive_priority_lease = ResponsivePriorityLease(
+        Region.RIGHT_RAIL, read_mode=True
+    )
 
     config_module._invalidate_config_caches()
     restarted = WatchlistsCollectionsScreen(_build_test_app())
     assert restarted.region_layout == desired
     assert restarted._effective_region_layout == desired
     assert restarted._article_focus_active is False
-    assert restarted._responsive_priority_target is None
+    assert restarted._responsive_region_layout is None
+    assert restarted._responsive_priority_lease is None
 
     persisted = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert persisted["watchlists"]["collapsed_regions"] == [

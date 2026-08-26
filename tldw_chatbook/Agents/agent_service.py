@@ -34,8 +34,6 @@ from tldw_chatbook.Chat.console_history_budget import (
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Internal_Prompts import get_internal_prompt
-from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
     estimate_tokens,
@@ -164,10 +162,51 @@ from .tool_catalog import (
     initial_disclosure,
 )
 
-# Catalog-default re-export: keeps existing imports (console_agent_bridge,
-# tests) valid and pins the "shipped default" used by the dual-prefix
-# sub-agent check. Runtime call sites resolve live via get_internal_prompt.
-SUBAGENT_SYSTEM_PROMPT = CATALOG["agents.subagent_system"].default
+def get_internal_prompt(prompt_id: str) -> str:
+    """Resolve an internal prompt without putting ``Internal_Prompts`` on boot.
+
+    TASK-22213: this module is on the Chat first-paint import leg
+    (``chat_screen`` -> ``console_chat_controller`` -> ``console_fleet_wake``
+    -> here), and its former module-scope Internal_Prompts imports were the
+    FIRST edge that put the 10-module prompt catalog in front of first
+    paint. Prompts are only needed at spawn time, long after mount. Same
+    name and signature as the real resolver so call sites are unchanged.
+    Guarded by ``Tests/Packaging/test_rag_boot_import_closure.py``.
+
+    Args:
+        prompt_id: Prompt identifier (e.g., ``"agents.subagent_system"``).
+
+    Returns:
+        Resolved prompt text with placeholders intact.
+
+    Raises:
+        KeyError: If ``prompt_id`` is not registered in the catalog.
+    """
+    from tldw_chatbook.Internal_Prompts import get_internal_prompt as _resolve
+
+    return _resolve(prompt_id)
+
+
+def __getattr__(name: str):
+    """Lazy catalog-default re-export (PEP 562, TASK-22213).
+
+    ``SUBAGENT_SYSTEM_PROMPT`` keeps existing imports (console_agent_bridge,
+    tests) valid and pins the "shipped default" used by the dual-prefix
+    sub-agent check -- but computing it at module scope required the whole
+    ``Internal_Prompts`` catalog on the Chat first-paint leg. It now
+    resolves (and is cached into ``globals()``) on first attribute access;
+    ``console_agent_bridge``'s ``from ... import SUBAGENT_SYSTEM_PROMPT``
+    triggers exactly that, off the boot leg. Runtime spawn sites still
+    resolve live via ``get_internal_prompt`` above.
+    """
+    if name == "SUBAGENT_SYSTEM_PROMPT":
+        from tldw_chatbook.Internal_Prompts import CATALOG
+
+        value = CATALOG["agents.subagent_system"].default
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 TRUNCATION_NOTICE = "\n[truncated]"
 

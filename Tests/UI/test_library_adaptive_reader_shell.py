@@ -10,7 +10,7 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from tldw_chatbook.Library.library_adaptive_reader_state import (
+from tldw_chatbook.Utils.adaptive_reader_state import (
     PANE_GRIP_WIDTH,
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
