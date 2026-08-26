@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
+from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from Tests.UI.test_console_native_chat_flow import (
@@ -22,6 +23,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
@@ -769,3 +771,233 @@ async def test_console_composer_blink_phases_are_geometry_identical():
                 f"{name!r}: blink phases differ in painted cell widths -- "
                 f"{cell_counts[0]} vs {cell_counts[1]}"
             )
+
+
+# ---------------------------------------------------------------------------
+# TASK-22218: the blink tick must not wrap the draft, scan history, or keep
+# working under a modal
+# ---------------------------------------------------------------------------
+
+
+def _seeded_history(*inputs: str) -> PromptHistory:
+    """Build a history store with in-memory entries only (no file IO)."""
+    history = PromptHistory("/nonexistent/t22218_prompt_history.jsonl")
+    history._entries = [{"input": text, "timestamp": 0.0} for text in inputs]
+    history._loaded = True
+    return history
+
+
+async def _drive_ticks(pilot, composer, count: int) -> list[bool]:
+    """Drive ``count`` blink ticks; return the phase seen after each tick."""
+    phases: list[bool] = []
+    for _ in range(count):
+        composer._toggle_cursor_blink()
+        await pilot.pause()
+        phases.append(composer._cursor_visible)
+    return phases
+
+
+@pytest.mark.asyncio
+async def test_console_composer_idle_blink_ticks_do_no_wrap_or_history_scan(
+    monkeypatch,
+):
+    """A steady-state blink tick performs no draft wrap and no history scan.
+
+    TASK-22218: before the render memo, every 0.53 s tick re-ran the full
+    grapheme-aware ``cell_len`` wrap of the ENTIRE draft (a pasted 20 KB
+    draft, re-wrapped ~1.89x/s forever) plus ``_ghost_suffix``'s linear
+    ``startswith`` scan over up to 1000 history entries -- all to flip one
+    caret cell. With the draft, width, and history unchanged, a tick must be
+    a memo hit: zero wraps, zero scans.
+
+    The two warm-up ticks are the memo filling its two blink phases -- the
+    hidden phase genuinely has never been rendered for a fresh draft, so its
+    first render is real work, once.
+    """
+    app = _build_test_app()
+    history = _seeded_history(
+        *[f"prompt number {index}" for index in range(999)],
+        "word word word final entry",
+    )
+    app.console_prompt_history_factory = lambda: history
+    _configure_native_ready_console(app)
+    host = _CssTrueConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        draft = "word " * 4000  # 20,000 characters, wraps to many rows
+        composer = await _focused_composer(pilot, console, draft)
+        assert composer._prompt_history is history
+
+        counts = {"wrap": 0, "scan": 0}
+        real_wrap = ConsoleComposerBar._wrap_draft_line_slices.__func__
+
+        def counting_wrap(cls, text, width):
+            counts["wrap"] += 1
+            return real_wrap(cls, text, width)
+
+        monkeypatch.setattr(
+            ConsoleComposerBar,
+            "_wrap_draft_line_slices",
+            classmethod(counting_wrap),
+        )
+        real_complete = history.complete
+
+        def counting_complete(prefix):
+            counts["scan"] += 1
+            return real_complete(prefix)
+
+        monkeypatch.setattr(history, "complete", counting_complete)
+
+        # Warm-up: one tick per blink phase.
+        await _drive_ticks(pilot, composer, 2)
+
+        counts["wrap"] = 0
+        counts["scan"] = 0
+        rounds = 6
+        await _drive_ticks(pilot, composer, rounds)
+        assert counts == {"wrap": 0, "scan": 0}, (
+            f"{rounds} idle blink ticks with an unchanged draft/width/history "
+            f"performed {counts['wrap']} full-draft wraps and {counts['scan']} "
+            f"history scans -- a tick must be a render-memo hit"
+        )
+
+        # The ticks must still repaint the caret -- a tick that stopped
+        # rendering entirely would also score zero.
+        visible = composer.query_one("#console-command-visible-text", Static)
+        composer._cursor_visible = True
+        composer._toggle_cursor_blink()
+        await pilot.pause()
+        hidden_text = visible.renderable.plain
+        composer._toggle_cursor_blink()
+        await pilot.pause()
+        shown_text = visible.renderable.plain
+        assert "▌" not in hidden_text
+        assert "▌" in shown_text
+
+
+class _ComposerCoverModal(ModalScreen[None]):
+    """Bare modal used to cover the Console screen in blink-gate tests."""
+
+    def compose(self):
+        yield Static("covering modal", id="composer-cover-modal-body")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_blink_freezes_solid_under_modal_and_resumes():
+    """Blink ticks stop flipping while the composer's screen is covered.
+
+    TASK-22218: the blink resume gate is ``has_focus_within``, which reads
+    the composer's OWN screen's focus memory -- it survives ``push_screen``,
+    so every modal left the caret blinking (and re-rendering) underneath.
+    The tick now early-outs on ``not self.screen.is_active`` (the TASK-22219
+    shape: the timer keeps ticking and IS the resume path), parking the
+    caret solid; the first tick after the modal pops blinks again.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _CssTrueConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        composer = await _focused_composer(pilot, console, "hello world")
+
+        host.push_screen(_ComposerCoverModal())
+        await pilot.pause()
+        await pilot.pause()
+        assert not console.is_active
+        # The pre-existing trap this test pins: per-screen focus memory
+        # keeps the old resume gate armed underneath the modal.
+        assert composer.has_focus_within
+
+        phases = await _drive_ticks(pilot, composer, 6)
+        assert phases == [True] * 6, (
+            f"blink kept flipping under a modal: phases {phases} -- the tick "
+            f"must park the caret solid while the composer's screen is covered"
+        )
+
+        host.pop_screen()
+        await pilot.pause()
+        await pilot.pause()
+        assert console.is_active
+        resumed = await _drive_ticks(pilot, composer, 2)
+        assert False in resumed, (
+            f"blink did not resume after the modal popped: phases {resumed}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_composer_typing_after_idle_ticks_repaints_new_draft():
+    """The render memo invalidates on a draft edit -- no stale caret/text.
+
+    Guard for TASK-22218's memoization: after idle ticks have filled both
+    blink-phase memo slots, a typed character must repaint with the new
+    draft text and the caret after it (a memo keyed without the draft would
+    serve the stale renderable forever).
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _CssTrueConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        composer = await _focused_composer(pilot, console, "hello")
+        visible = composer.query_one("#console-command-visible-text", Static)
+
+        # Fill both phase slots, ending on the solid phase.
+        composer._cursor_visible = True
+        await _drive_ticks(pilot, composer, 2)
+        assert "hello▌" in visible.renderable.plain
+
+        composer.insert_text("!")
+        await pilot.pause()
+        assert "hello!▌" in visible.renderable.plain
+
+        # And the next ticks keep blinking the caret against the new draft.
+        composer._cursor_visible = True
+        await _drive_ticks(pilot, composer, 1)
+        assert "hello!" in visible.renderable.plain
+        assert "▌" not in visible.renderable.plain
+
+
+@pytest.mark.asyncio
+async def test_console_composer_history_append_while_idle_updates_ghost(tmp_path):
+    """A history record while the composer idles invalidates the ghost text.
+
+    Guard for TASK-22218's memo key: the ghost suffix is part of the memoized
+    OUTPUT, so a new history entry recorded while the composer sits idle
+    (e.g. a queued send completing) must reach the next blink tick via the
+    history revision in the memo key -- not be served stale until the next
+    keystroke.
+    """
+    app = _build_test_app()
+    # A real writable path: `append` below must succeed, not roll back.
+    history = PromptHistory(tmp_path / "prompt_history.jsonl")
+    history._entries = [{"input": "hello world", "timestamp": 0.0}]
+    history._loaded = True
+    app.console_prompt_history_factory = lambda: history
+    _configure_native_ready_console(app)
+    host = _CssTrueConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        composer = await _focused_composer(pilot, console, "hello")
+        assert composer._prompt_history is history
+        visible = composer.query_one("#console-command-visible-text", Static)
+
+        # Warm both phases; land on the solid phase showing the ghost.
+        composer._cursor_visible = True
+        await _drive_ticks(pilot, composer, 2)
+        assert "hello▌ world" in visible.renderable.plain
+
+        # Record a newer entry the way production does (append bumps the
+        # store's revision; most-recent-wins changes the suggestion).
+        recorded = await history.append("hello brave")
+        assert recorded is True
+
+        composer._cursor_visible = False
+        await _drive_ticks(pilot, composer, 1)
+        assert "hello▌ brave" in visible.renderable.plain, (
+            f"ghost text served stale after a history record: "
+            f"{visible.renderable.plain!r}"
+        )
