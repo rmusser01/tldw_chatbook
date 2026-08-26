@@ -736,7 +736,17 @@ class LLMManagementWindow(Container):
         owned by this widget is cancelled at unmount, so the probe dies
         with the screen; ``exclusive`` also collapses overlapping polls on
         a slow probe instead of stacking them.
+
+        task-22220: the inactive-screen gate is hoisted here from the
+        coroutine -- the 3 s tick on a hidden tab used to construct the
+        coroutine and schedule a worker every fire just so the coroutine's
+        own first line could drop it. An inactive screen now constructs
+        nothing. The coroutine keeps its own pre-await guard (the
+        scheduling->running race) and post-await re-check (mid-probe
+        deactivation, task-15473).
         """
+        if not self.is_attached or not self.screen.is_active:
+            return
         self.run_worker(
             self._update_ollama_api_state(),
             exclusive=True,

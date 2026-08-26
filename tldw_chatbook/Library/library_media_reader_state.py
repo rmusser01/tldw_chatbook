@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from .library_adaptive_reader_state import (
+from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH as ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH as ITEMS_MIN_WIDTH,
     ITEMS_TARGET_WIDTH as ITEMS_TARGET_WIDTH,

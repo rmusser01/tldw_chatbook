@@ -509,10 +509,13 @@ def test_inspect_reports_disk_unavailable_when_staging_is_unverified(
         )
 
     assert raised.value.category == "actor_pack_import_disk_unavailable"
-    assert list(staging_root.iterdir()) == []
+    # task-22216: construction no longer creates the staging directory, and
+    # the patched (unverified) privacy probe never does either — "nothing
+    # staged" now includes the directory not existing at all.
+    assert not staging_root.exists() or list(staging_root.iterdir()) == []
 
 
-def test_startup_sweep_removes_only_authenticated_bounded_candidates(
+def test_session_sweep_removes_only_authenticated_bounded_candidates(
     import_service: ActorPackImportService,
 ) -> None:
     review = import_service.inspect_archive(
@@ -529,9 +532,151 @@ def test_startup_sweep_removes_only_authenticated_bounded_candidates(
         profile_root=import_service._profile_root,
     )
 
+    # task-22216: construction alone must no longer sweep.
+    assert authenticated.exists()
+
+    replacement.ensure_staging_swept()
+
     assert not authenticated.exists()
     assert malformed.exists()
     assert replacement.sweep_staging(max_candidates=1) == 0
+
+
+def test_construction_performs_no_staging_filesystem_io(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-22216: __init__ records paths only — no sweep, no directory."""
+    db = CharactersRAGDB(
+        str(tmp_path / "profile.db"), client_id="actor-pack-construct"
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail(
+            "construction must not touch the staging filesystem (task-22216)"
+        )
+
+    monkeypatch.setattr(importer_module, "secure_private_directory", forbidden)
+    monkeypatch.setattr(importer_module.os, "scandir", forbidden)
+
+    staging_root = tmp_path / "staging"
+    ActorPackImportService(
+        ActorPackRepository(db),
+        staging_root=staging_root,
+        profile_root=tmp_path,
+    )
+
+    assert not staging_root.exists()
+
+
+def test_ensure_staging_swept_latches_only_on_success(
+    import_service: ActorPackImportService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-22216: failed attempts retry; a successful sweep is once-only."""
+    calls: list[int] = []
+
+    def fake_sweep(*, max_candidates: int = 32) -> int:
+        calls.append(max_candidates)
+        if len(calls) == 1:
+            raise ActorPackImportError("actor_pack_import_cleanup_denied")
+        return 0
+
+    monkeypatch.setattr(import_service, "sweep_staging", fake_sweep)
+
+    with pytest.raises(ActorPackImportError) as raised:
+        import_service.ensure_staging_swept()
+    assert raised.value.category == "actor_pack_import_cleanup_denied"
+
+    import_service.ensure_staging_swept()  # retries after the failure
+    import_service.ensure_staging_swept()  # cached no-op once latched
+    import_service.ensure_staging_swept()
+
+    assert len(calls) == 2
+
+
+def test_ensure_staging_swept_serializes_concurrent_first_use(
+    import_service: ActorPackImportService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-22216: a first import racing the deferred worker blocks on the
+    in-flight sweep instead of double-sweeping past it."""
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+
+    def slow_sweep(*, max_candidates: int = 32) -> int:
+        calls.append(max_candidates)
+        started.set()
+        assert release.wait(timeout=5)
+        return 0
+
+    monkeypatch.setattr(import_service, "sweep_staging", slow_sweep)
+
+    first = threading.Thread(target=import_service.ensure_staging_swept)
+    first.start()
+    assert started.wait(timeout=5)
+
+    second_done = threading.Event()
+
+    def second() -> None:
+        import_service.ensure_staging_swept()
+        second_done.set()
+
+    racer = threading.Thread(target=second)
+    racer.start()
+    # The second caller must not complete while the sweep is in flight.
+    assert not second_done.wait(timeout=0.2)
+
+    release.set()
+    first.join(timeout=5)
+    racer.join(timeout=5)
+
+    assert second_done.is_set()
+    assert calls == [32]
+
+
+def test_inspect_archive_sweeps_crash_residue_before_staging(
+    import_service: ActorPackImportService,
+) -> None:
+    """task-22216: the first staging use cleans residue a crashed prior
+    session left behind — before creating its own candidate."""
+    archive = (FIXTURES / "minimal-character.tldw-actor-pack").resolve()
+    residue_review = import_service.inspect_archive(archive)
+    residue = import_service._staging_root / residue_review._candidate_name
+    assert residue.exists()
+
+    replacement = ActorPackImportService(
+        import_service.repository,
+        staging_root=import_service._staging_root,
+        profile_root=import_service._profile_root,
+    )
+    assert residue.exists()  # construction must not sweep
+
+    fresh_review = replacement.inspect_archive(archive)
+
+    assert not residue.exists()
+    fresh = replacement._staging_root / fresh_review._candidate_name
+    assert fresh.exists()  # the sweep ran BEFORE staging, not after
+    replacement.cleanup_review(fresh_review)
+
+
+def test_inspect_archive_sweeps_only_once_per_session(
+    import_service: ActorPackImportService,
+) -> None:
+    """task-22216: a later import must not sweep away an earlier in-flight
+    candidate from the same session."""
+    archive = (FIXTURES / "minimal-character.tldw-actor-pack").resolve()
+    first = import_service.inspect_archive(archive)
+    first_candidate = import_service._staging_root / first._candidate_name
+
+    second = import_service.inspect_archive(archive)
+
+    assert first_candidate.exists()
+    import_service.cleanup_review(second)
+    import_service.cleanup_review(first)
 
 
 def test_startup_sweep_skips_usable_unverified_staging(
