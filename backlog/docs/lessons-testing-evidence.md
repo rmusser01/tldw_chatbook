@@ -8868,3 +8868,36 @@ Importing `Chunking.Chunk_Lib` into a screen module left the census unmoved
 the real-growth mutant (a genuinely new 40k-LOC module on that route) was
 caught and named the route. Before recording a survivor as a gap, check that
 the mutation actually changes the quantity under test.
+
+## A `query_one("#id")` is not a DOM walk in Textual 8.2.8 — a `query("*")` is (TASK-22228, 2026-08-26)
+
+Three findings in the same small-residue batch were written as "an uncached
+DOM query on a hot path". Measured on the mounted Console (475 widgets), two
+of them were noise and the third was 33x worse than its own brief said:
+
+* `screen.query_one("#console-native-composer")` per mouse-up: **0.3 us**
+  warm, 5.2 us cold. Textual 8.2.8's `DOMNode.query_one` takes an id-selector
+  fast path — `walk_breadth_search_id` plus a per-node `_query_one_cache`
+  keyed on `_nodes._updates` — so a settled DOM answers from a dict.
+* the left rail's two id lookups + `max_scroll_y` per scroll frame: **2.7 us**
+  warm, 10.4 us cold, against a frame that repaints the rail.
+* `bounded.viewport.query("*")` over a **16-node** subtree: **74.1 us**, versus
+  **2.2 us** for the identical `walk_children(Widget)`. `DOMQuery.nodes` builds
+  its candidate list from exactly that walk and then runs the parsed selector
+  through `match()` for every node — for the universal selector, a filter that
+  admits everything, that round-trip IS the whole cost.
+
+The trap has a second half: the "fix" the brief prescribed for the first item
+— route it through the screen's memoized composer accessor — measured SLOWER
+than what it replaced (0.7 us vs 0.3 us), because the memo revalidates by
+building `ancestors_with_self` on every hit. Implementing the prescription
+would have been a pessimization defended by a green test.
+
+**What to do.** Before converting any "uncached query" finding, time the call
+as it actually runs (warm AND with `node._query_one_cache.clear()` for the
+cold arm). Attribute cost to the SELECTOR ENGINE, not to the walk: `query_one`
+with a literal `#id` is cheap and cached; `query(...)` with any selector — most
+of all `"*"` — pays `match()` per node and caches nothing. When the filter
+admits every widget, `walk_children(Widget)` is the same list in the same
+order for a thirtieth of the price, and an equivalence assertion against the
+`query("*")` result is what makes swapping it safe.

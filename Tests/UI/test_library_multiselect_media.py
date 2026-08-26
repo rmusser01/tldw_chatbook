@@ -1807,15 +1807,22 @@ def test_single_delete_arm_supersedes_stale_receipt():
     earlier delete -- mirroring ``handle_library_media_delete_selected``'s
     arm-time clear, so a completed receipt always reflects only what just
     happened."""
+    repaints: list[str] = []
     fake = SimpleNamespace(
         _library_media_confirming_delete=False,
         _library_media_delete_receipt_ids=("9",),
-        refresh=lambda **k: None,
+        # TASK-22228 item 6: arming now repaints through the viewer-scoped
+        # seam rather than recomposing the whole screen. Both are stubbed so
+        # this arm keeps testing the receipt supersede and nothing else.
+        _sync_library_media_viewer_or_recompose=lambda: repaints.append("viewer"),
+        refresh=lambda **k: repaints.append("screen"),
     )
 
     LibraryScreen.handle_library_media_delete(
         fake, SimpleNamespace(stop=lambda: None)
     )
+
+    assert repaints == ["viewer"]
 
     assert fake._library_media_confirming_delete is True
     assert fake._library_media_delete_receipt_ids == ()
