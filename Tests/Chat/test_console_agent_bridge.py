@@ -6269,6 +6269,29 @@ def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) ->
         ]
     )
     bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+    live_tokens: list[int | None] = []
+    terminal_tokens: list[int | None] = []
+    original_replace = store.replace_message_thinking
+    original_settle = store.settle_message_thinking
+
+    def record_replace(message_id, envelope, *, generation_token=None):
+        live_tokens.append(generation_token)
+        return original_replace(
+            message_id,
+            envelope,
+            generation_token=generation_token,
+        )
+
+    def record_settle(message_id, envelope, *, generation_token=None):
+        terminal_tokens.append(generation_token)
+        return original_settle(
+            message_id,
+            envelope,
+            generation_token=generation_token,
+        )
+
+    store.replace_message_thinking = record_replace
+    store.settle_message_thinking = record_settle
 
     outcome = _run(
         bridge,
@@ -6291,6 +6314,9 @@ def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) ->
         "complete",
         "complete",
     ]
+    assert live_tokens and terminal_tokens
+    assert set(live_tokens + terminal_tokens) == {live_tokens[0]}
+    assert type(live_tokens[0]) is int
 
 
 def test_agent_rounds_advance_for_fence_first_tool_calls(tmp_path) -> None:

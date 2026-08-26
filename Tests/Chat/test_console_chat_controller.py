@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import threading
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -6715,6 +6716,18 @@ async def test_direct_stream_pairs_typed_thinking_with_visible_answer() -> None:
         "visible answer",
     )
     store = ConsoleChatStore()
+    thinking_tokens: list[int | None] = []
+    original_replace = store.replace_message_thinking
+
+    def record_thinking_token(message_id, envelope, *, generation_token=None):
+        thinking_tokens.append(generation_token)
+        return original_replace(
+            message_id,
+            envelope,
+            generation_token=generation_token,
+        )
+
+    store.replace_message_thinking = record_thinking_token
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     result = await controller.submit_draft("hello")
@@ -6731,6 +6744,9 @@ async def test_direct_stream_pairs_typed_thinking_with_visible_answer() -> None:
     assert len(assistant.thinking.blocks) == 1
     assert assistant.thinking.blocks[0].text == "private plan"
     assert assistant.thinking.blocks[0].status == "complete"
+    assert thinking_tokens
+    assert len(set(thinking_tokens)) == 1
+    assert type(thinking_tokens[0]) is int
 
 
 @pytest.mark.asyncio
@@ -7214,14 +7230,15 @@ def test_late_settlement_decision_serializes_with_terminal_commit(
     envelope = _terminal_thinking(assistant.id, terminal_status)
     decision_passed = threading.Event()
     settlement_release = threading.Event()
-    original_replace = store.replace_message_thinking
+    controller_attempted = threading.Event()
+    original_replace = store._replace_message_thinking
 
     def pause_after_nonterminal_decision(message_id, thinking):
         decision_passed.set()
         assert settlement_release.wait(timeout=3)
         return original_replace(message_id, thinking)
 
-    store.replace_message_thinking = pause_after_nonterminal_decision
+    store._replace_message_thinking = pause_after_nonterminal_decision
     errors: list[BaseException] = []
 
     def settle_from_bridge() -> None:
@@ -7232,6 +7249,7 @@ def test_late_settlement_decision_serializes_with_terminal_commit(
 
     def settle_from_controller() -> None:
         try:
+            controller_attempted.set()
             if terminal_status == "stopped":
                 store.mark_message_stopped(assistant.id)
             else:
@@ -7246,6 +7264,7 @@ def test_late_settlement_decision_serializes_with_terminal_commit(
         assert decision_passed.wait(timeout=3)
         assert persistence.projection_attempts == 0
         controller_thread.start()
+        assert controller_attempted.wait(timeout=3)
         controller_thread.join(timeout=0.25)
         terminal_committed_early = not controller_thread.is_alive()
         settlement_release.set()
@@ -7284,7 +7303,8 @@ def test_late_settlement_decision_serializes_with_terminal_commit(
     finally:
         settlement_release.set()
         bridge_thread.join(timeout=1)
-        controller_thread.join(timeout=1)
+        if controller_thread.ident is not None:
+            controller_thread.join(timeout=1)
         db.close_connection()
 
 
@@ -7297,6 +7317,7 @@ def test_late_settlement_waits_for_terminal_writer_without_conflict(tmp_path) ->
     store.persistence = persistence
     envelope = _terminal_thinking(assistant.id, "stopped")
     errors: list[BaseException] = []
+    bridge_attempted = threading.Event()
     persistence.arm_next_writer()
 
     def stop_from_controller() -> None:
@@ -7307,6 +7328,7 @@ def test_late_settlement_waits_for_terminal_writer_without_conflict(tmp_path) ->
 
     def settle_from_bridge() -> None:
         try:
+            bridge_attempted.set()
             store.settle_message_thinking(assistant.id, envelope)
         except BaseException as exc:  # pragma: no cover - asserted below
             errors.append(exc)
@@ -7317,6 +7339,7 @@ def test_late_settlement_waits_for_terminal_writer_without_conflict(tmp_path) ->
         controller_thread.start()
         assert persistence.writer_entered.wait(timeout=3)
         bridge_thread.start()
+        assert bridge_attempted.wait(timeout=3)
         bridge_thread.join(timeout=0.25)
         bridge_completed_early = not bridge_thread.is_alive()
         persistence.writer_release.set()
@@ -7357,3 +7380,237 @@ def test_late_settlement_waits_for_terminal_writer_without_conflict(tmp_path) ->
         controller_thread.join(timeout=1)
         bridge_thread.join(timeout=1)
         db.close_connection()
+
+
+def test_abandoned_variant_rejects_late_thinking_from_restored_attempt(
+    tmp_path,
+) -> None:
+    """A worker from a stopped regenerate cannot decorate the restored base."""
+    db, store, session, assistant, checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="stale-restored-variant",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "complete"
+    owned.assistant_generation_state = "complete"
+    owned.thinking = _terminal_thinking(assistant.id, "complete")
+    assert store.persist_selected_generation(assistant.id) is True
+
+    generation_token = store.begin_generation_attempt(assistant.id)
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle_abandoned_worker() -> None:
+        worker_entered.set()
+        assert worker_release.wait(timeout=3)
+        try:
+            store.settle_message_thinking(
+                assistant.id,
+                _terminal_thinking(assistant.id, "stopped"),
+                generation_token=generation_token,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=settle_abandoned_worker, daemon=True)
+    try:
+        store.begin_variant_stream(assistant.id)
+        store.append_stream_chunk(assistant.id, "discarded replacement")
+        worker.start()
+        assert worker_entered.wait(timeout=3)
+        store.mark_message_stopped(assistant.id)
+
+        expected_live = copy.deepcopy(store.get_message(assistant.id))
+        expected_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        worker_release.set()
+        worker.join(timeout=3)
+
+        assert not worker.is_alive()
+        assert errors == []
+        assert store.get_message(assistant.id) == expected_live
+        assert (
+            dict(db.get_message_by_id(assistant.persisted_message_id)) == expected_row
+        )
+
+        # Repeated settlement by the same detached owner remains a no-op.
+        store.settle_message_thinking(
+            assistant.id,
+            _terminal_thinking(assistant.id, "stopped"),
+            generation_token=generation_token,
+        )
+        assert (
+            dict(db.get_message_by_id(assistant.persisted_message_id)) == expected_row
+        )
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == "paired answer"
+        assert reloaded.thinking == expected_live.thinking
+        assert reloaded.variants == expected_live.variants
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.assistant_generation_state == "complete"
+    finally:
+        worker_release.set()
+        worker.join(timeout=1)
+        db.close_connection()
+
+
+def test_new_no_evidence_generation_rejects_prior_worker_settlement(tmp_path) -> None:
+    """Starting a newer retry fences a detached worker from the failed try."""
+    db, store, session, assistant, checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="stale-new-generation",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "failed"
+    owned.assistant_generation_state = "failed"
+    owned.thinking = _terminal_thinking(assistant.id, "failed")
+    assert store.persist_selected_generation(assistant.id) is True
+
+    old_token = store.begin_generation_attempt(assistant.id)
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle_old_worker() -> None:
+        worker_entered.set()
+        assert worker_release.wait(timeout=3)
+        try:
+            store.settle_message_thinking(
+                assistant.id,
+                _terminal_thinking(assistant.id, "failed"),
+                generation_token=old_token,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=settle_old_worker, daemon=True)
+    try:
+        worker.start()
+        assert worker_entered.wait(timeout=3)
+        new_token = store.begin_generation_attempt(assistant.id)
+        assert new_token != old_token
+        store.prepare_message_retry(assistant.id)
+        store.append_stream_chunk(assistant.id, "new answer without thinking")
+        store.mark_message_complete(assistant.id)
+
+        expected_live = copy.deepcopy(store.get_message(assistant.id))
+        expected_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        worker_release.set()
+        worker.join(timeout=3)
+
+        assert not worker.is_alive()
+        assert errors == []
+        assert store.get_message(assistant.id) == expected_live
+        assert (
+            dict(db.get_message_by_id(assistant.persisted_message_id)) == expected_row
+        )
+        assert expected_live.content == "new answer without thinking"
+        assert expected_live.thinking is None
+        assert expected_live.provider_continuation == checkpoint
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == expected_live.content
+        assert reloaded.thinking is None
+        assert reloaded.variants == expected_live.variants
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.assistant_generation_state == "complete"
+    finally:
+        worker_release.set()
+        worker.join(timeout=1)
+        db.close_connection()
+
+
+def test_generation_owner_lock_counts_waiter_and_releases_scoped_entry() -> None:
+    """The keyed owner entry covers holder+waiter, then is reclaimed."""
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+    )
+    holder_entered = threading.Event()
+    holder_release = threading.Event()
+    waiter_attempted = threading.Event()
+    waiter_entered = threading.Event()
+
+    def hold_owner() -> None:
+        with store._generation_owner_scope(assistant.id):
+            holder_entered.set()
+            assert holder_release.wait(timeout=3)
+
+    def wait_for_owner() -> None:
+        waiter_attempted.set()
+        with store._generation_owner_scope(assistant.id):
+            waiter_entered.set()
+
+    holder = threading.Thread(target=hold_owner, daemon=True)
+    waiter = threading.Thread(target=wait_for_owner, daemon=True)
+    try:
+        holder.start()
+        assert holder_entered.wait(timeout=3)
+        waiter.start()
+        assert waiter_attempted.wait(timeout=3)
+        deadline = time.monotonic() + 3
+        while store._generation_runtime_counts(assistant.id)[1] != 2:
+            assert time.monotonic() < deadline
+        assert waiter_entered.is_set() is False
+        assert store._generation_runtime_counts(assistant.id) == (1, 2, 0)
+        holder_release.set()
+        holder.join(timeout=3)
+        waiter.join(timeout=3)
+
+        assert waiter_entered.is_set()
+        assert store._generation_runtime_counts(assistant.id) == (0, 0, 0)
+    finally:
+        holder_release.set()
+        holder.join(timeout=1)
+        waiter.join(timeout=1)
+
+
+def test_generation_runtime_entries_do_not_survive_invalid_or_owner_churn() -> None:
+    """Invalid calls, delete, close, and restore retain no lock/token owners."""
+    store = ConsoleChatStore()
+    for index in range(25):
+        with pytest.raises(KeyError):
+            store.mark_message_complete(f"missing-{index}")
+        assert store._generation_runtime_counts() == (0, 0, 0)
+
+    first = _arm_session(store)
+    deleted = store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="delete me",
+    )
+    store.begin_generation_attempt(deleted.id)
+    assert store._generation_runtime_counts() == (0, 0, 1)
+    store.delete_message(deleted.id)
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+    closed = store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="close me",
+    )
+    store.begin_generation_attempt(closed.id)
+    store.close_session(first.id)
+    assert store._generation_runtime_counts() == (0, 0, 0)
+
+    restored_session = store.create_session(title="restored")
+    restored = store.append_message(
+        restored_session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="replace state",
+    )
+    store.begin_generation_attempt(restored.id)
+    store.restore_state(sessions=())
+    assert store._generation_runtime_counts() == (0, 0, 0)

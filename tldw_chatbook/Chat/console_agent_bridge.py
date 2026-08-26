@@ -2212,6 +2212,7 @@ class _StreamingModelAdapter:
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
         thinking_capture: ThinkingCapture | None = None,
+        generation_token: int | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -2227,6 +2228,7 @@ class _StreamingModelAdapter:
         self._thinking_capture = thinking_capture or ThinkingCapture(
             assistant_owner_id=assistant_message_id
         )
+        self._generation_token = generation_token
         # PR3a-1 Task 1: per-THREAD lifeline override. A fleet child runs on
         # its own thread and enters `child_lifeline()` there before its run
         # begins, which parks that child's private loop here; every
@@ -2432,7 +2434,9 @@ class _StreamingModelAdapter:
                         update = self._thinking_capture.observe(chunk)
                         if update.envelope is not None:
                             self._store.replace_message_thinking(
-                                self._assistant_message_id, update.envelope
+                                self._assistant_message_id,
+                                update.envelope,
+                                generation_token=self._generation_token,
                             )
                     if self._should_cancel():
                         break
@@ -3693,6 +3697,7 @@ class ConsoleAgentBridge:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        generation_token: int | None = None,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
         confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
         | None = None,
@@ -3701,6 +3706,10 @@ class ConsoleAgentBridge:
         ]
         | None = None,
     ) -> tuple[str, RunOutcome]:
+        if generation_token is None:
+            generation_token = self._store.begin_generation_attempt(
+                assistant_message_id
+            )
         protocol = getattr(resolution, "continuation_protocol", None)
         if continuation_target is None and isinstance(protocol, str) and protocol:
             provider = getattr(resolution, "execution_key", None)
@@ -4173,6 +4182,7 @@ class ConsoleAgentBridge:
             continuation_target=continuation_target,
             continuation_owner_key=continuation_owner_key,
             thinking_capture=thinking_capture,
+            generation_token=generation_token,
         )
 
         # PR3a-1 Task 6b (audit F1): this turn's own key into
@@ -4832,7 +4842,9 @@ class ConsoleAgentBridge:
         capture_update = thinking_capture.settle(capture_outcome)
         if capture_update.envelope is not None:
             self._store.settle_message_thinking(
-                assistant_message_id, capture_update.envelope
+                assistant_message_id,
+                capture_update.envelope,
+                generation_token=generation_token,
             )
         for step in outcome.steps:
             logger.info(

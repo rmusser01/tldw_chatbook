@@ -9,6 +9,7 @@ import json
 import threading
 import time
 from collections import OrderedDict, deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -268,6 +269,14 @@ class _VariantStreamBase:
     prior_provider_continuation_remote: bool = False
     prior_provider_continuation_actions_enabled: bool = True
     prior_assistant_generation_state: str | None = None
+
+
+@dataclass(slots=True)
+class _GenerationOwnerLockEntry:
+    """One scoped reentrant owner lock plus its holders and waiters."""
+
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    users: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1098,15 +1107,21 @@ class ConsoleChatStore:
         # return directly.
         self._preparation_lock = threading.RLock()
         # Generation terminal commits can run on the controller event-loop
-        # thread while late agent settlement runs in ``to_thread``.  Resolve
-        # one reentrant lock per message owner under the short registry lock;
-        # the registry lock is released before an owner lock is acquired, so
-        # unrelated owners never block one another and nested projection paths
-        # can safely reacquire their own owner lock.  Terminal recovery takes
-        # locks in owner -> preparation order; callers must not enter a terminal
-        # generation mutation while holding ``_preparation_lock``.
+        # thread while late agent settlement runs in ``to_thread``. Entries
+        # count holders plus waiters before acquisition and disappear when the
+        # last user releases, preventing both keyed-lock leaks and ABA removal.
+        # The registry lock is never held while waiting for an owner. Lock
+        # order for nested terminal recovery is owner -> registry (short,
+        # non-waiting) -> preparation; callers must not enter here while
+        # holding ``_preparation_lock``.
         self._generation_owner_locks_guard = threading.Lock()
-        self._generation_owner_locks: dict[str, threading.RLock] = {}
+        self._generation_owner_locks: dict[str, _GenerationOwnerLockEntry] = {}
+        # Attempt tokens are intentionally process-local: a detached worker
+        # cannot survive process restart. The app-lifetime sequence is global
+        # across message ids so delete/restore/reuse can never recreate an old
+        # token (the same-process ABA boundary this fence owns).
+        self._generation_attempt_sequence = 0
+        self._generation_attempt_tokens: dict[str, int] = {}
         self._preparations_by_session: dict[str, ConsoleTurnPreparation] = {}
         self._preparations_by_id: dict[str, ConsoleTurnPreparation] = {}
         self._durable_identity_by_preparation: dict[
@@ -2988,6 +3003,7 @@ class ConsoleChatStore:
             if owner == session_id
         ]
         for message_id in owned_message_ids:
+            self._invalidate_generation_attempt(message_id)
             self.clear_terminal_citation_state(message_id)
             self._message_session_index.pop(message_id, None)
             self._stream_chunks_by_message.pop(message_id, None)
@@ -5198,6 +5214,10 @@ class ConsoleChatStore:
             session_id: tuple(messages)
             for session_id, messages in (messages_by_session or {}).items()
         }
+        with self._generation_owner_locks_guard:
+            generation_owner_ids = tuple(self._generation_attempt_tokens)
+        for message_id in generation_owner_ids:
+            self._invalidate_generation_attempt(message_id)
         preserved_ephemeral = {
             session_id: recovery
             for session_id, recovery in self._dispatch_recoveries_by_session.items()
@@ -6472,6 +6492,7 @@ class ConsoleChatStore:
         children_map.pop(owner_id, None)
         removed = set(descendant_ids)
         for node_id in descendant_ids:
+            self._invalidate_generation_attempt(node_id)
             self.clear_terminal_citation_state(node_id)
             nodes.pop(node_id, None)
             children_map.pop(node_id, None)
@@ -7323,6 +7344,8 @@ class ConsoleChatStore:
         parent_native_id = self._native_parent_by_message.get(message_id)
         on_active_path = message_id in self.active_path_message_ids(session_id)
         subtree_ids = self._subtree_ids(session_id, message_id)
+        for node_id in subtree_ids:
+            self._invalidate_generation_attempt(node_id)
         tombstones: list[dict[str, Any]] = []
         if self.persistence is not None and message.persisted_message_id is not None:
             deleter = getattr(self.persistence, "delete_message_subtree", None)
@@ -8726,18 +8749,78 @@ class ConsoleChatStore:
             self._persist_metadata_only(message)
         return self._snapshot(message)
 
-    def _generation_owner_lock(self, message_id: str) -> threading.RLock:
-        """Return the process-local reentrant lock for one generation owner."""
+    @contextmanager
+    def _generation_owner_scope(self, message_id: str):
+        """Hold one reclaimable, waiter-aware generation-owner lock."""
         with self._generation_owner_locks_guard:
-            lock = self._generation_owner_locks.get(message_id)
-            if lock is None:
-                lock = threading.RLock()
-                self._generation_owner_locks[message_id] = lock
-            return lock
+            entry = self._generation_owner_locks.get(message_id)
+            if entry is None:
+                entry = _GenerationOwnerLockEntry()
+                self._generation_owner_locks[message_id] = entry
+            entry.users += 1
+        entry.lock.acquire()
+        try:
+            yield
+        finally:
+            entry.lock.release()
+            with self._generation_owner_locks_guard:
+                entry.users -= 1
+                if (
+                    entry.users == 0
+                    and self._generation_owner_locks.get(message_id) is entry
+                ):
+                    self._generation_owner_locks.pop(message_id, None)
+
+    def _generation_runtime_counts(
+        self, message_id: str | None = None
+    ) -> tuple[int, int, int]:
+        """Return content-free lock/user/token counts for concurrency tests."""
+        with self._generation_owner_locks_guard:
+            if message_id is None:
+                users = sum(
+                    entry.users for entry in self._generation_owner_locks.values()
+                )
+            else:
+                entry = self._generation_owner_locks.get(message_id)
+                users = entry.users if entry is not None else 0
+            return (
+                len(self._generation_owner_locks),
+                users,
+                len(self._generation_attempt_tokens),
+            )
+
+    def begin_generation_attempt(self, message_id: str) -> int:
+        """Issue and freeze a new process-local token for one assistant attempt."""
+        with self._generation_owner_scope(message_id):
+            message = self._message_or_raise(message_id)
+            if message.role is not ConsoleMessageRole.ASSISTANT:
+                raise ValueError("Only assistant messages can own generations.")
+            with self._generation_owner_locks_guard:
+                self._generation_attempt_sequence += 1
+                token = self._generation_attempt_sequence
+                self._generation_attempt_tokens[message_id] = token
+                return token
+
+    def _generation_attempt_is_current(
+        self, message_id: str, generation_token: int | None
+    ) -> bool:
+        """Check an attempt token while its owner scope is held."""
+        with self._generation_owner_locks_guard:
+            return self._generation_attempt_tokens.get(message_id) == generation_token
+
+    def _invalidate_generation_attempt(self, message_id: str) -> None:
+        """Fence every detached worker for one owner without reviving a prior one."""
+        with self._generation_owner_scope(message_id):
+            self._invalidate_generation_attempt_locked(message_id)
+
+    def _invalidate_generation_attempt_locked(self, message_id: str) -> None:
+        """Invalidate one attempt while the caller holds its owner scope."""
+        with self._generation_owner_locks_guard:
+            self._generation_attempt_tokens.pop(message_id, None)
 
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message complete and flush final visible content to persistence."""
-        with self._generation_owner_lock(message_id):
+        with self._generation_owner_scope(message_id):
             return self._mark_message_complete(message_id)
 
     def _mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
@@ -8881,7 +8964,7 @@ class ConsoleChatStore:
 
     def mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
         """Serialize a stopped terminal projection for one generation owner."""
-        with self._generation_owner_lock(message_id):
+        with self._generation_owner_scope(message_id):
             return self._mark_message_stopped(message_id)
 
     def _mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
@@ -8918,6 +9001,7 @@ class ConsoleChatStore:
             message.metadata = base.prior_metadata
             self._restore_variant_stream_base(message, base)
             self._variant_restored_message_ids.add(message.id)
+            self._invalidate_generation_attempt_locked(message.id)
         else:
             message.status = "stopped"
             message.assistant_generation_state = "stopped"
@@ -8938,7 +9022,7 @@ class ConsoleChatStore:
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
         """Serialize a failed terminal projection for one generation owner."""
-        with self._generation_owner_lock(message_id):
+        with self._generation_owner_scope(message_id):
             return self._mark_message_failed(message_id)
 
     def _mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
@@ -8973,6 +9057,7 @@ class ConsoleChatStore:
             message.metadata = base.prior_metadata
             self._restore_variant_stream_base(message, base)
             self._variant_restored_message_ids.add(message.id)
+            self._invalidate_generation_attempt_locked(message.id)
         else:
             message.status = "failed"
             message.assistant_generation_state = "failed"
@@ -9380,10 +9465,19 @@ class ConsoleChatStore:
         message.assistant_generation_state = base.prior_assistant_generation_state
 
     def replace_message_thinking(
-        self, message_id: str, envelope: ThinkingEnvelope | None
-    ) -> ConsoleChatMessage:
+        self,
+        message_id: str,
+        envelope: ThinkingEnvelope | None,
+        *,
+        generation_token: int | None = None,
+    ) -> ConsoleChatMessage | None:
         """Replace canonical thinking at the generation-owner seam."""
-        with self._generation_owner_lock(message_id):
+        with self._generation_owner_scope(message_id):
+            if not self._generation_attempt_is_current(message_id, generation_token):
+                try:
+                    return self._snapshot(self._message_or_raise(message_id))
+                except KeyError:
+                    return None
             return self._replace_message_thinking(message_id, envelope)
 
     def _replace_message_thinking(
@@ -9406,8 +9500,12 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def settle_message_thinking(
-        self, message_id: str, envelope: ThinkingEnvelope
-    ) -> ConsoleChatMessage:
+        self,
+        message_id: str,
+        envelope: ThinkingEnvelope,
+        *,
+        generation_token: int | None = None,
+    ) -> ConsoleChatMessage | None:
         """Settle captured thinking, durably joining a detached terminal owner.
 
         Agent execution runs in a worker thread.  Stop can therefore commit
@@ -9418,7 +9516,12 @@ class ConsoleChatStore:
         Ordinary in-flight settlement stays process-local for the controller's
         existing terminal projection.
         """
-        with self._generation_owner_lock(message_id):
+        with self._generation_owner_scope(message_id):
+            if not self._generation_attempt_is_current(message_id, generation_token):
+                try:
+                    return self._snapshot(self._message_or_raise(message_id))
+                except KeyError:
+                    return None
             return self._settle_message_thinking(message_id, envelope)
 
     def _settle_message_thinking(
@@ -9428,7 +9531,7 @@ class ConsoleChatStore:
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can own thinking.")
         if message.assistant_generation_state not in {"stopped", "failed"}:
-            return self.replace_message_thinking(message_id, envelope)
+            return self._replace_message_thinking(message_id, envelope)
 
         current = self._generation_variant(message)
         target = replace(
@@ -10819,7 +10922,7 @@ class ConsoleChatStore:
 
     def persist_selected_generation(self, message_id: str) -> bool:
         """Atomically project the complete selected assistant generation."""
-        with self._generation_owner_lock(message_id):
+        with self._generation_owner_scope(message_id):
             return self._persist_selected_generation(message_id)
 
     def _persist_selected_generation(self, message_id: str) -> bool:

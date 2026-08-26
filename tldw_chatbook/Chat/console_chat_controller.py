@@ -15500,6 +15500,15 @@ class ConsoleChatController:
             summary="Provider stream retried as a non-streaming request",
             status="retrying",
         )
+        require_thinking_persistence_support(
+            self.store.persistence,
+            persistent=(
+                self.store.persistence is not None
+                and not self.store.session_is_ephemeral(owner_id)
+            ),
+            may_emit_thinking=bool(getattr(resolution, "may_emit_thinking", False)),
+        )
+        generation_token = self.store.begin_generation_attempt(assistant_message_id)
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         if character_emote_snapshot is not None and not prepare_retry:
@@ -15523,7 +15532,9 @@ class ConsoleChatController:
         def project_thinking(update: Any) -> None:
             if update.envelope is not None:
                 self.store.replace_message_thinking(
-                    assistant_message_id, update.envelope
+                    assistant_message_id,
+                    update.envelope,
+                    generation_token=generation_token,
                 )
 
         def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
@@ -15548,14 +15559,6 @@ class ConsoleChatController:
                 ConsoleTurnPreparationState.DISPATCH_STARTED,
             ):
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
-            require_thinking_persistence_support(
-                self.store.persistence,
-                persistent=(
-                    self.store.persistence is not None
-                    and not self.store.session_is_ephemeral(owner_id)
-                ),
-                may_emit_thinking=bool(getattr(resolution, "may_emit_thinking", False)),
-            )
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
                 dispatch_request,
@@ -16360,6 +16363,7 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
             session_id=session_id,
         )
+        generation_token = self.store.begin_generation_attempt(assistant_message_id)
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         elif prepare_retry:
@@ -16603,6 +16607,7 @@ class ConsoleChatController:
                 continuation_owner_key=(
                     NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
                 ),
+                generation_token=generation_token,
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():
