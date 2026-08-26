@@ -209,6 +209,9 @@ class AgentRunsChangeReviewProvider:
         #: workspace. The revert engine refuses while one is live -- the
         #: per-root lock covers git ops, not the agent's own file tools.
         self.run_active = run_active if run_active is not None else (lambda: False)
+        self.run_active_for_root: Callable[[str], bool] = (
+            lambda _root: self.run_active()
+        )
         if diff_display_max_lines is None:
             diff_display_max_lines = self._configured_cap()
         # Review finding: an explicit 0/negative/non-int cap would defeat
@@ -447,7 +450,11 @@ class AgentRunsChangeReviewProvider:
         from tldw_chatbook.Workspaces.change_revert import revert_paths
 
         return revert_paths(
-            self._service, self._db, row, paths, run_active=self.run_active
+            self._service,
+            self._db,
+            row,
+            paths,
+            run_active=lambda: self.run_active_for_root(str(row["root"])),
         )
 
     def diff_text(self, row: dict, path: str) -> str:
@@ -749,7 +756,11 @@ class AgentRunsChangeReviewProvider:
         )
 
         return _commit_selected(
-            Path(root), files, message, new_branch, run_active=self.run_active
+            Path(root),
+            files,
+            message,
+            new_branch,
+            run_active=lambda: self.run_active_for_root(root),
         )
 
     def push_current(
@@ -2500,7 +2511,7 @@ class ChangeReviewScreen(Screen):
             self.notify(COMMIT_CLEAN_TREE_REASON, severity="warning")
             return
         try:
-            refused = bool(self._provider.run_active())
+            refused = bool(self._provider.run_active_for_root(root))
         except Exception:  # noqa: BLE001 -- a broken probe must not block work
             logger.opt(exception=True).warning(
                 "change_review: run_active probe failed; deferring to the "
@@ -3902,17 +3913,31 @@ class ChangeReviewScreen(Screen):
         # Multi-root Undo-all: one confirm covering everything, then the
         # engine runs per root row.
         rows_paths = list(by_row.values())
+        self.run_worker(
+            self._prepare_undo_all(rows_paths, total),
+            group="change-review-preflight",
+            exit_on_error=False,
+        )
+
+    async def _prepare_undo_all(
+        self, rows_paths: list[tuple[dict, list[str]]], total: int
+    ) -> None:
+        """Read whole-turn overwrite warnings without blocking Textual."""
         all_edited: list[str] = []
         for row, paths in rows_paths:
-            all_edited.extend(self._provider.preflight_revert(row, paths).edited_since)
+            preflight = await asyncio.to_thread(
+                self._provider.preflight_revert, row, paths
+            )
+            all_edited.extend(preflight.edited_since)
 
         def _apply(confirmed: bool | None) -> None:
             if not confirmed:
                 return
-            outcomes = []
-            for row, paths in rows_paths:
-                outcomes.extend(self._run_revert(row, paths))
-            self._report_outcomes(outcomes)
+            self.run_worker(
+                self._revert_rows(rows_paths),
+                group="change-review-revert",
+                exit_on_error=False,
+            )
 
         self.app.push_screen(
             ChangeRevertConfirmModal(
@@ -3922,22 +3947,45 @@ class ChangeReviewScreen(Screen):
         )
 
     def _confirm_and_revert(self, row: dict, paths: list[str], summary: str) -> None:
-        edited = self._provider.preflight_revert(row, paths).edited_since
+        self.run_worker(
+            self._prepare_confirm_and_revert(row, paths, summary),
+            group="change-review-preflight",
+            exit_on_error=False,
+        )
+
+    async def _prepare_confirm_and_revert(
+        self, row: dict, paths: list[str], summary: str
+    ) -> None:
+        """Prepare one confirmation without hashing files on the UI thread."""
+        preflight = await asyncio.to_thread(self._provider.preflight_revert, row, paths)
 
         def _apply(confirmed: bool | None) -> None:
             if not confirmed:
                 return
-            self._report_outcomes(self._run_revert(row, paths))
+            self.run_worker(
+                self._revert_rows([(row, paths)]),
+                group="change-review-revert",
+                exit_on_error=False,
+            )
 
         self.app.push_screen(
-            ChangeRevertConfirmModal(summary, edited), callback=_apply
+            ChangeRevertConfirmModal(summary, preflight.edited_since), callback=_apply
         )
 
-    def _run_revert(self, row: dict, paths: list[str]) -> list:
+    async def _revert_rows(
+        self, rows_paths: list[tuple[dict, list[str]]]
+    ) -> None:
+        """Apply one confirmed selection off-thread, then update the screen."""
+        outcomes = []
+        for row, paths in rows_paths:
+            outcomes.extend(await self._run_revert(row, paths))
+        self._report_outcomes(outcomes)
+
+    async def _run_revert(self, row: dict, paths: list[str]) -> list:
         from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
 
         try:
-            return self._provider.revert(row, paths)
+            return await asyncio.to_thread(self._provider.revert, row, paths)
         except RevertRefusedError as exc:
             self.notify(str(exc), severity="warning")
             return []

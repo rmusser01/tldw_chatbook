@@ -816,8 +816,13 @@ class _ConsoleTurnUndoPlan:
     total_files: int
 
 
-def _console_turn_undo_run_active(provider: Any) -> bool:
-    """Read the provider's live run probe when it exposes one."""
+def _console_turn_undo_run_active(
+    provider: Any, roots: tuple[str, ...]
+) -> bool:
+    """Read the provider's root-aware run probe with legacy fallback."""
+    root_probe = getattr(provider, "run_active_for_root", None)
+    if callable(root_probe):
+        return any(bool(root_probe(root)) for root in roots)
     probe = getattr(provider, "run_active", None)
     return bool(probe()) if callable(probe) else False
 
@@ -830,10 +835,6 @@ def _prepare_console_turn_undo(provider: Any, run_id: str) -> _ConsoleTurnUndoPl
     Duplicate-root windows are refused before any diff or preflight read: the
     compact card does not expose enough baseline ordering to consent safely.
     """
-    if _console_turn_undo_run_active(provider):
-        raise _ConsoleTurnUndoUnavailableError(
-            "A run is active on this workspace — finish or stop the run first."
-        )
     turn = provider.turn_for_run(run_id)
     if turn is None or not turn.rows:
         raise _ConsoleTurnUndoUnavailableError(
@@ -853,6 +854,11 @@ def _prepare_console_turn_undo(provider: Any, run_id: str) -> _ConsoleTurnUndoPl
                 "This turn has multiple change windows for the same workspace."
             )
         seen_roots.add(canonical)
+    roots = tuple(str(row["root"]) for row in turn.rows)
+    if _console_turn_undo_run_active(provider, roots):
+        raise _ConsoleTurnUndoUnavailableError(
+            "A run is active on this workspace — finish or stop the run first."
+        )
 
     rows_paths: list[tuple[dict, tuple[str, ...]]] = []
     for row in turn.rows:
@@ -906,7 +912,10 @@ def _prepare_console_turn_undo(provider: Any, run_id: str) -> _ConsoleTurnUndoPl
 
 def _apply_console_turn_undo(provider: Any, plan: _ConsoleTurnUndoPlan) -> list:
     """Revalidate a confirmed plan, then invoke the existing revert engine."""
-    if _console_turn_undo_run_active(provider):
+    from tldw_chatbook.Workspaces.change_revert import RevertOutcome
+
+    roots = tuple(str(row["root"]) for row, _paths in plan.rows_paths)
+    if _console_turn_undo_run_active(provider, roots):
         raise _ConsoleTurnUndoUnavailableError(
             "A run is active on this workspace — finish or stop the run first."
         )
@@ -931,8 +940,27 @@ def _apply_console_turn_undo(provider: Any, plan: _ConsoleTurnUndoPlan) -> list:
 
     outcomes: list = []
     multi_root = len(plan.rows_paths) > 1
-    for (row, paths), root_label in zip(plan.rows_paths, plan.root_labels):
-        row_outcomes = provider.revert(row, list(paths))
+    for index, ((row, paths), root_label) in enumerate(
+        zip(plan.rows_paths, plan.root_labels)
+    ):
+        try:
+            row_outcomes = provider.revert(row, list(paths))
+        except Exception as exc:  # noqa: BLE001 - retain earlier disk outcomes
+            error = f"not processed: {str(exc)[:240]}"
+            for (_pending_row, pending_paths), pending_label in zip(
+                plan.rows_paths[index:], plan.root_labels[index:]
+            ):
+                outcomes.extend(
+                    RevertOutcome(
+                        path=(
+                            f"{pending_label}/{path}" if multi_root else str(path)
+                        ),
+                        ok=False,
+                        error=error,
+                    )
+                    for path in pending_paths
+                )
+            break
         outcomes.extend(
             replace(outcome, path=f"{root_label}/{outcome.path}")
             if multi_root
@@ -16893,6 +16921,7 @@ class ChatScreen(BaseAppScreen):
             provider.run_active = lambda: (
                 controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
             )
+            provider.run_active_for_root = controller.run_active_for_workspace
         return provider
 
     def _console_change_review_workspace_roots(self) -> "tuple[str, ...] | None":
@@ -17103,13 +17132,15 @@ class ChatScreen(BaseAppScreen):
             return
 
         failed = [outcome for outcome in outcomes if not outcome.ok]
+        succeeded = [outcome for outcome in outcomes if outcome.ok]
         success = bool(outcomes) and not failed and len(outcomes) == plan.total_files
         if failed:
             detail = ", ".join(
                 f"{outcome.path} ({outcome.error})" for outcome in failed[:5]
             )
             self.app_instance.notify(
-                f"{len(failed)} file(s) could not be reverted: {detail}",
+                f"{len(succeeded)} file(s) reverted; "
+                f"{len(failed)} file(s) not reverted: {detail}",
                 severity="error",
             )
         elif success:

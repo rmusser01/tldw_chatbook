@@ -46,8 +46,10 @@ class _Provider:
         self.preflight_calls: list[tuple[int, tuple[str, ...]]] = []
         self.revert_calls: list[tuple[int, tuple[str, ...]]] = []
         self.outcomes_by_row: dict[int, list[RevertOutcome]] = {}
+        self.revert_error_by_row: dict[int, Exception] = {}
         self.revert_error: Exception | None = None
         self.active = False
+        self.active_roots: set[str] = set()
 
     def turn_for_run(self, run_id: str):
         return self.turn if run_id == self.turn.run_id else None
@@ -68,6 +70,8 @@ class _Provider:
     def revert(self, row: dict, paths: list[str]):
         row_id = int(row["id"])
         self.revert_calls.append((row_id, tuple(paths)))
+        if row_id in self.revert_error_by_row:
+            raise self.revert_error_by_row[row_id]
         if self.revert_error is not None:
             raise self.revert_error
         if row_id in self.outcomes_by_row:
@@ -76,6 +80,9 @@ class _Provider:
 
     def run_active(self):
         return self.active
+
+    def run_active_for_root(self, root: str):
+        return self.active or str(root) in self.active_roots
 
 
 def _row(row_id: int, root: Path, **overrides) -> dict:
@@ -191,6 +198,27 @@ def test_prepare_refuses_tracking_error_and_active_run_without_mutation(tmp_path
     assert active.revert_calls == []
 
 
+def test_prepare_refuses_a_background_run_targeting_any_turn_root(tmp_path):
+    root_a = tmp_path / "alpha"
+    root_b = tmp_path / "beta"
+    provider = _Provider(
+        [_row(1, root_a), _row(2, root_b)],
+        {
+            1: [ChangedFile(path="a.txt", status="M", adds=1, dels=1)],
+            2: [ChangedFile(path="b.txt", status="M", adds=1, dels=1)],
+        },
+    )
+    provider.active_roots.add(str(root_b))
+    unavailable = chat_screen_module._ConsoleTurnUndoUnavailableError
+
+    with pytest.raises(unavailable, match="finish or stop"):
+        _prepare(provider)
+
+    assert provider.changed_calls == []
+    assert provider.preflight_calls == []
+    assert provider.revert_calls == []
+
+
 def test_apply_rechecks_preflight_and_refuses_new_edits_before_any_revert(tmp_path):
     root = tmp_path / "workspace"
     row = _row(1, root)
@@ -243,6 +271,35 @@ def test_apply_reports_all_per_path_outcomes_for_ordinary_multi_root(tmp_path):
     outcomes = _apply(provider, plan)
 
     assert [outcome.path for outcome in outcomes] == ["alpha/a.txt", "beta/b.txt"]
+    assert provider.revert_calls == [(1, ("a.txt",)), (2, ("b.txt",))]
+
+
+def test_apply_preserves_success_and_marks_every_path_after_a_later_root_error(
+    tmp_path,
+):
+    roots = [tmp_path / name for name in ("alpha", "beta", "gamma")]
+    provider = _Provider(
+        [_row(index, root) for index, root in enumerate(roots, start=1)],
+        {
+            1: [ChangedFile(path="a.txt", status="M", adds=1, dels=1)],
+            2: [ChangedFile(path="b.txt", status="M", adds=1, dels=1)],
+            3: [ChangedFile(path="c.txt", status="M", adds=1, dels=1)],
+        },
+    )
+    provider.revert_error_by_row[2] = RuntimeError("second root failed")
+    plan = _prepare(provider)
+
+    outcomes = _apply(provider, plan)
+
+    assert [(outcome.path, outcome.ok) for outcome in outcomes] == [
+        ("alpha/a.txt", True),
+        ("beta/b.txt", False),
+        ("gamma/c.txt", False),
+    ]
+    assert all(
+        "not processed" in str(outcome.error) and "second root failed" in outcome.error
+        for outcome in outcomes[1:]
+    )
     assert provider.revert_calls == [(1, ("a.txt",)), (2, ("b.txt",))]
 
 
@@ -564,7 +621,9 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
             "Undo All retry after partial failure",
         )
         assert any(
-            "a.txt (restore failed)" in message and severity == "error"
+            "0 file(s) reverted; 1 file(s) not reverted" in message
+            and "a.txt (restore failed)" in message
+            and severity == "error"
             for message, severity in notices
         )
         assert str(undo.label) == "Undo All"
