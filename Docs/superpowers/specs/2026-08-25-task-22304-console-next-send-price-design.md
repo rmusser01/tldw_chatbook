@@ -52,7 +52,7 @@ When text pricing, the input estimate, and a response-token cap are all known an
 ```text
 Next request: up to ~$0.0874
 Input: ~1,284 tokens · ~$0.0039
-Reply: up to 4,096 tokens · ~$0.0835
+Reply: up to 4,096 tokens · ~$0.0836
 anthropic · claude-sonnet-4-6 · rates as of 2026-08-01
 ```
 
@@ -118,10 +118,11 @@ Construct the controller in `wiring.py`, following the existing named late-bindi
 
 - active session settings;
 - the current Console chat store;
+- the chat controller's canonical synchronous provider-history projection;
 - the pending live-work launch/staged context;
 - the pricing catalog and token counter, injectable for tests.
 
-The controller builds the exact request rows, resolves model pricing, counts pending attachments, and returns the tooltip for the current draft. It owns a verified `TokenEstimateCache` entry whose signature contains provider, model, system prompt, complete history rows, staged text, and draft text. A cache key collision can only cause recomputation because every hit is checked against the complete signature. `wiring.py` is the sole owner of the named late-binding callback graph; `ChatScreen` does not construct, query through, or mutate estimate internals.
+The controller starts from the same `_provider_messages_for_session` projection used by native dispatch. That projection already folds a seeded leading assistant greeting into the system row and excludes transcript-only system rows, failed/empty rows, leading assistant rows, and assistant generation states that are not legal provider history. The controller then adds the live draft and prompt-eligible staged evidence for estimation, resolves model pricing, counts pending attachments, and returns the tooltip. Later asynchronous send-time transforms (skills, dictionaries, world info, compaction, provider serialization, and tools) remain outside this pre-send UI estimate; the tooltip is an estimate, not a frozen wire receipt. The controller owns a verified `TokenEstimateCache` entry whose signature contains provider, model, canonical projected history rows (including the resolved system/greeting row), staged text, and draft text. A cache key collision can only cause recomputation because every hit is checked against the complete signature. `wiring.py` is the sole owner of the named late-binding callback graph; `ChatScreen` does not construct, query through, or mutate estimate internals.
 
 ### Composer presentation
 
@@ -183,15 +184,17 @@ No network call, database write, or price persistence occurs. Unexpected estimat
 
 ### Controller tests
 
-- Context includes system prompt, history, live draft, and prompt-eligible staged evidence exactly once.
+- Context starts from the dispatch path's canonical provider-history projection, then includes the live draft and prompt-eligible staged evidence exactly once.
+- Failed/empty rows, transcript-only system rows, and disallowed assistant states remain excluded; a seeded leading assistant greeting is represented only through the folded system row.
 - Repeated identical syncs reuse the verified estimate; draft, provider, model, settings, history, or staged-text changes recompute.
 - Attachment-count changes update the caveat without assigning media cost.
-- Counter/catalog exceptions degrade to unavailable presentation.
+- A token-counter exception preserves the detailed unavailable-input line, reply line, and provenance; broader controller/catalog failures degrade to the short unavailable presentation.
 
 ### Composer tests
 
 - Empty payload keeps `Send` and existing guidance.
 - Ready draft renders `Send | $`; an accepted-run follow-up renders `Queue | $`.
+- A pending attachment with a blank text draft still renders the suffix and attachment caveat.
 - Unknown pricing still renders the suffix and unavailable tooltip.
 - Blocked states retain unsuffixed labels and existing recovery tooltips.
 - Repeated local resyncs never duplicate the suffix and preserve dynamic action-row geometry.

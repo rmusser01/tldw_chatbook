@@ -4,7 +4,7 @@
 
 **Goal:** Show `Send | $` or `Queue | $` for every currently sendable Console payload and explain the estimated text-processing upper bound in the existing hover tooltip without changing dispatch or accumulated-spend behavior.
 
-**Architecture:** Add one no-DOM `ConsoleSendPriceController` plus immutable pure presentation model in `UI/Console_Modules/send_price.py`. `wiring.py` constructs the controller from named late-binding accessors; `ChatScreen` only forwards its callback into `ConsoleComposerBar`, which remains responsible for its displayed label, width, and tooltip precedence. The controller builds the exact system/history/draft/staged text rows and memoizes tokenization with the existing verified-signature cache; the pure builder owns cost availability, math, and copy.
+**Architecture:** Add one no-DOM `ConsoleSendPriceController` plus immutable pure presentation model in `UI/Console_Modules/send_price.py`. `wiring.py` constructs the controller from named late-binding accessors; `ChatScreen` only forwards its callback into `ConsoleComposerBar`, which remains responsible for its displayed label, width, and tooltip precedence. The controller starts with the chat dispatch controller's canonical synchronous provider-history projection, appends draft/staged text rows, and memoizes tokenization with the existing verified-signature cache; the pure builder owns cost availability, math, and copy.
 
 **Tech Stack:** Python 3.11, Textual 8, pytest/pytest-asyncio, Ruff, existing `PricingCatalog`, `TokenEstimateCache`, and `format_cost_amount` utilities.
 
@@ -51,7 +51,7 @@
       assert state.tooltip == (
           "Next request: up to ~$0.0874\n"
           "Input: ~1,284 tokens · ~$0.0039\n"
-          "Reply: up to 4,096 tokens · ~$0.0835\n"
+          "Reply: up to 4,096 tokens · ~$0.0836\n"
           "anthropic · claude-sonnet-4-6 · rates as of 2026-08-01"
       )
   ```
@@ -111,12 +111,13 @@
 - Reference: `tldw_chatbook/Chat/console_display_state.py`
 - Reference: `tldw_chatbook/Chat/console_session_settings.py`
 
-- [ ] Add controller tests using tiny fake settings/store/launch accessors and injectable catalog/counter callables. Capture the exact counter input and prove that rows contain the active system prompt, complete active-session history, nonblank live draft, and `console_prompted_evidence_text(launch)` exactly once and in request order.
+- [ ] Add controller tests using tiny fake settings/store/launch accessors, an injectable canonical provider-history accessor, and injectable catalog/counter callables. Capture the exact counter input and prove that it starts with the accessor's already-filtered provider rows, then contains the nonblank live draft and `console_prompted_evidence_text(launch)` exactly once and in request order.
 
   ```python
   controller = ConsoleSendPriceController(
       settings_accessor=lambda: settings,
       chat_store_accessor=lambda: store,
+      provider_history_accessor=lambda session_id: canonical_history,
       pending_launch_accessor=lambda: launch,
       pricing_catalog_accessor=lambda: catalog,
       token_counter=count_tokens,
@@ -124,7 +125,7 @@
   state = controller.presentation_for_draft("live draft")
 
   assert captured_rows == [
-      {"role": "system", "content": "system"},
+      {"role": "system", "content": "system + seeded greeting"},
       {"role": "user", "content": "history"},
       {"role": "user", "content": "live draft"},
       {"role": "user", "content": staged_text},
@@ -134,7 +135,9 @@
 
 - [ ] Add cache/refresh tests. An identical call must reuse the `TokenEstimateCache`; changing draft, provider, model, system prompt, history, or staged evidence must change the complete signature and invoke the counter again. Changing only attachment count must refresh the presentation/caveat without fabricating media tokens or requiring another text-token pass.
 
-- [ ] Add degradation tests: no sendable payload returns `None`; missing store/session produces an unavailable tooltip rather than raising; counter/catalog/accessor exceptions return `ConsoleNextSendPrice("Next request: cost unavailable")` and never affect send readiness.
+- [ ] Add an attachment-only controller test: a blank draft with one pending binary/media attachment must still return a presentation, retain any known projected-history text components, force the total unavailable, and include `Attachments: 1 · media cost not estimated`. Only a blank draft with zero attachments returns `None`.
+
+- [ ] Add degradation tests: missing store/session produces an unavailable tooltip rather than raising. A token-counter exception must call the pure builder with `input_tokens=None`, retaining `Input: token estimate unavailable`, the reply line, and provenance. Catalog or broader accessor/controller failures may return the short `ConsoleNextSendPrice("Next request: cost unavailable")` fallback and must never affect send readiness.
 
 - [ ] Run the controller selection and verify RED because `ConsoleSendPriceController` is absent:
 
@@ -151,6 +154,9 @@
           *,
           settings_accessor: Callable[[], ConsoleSessionSettings],
           chat_store_accessor: Callable[[], ConsoleChatStore | None],
+          provider_history_accessor: Callable[
+              [str], Sequence[Mapping[str, Any]]
+          ],
           pending_launch_accessor: Callable[[], ConsoleLiveWorkLaunch | None],
           pricing_catalog_accessor: Callable[[], PricingCatalog] = get_pricing_catalog,
           token_counter: Callable[[list[dict[str, str]], str, str], int] = (
@@ -170,7 +176,9 @@
           return state.tooltip if state is not None else None
   ```
 
-  Normalize enum roles with `.value`, tolerate a closed/missing active session, and use a cache key containing the active session id. Verify every hit with `token_estimate_signature(rows, model, provider_config_key(provider))`; attachment count stays outside this signature because it does not change text tokenization.
+  Copy role/content from the canonical projected history without reimplementing its filters, tolerate a closed/missing active session, and use a cache key containing the active session id. Verify every hit with `token_estimate_signature(rows, model, provider_config_key(provider))`; attachment count stays outside this signature because it does not change text tokenization. Catch token-counter errors around only the memoized compute, set `input_tokens=None`, and continue through the pure builder.
+
+- [ ] Pin the shared projection boundary with pathological fixtures in the controller/integration tests: the injected canonical history must contain the folded seeded-greeting system row but omit transcript-only system rows, failed rows, empty speech placeholders, leading assistant rows, and assistant states disallowed from provider history. This prevents the estimator from drifting by adding its own raw-store filtering.
 
 - [ ] Run all `test_console_send_price.py` tests and verify GREEN, then run Ruff checks for the two files.
 
@@ -191,7 +199,7 @@
 
 - [ ] Immediately before editing the Textual widget, read `.agents/skills/impeccable/reference/craft-floor.md` in full and apply its interaction/layout checks to this bounded change.
 
-- [ ] Add a mounted minimal-composer test app whose callback returns a deterministic tooltip. Cover empty draft (`Send`, current guidance), ready draft (`Send | $`), ready run-follow-up (`Queue | $`), dynamic width, and repeated `_sync_current_action_state()` calls that must not duplicate the suffix.
+- [ ] Add a mounted minimal-composer test app whose callback returns a deterministic tooltip. Cover empty draft (`Send`, current guidance), ready draft (`Send | $`), attachment-only readiness with a blank draft (`Send | $`), ready run-follow-up (`Queue | $`), dynamic width, and repeated `_sync_current_action_state()` calls that must not duplicate the suffix.
 
 - [ ] Add blocked/setup/wake regression cases proving a sendable draft with a callback keeps the unsuffixed base label, disabled state, and existing blocker tooltip whenever `send_blocked` is true. Retain a standalone no-callback assertion so existing callers keep current generic behavior.
 
@@ -245,7 +253,7 @@
 
 - [ ] Add a mounted priced-Anthropic regression using the existing sandboxed persisted-config pattern from `test_console_cost_chip_screen.py`. Type a draft and assert `Send | $`, separate input/reply lines, provider/model, rate date, and the unchanged pre-send accumulated-cost chip.
 
-- [ ] In the mounted test, mutate one source per assertion—draft, provider/model, system/max tokens, active session/history, staged evidence, and pending attachments—and invoke the existing action/control sync used by that mutation. Assert the tooltip refreshes; draft edits must refresh synchronously through the composer's own `_sync_current_action_state`, not the 0.2-second screen tick. During an accepted live run, load a second draft and assert `Queue | $`.
+- [ ] In the mounted test, mutate one source per assertion—draft, provider/model, system/max tokens, active session/history, staged evidence, and pending attachments—and invoke the existing action/control sync used by that mutation. Assert the tooltip refreshes; draft edits must refresh synchronously through the composer's own `_sync_current_action_state`, not the 0.2-second screen tick. Clear the draft while leaving a pending binary attachment and assert `Send | $` plus the attachment caveat. During an accepted live run, load a second draft and assert `Queue | $`.
 
 - [ ] Run the mounted/wiring tests and verify RED because no controller is wired and `ChatScreen` provides no callback:
 
@@ -261,6 +269,10 @@
           lambda: screen._session._ensure_active_console_session_settings()
       ),
       chat_store_accessor=lambda: screen._console_chat_store,
+      provider_history_accessor=(
+          lambda session_id: screen._ensure_console_chat_controller()
+          ._provider_messages_for_session(session_id)
+      ),
       pending_launch_accessor=lambda: screen._pending_console_launch_context,
   )
   ```
