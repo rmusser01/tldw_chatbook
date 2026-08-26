@@ -15705,9 +15705,7 @@ class SettingsScreen(BaseAppScreen):
                     )
                 custom_widths = bool(values["library_reader_custom_widths_enabled"])
                 with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        "Preferred rail width", classes="settings-input-label"
-                    )
+                    yield Static("Preferred rail width", classes="settings-input-label")
                     yield Input(
                         value=str(values["library_reader_library_width"]),
                         id="settings-appearance-library-media-library-width",
@@ -18529,9 +18527,7 @@ class SettingsScreen(BaseAppScreen):
         key = keys.get(str(event.input.id or ""))
         if key is None:
             return
-        self._stage_appearance_value(
-            key, self._normalise_appearance_int(event.value)
-        )
+        self._stage_appearance_value(key, self._normalise_appearance_int(event.value))
         self._mark_appearance_settings_staged()
 
     @on(Button.Pressed, "#settings-appearance-library-media-reset")
@@ -18545,8 +18541,14 @@ class SettingsScreen(BaseAppScreen):
             "library_reader_library_open",
             "library_reader_custom_widths_enabled",
             "library_reader_library_width",
-            *(f"library_{destination}_items_open" for destination, _label in LIBRARY_READER_DESTINATIONS),
-            *(f"library_{destination}_items_width" for destination, _label in LIBRARY_READER_DESTINATIONS),
+            *(
+                f"library_{destination}_items_open"
+                for destination, _label in LIBRARY_READER_DESTINATIONS
+            ),
+            *(
+                f"library_{destination}_items_width"
+                for destination, _label in LIBRARY_READER_DESTINATIONS
+            ),
         ):
             self._stage_appearance_value(key, getattr(defaults, key))
         self._sync_appearance_widgets()
@@ -22399,14 +22401,17 @@ class SettingsScreen(BaseAppScreen):
 
     def _signal_library_reader_layout_refresh(self) -> None:
         """Publish saved reader layout defaults to live Library screens."""
-        generation = int(
-            getattr(
-                self.app_instance,
-                "_library_reader_layout_refresh_generation",
-                0,
+        generation = (
+            int(
+                getattr(
+                    self.app_instance,
+                    "_library_reader_layout_refresh_generation",
+                    0,
+                )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         self.app_instance._library_reader_layout_refresh_generation = generation
         signalled: set[int] = set()
         for app in (self.app, self.app_instance):
@@ -23149,9 +23154,9 @@ class SettingsScreen(BaseAppScreen):
                 ),
             ):
                 try:
-                    self.query_one(selector, Button).label = (
-                        self._appearance_media_layout_label(key)
-                    )
+                    self.query_one(
+                        selector, Button
+                    ).label = self._appearance_media_layout_label(key)
                 except QueryError:
                     pass
             custom_widths = bool(values["library_reader_custom_widths_enabled"])

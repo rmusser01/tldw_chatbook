@@ -217,9 +217,7 @@ def load_appearance_defaults(
             )
         ).value,
         library_reader_library_open=shared_reader.library_open,
-        library_reader_custom_widths_enabled=(
-            shared_reader.custom_widths_enabled
-        ),
+        library_reader_custom_widths_enabled=(shared_reader.custom_widths_enabled),
         library_reader_library_width=shared_width,
         library_media_items_open=destination_readers["media"].items_open,
         library_media_items_width=destination_readers["media"].items_width,
@@ -353,10 +351,7 @@ def validate_appearance_defaults(
                 False, f"{label} pane preference must be open or collapsed."
             )
         items_width = _strict_int(width_value)
-        if (
-            items_width is None
-            or not ITEMS_MIN_WIDTH <= items_width <= ITEMS_MAX_WIDTH
-        ):
+        if items_width is None or not ITEMS_MIN_WIDTH <= items_width <= ITEMS_MAX_WIDTH:
             return SettingsValidationResult(
                 False,
                 f"{label} width must be between {ITEMS_MIN_WIDTH} and {ITEMS_MAX_WIDTH}.",
@@ -403,18 +398,14 @@ def build_appearance_save_sections(
     reader.update(
         {
             "library_open": bool(values.library_reader_library_open),
-            "custom_widths_enabled": bool(
-                values.library_reader_custom_widths_enabled
-            ),
+            "custom_widths_enabled": bool(values.library_reader_custom_widths_enabled),
             "library_width": int(values.library_reader_library_width),
         }
     )
     library["reader"] = reader
     for destination in ("media", "conversations", "notes", "prompts", "skills"):
         section_name = f"{destination}_reader"
-        destination_reader = dict(
-            deepcopy(_mapping_child(library, section_name))
-        )
+        destination_reader = dict(deepcopy(_mapping_child(library, section_name)))
         destination_reader.update(
             {
                 "items_open": bool(

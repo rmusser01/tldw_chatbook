@@ -45,8 +45,7 @@ def test_shipped_template_keeps_shared_reader_empty_and_legacy_reference_at_31()
 
     assert template["library"]["reader"] == {}
     assert (
-        template["library"]["media_reader"]["library_width"]
-        == LIBRARY_REFERENCE_WIDTH
+        template["library"]["media_reader"]["library_width"] == LIBRARY_REFERENCE_WIDTH
     )
 
 
@@ -61,13 +60,9 @@ def test_fresh_profile_uses_template_reference_without_materializing_shared_read
 
     assert written["library"]["reader"] == {}
     assert (
-        written["library"]["media_reader"]["library_width"]
-        == LIBRARY_REFERENCE_WIDTH
+        written["library"]["media_reader"]["library_width"] == LIBRARY_REFERENCE_WIDTH
     )
-    assert (
-        settings["library"]["reader"]["library_width"]
-        == LIBRARY_REFERENCE_WIDTH
-    )
+    assert settings["library"]["reader"]["library_width"] == LIBRARY_REFERENCE_WIDTH
 
 
 def test_library_reader_environment_overrides_toml_for_settings(tmp_path, monkeypatch):
@@ -312,9 +307,7 @@ library_width = 28
     assert config_path.read_text(encoding="utf-8") == original
 
 
-def test_load_settings_preserves_legacy_28_without_writing(
-    tmp_path, monkeypatch
-):
+def test_load_settings_preserves_legacy_28_without_writing(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     original = """
 [library.media_reader]

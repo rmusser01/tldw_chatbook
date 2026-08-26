@@ -207,7 +207,9 @@ def test_load_appearance_defaults_reduce_motion_defaults_off_and_coerces():
     assert load_appearance_defaults({}).reduce_motion is False
 
     assert (
-        load_appearance_defaults({"appearance": {"reduce_motion": "true"}}).reduce_motion
+        load_appearance_defaults(
+            {"appearance": {"reduce_motion": "true"}}
+        ).reduce_motion
         is True
     )
     assert (
@@ -289,7 +291,7 @@ def test_load_appearance_defaults_falls_back_to_legacy_media_per_shared_key():
                     "custom_widths_enabled": True,
                     "library_width": -500,
                     "items_width": 500,
-                }
+                },
             }
         }
     )
