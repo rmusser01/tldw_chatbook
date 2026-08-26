@@ -37,6 +37,6 @@ Give users an at-a-glance indication that a composed Console message has an esti
 4. Implement and verify the pure estimate model, Console integration, dynamic button presentation, tooltip copy, and focused regressions.
 
 ADR required: yes
-ADR path: backlog/decisions/087-console-read-only-next-send-estimate-projection.md
-Reason: The feature adds a cross-module, read-only store/controller projection so per-keystroke pricing can observe buffered history without invoking the incumbent materializing-and-persisting getter.
+ADR path: backlog/decisions/088-console-lightweight-next-send-history-projection.md
+Reason: The feature adds a cross-module detached store snapshot and shared pre-serialization history projection so per-keystroke pricing can observe buffered text and admitted media without writes or base64 work.
 <!-- SECTION:PLAN:END -->

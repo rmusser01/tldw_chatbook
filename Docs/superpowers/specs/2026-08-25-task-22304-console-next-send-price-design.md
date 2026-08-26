@@ -92,7 +92,7 @@ The estimated text input is the locally estimated token count of:
 
 Inline text-file attachments already become draft text and are therefore counted normally. Pending binary/media attachments are not assigned fabricated tokens or dollars; their count is surfaced and the full total remains unavailable.
 
-Canonical historical multimodal rows are projected to their text parts before local token estimation. Each non-text content part is counted only for the `Media context` caveat; it contributes neither tokens nor dollars, and its presence makes the full total unavailable.
+Canonical historical rows pass through the same current vision/budget admission policy as dispatch before local token estimation. Text is retained directly; each eligible non-text media attachment is counted only for the `Media context` caveat, contributes neither tokens nor dollars, and makes the full total unavailable. Media omitted by dispatch contributes the same text placeholder dispatch uses and does not create a media caveat.
 
 For known text pricing:
 
@@ -126,9 +126,9 @@ Construct the controller in `wiring.py`, following the existing named late-bindi
 - the pending live-work launch/staged context;
 - the pricing catalog and token counter, injectable for tests.
 
-The store exposes a detached read-only active-path snapshot that projects buffered stream chunks onto the copies without mutating store-owned messages, materialization counters, revisions, or persistence. The chat controller consumes that snapshot through a named next-send method and shares the same system/greeting fold and provider-history filtering helper as native dispatch. That projection folds a seeded leading assistant greeting into the system row and excludes transcript-only system rows, failed/empty rows, leading assistant rows, and assistant generation states that are not legal provider history.
+The store exposes a detached read-only active-path snapshot that projects buffered stream chunks onto the copies without mutating store-owned messages, materialization counters, revisions, or persistence. The chat controller passes that snapshot through the same lightweight pre-serialization history projector native dispatch uses. This shared projector folds the seeded leading assistant greeting into the system row, excludes transcript-only system rows, failed/empty rows, leading assistant rows, and assistant generation states that are not legal provider history, and applies the current historical-media vision/budget admission rule. It retains source identity, role, resolved text, and eligible media references but never calls `image_url_part` or base64-encodes bytes. Dispatch serializes that projection afterward; the named estimate method instead returns immutable text rows plus an eligible historical-media count.
 
-The send-price controller then extracts only string content and `type == "text"` parts from those projected rows, counts non-text parts as unpriced historical media, and adds the live draft and prompt-eligible staged evidence for estimation. This prevents image/audio-like content blocks from receiving the generic local tokenizer's fabricated text price. The controller resolves model pricing, counts pending attachments, and returns the tooltip. Later asynchronous send-time transforms (skills, dictionaries, world info, compaction, provider serialization, and tools) remain outside this pre-send UI estimate; the tooltip is an estimate, not a frozen wire receipt. The controller owns a verified `TokenEstimateCache` entry whose signature contains provider, model, canonical text-only projected history rows (including the resolved system/greeting row), staged text, and draft text. A cache key collision can only cause recomputation because every hit is checked against the complete signature. `wiring.py` is the sole owner of the named late-binding callback graph; `ChatScreen` does not construct, query through, or mutate estimate internals.
+The send-price controller adds the live draft and prompt-eligible staged evidence to those text rows. Historical media receives no generic local-tokenizer allowance and no fabricated text price. The controller resolves model pricing, counts pending attachments, and returns the tooltip. Later asynchronous send-time transforms (skills, dictionaries, world info, compaction, provider serialization, and tools) remain outside this pre-send UI estimate; the tooltip is an estimate, not a frozen wire receipt. The controller owns a verified `TokenEstimateCache` entry whose signature contains provider, model, canonical text-only projected history rows (including the resolved system/greeting row), staged text, and draft text. A cache key collision can only cause recomputation because every hit is checked against the complete signature. `wiring.py` is the sole owner of the named late-binding callback graph; `ChatScreen` does not construct, query through, or mutate estimate internals.
 
 ### Composer presentation
 
@@ -193,7 +193,7 @@ No network call, database write, or price persistence occurs. Unexpected estimat
 
 - Context starts from the dispatch path's canonical provider-history projection, then includes the live draft and prompt-eligible staged evidence exactly once.
 - Failed/empty rows, transcript-only system rows, and disallowed assistant states remain excluded; a seeded leading assistant greeting is represented only through the folded system row.
-- Historical multimodal rows contribute only their text parts; non-text parts force the headline unavailable and appear in the `Media context` caveat.
+- Historically attached media admitted by the shared vision/budget projection forces the headline unavailable and appears in the `Media context` caveat; the estimate path never serializes or base64-encodes it.
 - Repeated identical syncs reuse the verified estimate; draft, provider, model, settings, history, or staged-text changes recompute.
 - Attachment-count changes update the caveat without assigning media cost.
 - A token-counter exception preserves the detailed unavailable-input line, reply line, and provenance; broader controller/catalog failures degrade to the short unavailable presentation.
@@ -217,5 +217,5 @@ No network call, database write, or price persistence occurs. Unexpected estimat
 ## ADR check
 
 **ADR required:** yes
-**ADR path:** `backlog/decisions/087-console-read-only-next-send-estimate-projection.md`
-**Reason:** The feature adds a cross-module, read-only store/controller projection so per-keystroke pricing can observe buffered history without invoking the incumbent materializing-and-persisting getter.
+**ADR path:** `backlog/decisions/088-console-lightweight-next-send-history-projection.md`
+**Reason:** The feature adds a cross-module detached store snapshot and shared pre-serialization history projection so per-keystroke pricing can observe buffered text and admitted media without writes or base64 work.

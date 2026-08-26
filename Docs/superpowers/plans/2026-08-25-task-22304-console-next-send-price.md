@@ -4,7 +4,7 @@
 
 **Goal:** Show `Send | $` or `Queue | $` for every currently sendable Console payload and explain the estimated text-processing upper bound in the existing hover tooltip without changing dispatch or accumulated-spend behavior.
 
-**Architecture:** Add one no-DOM `ConsoleSendPriceController` plus immutable pure presentation model in `UI/Console_Modules/send_price.py`. `wiring.py` constructs the controller from named late-binding accessors; `ChatScreen` only forwards its callback into `ConsoleComposerBar`, which remains responsible for its displayed label, width, and tooltip precedence. The controller starts with the chat dispatch controller's canonical synchronous provider-history projection, appends draft/staged text rows, and memoizes tokenization with the existing verified-signature cache; the pure builder owns cost availability, math, and copy.
+**Architecture:** Add one no-DOM `ConsoleSendPriceController` plus immutable pure presentation model in `UI/Console_Modules/send_price.py`. `wiring.py` constructs the controller from named late-binding accessors; `ChatScreen` only forwards its callback into `ConsoleComposerBar`, which remains responsible for its displayed label, width, and tooltip precedence. The store provides detached buffered-history snapshots, while the Chat controller shares one lightweight pre-serialization filter/media-admission projection between dispatch and estimation; only dispatch base64-serializes media. The price controller appends draft/staged text rows and memoizes tokenization with the existing verified-signature cache; the pure builder owns cost availability, math, and copy.
 
 **Tech Stack:** Python 3.11, Textual 8, pytest/pytest-asyncio, Ruff, existing `PricingCatalog`, `TokenEstimateCache`, and `format_cost_amount` utilities.
 
@@ -17,8 +17,8 @@
 - Use test-driven development: observe each new test fail for the intended reason before its corresponding production change.
 - Keep all estimate construction and mutable memo state out of `UI/Screens/chat_screen.py`; do not raise the existing screen-size ratchet budget.
 - Preserve the existing blocker/setup/wake/recovery tooltip precedence and unsuffixed blocked labels.
-- Use the uncached input rate and configured maximum reply tokens. Do not assign token or dollar values to pending binary/media attachments.
-- ADR required: yes. ADR path: `backlog/decisions/087-console-read-only-next-send-estimate-projection.md`. Reason: the feature adds a cross-module read-only snapshot/projection contract so per-keystroke presentation never invokes the incumbent materializing-and-persisting getter.
+- Use the uncached input rate and configured maximum reply tokens. Do not assign token or dollar values to pending or dispatch-admitted historical binary/media attachments.
+- ADR required: yes. ADR path: `backlog/decisions/088-console-lightweight-next-send-history-projection.md`. Reason: the feature adds a cross-module detached store snapshot and shared pre-serialization history projection so per-keystroke presentation observes buffered text/admitted media without writes or base64 work.
 
 ## Task 1: Lock the pure price and tooltip contract
 
@@ -101,13 +101,14 @@
   git commit -m "feat(console): model next-send price tooltip"
   ```
 
-## Task 2: Build and verify the exact-request controller
+## Task 2: Build and verify the read-only request-history controller
 
 **Files:**
 
 - Modify: `Tests/UI/test_console_send_price.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/send_price.py`
 - Modify: `tldw_chatbook/Chat/console_chat_controller.py`
+- Modify: `tldw_chatbook/Chat/console_chat_models.py`
 - Modify: `tldw_chatbook/Chat/console_chat_store.py`
 - Modify: `Tests/Chat/test_console_chat_controller.py`
 - Modify: `Tests/Chat/test_console_chat_store.py`
@@ -117,7 +118,9 @@
 
 - [ ] Add `test_read_only_messages_for_session_projects_stream_buffer_without_mutation` in `Tests/Chat/test_console_chat_store.py`. Build a streaming assistant with buffered-but-unmaterialized chunks and a persistence spy, capture live message content, materialization counters, payload/speech revisions, and persistence calls, then assert `read_only_messages_for_session(session_id)` returns detached current text while every captured store value and call count remains unchanged.
 
-- [ ] Add `test_provider_messages_for_next_send_estimate_matches_dispatch_projection_without_store_writes` in `Tests/Chat/test_console_chat_controller.py`. Use pathological history (transcript-only system, seeded leading greeting, failed row, empty speech placeholder, disallowed assistant state, normal user/assistant, and buffered live assistant) and assert the named method returns the exact canonical filtered projection without changing store/persistence state.
+- [ ] Add `test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization` in `Tests/Chat/test_console_chat_controller.py`. Use pathological history (transcript-only system, seeded leading greeting, failed row, empty speech placeholder, disallowed assistant state, normal user/assistant, buffered live assistant, and eligible plus over-budget historical images). Monkeypatch the controller module's `image_url_part` to raise if called, then assert the named estimate method returns the exact canonical text rows and only the dispatch-admitted media count without changing store/persistence state.
+
+- [ ] Add `test_provider_message_payloads_serializes_only_after_lightweight_projection` beside that test: with the same eligible image fixture, `_provider_message_payloads` still calls the patched `image_url_part` exactly for dispatch-admitted attachments and produces the incumbent provider content shape. This pins the new boundary: common filtering/admission happens first, serialization happens only for dispatch.
 
 - [ ] Add send-price controller tests using tiny fake settings/store/launch accessors, the injectable canonical provider-history accessor, and injectable catalog/counter callables. Capture the exact counter input and prove that it starts with the accessor's already-filtered provider rows, then contains the nonblank live draft and `console_prompted_evidence_text(launch)` exactly once and in request order.
 
@@ -125,7 +128,7 @@
   controller = ConsoleSendPriceController(
       settings_accessor=lambda: settings,
       chat_store_accessor=lambda: store,
-      provider_history_accessor=lambda session_id: canonical_history,
+      provider_history_accessor=lambda session_id: canonical_history_projection,
       pending_launch_accessor=lambda: launch,
       pricing_catalog_accessor=lambda: catalog,
       token_counter=count_tokens,
@@ -145,19 +148,23 @@
 
 - [ ] Add an attachment-only controller test: a blank draft with one pending binary/media attachment must still return a presentation, retain any known projected-history text components, force the total unavailable, and include `Attachments: 1 · media cost not estimated`. Only a blank draft with zero attachments returns `None`.
 
-- [ ] Add a historical-multimodal controller test whose canonical row contains one text part plus one image/non-text part. Assert the counter receives only the text part, the non-text part receives no token/dollar value, the headline is unavailable, and the tooltip includes `Media context: 1 item · media cost not estimated`. Cover the plural form and simultaneous pending/historical caveats in the pure tests.
+- [ ] Add a historical-media controller test whose injected `ConsoleNextSendHistoryProjection` contains one text row plus `historical_media_count=1`. Assert the counter receives only the text row, media receives no token/dollar value, the headline is unavailable, and the tooltip includes `Media context: 1 item · media cost not estimated`. Cover the plural form and simultaneous pending/historical caveats in the pure tests.
 
 - [ ] Add degradation tests: missing store/session produces an unavailable tooltip rather than raising. A token-counter exception must call the pure builder with `input_tokens=None`, retaining `Input: token estimate unavailable`, the reply line, and provenance. Catalog or broader accessor/controller failures may return the short `ConsoleNextSendPrice("Next request: cost unavailable")` fallback and must never affect send readiness.
 
 - [ ] Run the controller selection and named read-only snapshot/history-seam tests and verify RED because the APIs are absent:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_store.py::test_read_only_messages_for_session_projects_stream_buffer_without_mutation Tests/Chat/test_console_chat_controller.py::test_provider_messages_for_next_send_estimate_matches_dispatch_projection_without_store_writes -q --tb=short -p no:warnings -k "controller or cache or context or unavailable or read_only_messages or provider_messages"
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_store.py::test_read_only_messages_for_session_projects_stream_buffer_without_mutation Tests/Chat/test_console_chat_controller.py::test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization Tests/Chat/test_console_chat_controller.py::test_provider_message_payloads_serializes_only_after_lightweight_projection -q --tb=short -p no:warnings -k "controller or cache or context or unavailable or read_only_messages or provider_messages"
   ```
 
 - [ ] Implement `ConsoleChatStore.read_only_messages_for_session(session_id)`. Validate the session, make detached snapshots from the active-path view, and, for each copied streaming row with buffered chunks newer than the materialized count, set only the copy's content to `"".join(buffer)`. Do not call `_fold_stream_buffer_without_persistence`, `_materialize_stream_buffer`, persistence, or any revision bump.
 
-- [ ] Extract the body that folds the leading system/greeting row and calls `_provider_message_payloads` into one private `ConsoleChatController` helper accepting already-snapshotted messages. Keep `_provider_messages_for_session` on its existing materializing store path for dispatch, and add `provider_messages_for_next_send_estimate(session_id)` on the new read-only store path. Both methods must call the shared helper so filtering cannot drift.
+- [ ] Add immutable `ConsoleNextSendHistoryProjection` to `Chat/console_chat_models.py` with `rows: tuple[tuple[str, str], ...]` and `historical_media_count: int`. This is the only value the UI-facing accessor returns; it contains no bytes or provider wire parts.
+
+- [ ] Extract a private lightweight Chat-controller projector that accepts already-snapshotted messages and returns private rows carrying source identity, role, resolved text, and only the currently vision/budget-admitted attachment references. Move the incumbent role/status/empty-row/leading-assistant/assistant-state filters, newest-first image reservation, and omitted-image placeholder choice into this helper without calling `image_url_part`.
+
+- [ ] Refactor `_provider_message_payloads` to consume the lightweight rows and perform its existing `image_url_part` serialization afterward. Keep `_provider_messages_for_session` on its existing materializing store path for dispatch. Add `provider_messages_for_next_send_estimate(session_id)` on the read-only store path; it consumes the same lightweight rows, folds the same system/greeting text, returns only `(role, text)` tuples plus the eligible attachment count, and never invokes provider serialization.
 
 - [ ] Implement `ConsoleSendPriceController` in the no-DOM module with named keyword-only callables and an owned `TokenEstimateCache`:
 
@@ -169,7 +176,7 @@
           settings_accessor: Callable[[], ConsoleSessionSettings],
           chat_store_accessor: Callable[[], ConsoleChatStore | None],
           provider_history_accessor: Callable[
-              [str], Sequence[Mapping[str, Any]]
+              [str], ConsoleNextSendHistoryProjection
           ],
           pending_launch_accessor: Callable[[], ConsoleLiveWorkLaunch | None],
           pricing_catalog_accessor: Callable[[], PricingCatalog] = get_pricing_catalog,
@@ -190,16 +197,16 @@
           return state.tooltip if state is not None else None
   ```
 
-  Copy role/content from the canonical projected history without reimplementing its turn filters. For string content, copy it verbatim. For sequence content, join only mapping parts with `type == "text"` and string `text`, while counting every other part as historical media; omit a projected row only when it has no text at all. Tolerate a closed/missing active session and use a cache key containing the active session id. Verify every hit with `token_estimate_signature(rows, model, provider_config_key(provider))`; attachment and historical-media counts stay outside this signature because they do not change text tokenization, but are read on every presentation build. Catch token-counter errors around only the memoized compute, set `input_tokens=None`, and continue through the pure builder.
+  Convert the projection's immutable `(role, text)` rows to the token counter's mapping shape, then append draft/staged rows without reimplementing history filters or touching media bytes. Tolerate a closed/missing active session and use a cache key containing the active session id. Verify every hit with `token_estimate_signature(rows, model, provider_config_key(provider))`; pending-attachment and projected historical-media counts stay outside this signature because they do not change text tokenization, but are read on every presentation build. Catch token-counter errors around only the memoized compute, set `input_tokens=None`, and continue through the pure builder.
 
-- [ ] Pin the shared projection boundary with the pathological Chat-controller fixture above: the canonical history must contain the folded seeded-greeting system row but omit transcript-only system rows, failed rows, empty speech placeholders, leading assistant rows, and assistant states disallowed from provider history. The send-price test should treat the injected canonical projection as authoritative rather than recreating those filters.
+- [ ] Pin the shared projection boundary with the pathological Chat-controller fixture above: canonical history contains the folded seeded-greeting system row but omits transcript-only system rows, failed rows, empty speech placeholders, leading assistant rows, and assistant states disallowed from provider history; admitted media is counted, omitted media becomes the incumbent text placeholder, and `image_url_part` is never called. The send-price test treats the injected immutable projection as authoritative rather than recreating those rules.
 
 - [ ] Run `test_console_send_price.py` plus both focused read-only projection tests and verify GREEN, then run Ruff checks for the six changed files.
 
 - [ ] Commit the controller:
 
   ```bash
-  git add tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
+  git add tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_models.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
   git commit -m "feat(console): estimate the pending request context"
   ```
 
@@ -335,7 +342,7 @@
 - [ ] Run the complete focused baseline plus the new tests from a clean invocation:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_cost_chip_screen.py Tests/UI/test_console_prompt_queue.py Tests/Chat/test_console_session_settings.py Tests/LLM_Calls/test_pricing_catalog.py Tests/Chat/test_console_chat_store.py::test_read_only_messages_for_session_projects_stream_buffer_without_mutation Tests/Chat/test_console_chat_controller.py::test_provider_messages_for_next_send_estimate_matches_dispatch_projection_without_store_writes -q --tb=short -p no:warnings
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_cost_chip_screen.py Tests/UI/test_console_prompt_queue.py Tests/Chat/test_console_session_settings.py Tests/LLM_Calls/test_pricing_catalog.py Tests/Chat/test_console_chat_store.py::test_read_only_messages_for_session_projects_stream_buffer_without_mutation Tests/Chat/test_console_chat_controller.py::test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization Tests/Chat/test_console_chat_controller.py::test_provider_message_payloads_serializes_only_after_lightweight_projection -q --tb=short -p no:warnings
   ```
 
 - [ ] Run the architecture ratchet without changing its budget:
@@ -349,8 +356,8 @@
 - [ ] Run final static and patch checks:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_models.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_models.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
   git diff --check
   git status --short
   ```
@@ -359,7 +366,7 @@
 
 - [ ] Request independent code review using `superpowers:requesting-code-review`; fix any verified blocking findings and rerun the affected checks.
 
-- [ ] Complete Backlog hygiene: check all six acceptance criteria, replace the preliminary plan with a concise final plan if needed, add Implementation Notes with files/trade-offs/test evidence and the ADR-087 decision, and set TASK-22304 to Done only after every Definition-of-Done item is genuinely satisfied. Add a lesson only if this implementation produced a repeatable incident worth preserving.
+- [ ] Complete Backlog hygiene: check all six acceptance criteria, replace the preliminary plan with a concise final plan if needed, add Implementation Notes with files/trade-offs/test evidence and the ADR-088 decision (including ADR-087 supersession), and set TASK-22304 to Done only after every Definition-of-Done item is genuinely satisfied. Add a lesson only if this implementation produced a repeatable incident worth preserving.
 
 - [ ] Commit task completion documentation:
 

@@ -1,6 +1,6 @@
 # ADR-087: Console read-only next-send estimate projection
 
-Status: Accepted
+Status: Superseded by ADR-088
 Date: 2026-08-25
 Related Task: [TASK-22304](../tasks/task-22304%20-%20Show-an-estimated-next-send-price-on-the-Console-Send-button.md)
 Related Spec: [Console next-send price indicator design](../../Docs/superpowers/specs/2026-08-25-task-22304-console-next-send-price-design.md)
