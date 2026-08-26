@@ -47,16 +47,34 @@ enabled; new/reset preferences use 31. Auto-collapse, extreme-width compression,
 compact rail-only or canvas-only takeovers remain transient effective states and never rewrite the
 requested width.
 
+Ordinary custom geometry protects the existing 40-cell canvas minimum without rewriting the saved
+preference: for positive co-present content width `W`, its effective width is
+`max(24, min(saved_width, W - 40))`. The exact saved width restores when
+`W >= saved_width + 40`. Adaptive readers retain resolver-owned collapse and priority rather than
+using this ordinary two-pane compression formula.
+
 `LibraryScreen` owns the shared normalized preference snapshot and effective ordinary state.
 `LibraryRail` owns the reversible style transition: bounded `3fr` while alongside content with
-custom mode off, exact 24–48 cells while alongside content with custom mode on, fill while rail-only,
-and hidden under existing collapse/canvas-only contracts. Wide recovery restores the applicable
-bounded or custom declaration. Adaptive shells continue to own exact effective cell geometry.
+custom mode off, the transiently compressed exact custom result while alongside content with
+custom mode on, fill while rail-only, and hidden under existing collapse/canvas-only contracts.
+Wide recovery restores the applicable bounded or saved custom declaration. Adaptive shells
+continue to own exact effective cell geometry.
 Ordinary destinations remain co-present at 64 columns and above. Below 64, where the existing
 24-cell rail and 40-cell canvas minimums cannot fit, a route-general emergency stage shows either
-the rail or canvas at full workbench width. Activation moves rail to canvas, Back returns canvas to
-the selected rail row, and recovery to 64 or wider restores guarded focus/scroll state without
-persisting effective geometry.
+the rail or canvas at full workbench width. Activation moves rail to canvas, the guarded emergency
+return moves a safe top-level canvas to the selected rail row, and recovery to 64 or wider restores
+guarded focus/scroll state without persisting effective geometry.
+
+Emergency return is one guarded `LibraryScreen` seam exposed as a visible **‹ Library** action and
+an Escape binding ordered after route-specific Back/cancel/dirty/destructive handlers but before
+the broad list-to-rail focus binding. Modal and in-canvas safety contracts receive first refusal.
+Successful return focuses the selected rail row, is advertised in compact footer/F1 help, and uses
+focus-intent generations so later compact interaction defeats stale wide-recovery restoration.
+
+With two fixed five-cell adaptive grips, explicit Library priority reaches its 24-cell escape floor
+at `W=34`; below that it compresses as `max(W - 10, 0)`. Therefore `W=34` resolves to Library 24,
+Items 0, Work 0, while `W=33` resolves to Library 23, Items 0, Work 0. Width zero remains the
+all-zero pre-layout sentinel.
 
 `LibraryScreen` remains the orchestration owner under the existing compose-once and scoped canvas
 replacement contracts. Concrete destination list and work widgets remain destination-owned and

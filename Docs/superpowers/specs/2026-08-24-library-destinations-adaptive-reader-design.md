@@ -179,6 +179,8 @@ Resolution follows these rules:
    Destination-owned automatic priority follows the same branch: the default Notes Navigator
    keeps Items open and permits Work compression at narrow widths, while Notes editor/work-owned
    states release that priority so the normal collapse order protects editing space.
+   With the two five-cell grips reserved, explicit Library priority holds its 24-cell floor at
+   `W=34` and compresses to `max(W - 10, 0)` below it (`W=33` yields Library 23, Items 0, Work 0).
 7. Manual grip toggles persist requested visibility. Custom widths persist only through an explicit
    Settings save; the grips remain collapse/expand controls and are not drag handles.
 8. Automatic collapse, adaptive list expansion, window resize, and effective priority do not
