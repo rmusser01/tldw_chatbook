@@ -708,6 +708,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_pending_arrivals = 0
         self._items_pending_query_key: tuple[Any, ...] | None = None
         self._pending_tree_scope: TreeScope | None = None
+        self._items_retry_message: str | None = None
         self._items_snapshot_generation = 0
         self._items_page_presentation_lock = asyncio.Lock()
         self._items_inflight_replacement: tuple[
@@ -2403,6 +2404,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             items_pane.search_results_authoritative = (
                 self._items_search_results_authoritative
             )
+            if self._items_retry_message is not None:
+                items_pane.display = False
+                children.extend(
+                    (
+                        Static(
+                            self._items_retry_message,
+                            id="watchlists-items-retry-state",
+                        ),
+                        Button(
+                            "Retry",
+                            id="watchlists-items-retry-button",
+                            variant="primary",
+                        ),
+                    )
+                )
             children.append(items_pane)
         elif section == "rules":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
@@ -2525,6 +2541,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _enter_server_read_recovery(self) -> None:
         """Clear item-specific state before presenting Server Read recovery."""
         self._read_recovery_active = True
+        self._items_retry_message = None
         self._reset_items_paging_for_context(loading=False)
         self._items_status_filter = "all"
         self._items_search_query = ""
@@ -3669,8 +3686,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             markup=False,
         )
 
+    def _show_items_retry_state(self) -> None:
+        """Replace an empty returned Reader with an honest retry surface."""
+        self._items_retry_message = (
+            f"Couldn't load {self._scope_display_label(self.tree_scope)}. "
+            "Retry to load Feed Items."
+        )
+        self._request_surface_refresh(self._SURFACE_SECTION)
+
     def _invalidate_parked_reader(self, *, loading: bool) -> None:
         """Drop every Reader authority after an immediate management move."""
+        self._items_retry_message = None
         self._reset_items_paging_for_context(loading=loading)
         self._items_snapshot = None
         self._loaded_items = []
@@ -5210,6 +5236,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
         else:
             selector.value = "local"
+
+    @on(Button.Pressed, "#watchlists-items-retry-button")
+    def handle_items_retry(self, event: Button.Pressed) -> None:
+        """Retry the committed Reader scope without exposing stale rows."""
+        event.stop()
+        self._items_retry_message = None
+        self._items_page_loading = True
+        self._request_surface_refresh(self._SURFACE_SECTION)
+        self.run_worker(
+            self._replace_items_snapshot(reason="return_to_read"),
+            exclusive=True,
+            group="wc_items",
+        )
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:
@@ -9960,6 +9999,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, *, scope: TreeScope | None = None
     ) -> None:
         """Park old rows while immediately invalidating older query work."""
+        if scope is None:
+            self._pending_tree_scope = None
         query = self._reader_item_query(scope=scope)
         self._items_snapshot_generation += 1
         self._items_pending_query_key = query.context_key
@@ -10008,7 +10049,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                             "Failed to present watchlist items (exception_type={}).",
                             type(exc).__name__,
                         )
-                        if callable(notify):
+                        if callable(notify) and not atomic_batch:
                             notify("Failed to load watchlist items.", severity="error")
                         return False
                 if not is_current():
@@ -10097,6 +10138,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             rows = list(candidate.page(0))
 
             def commit() -> None:
+                had_retry_state = self._items_retry_message is not None
+                self._items_retry_message = None
                 self._items_snapshot = candidate
                 self._loaded_items = rows
                 self._items_page_index = 0
@@ -10130,6 +10173,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         self._pending_tree_scope = None
                 self._push_items_pager_state()
                 self._restore_items_view_state()
+                if had_retry_state:
+                    self._request_surface_refresh(self._SURFACE_SECTION)
 
             result = await self._publish_items_rows(
                 rows,
@@ -10147,6 +10192,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     self._notify_pending_scope_failure(scope)
                     if self._pending_tree_scope == scope:
                         self._pending_tree_scope = None
+                elif reason == "return_to_read":
+                    self._show_items_retry_state()
             return result
         except asyncio.CancelledError:
             if self._items_request_is_current(generation, query_key):
@@ -10164,11 +10211,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._items_page_loading = False
                 self._push_items_pager_state()
                 notify = getattr(self.app_instance, "notify", None)
-                if callable(notify):
-                    if clear_reader_on_commit and scope is not None:
-                        self._notify_pending_scope_failure(scope)
-                    else:
-                        notify("Failed to load watchlist items.", severity="error")
+                if clear_reader_on_commit and scope is not None:
+                    self._notify_pending_scope_failure(scope)
+                elif reason == "return_to_read":
+                    self._show_items_retry_state()
+                elif callable(notify):
+                    notify("Failed to load watchlist items.", severity="error")
                 if self._pending_tree_scope == scope:
                     self._pending_tree_scope = None
             return False

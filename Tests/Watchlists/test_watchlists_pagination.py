@@ -912,6 +912,8 @@ async def test_pending_scope_presentation_failure_does_not_commit(monkeypatch):
         assert await screen._replace_items_snapshot(reason="initial") is True
         prior_snapshot = screen._items_snapshot
         prior_rows = screen._loaded_items
+        screen._tree_watchlists = [{"id": 7, "name": "Candidate [A]"}]
+        screen.app_instance.notify = Mock()
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         original_apply = pane.apply_page_items
 
@@ -924,12 +926,36 @@ async def test_pending_scope_presentation_failure_does_not_commit(monkeypatch):
         screen.post_message(
             BreadcrumbScopeSelected(TreeScope(kind="watchlist", watchlist_id=7))
         )
+        await _wait_until(
+            pilot, lambda: controller.list_reader_items_page.await_count == 2
+        )
         await _wait_until(pilot, lambda: not screen._items_page_loading)
 
         assert screen.tree_scope == TreeScope(kind="all")
         assert screen._items_snapshot is prior_snapshot
         assert screen._loaded_items is prior_rows
         assert pane.items is prior_rows
+        screen.app_instance.notify.assert_called_once_with(
+            "Couldn't open Candidate [A]; still showing All Sources.",
+            severity="error",
+            markup=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_non_scope_replacement_supersedes_orphaned_pending_scope():
+    controller = AsyncMock()
+    controller.list_reader_items_page.return_value = _page(
+        [4], high_water=4, snapshot_count=1
+    )
+
+    async with _open_screen(controller) as (screen, _pilot):
+        orphaned = TreeScope(kind="watchlist", watchlist_id=7)
+        screen._pending_tree_scope = orphaned
+
+        screen._supersede_items_query_intent()
+
+        assert screen._pending_tree_scope is None
 
 
 @pytest.mark.asyncio

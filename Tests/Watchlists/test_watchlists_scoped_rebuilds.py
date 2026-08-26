@@ -33,7 +33,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, ListView
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
@@ -2195,7 +2195,14 @@ async def test_management_scope_invalidates_reader_return_to_read_failure_is_hon
         assert pane.items == []
         assert pane.new_items_note == ""
         assert pane.page_loading is False
-        assert pane.query_one("#items-refresh-button", Button).disabled is False
+        assert pane.display is False
+        assert _static_text(
+            screen.query_one("#watchlists-items-retry-state")
+        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        retry = screen.query_one("#watchlists-items-retry-button", Button)
+        assert str(retry.label) == "Retry"
+        assert retry.disabled is False
+        assert "No matching items" not in host.export_screenshot()
         assert screen.query_one("#watchlists-content-pane", ContentPane).item is None
 
 
