@@ -42,6 +42,7 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Utils.adaptive_reader_state import (
     normalize_adaptive_reader_preferences,
 )
@@ -6086,6 +6087,8 @@ def apply_settings_mutation_to_cli_config(
     delete_keys: Mapping[str, Collection[str]] | None = None,
     mutation_precondition: Callable[[], bool] | None = None,
     locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool] | None = None,
+    before_replace: Callable[[], None] | None = None,
+    after_replace: Callable[[], None] | None = None,
 ) -> ConfigMutationResult:
     """Atomically apply exact config sets/deletes, then refresh caches."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
@@ -6097,6 +6100,10 @@ def apply_settings_mutation_to_cli_config(
             locked_snapshot_precondition
         ):
             raise TypeError("Locked configuration precondition must be callable")
+        if before_replace is not None and not callable(before_replace):
+            raise TypeError("Before-replace callback must be callable")
+        if after_replace is not None and not callable(after_replace):
+            raise TypeError("After-replace callback must be callable")
         config_path = _get_effective_config_path()
     except Exception as error:
         logger.error(
@@ -6190,6 +6197,17 @@ def apply_settings_mutation_to_cli_config(
                     conflict_reason="identity_changed",
                 )
 
+        if before_replace is not None:
+            try:
+                before_replace()
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=before_replace_callback, error_type={}).",
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(False, False, "before_replace")
+
         try:
             deleted_any = _delete_config_keys(config_data, requested_deletes)
             for section, values in section_values.items():
@@ -6230,6 +6248,17 @@ def apply_settings_mutation_to_cli_config(
         file_replaced = True
         logger.success(f"Successfully replaced settings file at {config_path}")
 
+        if after_replace is not None:
+            try:
+                after_replace()
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=after_replace_callback, error_type={}).",
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(True, False, "cache_reload")
+
         try:
             _publish_runtime_config_unlocked(raw_config=raw_written)
         except Exception as error:
@@ -6243,6 +6272,91 @@ def apply_settings_mutation_to_cli_config(
 
         logger.info("Global configuration caches invalidated and reloaded.")
         return ConfigMutationResult(file_replaced, True, None)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCapturePolicy:
+    """Canonical process projection for future Console capture admission."""
+
+    enabled: bool
+    detail: CaptureDetail
+    generation: int
+
+
+_RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
+_RUNTIME_CAPTURE_POLICY: RuntimeCapturePolicy | None = None
+
+
+def _publish_runtime_capture_policy(
+    enabled: bool,
+    detail: CaptureDetail,
+    generation: int,
+) -> RuntimeCapturePolicy:
+    """Publish one validated capture policy without touching general caches."""
+    if not isinstance(detail, CaptureDetail):
+        raise TypeError("detail must be CaptureDetail")
+    policy = RuntimeCapturePolicy(bool(enabled), detail, generation)
+    global _RUNTIME_CAPTURE_POLICY
+    with _RUNTIME_CAPTURE_POLICY_LOCK:
+        _RUNTIME_CAPTURE_POLICY = policy
+    return policy
+
+
+def runtime_capture_policy() -> RuntimeCapturePolicy:
+    """Return the shared runtime capture policy, resolving invalid detail Safe."""
+    with _RUNTIME_CAPTURE_POLICY_LOCK:
+        current = _RUNTIME_CAPTURE_POLICY
+    if current is not None:
+        return current
+    snapshot = get_runtime_config_snapshot()
+    raw_detail = get_cli_setting("console", "exchange_capture_detail", "safe")
+    try:
+        detail = CaptureDetail(raw_detail)
+    except (TypeError, ValueError):
+        detail = CaptureDetail.SAFE
+    return _publish_runtime_capture_policy(
+        coerce_bool_setting(
+            get_cli_setting("console", "exchange_capture", True), True
+        ),
+        detail,
+        snapshot.generation,
+    )
+
+
+def apply_console_capture_settings(
+    *,
+    enabled: bool,
+    detail: CaptureDetail,
+    expected_generation: int,
+) -> ConfigMutationResult:
+    """Apply the kill switch/detail with privacy-safe publication ordering."""
+    if type(enabled) is not bool or not isinstance(detail, CaptureDetail):
+        return ConfigMutationResult(False, False, "before_replace")
+
+    def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
+        return snapshot.generation == expected_generation
+
+    def publish_before_replace() -> None:
+        _publish_runtime_capture_policy(enabled, detail, expected_generation)
+
+    def publish_after_replace() -> None:
+        _publish_runtime_capture_policy(enabled, detail, expected_generation + 1)
+
+    privacy_safe = not enabled or detail is CaptureDetail.SAFE
+    result = apply_settings_mutation_to_cli_config(
+        {
+            "console": {
+                "exchange_capture": enabled,
+                "exchange_capture_detail": detail.value,
+            }
+        },
+        locked_snapshot_precondition=generation_is_current,
+        before_replace=publish_before_replace if privacy_safe else None,
+        after_replace=None if privacy_safe else publish_after_replace,
+    )
+    if privacy_safe and result.file_replaced:
+        _publish_runtime_capture_policy(enabled, detail, expected_generation + 1)
+    return result
 
 
 def save_settings_to_cli_config(

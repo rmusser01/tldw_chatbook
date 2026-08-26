@@ -102,7 +102,11 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
 )
-from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyWriteStatus,
+    ConsoleCapturePolicyRepository,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     effective_user_display_name,
@@ -696,6 +700,22 @@ class ContinuationDurabilityResult:
     reason: str
 
 
+class CapturePolicyStaleError(RuntimeError):
+    """A capture-policy write lost its process-local revision race."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePolicyState:
+    """Process-local capture policy owned by one Console session."""
+
+    next_detail: CaptureDetail | None
+    conversation_detail: CaptureDetail | None
+    next_revision: int
+    policy_revision: int
+    capture_revision: int
+    save_pending: bool
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -752,6 +772,11 @@ class ConsoleChatSession:
     #: Live opaque identity for the one-shot slot. Every write, including
     #: clearing or re-arming the same text, advances this token.
     one_shot_prefill_revision: int = 0
+    capture_detail_override: CaptureDetail | None = None
+    next_capture_detail: CaptureDetail | None = None
+    next_capture_detail_revision: int = 0
+    capture_revision: int = 0
+    capture_policy_save_pending: bool = False
     #: RAG retrieval scope (task-9) for a not-yet-persisted session -- see
     #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
     #: through to durable storage exactly once, at first persistence.
@@ -957,6 +982,14 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
+        self._capture_policy_revision = 0
+        self._capture_policy_lock = threading.RLock()
+        capture_policy_db = getattr(persistence, "db", None)
+        self.capture_policy_repository = (
+            ConsoleCapturePolicyRepository(capture_policy_db)
+            if capture_policy_db is not None
+            else None
+        )
         # Task 13: one app-lifetime, process-memory preparation owner per
         # session.  This state deliberately belongs to the store rather than
         # a mounted Console screen so navigation cannot lose or duplicate a
@@ -1646,6 +1679,7 @@ class ConsoleChatStore:
             activate=activate,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        self.hydrate_session_capture_policy(session.id)
         self._hydrate_dispatch_recovery(
             session.id,
             str(persisted_conversation_id),
@@ -4154,6 +4188,7 @@ class ConsoleChatStore:
         session = self._session_or_raise(session_id)
         session.persisted_conversation_id = identity.conversation_id
         session.title = identity.title
+        self._flush_staged_capture_policy(session)
 
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
@@ -4359,6 +4394,141 @@ class ConsoleChatStore:
     def session_one_shot_prefill(self, session_id: str) -> str | None:
         """Return the armed one-shot response prefill for a session, if any."""
         return self._session_or_raise(session_id).one_shot_prefill
+
+    def capture_policy_state(self, session_id: str) -> CapturePolicyState:
+        """Return one immutable session policy view and the shared revision."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            return CapturePolicyState(
+                next_detail=session.next_capture_detail,
+                conversation_detail=session.capture_detail_override,
+                next_revision=session.next_capture_detail_revision,
+                policy_revision=self._capture_policy_revision,
+                capture_revision=session.capture_revision,
+                save_pending=session.capture_policy_save_pending,
+            )
+
+    def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyState:
+        """Hydrate a persisted conversation override into process-local state."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            repository = self.capture_policy_repository
+            if session.persisted_conversation_id is not None and repository is not None:
+                policy = repository.read(session.persisted_conversation_id)
+                session.capture_detail_override = (
+                    policy.detail if policy is not None else None
+                )
+                session.capture_policy_save_pending = False
+            return self.capture_policy_state(session_id)
+
+    def _flush_staged_capture_policy(self, session: ConsoleChatSession) -> None:
+        """Best-effort flush of an ephemeral policy after identity publication."""
+        if session.capture_detail_override is None:
+            return
+        repository = self.capture_policy_repository
+        if repository is None or session.persisted_conversation_id is None:
+            session.capture_policy_save_pending = True
+            return
+        result = repository.replace(
+            session.persisted_conversation_id,
+            session.capture_detail_override,
+        )
+        session.capture_policy_save_pending = result.status not in {
+            CapturePolicyWriteStatus.STORED,
+            CapturePolicyWriteStatus.UNCHANGED,
+        }
+
+    def set_session_next_capture_detail(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+    ) -> tuple[CaptureDetail | None, int, int]:
+        """Arm or disarm a next-send detail behind the shared revision fence."""
+        if detail is not None and not isinstance(detail, CaptureDetail):
+            raise TypeError("detail must be CaptureDetail or None")
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if self._capture_policy_revision != expected_policy_revision:
+                raise CapturePolicyStaleError
+            session.next_capture_detail = detail
+            session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return (
+                session.next_capture_detail,
+                session.next_capture_detail_revision,
+                self._capture_policy_revision,
+            )
+
+    def consume_session_next_capture_detail(
+        self,
+        session_id: str,
+        *,
+        expected_next_revision: int,
+    ) -> bool:
+        """Clear only the exact next-send slot captured by admission."""
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if session.next_capture_detail_revision != expected_next_revision:
+                return False
+            session.next_capture_detail = None
+            session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return True
+
+    def replace_session_capture_override(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+        save_pending: bool = False,
+    ) -> int:
+        """Replace future conversation detail behind the shared revision fence."""
+        if detail is not None and not isinstance(detail, CaptureDetail):
+            raise TypeError("detail must be CaptureDetail or None")
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if self._capture_policy_revision != expected_policy_revision:
+                raise CapturePolicyStaleError
+            session.capture_detail_override = detail
+            session.capture_policy_save_pending = bool(save_pending)
+            self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def disarm_all_next_capture_details(self) -> int:
+        """Disarm every live one-shot after the global kill switch turns off."""
+        with self._capture_policy_lock:
+            changed = False
+            for session in self._sessions.values():
+                if session.next_capture_detail is None:
+                    continue
+                session.next_capture_detail = None
+                session.next_capture_detail_revision += 1
+                changed = True
+            if changed:
+                self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def advance_capture_policy_revision(
+        self,
+        *,
+        expected_policy_revision: int,
+        disarm_next: bool = False,
+    ) -> int:
+        """Advance the shared fence for a non-session policy mutation."""
+        with self._capture_policy_lock:
+            if self._capture_policy_revision != expected_policy_revision:
+                raise CapturePolicyStaleError
+            if disarm_next:
+                for session in self._sessions.values():
+                    if session.next_capture_detail is None:
+                        continue
+                    session.next_capture_detail = None
+                    session.next_capture_detail_revision += 1
+            self._capture_policy_revision += 1
+            return self._capture_policy_revision
 
     def set_session_one_shot_prefill(
         self, session_id: str, prefill: str | None

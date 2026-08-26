@@ -24,7 +24,16 @@ from dataclasses import replace
 import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat import console_chat_store as store_module
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyWriteResult,
+    CapturePolicyWriteStatus,
+    ConversationCapturePolicy,
+)
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleStagedConversationIdentity,
+)
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeCapture
 
 
@@ -34,6 +43,112 @@ def _cap(run_tag="r1", seq=0, status="complete"):
         endpoint=None, request={"messages_payload": []},
         response={"content": "x"}, status=status, usage_json=None,
         omitted_keys=())
+
+
+def test_capture_policy_state_uses_exact_revisions():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    initial = store.capture_policy_state(session.id)
+
+    value, slot_revision, policy_revision = store.set_session_next_capture_detail(
+        session.id,
+        CaptureDetail.FULL,
+        expected_policy_revision=initial.policy_revision,
+    )
+
+    assert value is CaptureDetail.FULL
+    assert slot_revision == 1
+    assert policy_revision == 1
+    assert store.consume_session_next_capture_detail(
+        session.id, expected_next_revision=slot_revision
+    ) is True
+    assert store.capture_policy_state(session.id).next_detail is None
+
+
+def test_capture_policy_rejects_stale_mutation_without_disclosure():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.set_session_next_capture_detail(
+        session.id, CaptureDetail.SAFE, expected_policy_revision=0
+    )
+
+    with pytest.raises(store_module.CapturePolicyStaleError) as raised:
+        store.replace_session_capture_override(
+            session.id,
+            CaptureDetail.FULL,
+            expected_policy_revision=0,
+        )
+
+    assert str(raised.value) == ""
+    assert store.capture_policy_state(session.id).conversation_detail is None
+
+
+def test_exact_revision_consumption_preserves_concurrently_rearmed_slot():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    _, admitted_revision, policy_revision = store.set_session_next_capture_detail(
+        session.id, CaptureDetail.FULL, expected_policy_revision=0
+    )
+    store.set_session_next_capture_detail(
+        session.id,
+        CaptureDetail.SAFE,
+        expected_policy_revision=policy_revision,
+    )
+
+    assert store.consume_session_next_capture_detail(
+        session.id, expected_next_revision=admitted_revision
+    ) is False
+    assert store.capture_policy_state(session.id).next_detail is CaptureDetail.SAFE
+
+
+def test_capture_policy_hydrates_from_the_existing_repository():
+    class Repository:
+        @staticmethod
+        def read(conversation_id):
+            assert conversation_id == "conversation-1"
+            return ConversationCapturePolicy(
+                conversation_id,
+                CaptureDetail.FULL,
+                "2026-08-26T00:00:00Z",
+            )
+
+    store = ConsoleChatStore()
+    store.capture_policy_repository = Repository()
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+
+    store.hydrate_session_capture_policy(session.id)
+
+    assert store.capture_policy_state(session.id).conversation_detail is CaptureDetail.FULL
+
+
+def test_failed_staged_safe_flush_stays_safe_and_pending_after_publication():
+    class Repository:
+        @staticmethod
+        def replace(conversation_id, detail):
+            assert (conversation_id, detail) == (
+                "conversation-1",
+                CaptureDetail.SAFE,
+            )
+            return CapturePolicyWriteResult(CapturePolicyWriteStatus.UNAVAILABLE, None)
+
+    store = ConsoleChatStore()
+    store.capture_policy_repository = Repository()
+    session = store.ensure_session()
+    store.replace_session_capture_override(
+        session.id,
+        CaptureDetail.SAFE,
+        expected_policy_revision=0,
+    )
+
+    store.publish_committed_identity(
+        session.id,
+        ConsoleStagedConversationIdentity("conversation-1", "Conversation"),
+    )
+
+    state = store.capture_policy_state(session.id)
+    assert state.conversation_detail is CaptureDetail.SAFE
+    assert state.save_pending is True
 
 
 def _recording_exchange_persistence():

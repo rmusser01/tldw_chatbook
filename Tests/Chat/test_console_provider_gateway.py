@@ -48,6 +48,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureBudget,
+    CaptureDetail,
+    build_request_capture,
+)
 
 
 @pytest.mark.asyncio
@@ -2185,6 +2190,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "_usage_lock",
         "run_tag",
         "exchange_capture_enabled",
+        "capture_detail",
         "completed_exchanges",
         "_active_exchanges",
         "_exchange_lock",
@@ -2199,6 +2205,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "_usage_lock",
         "run_tag",
         "exchange_capture_enabled",
+        "capture_detail",
         "completed_exchanges",
         "_active_exchanges",
         "_exchange_lock",
@@ -6262,6 +6269,42 @@ class TestSignalsExchangeCapture:
         assert captures[1].response["content"] == "again"
         assert captures[0].run_tag == captures[1].run_tag == aggregate.run_tag
 
+    def test_call_views_inherit_one_frozen_capture_detail(self):
+        aggregate = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True,
+            capture_detail=CaptureDetail.FULL,
+        )
+
+        assert aggregate.new_usage_call().capture_detail is CaptureDetail.FULL
+        assert aggregate.new_usage_call().capture_detail is CaptureDetail.FULL
+
+    def test_exchange_capture_keeps_frozen_detail_and_shared_budget(self):
+        aggregate = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True,
+            capture_detail=CaptureDetail.FULL,
+        )
+        call = aggregate.new_usage_call()
+        budget = CaptureBudget(limit_bytes=4096)
+        request, omitted = build_request_capture(
+            {"messages_payload": [{"role": "user", "content": "hello"}]},
+            capture_detail=call.capture_detail,
+            budget=budget,
+        )
+        call.begin_exchange(
+            provider="anthropic",
+            model="m",
+            endpoint=None,
+            request=request,
+            omitted_keys=omitted,
+            capture_budget=budget,
+        )
+        call.record_exchange_content("world")
+        call.close_exchange()
+
+        capture = aggregate.exchange_captures()[0]
+        assert capture.capture_detail is CaptureDetail.FULL
+        assert capture.response["content"] == "world"
+
     def test_in_flight_tail_reports_stopped(self):
         aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call = aggregate.new_usage_call()
@@ -6421,6 +6464,49 @@ class TestGatewayExchangeCapture:
         # Review finding M3 control: real provider output is never
         # mislabeled as synthesized fallback copy.
         assert captures[0].response["synthetic_fallback"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("detail", "expected"),
+        [
+            (CaptureDetail.SAFE, "[project instruction body omitted by capture policy"),
+            (CaptureDetail.FULL, "project-body"),
+        ],
+    )
+    async def test_generic_capture_threads_detail_to_semantic_request_builder(
+        self,
+        detail,
+        expected,
+    ):
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": "pong"}}]}
+
+        signals = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True,
+            capture_detail=detail,
+        )
+        await self._drain(
+            ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call).stream_chat(
+                self._resolution(),
+                [
+                    {
+                        "role": "system",
+                        "content": "project-body",
+                        gateway_module.EPHEMERAL_ORIGIN_KEY: "project_instructions",
+                    },
+                    {"role": "user", "content": "q"},
+                ],
+                signals=signals,
+            )
+        )
+
+        captured = signals.exchange_captures()[0]
+        system_content = captured.request["system_message"]
+        if detail is CaptureDetail.SAFE:
+            assert system_content.startswith(expected)
+        else:
+            assert system_content == expected
+        assert captured.capture_detail is detail
 
     @pytest.mark.asyncio
     async def test_synthetic_fallback_copy_is_stamped_not_silently_recorded(self):
@@ -6681,7 +6767,7 @@ class TestGatewayExchangeCapture:
         -- and proves the patch took with a call counter."""
         call_count = {"n": 0}
 
-        def raising_build_request_capture(kwargs):
+        def raising_build_request_capture(kwargs, **_options):
             call_count["n"] += 1
             raise RuntimeError("capture exploded")
 
@@ -6748,6 +6834,52 @@ class TestLlamaCppExchangeCapture:
         # resolution.api_key rides stream_llamacpp_chat's kwargs (headers),
         # never the wire body -- the capture must contain no trace of it.
         assert "local-secret" not in _json.dumps(captures[0].request)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("detail", "expected"),
+        [
+            (CaptureDetail.SAFE, "[project instruction body omitted by capture policy"),
+            (CaptureDetail.FULL, "project-body"),
+        ],
+    )
+    async def test_llamacpp_capture_applies_frozen_detail_to_wire_payload(
+        self,
+        monkeypatch,
+        detail,
+        expected,
+    ):
+        async def fake_stream(self, **kwargs):
+            yield "ok"
+
+        monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream)
+        signals = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True,
+            capture_detail=detail,
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": "project-body",
+                gateway_module.EPHEMERAL_ORIGIN_KEY: "project_instructions",
+            },
+            {"role": "user", "content": "q"},
+        ]
+
+        _ = [
+            item
+            async for item in ConsoleProviderGateway().stream_chat(
+                self._resolution(streaming=True), messages, signals=signals
+            )
+        ]
+
+        captured = signals.exchange_captures()[0]
+        content = captured.request["wire_payload"]["messages"][0]["content"]
+        if detail is CaptureDetail.SAFE:
+            assert content.startswith(expected)
+        else:
+            assert content == expected
+        assert captured.capture_detail is detail
 
     @pytest.mark.asyncio
     async def test_llamacpp_non_streaming_capture_is_wire_literal_and_keyless(

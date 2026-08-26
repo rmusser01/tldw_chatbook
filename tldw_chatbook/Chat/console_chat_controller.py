@@ -17,6 +17,7 @@ from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -91,6 +92,7 @@ from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
 from tldw_chatbook.Chat.console_chat_store import (
+    CapturePolicyStaleError,
     ConsoleChatSession,
     ConsoleChatStore,
     ConsoleDispatchSettlementError,
@@ -98,6 +100,15 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleDurableAcceptanceFingerprint,
     ConsoleDurableTurnCommit,
     TerminalCitationFinalizer,
+)
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureDetail,
+    CapturePolicyResolution,
+    resolve_capture_policy,
+)
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyWriteStatus,
+    ConsoleCapturePolicyRepository,
 )
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
@@ -258,12 +269,15 @@ from tldw_chatbook.Agents.session_todo_store import (
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import (
+    ConfigMutationResult,
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     coerce_bool_setting,
     coerce_int_setting,
     get_cli_setting,
+    apply_console_capture_settings,
+    runtime_capture_policy,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
@@ -1785,12 +1799,51 @@ class _DurablePostcommitContinuation:
     turn_context: ConsoleTurnExecutionContext
     prepared: _PreparedSendContinuation | None
     committed_context_epoch: int
+    stream_signals: ConsoleProviderStreamSignals
     #: TASK-22302: the durable turn commits in `_accept_durable_turn` and
     #: publishes its live owners in `resume_durable_postcommit`; the terminal
     #: citation finalizer has to survive that hand-off. It did not -- the
     #: publish site passed a hard-coded None -- so no durable Console turn
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePolicySnapshot:
+    """Future and active capture policy for one immutable Console session."""
+
+    session_id: str
+    conversation_id: str | None
+    conversation_title: str
+    enabled: bool
+    next_detail: CaptureDetail | None
+    conversation_detail: CaptureDetail | None
+    global_detail: CaptureDetail
+    effective: CapturePolicyResolution
+    policy_revision: int
+    config_generation: int
+    capture_revision: int
+    active_run_detail: CaptureDetail | None
+    queued_consumer: bool
+    save_pending: bool
+    error_code: str | None
+
+
+class CapturePolicyMutationStatus(str, Enum):
+    APPLIED = "applied"
+    SAFE_SESSION_ONLY = "safe_session_only"
+    STALE = "stale"
+    TARGET_MISSING = "target_missing"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePolicyMutationResult:
+    status: CapturePolicyMutationStatus
+    snapshot: CapturePolicySnapshot
+    retryable: bool
+    reason_code: str | None
+    config_result: ConfigMutationResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2026,6 +2079,14 @@ class ConsoleChatController:
         self._library_provider_factory = library_provider_factory
         self._global_user_display_name = global_user_display_name or (lambda: "User")
         persistence_db = getattr(getattr(store, "persistence", None), "db", None)
+        self._capture_policy_repository = getattr(
+            store, "capture_policy_repository", None
+        ) or (
+            ConsoleCapturePolicyRepository(persistence_db)
+            if persistence_db is not None
+            else None
+        )
+        self._capture_policy_hydrated: set[str] = set()
         self._visual_identity_repository = (
             VisualIdentityRepository(persistence_db)
             if persistence_db is not None
@@ -2313,6 +2374,7 @@ class ConsoleChatController:
         #: docstring for the resulting, deliberately-scoped-down, limit on
         #: the three worker-thread approval/confirm bridges below.
         self._active_cancel_events: dict[str, threading.Event] = {}
+        self._active_capture_details: dict[str, CaptureDetail] = {}
         # Cost-ticker PR3: per-session cache-break/TTL ground truth for the
         # cost chip. All three are process-local and best-effort -- a missed
         # write means a stale chip, never a broken send.
@@ -2528,6 +2590,238 @@ class ConsoleChatController:
         #: `request_id`. The mounted card is the session's FIFO head, so a
         #: second same-session confirm no longer evicts an older sibling.
         self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}
+
+    def _hydrate_capture_policy(self, session: ConsoleChatSession) -> None:
+        if session.id in self._capture_policy_hydrated:
+            return
+        self._capture_policy_hydrated.add(session.id)
+        if session.persisted_conversation_id is None:
+            return
+        self.store.hydrate_session_capture_policy(session.id)
+
+    def capture_policy_snapshot(self, session_id: str) -> CapturePolicySnapshot:
+        """Resolve the future policy for one immutable session identity."""
+        session = next((item for item in self.store.sessions() if item.id == session_id), None)
+        if session is None:
+            raise KeyError(session_id)
+        self._hydrate_capture_policy(session)
+        state = self.store.capture_policy_state(session_id)
+        runtime = runtime_capture_policy()
+        effective = resolve_capture_policy(
+            enabled=runtime.enabled,
+            next_send=state.next_detail,
+            conversation=state.conversation_detail,
+            global_default=runtime.detail,
+        )
+        queue = self.prompt_queue_registry.snapshot(session_id)
+        return CapturePolicySnapshot(
+            session_id=session_id,
+            conversation_id=session.persisted_conversation_id,
+            conversation_title=session.title,
+            enabled=runtime.enabled,
+            next_detail=state.next_detail,
+            conversation_detail=state.conversation_detail,
+            global_detail=runtime.detail,
+            effective=effective,
+            policy_revision=state.policy_revision,
+            config_generation=runtime.generation,
+            capture_revision=state.capture_revision,
+            active_run_detail=self._active_capture_details.get(session_id),
+            queued_consumer=bool(getattr(queue, "entries", ())),
+            save_pending=state.save_pending,
+            error_code=(
+                "invalid_" + "_".join(effective.invalid_sources)
+                if effective.invalid_sources
+                else None
+            ),
+        )
+
+    def set_next_capture_detail(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+    ) -> CapturePolicyMutationResult:
+        try:
+            self.store.set_session_next_capture_detail(
+                session_id,
+                detail,
+                expected_policy_revision=expected_policy_revision,
+            )
+        except CapturePolicyStaleError:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "stale_policy_revision",
+            )
+        except KeyError:
+            raise
+        return CapturePolicyMutationResult(
+            CapturePolicyMutationStatus.APPLIED,
+            self.capture_policy_snapshot(session_id),
+            False,
+            None,
+        )
+
+    async def replace_conversation_capture_detail(
+        self,
+        session_id: str,
+        detail: CaptureDetail | None,
+        *,
+        expected_policy_revision: int,
+    ) -> CapturePolicyMutationResult:
+        before = self.capture_policy_snapshot(session_id)
+        if before.policy_revision != expected_policy_revision:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                before,
+                True,
+                "stale_policy_revision",
+            )
+        inherited = resolve_capture_policy(
+            enabled=before.enabled,
+            conversation=detail,
+            global_default=before.global_detail,
+            allow_next_send=False,
+        ).detail
+        session_only = before.conversation_id is None
+        write_status = None
+        if not session_only and self._capture_policy_repository is not None:
+            write_status = await self._run_durable_db_call(
+                self._capture_policy_repository.replace,
+                before.conversation_id,
+                detail,
+            )
+            if write_status.status is CapturePolicyWriteStatus.MISSING_CONVERSATION:
+                return CapturePolicyMutationResult(
+                    CapturePolicyMutationStatus.TARGET_MISSING,
+                    before,
+                    False,
+                    "conversation_missing",
+                )
+            session_only = write_status.status is CapturePolicyWriteStatus.UNAVAILABLE
+        elif not session_only:
+            session_only = True
+        if session_only and inherited is CaptureDetail.FULL:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.FAILED,
+                before,
+                True,
+                "save_failed",
+            )
+        try:
+            self.store.replace_session_capture_override(
+                session_id,
+                detail,
+                expected_policy_revision=expected_policy_revision,
+                save_pending=session_only and before.conversation_id is not None,
+            )
+        except CapturePolicyStaleError:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "stale_policy_revision",
+            )
+        return CapturePolicyMutationResult(
+            CapturePolicyMutationStatus.SAFE_SESSION_ONLY
+            if session_only and before.conversation_id is not None
+            else CapturePolicyMutationStatus.APPLIED,
+            self.capture_policy_snapshot(session_id),
+            session_only and before.conversation_id is not None,
+            "save_failed" if session_only and before.conversation_id is not None else None,
+        )
+
+    def apply_global_capture_settings(
+        self,
+        *,
+        enabled: bool,
+        detail: CaptureDetail,
+        expected_config_generation: int,
+        expected_policy_revision: int,
+    ) -> CapturePolicyMutationResult:
+        session_id = self.store.active_session_id
+        if session_id is None:
+            raise KeyError("No active Console session")
+        before = self.capture_policy_snapshot(session_id)
+        if before.policy_revision != expected_policy_revision:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                before,
+                True,
+                "stale_policy_revision",
+            )
+        config_result = apply_console_capture_settings(
+            enabled=enabled,
+            detail=detail,
+            expected_generation=expected_config_generation,
+        )
+        if config_result.conflict:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                before,
+                True,
+                "stale_config_generation",
+                config_result,
+            )
+        active = not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        if not active:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.FAILED,
+                before,
+                True,
+                "save_failed",
+                config_result,
+            )
+        self.store.advance_capture_policy_revision(
+            expected_policy_revision=expected_policy_revision,
+            disarm_next=not enabled,
+        )
+        return CapturePolicyMutationResult(
+            CapturePolicyMutationStatus.SAFE_SESSION_ONLY
+            if config_result.failure_phase == "before_replace"
+            else CapturePolicyMutationStatus.APPLIED,
+            self.capture_policy_snapshot(session_id),
+            config_result.failure_phase == "before_replace",
+            "save_failed"
+            if config_result.failure_phase == "before_replace"
+            else "cache_refresh_degraded"
+            if config_result.failure_phase == "cache_reload"
+            else None,
+            config_result,
+        )
+
+    def _admit_capture_policy(
+        self,
+        session_id: str,
+        origin: ConsoleSubmissionOrigin,
+    ) -> ConsoleProviderStreamSignals:
+        """Freeze capture detail once, after an accepted owner exists."""
+        state = self.store.capture_policy_state(session_id)
+        runtime = runtime_capture_policy()
+        eligible = origin in {
+            ConsoleSubmissionOrigin.MANUAL,
+            ConsoleSubmissionOrigin.QUEUED,
+        }
+        resolution = resolve_capture_policy(
+            enabled=runtime.enabled,
+            next_send=state.next_detail,
+            conversation=state.conversation_detail,
+            global_default=runtime.detail,
+            allow_next_send=eligible,
+        )
+        signals = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=resolution.enabled,
+            capture_detail=resolution.detail,
+        )
+        if eligible and state.next_detail is not None:
+            self.store.consume_session_next_capture_detail(
+                session_id,
+                expected_next_revision=state.next_revision,
+            )
+        return signals
 
     @property
     def run_state(self) -> ConsoleRunState:
@@ -5519,6 +5813,7 @@ class ConsoleChatController:
                 ConsoleTurnPreparationState.ACCEPTED,
             ):
                 raise RuntimeError("Prepared turn changed before acceptance.")
+            stream_signals = self._admit_capture_policy(session.id, origin)
             self._release_prepared_evidence(prepared_continuation)
             for pending in pendings:
                 self.store.consume_pending_attachment(session.id, pending.attachment_id)
@@ -5561,6 +5856,7 @@ class ConsoleChatController:
                 preparation_id=(
                     preparation.preparation_id if preparation is not None else None
                 ),
+                stream_signals=stream_signals,
             )
             result = replace(
                 stream_result,
@@ -5894,6 +6190,7 @@ class ConsoleChatController:
             turn_context=turn_context,
             prepared=prepared_continuation,
             committed_context_epoch=committed_context_epoch,
+            stream_signals=self._admit_capture_policy(session.id, origin),
             terminal_citation_finalizer=terminal_citation_finalizer,
         )
         with self.store.durable_preparation_lock:
@@ -6249,6 +6546,7 @@ class ConsoleChatController:
                     citation_repair_session=continuation.citation_repair_session,
                     turn_context=continuation.turn_context,
                     preparation_id=None,
+                    stream_signals=continuation.stream_signals,
                 ),
                 fingerprint=fingerprint,
             )
@@ -13862,6 +14160,7 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
         preparation_id: str | None = None,
+        stream_signals: ConsoleProviderStreamSignals | None = None,
     ) -> ConsoleSubmitResult:
         try:
             return await self._stream_assistant_response_inner(
@@ -13878,6 +14177,7 @@ class ConsoleChatController:
                 citation_repair_session=citation_repair_session,
                 turn_context=turn_context,
                 preparation_id=preparation_id,
+                stream_signals=stream_signals,
             )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -13908,6 +14208,7 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
         preparation_id: str | None = None,
+        stream_signals: ConsoleProviderStreamSignals | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -14124,7 +14425,8 @@ class ConsoleChatController:
         # passed `signals=` to the gateway and NOTHING was ever captured for
         # the path virtually every real send takes. Cost is not an opt-in
         # feature of one repair mode; every run needs its own signals object.
-        stream_signals = self._new_run_stream_signals()
+        stream_signals = stream_signals or self._new_run_stream_signals()
+        self._active_capture_details[owner_id] = stream_signals.capture_detail
         # Trajectory sidecar (schema v38): arm this turn's timing capture at
         # the single dispatch choke point covering BOTH the direct-provider
         # and agent paths, BEFORE the provider call. First-token is stamped
@@ -14206,6 +14508,7 @@ class ConsoleChatController:
                 # A no-op for the direct path, whose own finally already
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
+                self._active_capture_details.pop(owner_id, None)
 
     @staticmethod
     def _usage_payloads(stream_signals: Any) -> list[Any]:
@@ -14243,10 +14546,10 @@ class ConsoleChatController:
         is the arc's sixth site with this exact trap -- see the
         ``local_tools_enabled`` read a few hundred lines up for the first.
         """
+        runtime = runtime_capture_policy()
         return ConsoleProviderStreamSignals(
-            exchange_capture_enabled=coerce_bool_setting(
-                get_cli_setting("console", "exchange_capture", True), True
-            )
+            exchange_capture_enabled=runtime.enabled,
+            capture_detail=CaptureDetail.SAFE,
         )
 
     def _watch_post_turn_usage(

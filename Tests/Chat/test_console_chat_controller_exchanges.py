@@ -40,9 +40,14 @@ from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleSubmissionOrigin,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
+from tldw_chatbook.config import ConfigMutationResult
 from Tests.console_provider_doubles import provider_resolution
 
 
@@ -107,6 +112,125 @@ def test_signals_created_with_capture_enabled_by_default():
     assert signals.exchange_capture_enabled is True
 
 
+def test_capture_policy_precedence_and_wake_one_shot_exclusion(monkeypatch):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    snapshot = controller.capture_policy_snapshot(session.id)
+    controller.store.replace_session_capture_override(
+        session.id,
+        CaptureDetail.SAFE,
+        expected_policy_revision=snapshot.policy_revision,
+    )
+    snapshot = controller.capture_policy_snapshot(session.id)
+    controller.set_next_capture_detail(
+        session.id,
+        CaptureDetail.FULL,
+        expected_policy_revision=snapshot.policy_revision,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.FULL, generation=7),
+    )
+
+    wake = controller._admit_capture_policy(
+        session.id, ConsoleSubmissionOrigin.AGENT_WAKE
+    )
+    manual = controller._admit_capture_policy(
+        session.id, ConsoleSubmissionOrigin.MANUAL
+    )
+
+    assert wake.capture_detail is CaptureDetail.SAFE
+    assert manual.capture_detail is CaptureDetail.FULL
+    assert controller.capture_policy_snapshot(session.id).next_detail is None
+
+
+def test_admission_revision_gate_preserves_rearmed_next_slot(monkeypatch):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=1),
+    )
+    snapshot = controller.capture_policy_snapshot(session.id)
+    controller.set_next_capture_detail(
+        session.id,
+        CaptureDetail.FULL,
+        expected_policy_revision=snapshot.policy_revision,
+    )
+    original = controller.store.consume_session_next_capture_detail
+
+    def rearm_before_consume(session_id, *, expected_next_revision):
+        state = controller.store.capture_policy_state(session_id)
+        controller.store.set_session_next_capture_detail(
+            session_id,
+            CaptureDetail.SAFE,
+            expected_policy_revision=state.policy_revision,
+        )
+        return original(session_id, expected_next_revision=expected_next_revision)
+
+    monkeypatch.setattr(
+        controller.store, "consume_session_next_capture_detail", rearm_before_consume
+    )
+
+    signals = controller._admit_capture_policy(
+        session.id, ConsoleSubmissionOrigin.MANUAL
+    )
+
+    assert signals.capture_detail is CaptureDetail.FULL
+    assert controller.capture_policy_snapshot(session.id).next_detail is CaptureDetail.SAFE
+
+
+def test_global_off_disarms_all_next_slots_but_keeps_conversation_detail(monkeypatch):
+    controller = _new_controller()
+    first = controller.store.ensure_session()
+    second = controller.store.create_session(activate=False)
+    controller.store.replace_session_capture_override(
+        first.id,
+        CaptureDetail.FULL,
+        expected_policy_revision=0,
+    )
+    revision = controller.store.capture_policy_state(first.id).policy_revision
+    controller.store.set_session_next_capture_detail(
+        first.id,
+        CaptureDetail.FULL,
+        expected_policy_revision=revision,
+    )
+    revision = controller.store.capture_policy_state(first.id).policy_revision
+    controller.store.set_session_next_capture_detail(
+        second.id,
+        CaptureDetail.SAFE,
+        expected_policy_revision=revision,
+    )
+    revision = controller.store.capture_policy_state(first.id).policy_revision
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=3),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "apply_console_capture_settings",
+        lambda **_kwargs: ConfigMutationResult(True, True, None),
+    )
+
+    result = controller.apply_global_capture_settings(
+        enabled=False,
+        detail=CaptureDetail.SAFE,
+        expected_config_generation=3,
+        expected_policy_revision=revision,
+    )
+
+    assert result.status is controller_module.CapturePolicyMutationStatus.APPLIED
+    assert controller.store.capture_policy_state(first.id).next_detail is None
+    assert controller.store.capture_policy_state(second.id).next_detail is None
+    assert (
+        controller.store.capture_policy_state(first.id).conversation_detail
+        is CaptureDetail.FULL
+    )
+
+
 def test_kill_switch_disables_capture(monkeypatch):
     """Patch ``get_cli_setting`` AT THE CONTROLLER'S NAMESPACE (a from-import
     binds at import time -- patch the consumer, prove it with a call
@@ -121,7 +245,15 @@ def test_kill_switch_disables_capture(monkeypatch):
         return default
 
     monkeypatch.setattr(
-        controller_module, "get_cli_setting", fake_get_cli_setting
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=controller_module.coerce_bool_setting(
+                fake_get_cli_setting("console", "exchange_capture", True), True
+            ),
+            detail=CaptureDetail.SAFE,
+            generation=1,
+        ),
     )
 
     signals = controller._new_run_stream_signals()
@@ -145,7 +277,17 @@ def test_kill_switch_string_false_disables_capture(monkeypatch):
             return "false"
         return default
 
-    monkeypatch.setattr(controller_module, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=controller_module.coerce_bool_setting(
+                fake_get_cli_setting("console", "exchange_capture", True), True
+            ),
+            detail=CaptureDetail.SAFE,
+            generation=1,
+        ),
+    )
 
     signals = controller._new_run_stream_signals()
 
