@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from rich.cells import cell_len
+from textual import events
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches, QueryError
 from textual.css.styles import StylesBase
@@ -77,6 +78,9 @@ from tldw_chatbook.Library.library_rail_state import (
     LibraryRailPreferences,
 )
 from tldw_chatbook.Library.library_rail_width import OrdinaryRailStyleContract
+from tldw_chatbook.Library.library_collections_state import (
+    LibraryCollectionDeleteReceipt,
+)
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LibraryRagPanelState,
@@ -4703,6 +4707,138 @@ async def test_library_emergency_user_click_defeats_an_older_restore_receipt(
 
 
 @pytest.mark.asyncio
+async def test_library_emergency_programmatic_canvas_focus_keeps_restore_receipt() -> (
+    None
+):
+    """Programmatic focus changes alone are not user interaction."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+
+        bar.focus()
+        await pilot.pause()
+        query.focus()
+        await pilot.pause()
+
+        assert screen._library_stage_interaction_generation == receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_tab_entry_uses_post_navigation_focus() -> None:
+    """A real Tab into the ordinary canvas defeats an older receipt."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        bar.focus()
+        await pilot.pause()
+
+        await pilot.press("tab")
+        await pilot.pause()
+
+        assert (
+            screen._library_entry_canvas_owner() in screen.focused.ancestors_with_self
+        )
+        assert screen._library_stage_interaction_generation > receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_stalled_tab_does_not_arm_later_focus(
+    monkeypatch,
+) -> None:
+    """A Tab that cannot navigate expires before later programmatic focus."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        bar.focus()
+        await pilot.pause()
+        monkeypatch.setattr(screen, "focus_next", lambda: None)
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert screen.focused is bar
+        query.focus()
+        await pilot.pause()
+
+        assert screen._library_stage_interaction_generation == receipt.generation
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_real_wheel_uses_widget_under_pointer() -> None:
+    """Wheel target, not unrelated keyboard focus, owns user intent."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        screen.query_one("#library-emergency-return").focus()
+        await pilot.pause()
+
+        screen.post_message(
+            events.MouseScrollDown(query, 0, 0, 0, 1, 0, False, False, False)
+        )
+        await pilot.pause()
+
+        assert screen._library_stage_interaction_generation > receipt.generation
+
+
+@pytest.mark.asyncio
 async def test_library_emergency_collection_mutation_syncs_return_truth() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -4728,6 +4864,121 @@ async def test_library_emergency_collection_mutation_syncs_return_truth() -> Non
             dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
             == "rail"
         )
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_real_collection_undo_releases_return_guard() -> None:
+    """The mounted Undo action immediately restores bar/footer/F1 truth."""
+
+    class RestoreService(StaticLibraryCollectionsService):
+        def restore_collection(self, collection_id: str) -> SimpleNamespace:
+            restored = SimpleNamespace(
+                collection_id=collection_id,
+                name="Restored Collection",
+                description="",
+                item_count=0,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-08-26T00:00:00Z",
+                updated_at="2026-08-26T00:00:00Z",
+            )
+            self.records = (*self.records, restored)
+            return restored
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.library_collections_service = RestoreService(())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        screen._library_collection_delete_receipt = LibraryCollectionDeleteReceipt(
+            collection_id="restored-collection",
+            name="Restored Collection",
+        )
+        screen.refresh(recompose=True)
+        undo = await _wait_for_selector(
+            screen, pilot, "#library-collections-delete-undo"
+        )
+
+        undo.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collection_delete_receipt is None,
+            message="Collection Undo did not complete",
+        )
+        await pilot.pause()
+
+        assert screen._library_collections_mutation_in_flight is False
+        assert (
+            screen.query_one(
+                "#library-emergency-return", LibraryEmergencyReturn
+            ).disabled
+            is False
+        )
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "rail"
+        )
+        assert screen.check_action("library_emergency_return", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_selecting_another_collection_clears_return_guard() -> (
+    None
+):
+    """A real row selection cancels pending deletion and repaints recovery."""
+    records = (
+        {
+            "collection_id": "collection-1",
+            "name": "First",
+            "description": "",
+            "item_count": 0,
+            "source_authority": "local",
+            "sync_status": "local-only",
+            "updated_at": "2026-08-26T00:00:00Z",
+        },
+        {
+            "collection_id": "collection-2",
+            "name": "Second",
+            "description": "",
+            "item_count": 0,
+            "source_authority": "local",
+            "sync_status": "local-only",
+            "updated_at": "2026-08-26T00:00:00Z",
+        },
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.library_collections_service = StaticLibraryCollectionsService(records)
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+        await _wait_for_selector(screen, pilot, "#library-delete-collection")
+        await pilot.click("#library-delete-collection")
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        assert bar.disabled is True
+
+        screen.query_one("#library-collection-select-1", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_selected_id == "collection-2",
+            message="Second Collection row was not selected",
+        )
+        await pilot.pause()
+
+        assert screen._library_collection_pending_delete_id == ""
+        assert bar.disabled is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "rail"
+        )
+        assert screen.check_action("library_emergency_return", ()) is True
 
 
 @pytest.mark.asyncio

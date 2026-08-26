@@ -6911,16 +6911,14 @@ class LibraryScreen(BaseAppScreen):
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         """Let wheel scrolling supersede resize and list-return memory."""
-        del event
-        self._advance_library_ordinary_emergency_user_interaction(self.focused)
+        self._advance_library_ordinary_emergency_user_interaction(event.widget)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         """Let wheel scrolling supersede resize and list-return memory."""
-        del event
-        self._advance_library_ordinary_emergency_user_interaction(self.focused)
+        self._advance_library_ordinary_emergency_user_interaction(event.widget)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
@@ -7363,11 +7361,21 @@ class LibraryScreen(BaseAppScreen):
         settle-window timer is only ever the LAST resort for a
         still-armed, still-idle request.
         """
-        if event.key in {"tab", "shift+tab", "backtab"}:
-            self._advance_library_ordinary_emergency_user_interaction(self.focused)
+        emergency_tab = bool(
+            event.key in {"tab", "shift+tab", "backtab"}
+            and self._library_emergency_stage == "canvas-only"
+            and self._library_emergency_restore_receipt is not None
+        )
+        if emergency_tab:
+            focused = self.focus_next() if event.key == "tab" else self.focus_previous()
+            self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
+        if emergency_tab:
+            event.stop()
+            event.prevent_default()
+            return
         if isinstance(self.focused, (Input, TextArea)):
             return
         if event.key in ("up", "down") and _move_library_list_row_focus(
@@ -36631,7 +36639,7 @@ class LibraryScreen(BaseAppScreen):
         route_key = self._library_entry_route_key()
         generation = self._library_snapshot_state_generation
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
-            self._library_collection_pending_delete_id = ""
+            self._set_library_collection_pending_delete_id("")
             return LibraryEntryReconcileResult.SUPERSEDED
         if refresh_snapshot:
             await self._refresh_library_collections_snapshot()
@@ -36696,6 +36704,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_collections_mutation_in_flight = True
         self._sync_library_emergency_guard_presentation()
         return True
+
+    def _set_library_collection_pending_delete_id(self, collection_id: str) -> None:
+        """Set destructive confirmation ownership and repaint return gates."""
+        self._library_collection_pending_delete_id = collection_id
+        self._sync_library_emergency_guard_presentation()
 
     def _release_library_collections_mutation(self) -> None:
         """Release Collection mutation ownership and repaint action gates."""
@@ -37307,7 +37320,7 @@ class LibraryScreen(BaseAppScreen):
             )
             self._library_collection_name_input = ""
             self._library_collection_description_input = ""
-            self._library_collection_pending_delete_id = ""
+            self._set_library_collection_pending_delete_id("")
             await self._sync_collections_panel(refresh_snapshot=True)
         finally:
             self._release_library_collections_mutation()
@@ -37341,7 +37354,7 @@ class LibraryScreen(BaseAppScreen):
             )
             self._library_collection_name_input = ""
             self._library_collection_description_input = ""
-            self._library_collection_pending_delete_id = ""
+            self._set_library_collection_pending_delete_id("")
             await self._sync_collections_panel(refresh_snapshot=True)
         finally:
             self._release_library_collections_mutation()
@@ -37355,10 +37368,9 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         self._library_collection_delete_receipt = None
-        self._library_collection_pending_delete_id = (
+        self._set_library_collection_pending_delete_id(
             self._library_collections_selected_id
         )
-        self._sync_library_emergency_guard_presentation()
         await self._refresh_collections_panel_action_state_widgets()
 
     @on(Button.Pressed, "#library-confirm-delete-collection")
@@ -37392,7 +37404,7 @@ class LibraryScreen(BaseAppScreen):
                 self._notify_library_collections_warning("Failed to delete Collection.")
                 return
             self._library_collections_selected_id = ""
-            self._library_collection_pending_delete_id = ""
+            self._set_library_collection_pending_delete_id("")
             self._library_collection_delete_receipt = LibraryCollectionDeleteReceipt(
                 collection_id=target_id,
                 name=target_name,
@@ -37478,8 +37490,10 @@ class LibraryScreen(BaseAppScreen):
                 "Could not restore this Collection; the receipt is still available."
             )
         finally:
-            self._library_collections_mutation_in_flight = False
-            await self._sync_collections_panel(refresh_snapshot=restored)
+            try:
+                await self._sync_collections_panel(refresh_snapshot=restored)
+            finally:
+                self._release_library_collections_mutation()
 
     @on(Button.Pressed, ".library-collection-row")
     async def select_library_collection(self, event: Button.Pressed) -> None:
@@ -37490,7 +37504,7 @@ class LibraryScreen(BaseAppScreen):
         if not collection_id:
             return
         self._library_collections_selected_id = collection_id
-        self._library_collection_pending_delete_id = ""
+        self._set_library_collection_pending_delete_id("")
         await self._sync_collections_panel(refresh_snapshot=False)
 
     def _notify_library_collections_warning(self, message: str) -> None:
