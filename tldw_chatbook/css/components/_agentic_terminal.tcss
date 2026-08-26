@@ -2977,6 +2977,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0 1;
 }
 
+#library-media-viewer-content-text {
+    /* task-22500: the widget sets its own height from the wrap index
+       (min(virtual rows, 18)); width must fill so the index is built at
+       the real render width. */
+    width: 100%;
+}
+
 #library-media-edit-form {
     height: auto;
     margin: 0 0 1 0;

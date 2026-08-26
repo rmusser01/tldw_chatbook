@@ -24,7 +24,6 @@ from statistics import median
 from time import perf_counter
 
 import pytest
-from rich.text import Text
 from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.UI.Screens.library_screen as library_screen_module
@@ -44,6 +43,9 @@ from Tests.UI.test_library_shell import (
 )
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
+)
+from tldw_chatbook.Widgets.Library.library_media_raw_view import (
+    VirtualizedRawContent,
 )
 
 NEEDLE = "needle"
@@ -174,9 +176,19 @@ async def _submit_query(screen, pilot, query: str) -> None:
     await pilot.pause()
 
 
-def _raw_static(screen) -> Static:
+def _raw_static(screen) -> VirtualizedRawContent:
+    """Return the mounted Raw view.
+
+    task-22500: this returned the plain ``Static`` the reader used to mount
+    for its Raw view; that widget is now ``VirtualizedRawContent`` (a
+    ``ScrollView`` with no ``.renderable``), so callers that used to read
+    Rich ``Text`` spans off the return value now read its live paint output
+    through ``render_line`` instead (see ``_highlighted_words_in_raw``).
+    """
     body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
-    return body.query_one("#library-media-viewer-content-text", Static)
+    return body.query_one(
+        "#library-media-viewer-content-text", VirtualizedRawContent
+    )
 
 
 def _status_text(screen) -> str:
@@ -184,18 +196,25 @@ def _status_text(screen) -> str:
     return str(status.renderable)
 
 
-def _active_spans(renderable: object) -> list:
-    if not isinstance(renderable, Text):
-        return []
-    return [span for span in renderable.spans if "bold" in str(span.style)]
+def _highlighted_words_in_raw(raw: VirtualizedRawContent) -> set[str]:
+    """Collect every substring the mounted Raw view currently paints reversed.
 
-
-def _highlighted_words(renderable: object) -> set[str]:
-    if not isinstance(renderable, Text):
+    task-22500: the widget has no single ``Text`` renderable to inspect --
+    each visible row is restyled at paint time by ``render_line`` -- so this
+    walks every row through the SAME method Textual's compositor calls and
+    collects the segments carrying the match style (``Style(reverse=True)``,
+    which both the plain and active match styles set), the direct
+    replacement for reading spans off a Rich ``Text``.
+    """
+    if raw.wrap_index is None:
         return set()
-    return {
-        renderable.plain[span.start : span.end] for span in renderable.spans
-    }
+    words: set[str] = set()
+    for row in range(raw.wrap_index.virtual_height):
+        strip = raw.render_line(row)
+        for segment in strip._segments:
+            if segment.style is not None and segment.style.reverse:
+                words.add(segment.text)
+    return words
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +252,16 @@ async def test_match_navigation_takes_no_document_pass_per_click():
 
 @pytest.mark.asyncio
 async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it():
-    """The mounted Static keeps ONE renderable; only the active span moves."""
+    """The mounted Raw view keeps its identity; only its search state moves.
+
+    task-22500: the virtualized Raw view holds no whole-document Rich
+    ``Text`` to patch anymore -- each visible row restyles itself from
+    ``query``/``match_index`` when Textual paints it -- so "patched, not
+    rebuilt" is now pinned at the WIDGET (it must never be replaced by a
+    match-nav click) rather than at a ``Text`` object's spans. Which row
+    paints ACTIVE-vs-plain styling is task 7's ``set_match_lines`` wiring,
+    not yet reachable at this stage.
+    """
     app, service = _flow_app(count=12)
     host = LibraryProductionCSSHarness(app)
 
@@ -243,23 +271,20 @@ async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it()
         await _submit_query(screen, pilot, NEEDLE)
 
         raw = _raw_static(screen)
-        first = raw.renderable
-        assert isinstance(first, Text)
-        first_active = _active_spans(first)
+        assert raw._query == NEEDLE
+        assert raw._match_index == 0
+        assert _highlighted_words_in_raw(raw) == {NEEDLE}
 
         screen.query_one("#library-media-content-search-next", Button).press()
         await pilot.pause()
 
-        second = _raw_static(screen).renderable
-        second_active = _active_spans(second)
-
-        assert second is first, (
-            "A match click rebuilt the document renderable instead of "
-            "patching the two spans whose style changed."
+        second = _raw_static(screen)
+        assert second is raw, (
+            "A match click rebuilt the Raw view instead of patching its "
+            "search state."
         )
-        assert len(first_active) == len(second_active) == 1
-        assert first_active[0].start != second_active[0].start
-        assert _highlighted_words(second) == {NEEDLE}
+        assert second._match_index == 1
+        assert _highlighted_words_in_raw(second) == {NEEDLE}
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +308,8 @@ async def test_a_new_query_rehighlights_the_document():
 
         await _submit_query(screen, pilot, OTHER_NEEDLE)
 
-        second = _raw_static(screen).renderable
-        assert _highlighted_words(second) == {OTHER_NEEDLE}, (
+        second = _raw_static(screen)
+        assert _highlighted_words_in_raw(second) == {OTHER_NEEDLE}, (
             "The second query reused the first query's highlight spans."
         )
         assert _status_text(screen) == "Match 1 of 20 matches", (
@@ -316,7 +341,7 @@ async def test_a_new_document_rescans_for_the_same_query():
         assert _status_text(screen) == "Match 2 of 10 matches", (
             "Match navigation reused the previous document's match list."
         )
-        highlighted = _highlighted_words(_raw_static(screen).renderable)
+        highlighted = _highlighted_words_in_raw(_raw_static(screen))
         assert highlighted == {NEEDLE}
 
 
@@ -343,12 +368,14 @@ async def test_clearing_the_search_mid_navigation_drops_every_highlight():
 
         assert screen._library_media_content_query == ""
         assert not screen.query("#library-media-content-search-status")
-        assert str(_raw_static(screen).renderable) == content
+        raw = _raw_static(screen)
+        assert raw._query == ""
+        assert _highlighted_words_in_raw(raw) == set()
 
         # A stray advance after the clear is a no-op, not a crash.
         screen._advance_library_media_content_match(1)
         await pilot.pause()
-        assert str(_raw_static(screen).renderable) == content
+        assert _highlighted_words_in_raw(_raw_static(screen)) == set()
 
 
 @pytest.mark.asyncio

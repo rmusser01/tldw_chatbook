@@ -27,6 +27,7 @@ from textual.errors import NoWidget
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
+from textual.selection import Selection
 from textual.widgets import (
     Button,
     Collapsible,
@@ -160,6 +161,9 @@ from tldw_chatbook.Library.library_conversations_state import (
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
+)
+from tldw_chatbook.Widgets.Library.library_media_raw_view import (
+    VirtualizedRawContent,
 )
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
@@ -10722,13 +10726,12 @@ async def test_library_shell_media_content_search_highlights_matches_in_body():
 
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
 
-        content = screen.query_one("#library-media-viewer-content-text").renderable
-        # Rendered as a Rich Text with a styled span over each "budget".
-        highlighted = [
-            content.plain[span.start : span.end]
-            for span in content.spans
-            if str(span.style)
-        ]
+        content = screen.query_one(
+            "#library-media-viewer-content-text", VirtualizedRawContent
+        )
+        # task-22500: each row is styled at paint time by render_line, not
+        # via spans on a whole-document Rich Text.
+        highlighted = _raw_view_highlighted_occurrences(content)
         assert highlighted.count("budget") == 2
         assert all(part.lower() == "budget" for part in highlighted)
 
@@ -10754,10 +10757,12 @@ async def test_library_shell_media_content_search_one_mark_per_matching_line():
         )
         assert status == "Match 1 of 1 matches"
         # ...and exactly one styled mark in the body, so count == visible marks.
-        content = screen.query_one("#library-media-viewer-content-text").renderable
-        marks = [span for span in content.spans if str(span.style)]
+        content = screen.query_one(
+            "#library-media-viewer-content-text", VirtualizedRawContent
+        )
+        marks = _raw_view_highlighted_occurrences(content)
         assert len(marks) == 1
-        assert content.plain[marks[0].start : marks[0].end] == "budget"
+        assert marks[0] == "budget"
 
 
 @pytest.mark.asyncio
@@ -11626,9 +11631,36 @@ def _markdown_media_item():
 
 def _markdown_text_widget_plain(widget) -> str:
     """Return a Static-family widget's rendered text as a plain string,
-    tolerating both a plain ``str`` and a Rich ``Text`` renderable."""
+    tolerating both a plain ``str`` and a Rich ``Text`` renderable, plus
+    the virtualized Raw view (task-22500): it has no ``.renderable`` at
+    all, so its full document text is read through ``get_selection``'s
+    SELECT_ALL convention (``Selection(None, None)``) instead."""
+    if isinstance(widget, VirtualizedRawContent):
+        selection = widget.get_selection(Selection(None, None))
+        return selection[0] if selection is not None else ""
     renderable = getattr(widget, "renderable", "")
     return getattr(renderable, "plain", str(renderable))
+
+
+def _raw_view_highlighted_occurrences(raw: VirtualizedRawContent) -> list[str]:
+    """Collect, in row order, every substring the Raw view paints reversed.
+
+    task-22500: the virtualized Raw view has no single Rich ``Text`` to
+    read spans off of -- each visible row is restyled at PAINT time by
+    ``render_line`` -- so this walks every row through the SAME method
+    Textual's compositor calls and collects the segments carrying the
+    match style (``Style(reverse=True)``, which both the plain and active
+    match styles set).
+    """
+    if raw.wrap_index is None:
+        return []
+    occurrences: list[str] = []
+    for row in range(raw.wrap_index.virtual_height):
+        strip = raw.render_line(row)
+        for segment in strip._segments:
+            if segment.style is not None and segment.style.reverse:
+                occurrences.append(segment.text)
+    return occurrences
 
 
 @pytest.mark.asyncio
@@ -11709,19 +11741,27 @@ async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown()
         await _open_media_viewer(screen, pilot)
 
         markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
+        # task-22500: Rendered is now wrapped in a VerticalScroll -- the
+        # Markdown widget's own `.display` is never toggled, only its
+        # wrapper's, so visibility is checked on the wrapper.
+        markdown_scroll = screen.query_one(
+            "#library-media-viewer-content-markdown-scroll"
+        )
 
         screen.query_one("#library-media-content-mode-raw", Button).press()
         await pilot.pause()
         await pilot.pause()
 
         assert screen._library_media_content_mode == "raw"
-        raw = screen.query_one("#library-media-viewer-content-text", Static)
+        raw = screen.query_one(
+            "#library-media-viewer-content-text", VirtualizedRawContent
+        )
         raw_text = _markdown_text_widget_plain(raw)
         assert "# Setup Guide" in raw_text
         assert "| --- | --- |" in raw_text
         assert screen.query_one("#library-media-viewer-content-markdown") is markdown
         assert raw.display
-        assert not markdown.display
+        assert not markdown_scroll.display
 
         screen.query_one("#library-media-content-mode-rendered", Button).press()
         await pilot.pause()
@@ -11730,7 +11770,7 @@ async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown()
         assert screen._library_media_content_mode == "rendered"
         assert screen.query_one("#library-media-viewer-content-markdown") is markdown
         assert screen.query_one("#library-media-viewer-content-text") is raw
-        assert markdown.display
+        assert markdown_scroll.display
         assert not raw.display
 
 
@@ -11751,17 +11791,19 @@ async def test_library_shell_media_viewer_inplace_rendered_search_primes_raw_hig
         await pilot.pause()
         await pilot.pause()
 
-        raw = screen.query_one("#library-media-viewer-content-text", Static)
+        raw = screen.query_one(
+            "#library-media-viewer-content-text", VirtualizedRawContent
+        )
         assert raw.display
+        assert raw._query == "setup"
         assert (
-            raw.renderable.plain.rstrip()
+            _markdown_text_widget_plain(raw).rstrip()
             == _markdown_media_item()[0]["content"].rstrip()
         )
-        selected = [
-            raw.renderable.plain[span.start : span.end]
-            for span in raw.renderable.spans
-            if str(span.style) == "reverse bold"
-        ]
+        # task-22500: which occurrence paints ACTIVE (reverse bold) vs plain
+        # (reverse) styling is task 7's `set_match_lines` wiring, not yet
+        # reachable here -- this pins that the match itself still highlights.
+        selected = _raw_view_highlighted_occurrences(raw)
         assert selected == ["Setup"]
 
 

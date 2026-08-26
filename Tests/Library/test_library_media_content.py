@@ -5,9 +5,9 @@ import asyncio
 import pytest
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.containers import ScrollableContainer
 from textual.widgets import Button, Input, Markdown, Static
 
-import tldw_chatbook.Widgets.Library.library_media_content as media_content_module
 from tldw_chatbook.Library.library_media_viewer_state import find_content_matches
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
@@ -15,6 +15,9 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
     RawContentHighlightPlan,
     build_raw_content_highlight_plan,
     build_raw_content_renderable,
+)
+from tldw_chatbook.Widgets.Library.library_media_raw_view import (
+    VirtualizedRawContent,
 )
 
 
@@ -100,7 +103,9 @@ async def test_body_lazily_mounts_each_mode_once_and_reuses_widgets() -> None:
         id="library-media-viewer-content",
     )
     async with BodyHarness(body).run_test() as _pilot:
-        raw = body.query_one("#library-media-viewer-content-text", Static)
+        raw = body.query_one(
+            "#library-media-viewer-content-text", VirtualizedRawContent
+        )
         assert not body.query("#library-media-viewer-content-markdown")
 
         await body.sync_mode("rendered")
@@ -114,7 +119,14 @@ async def test_body_lazily_mounts_each_mode_once_and_reuses_widgets() -> None:
 
 @pytest.mark.asyncio
 async def test_body_search_updates_lazily_mounted_raw_rich_highlights() -> None:
-    """Catch Raw construction that loses search state set while Rendered is visible."""
+    """Catch Raw construction that loses search state set while Rendered is visible.
+
+    task-22500: the virtualized Raw view has no whole-document renderable to
+    inspect -- it restyles each row from ``_query``/``_match_index`` when
+    Textual paints it -- so this now confirms the search state itself
+    reached the newly-constructed widget, plus that both matching rows
+    still paint their query text.
+    """
     body = LibraryMediaContentBody(
         content="# Heading\n\nbudget one\nbudget two",
         is_markdown=True,
@@ -123,22 +135,17 @@ async def test_body_search_updates_lazily_mounted_raw_rich_highlights() -> None:
         match_index=0,
         id="library-media-viewer-content",
     )
-    async with BodyHarness(body).run_test() as _pilot:
+    async with BodyHarness(body).run_test() as pilot:
         body.sync_search("budget", 1)
         await body.sync_mode("raw")
+        await pilot.pause()
 
-        raw = body.query_one("#library-media-viewer-content-text", Static)
-        assert isinstance(raw.renderable, Text)
-        budget_spans = [
-            span
-            for span in raw.renderable.spans
-            if raw.renderable.plain[span.start : span.end] == "budget"
-        ]
-        assert len(budget_spans) == 2
-        assert [str(span.style) for span in budget_spans] == [
-            "reverse",
-            "reverse bold",
-        ]
+        raw = body.raw_view
+        assert isinstance(raw, VirtualizedRawContent)
+        assert raw._query == "budget"
+        assert raw._match_index == 1
+        assert "budget" in raw.render_line(2).text
+        assert "budget" in raw.render_line(3).text
 
 
 @pytest.mark.asyncio
@@ -167,18 +174,46 @@ async def test_body_rapid_mode_changes_leave_latest_mode_visible_once() -> None:
         release.set()
         await raw_started.wait()
 
-        raw = body.query_one("#library-media-viewer-content-text", Static)
-        markdown = body.query_one("#library-media-viewer-content-markdown", Markdown)
+        raw = body.query_one(
+            "#library-media-viewer-content-text", VirtualizedRawContent
+        )
+        assert body.query_one("#library-media-viewer-content-markdown", Markdown)
         assert raw.display
-        assert not markdown.display
+        # task-22500: Rendered is now wrapped in a VerticalScroll -- the
+        # Markdown widget's OWN `.display` is never touched, only its
+        # wrapper's, so visibility is checked on the wrapper.
+        assert not body._markdown_scroll.display
 
         release_raw.set()
         await asyncio.gather(rendered_task, raw_task)
 
         assert raw.display
-        assert not markdown.display
+        assert not body._markdown_scroll.display
         assert len(body.query("#library-media-viewer-content-text")) == 1
         assert len(body.query("#library-media-viewer-content-markdown")) == 1
+
+
+@pytest.mark.asyncio
+async def test_body_exposes_the_active_scroller_per_mode() -> None:
+    """``scroller`` must resolve the CURRENT mode's real scroller, not this
+    container -- callers used to query this widget as a ``VerticalScroll``
+    inside try/except, and silently lost scroll capture/restore the moment
+    the type stopped matching (task-22500)."""
+    body = LibraryMediaContentBody(
+        content="# Heading\n\nbody text",
+        is_markdown=True,
+        mode="raw",
+        query="",
+        match_index=0,
+        id="library-media-viewer-content",
+    )
+    async with BodyHarness(body).run_test() as pilot:
+        assert isinstance(body.scroller, ScrollableContainer)
+        assert isinstance(body.raw_view, VirtualizedRawContent)
+        assert body.scroller is body.raw_view
+        await body.sync_mode("rendered")
+        await pilot.pause()
+        assert body.scroller is not body.raw_view
 
 
 @pytest.mark.asyncio
@@ -311,11 +346,13 @@ async def test_active_query_sync_mounts_controls_and_markdown_placeholder() -> N
 async def test_search_refresh_does_not_arm_a_layout_pass(monkeypatch) -> None:
     """``sync_search`` restyles the SAME characters, so no layout is needed.
 
-    ``build_raw_content_renderable`` only moves highlight spans around: it
-    never adds, removes or rewraps a line, so the Static's size cannot change
-    between match-nav clicks. The layout pass ``Static.update()`` arms by
-    default cost a measured 84.9 -> 57.7 ms of CPU per click on a 100 KB
-    document at 120x40 (10 Layout messages per 10 clicks -> 0).
+    task-22500: the virtualized Raw view restyles each row it paints
+    directly from ``_query``/``_match_index`` -- there is no whole-document
+    renderable to rebuild -- so forwarding a search update only needs to
+    repaint, never relayout. ``sync_search`` calls ``self.refresh()``, whose
+    ``layout`` default is already ``False``; this pins that call never flips
+    it to ``True`` (task-21134's original 84.9 -> 57.7 ms/click regression
+    guard, now against the widget that replaced the plain ``Static``).
     """
     body = LibraryMediaContentBody(
         content="alpha needle\nbeta\ngamma needle\n",
@@ -328,18 +365,22 @@ async def test_search_refresh_does_not_arm_a_layout_pass(monkeypatch) -> None:
     app = BodyHarness(body)
 
     async with app.run_test(size=(60, 12)):
-        raw_widget = body._raw_widget
+        raw_widget = body.raw_view
         assert raw_widget is not None
 
         seen: list[bool] = []
-        real_update = Static.update
+        real_refresh = VirtualizedRawContent.refresh
 
-        def recording_update(self, content="", *, layout: bool = True) -> None:
+        def recording_refresh(
+            self, *regions, repaint: bool = True, layout: bool = False, recompose: bool = False
+        ):
             if self is raw_widget:
                 seen.append(layout)
-            real_update(self, content, layout=layout)
+            return real_refresh(
+                self, *regions, repaint=repaint, layout=layout, recompose=recompose
+            )
 
-        monkeypatch.setattr(Static, "update", recording_update)
+        monkeypatch.setattr(VirtualizedRawContent, "refresh", recording_refresh)
 
         body.sync_search("needle", 0)
         body.sync_search("needle", 1)
@@ -349,7 +390,16 @@ async def test_search_refresh_does_not_arm_a_layout_pass(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_search_refresh_still_repaints_the_active_match() -> None:
-    """Skipping layout must not skip the repaint the highlight depends on."""
+    """Skipping layout must not skip the repaint the highlight depends on.
+
+    task-22500: there is no cached whole-document renderable left to go
+    stale -- ``render_line`` reads ``_query``/``_match_index`` fresh on
+    every call -- so this now pins that the Raw view's search state (and
+    therefore what the NEXT paint will show) actually advances when
+    ``sync_search`` is called twice in a row. Which row paints
+    ACTIVE-vs-plain styling is task 7's ``set_match_lines`` wiring, not yet
+    reachable here.
+    """
     body = LibraryMediaContentBody(
         content="alpha needle\nbeta\ngamma needle\n",
         is_markdown=False,
@@ -361,26 +411,17 @@ async def test_search_refresh_still_repaints_the_active_match() -> None:
     app = BodyHarness(body)
 
     async with app.run_test(size=(60, 12)):
-        raw_widget = body._raw_widget
+        raw_widget = body.raw_view
         assert raw_widget is not None
 
         body.sync_search("needle", 0)
-        first = raw_widget.renderable
-        assert isinstance(first, Text)
-        first_active = [
-            span for span in first.spans if "bold" in str(span.style)
-        ]
+        assert raw_widget._query == "needle"
+        assert raw_widget._match_index == 0
+        assert "needle" in raw_widget.render_line(0).text
 
         body.sync_search("needle", 1)
-        second = raw_widget.renderable
-        assert isinstance(second, Text)
-        second_active = [
-            span for span in second.spans if "bold" in str(span.style)
-        ]
-
-        assert first.plain == second.plain  # same characters: no relayout owed
-        assert first_active and second_active
-        assert first_active[0].start != second_active[0].start
+        assert raw_widget._match_index == 1
+        assert "needle" in raw_widget.render_line(2).text
 
 
 # ---------------------------------------------------------------------------
@@ -500,10 +541,16 @@ def test_highlight_plan_moves_only_the_active_span() -> None:
 
 
 @pytest.mark.asyncio
-async def test_body_reuses_one_plan_per_query_and_rebuilds_on_a_new_one(
-    monkeypatch,
-) -> None:
-    """Catch a body that rebuilds its highlight plan per match-nav click."""
+async def test_body_search_updates_reuse_the_same_raw_view() -> None:
+    """Catch a search update that rebuilds the Raw view instead of restyling it.
+
+    task-22500: the virtualized widget replaced the whole-document highlight
+    plan this used to pin -- each row restyles itself in ``render_line``, so
+    there is nothing document-sized left to build or cache at the body
+    level. What still matters is that repeated search updates reuse the
+    SAME mounted widget (never re-``compose``/re-mount it) and that the
+    widget's rendered rows reflect the query currently in effect.
+    """
     body = LibraryMediaContentBody(
         content="alpha needle\nbeta beacon\ngamma needle\ndelta beacon",
         is_markdown=False,
@@ -515,56 +562,38 @@ async def test_body_reuses_one_plan_per_query_and_rebuilds_on_a_new_one(
     app = BodyHarness(body)
 
     async with app.run_test(size=(60, 12)):
-        raw_widget = body._raw_widget
+        raw_widget = body.raw_view
         assert raw_widget is not None
 
-        builds: list[tuple[str, str]] = []
-        real_builder = build_raw_content_highlight_plan
-
-        def counting_builder(content: str, query: str):
-            builds.append((content, query))
-            return real_builder(content, query)
-
-        monkeypatch.setattr(
-            media_content_module,
-            "build_raw_content_highlight_plan",
-            counting_builder,
-        )
-
         body.sync_search("needle", 0)
-        first = raw_widget.renderable
+        assert body.raw_view is raw_widget
+        assert "needle" in raw_widget.render_line(0).text
+
         body.sync_search("needle", 1)
-        body.sync_search("needle", 0)
-        assert raw_widget.renderable is first
-        assert len(builds) == 1, (
-            f"The body rebuilt its highlight plan {len(builds)} times for "
-            "one (document, query) pair."
-        )
+        assert body.raw_view is raw_widget
+        assert "needle" in raw_widget.render_line(2).text
 
         # A padded restatement of the same query is the same needle.
         body.sync_search("  needle ", 1)
-        assert raw_widget.renderable is first
-        assert len(builds) == 1
+        assert body.raw_view is raw_widget
+        assert raw_widget._query == "needle"
 
         body.sync_search("beacon", 0)
-        assert len(builds) == 2
-        second = raw_widget.renderable
-        assert second is not first
-        assert isinstance(second, Text)
-        assert {
-            second.plain[span.start : span.end] for span in second.spans
-        } == {"beacon"}
+        assert body.raw_view is raw_widget
+        assert raw_widget._query == "beacon"
+        assert "beacon" in raw_widget.render_line(1).text
 
 
 @pytest.mark.asyncio
-async def test_body_replacing_its_document_rebuilds_the_plan() -> None:
-    """The plan key holds the document, not just the query.
+async def test_body_content_mutation_does_not_retroactively_change_the_mounted_raw_view() -> None:
+    """The Raw view's document is frozen at construction (task-22500).
 
-    The mounted screen never does this -- a content change recomposes the
-    viewer and builds a FRESH body -- so this pins the widget's own
-    contract rather than a live screen path: a body asked to highlight a
-    document it was not holding before must not answer from the previous
-    document's spans.
+    ``VirtualizedRawContent`` builds its line lists once, in ``__init__``;
+    ``sync_search`` only forwards ``query``/``match_index``, never
+    ``content``. Production never mutates ``body.content`` after
+    construction -- a content change recomposes the whole viewer and builds
+    a fresh body -- so this pins that contract directly rather than relying
+    on that higher-level recompose to exercise it.
     """
     body = LibraryMediaContentBody(
         content="alpha needle\nbeta",
@@ -577,22 +606,14 @@ async def test_body_replacing_its_document_rebuilds_the_plan() -> None:
     app = BodyHarness(body)
 
     async with app.run_test(size=(60, 12)):
-        raw_widget = body._raw_widget
+        raw_widget = body.raw_view
         assert raw_widget is not None
-
-        body.sync_search("needle", 0)
-        first = raw_widget.renderable
-        assert isinstance(first, Text)
-        assert first.plain == "alpha needle\nbeta"
+        assert "alpha needle" in raw_widget.render_line(0).text
 
         body.content = "gamma needle\ndelta needle\nepsilon"
         body.sync_search("needle", 1)
 
-        second = raw_widget.renderable
-        assert isinstance(second, Text)
-        assert second is not first
-        assert second.plain == "gamma needle\ndelta needle\nepsilon"
-        assert [str(span.style) for span in second.spans] == [
-            "reverse",
-            "reverse bold",
-        ]
+        # Same widget instance, still showing the ORIGINAL document -- a
+        # content change requires a new widget, produced by a fresh compose().
+        assert body.raw_view is raw_widget
+        assert "alpha needle" in raw_widget.render_line(0).text

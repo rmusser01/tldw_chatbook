@@ -6,10 +6,17 @@ from typing import Any
 
 from rich.text import Span, Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import (
+    Container,
+    Horizontal,
+    ScrollableContainer,
+    Vertical,
+    VerticalScroll,
+)
 from textual.widgets import Button, Input, Markdown, Static
 
 from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
+from tldw_chatbook.Widgets.Library.library_media_raw_view import VirtualizedRawContent
 
 #: Style carried by every highlighted match…
 MATCH_STYLE = "reverse"
@@ -142,7 +149,7 @@ def build_raw_content_renderable(
     return plan.renderable(match_index)
 
 
-class LibraryMediaContentBody(VerticalScroll):
+class LibraryMediaContentBody(Container):
     """Lazily mount and retain the Raw and Rendered media content views."""
 
     _VALID_MODES = frozenset({"raw", "rendered"})
@@ -160,8 +167,9 @@ class LibraryMediaContentBody(VerticalScroll):
         super().__init__(**kwargs)
         self.content = content
         self.is_markdown = is_markdown
-        self._raw_widget: Static | None = None
+        self._raw_widget: VirtualizedRawContent | None = None
         self._markdown_widget: Markdown | None = None
+        self._markdown_scroll: VerticalScroll | None = None
         self._desired_mode = self._normalize_mode(mode)
         self._mount_lock = asyncio.Lock()
         self._query = query
@@ -178,11 +186,44 @@ class LibraryMediaContentBody(VerticalScroll):
         self._highlight_query: str | None = None
         self._highlight_plan: RawContentHighlightPlan | str | None = None
 
+    @property
+    def raw_view(self) -> VirtualizedRawContent | None:
+        """The mounted virtualized Raw view.
+
+        Returns:
+            The mounted ``VirtualizedRawContent``, or ``None`` if Raw mode
+            has never been mounted yet.
+        """
+        return self._raw_widget
+
+    @property
+    def scroller(self) -> ScrollableContainer:
+        """The scroller for the CURRENT mode.
+
+        Callers used to query this container as a VerticalScroll inside
+        try/except; when the type stopped matching they silently no-opped
+        and the reader quietly lost scroll restoration.
+
+        Returns:
+            The Raw view when Raw is the active, mounted mode; the
+            Rendered scroller when it is mounted; otherwise this container
+            itself (before either mode has mounted).
+        """
+        if self._desired_mode == "raw" and self._raw_widget is not None:
+            return self._raw_widget
+        if self._markdown_scroll is not None:
+            return self._markdown_scroll
+        return self
+
     def compose(self) -> ComposeResult:
         """Construct only the selected initial content view."""
         if self._desired_mode == "rendered":
             self._markdown_widget = self._build_markdown_widget()
-            yield self._markdown_widget
+            self._markdown_scroll = VerticalScroll(
+                self._markdown_widget,
+                id="library-media-viewer-content-markdown-scroll",
+            )
+            yield self._markdown_scroll
             return
         self._raw_widget = self._build_raw_widget()
         yield self._raw_widget
@@ -206,11 +247,17 @@ class LibraryMediaContentBody(VerticalScroll):
             await self._ensure_mode_mounted(desired)
             if self._raw_widget is not None:
                 self._raw_widget.display = desired == "raw"
-            if self._markdown_widget is not None:
-                self._markdown_widget.display = desired == "rendered"
+            if self._markdown_scroll is not None:
+                self._markdown_scroll.display = desired == "rendered"
 
     def sync_search(self, query: str, match_index: int) -> None:
-        """Refresh mounted Raw content while retaining the rendered view.
+        """Forward a search update to the mounted virtualized Raw view.
+
+        task-22500: the whole-document highlight ``Text`` this used to
+        rebuild (via ``_raw_content_renderable``) is gone from the mounted
+        Raw view -- ``VirtualizedRawContent`` restyles each row it paints
+        from ``query``/``match_index`` directly, so there is nothing
+        document-sized left to build or cache here.
 
         Args:
             query: Case-insensitive search text to highlight.
@@ -222,16 +269,7 @@ class LibraryMediaContentBody(VerticalScroll):
         self._query = query
         self._match_index = match_index
         if self._raw_widget is not None:
-            # TASK-21134: ``layout=False`` -- a search refresh restyles the
-            # SAME characters (the highlight plan only moves the active
-            # span's style; it never adds, removes or rewraps a line), so
-            # the widget's size cannot change and the layout pass
-            # Static.update() arms by default was pure waste on every
-            # match-nav click and every keystroke in the search box.
-            self._raw_widget.update(
-                self._raw_content_renderable(query, match_index),
-                layout=False,
-            )
+            self._raw_widget.sync_search(query, match_index)
 
     def _raw_content_renderable(self, query: str, match_index: int) -> Text | str:
         """Return the highlighted document, reusing the cached plan.
@@ -272,9 +310,13 @@ class LibraryMediaContentBody(VerticalScroll):
                 self._raw_widget = self._build_raw_widget()
                 await self.mount(self._raw_widget)
             return
-        if self._markdown_widget is None:
+        if self._markdown_scroll is None:
             self._markdown_widget = self._build_markdown_widget()
-            await self.mount(self._markdown_widget)
+            self._markdown_scroll = VerticalScroll(
+                self._markdown_widget,
+                id="library-media-viewer-content-markdown-scroll",
+            )
+            await self.mount(self._markdown_scroll)
 
     def _normalize_mode(self, mode: str) -> str:
         """Validate a mode and force non-Markdown bodies to their Raw view."""
@@ -282,11 +324,18 @@ class LibraryMediaContentBody(VerticalScroll):
             raise ValueError(f"Unsupported Library media content mode: {mode!r}")
         return mode if self.is_markdown else "raw"
 
-    def _build_raw_widget(self) -> Static:
-        return Static(
-            self._raw_content_renderable(self._query, self._match_index),
+    def _build_raw_widget(self) -> VirtualizedRawContent:
+        """Construct the virtualized Raw content view for the current state.
+
+        Returns:
+            A ``VirtualizedRawContent`` seeded with the body's current
+            content, search query, and active match index.
+        """
+        return VirtualizedRawContent(
+            content=self.content,
+            query=self._query,
+            match_index=self._match_index,
             id="library-media-viewer-content-text",
-            markup=False,
         )
 
     def _build_markdown_widget(self) -> Markdown:
