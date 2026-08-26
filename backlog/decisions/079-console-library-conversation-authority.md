@@ -41,8 +41,10 @@ schema-version read rather than trying to upgrade a deferred outer transaction;
 inside that transaction it applies the seed (defaulting it when absent, per the
 amendment in the trade-offs below), creates the policy table plus a
 dedicated `console_dispatch_checkpoints` table/index, inserts final policy rows
-for active and soft-deleted conversations present in the migration transaction,
-adds nullable `messages.assistant_generation_state`, and advances the version.
+for the active conversations present in the migration transaction (soft-deleted
+ones were included as first written; amended by TASK-22225 -- see the
+trade-offs below), adds nullable `messages.assistant_generation_state`, and
+advances the version.
 The same v45 transaction replaces all four final message Sync-v1
 create/update/delete/undelete triggers so payloads serialize the new field and
 updates watch it. The historical v4 bootstrap schema stays unchanged: fresh
@@ -358,7 +360,17 @@ accepted ADR-003, ADR-030, ADR-032, ADR-066, or ADR-067 in place.
   migration back rather than guessing.
 - Existing conversations are intentionally backfilled to Allowed and their
   current automatic default, so privacy-tight defaults apply prospectively
-  rather than silently changing established behavior.
+  rather than silently changing established behavior. **Amended by
+  TASK-22225:** the backfill covers LIVE conversations only. Seeding
+  soft-deleted ones bought nothing the stated intent needs -- a tombstone has
+  no established behavior to preserve, because `ConsoleLibraryPolicy
+  Repository` joins `conversations` and fail-closes on `deleted`, both writers
+  refuse a deleted conversation, and the durable-turn commit raises before it
+  reads policy -- while costing one insert per tombstone inside the boot
+  version-bump transaction and storing device policy for conversations the
+  user deleted, permanently. The seed now excludes them and a v49 -> v50 step
+  removes the rows already written, so a profile that upgraded before the fix
+  and one that upgrades after it hold the same policy rows.
 - Global policy defaults apply only at local session creation, which means two
   devices may intentionally hold different policy for the same synced
   conversation.
