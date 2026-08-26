@@ -159,3 +159,78 @@ async def test_real_mouse_drag_across_two_source_lines_inserts_exactly_one_newli
         selected = app.screen.get_selected_text()
         assert selected == "first line\nsecond "
         assert selected.count("\n") == 1
+
+
+@pytest.mark.asyncio
+async def test_real_mouse_drag_paints_the_selection_style_only_over_dragged_cells():
+    """``get_selection`` returning the right text is not the same as the drag
+    being visible. A hand-rolled ``render_line`` does not get Static's
+    automatic selection highlight (from ``Visual.to_strips`` reading
+    ``widget.text_selection``) for free -- it must apply
+    ``screen.get_component_rich_style("screen--selection")`` itself, the
+    same component style ``Static``/``Log`` use. This asserts the RENDERED
+    strips carry that style over the covered cells and nowhere else, which a
+    ``get_selection``-only test cannot see."""
+    content = "alpha " * 60
+    app = _Harness(content)
+    async with app.run_test(size=(40, 20)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+
+        def bgcolor_at(strip, x):
+            return list(strip.crop(x, x + 1))[0].style.bgcolor
+
+        # Before any drag: nothing is styled.
+        assert bgcolor_at(widget.render_line(0), 0) is None
+
+        # Drag from row 0 col 3 to row 1 col 2 -- a wrap-boundary selection
+        # that is partial on BOTH rendered rows of this single wrapped
+        # source line.
+        await pilot.mouse_down(widget, offset=(3, 0))
+        await pilot._post_mouse_events([MouseMove], widget=widget, offset=(2, 1))
+        await pilot.mouse_up(widget, offset=(2, 1))
+        await pilot.pause()
+
+        selection_bg = app.screen.get_component_rich_style("screen--selection").bgcolor
+        assert selection_bg is not None
+
+        row0 = widget.render_line(0)
+        row1 = widget.render_line(1)
+        row5 = widget.render_line(5)  # far outside the drag
+
+        # Row 0 (first row): covered from column 3 onward, NOT before it.
+        assert bgcolor_at(row0, 0) is None
+        assert bgcolor_at(row0, 1) is None
+        assert bgcolor_at(row0, 2) is None
+        assert bgcolor_at(row0, 3) == selection_bg
+        assert bgcolor_at(row0, 7) == selection_bg
+
+        # Row 1 (last row): covered up to column 3, NOT after it.
+        assert bgcolor_at(row1, 0) == selection_bg
+        assert bgcolor_at(row1, 1) == selection_bg
+        assert bgcolor_at(row1, 2) == selection_bg
+        assert bgcolor_at(row1, 3) is None
+        assert bgcolor_at(row1, 4) is None
+
+        # An undragged row elsewhere in the same document: untouched.
+        for x in range(4):
+            assert bgcolor_at(row5, x) is None
+
+
+@pytest.mark.asyncio
+async def test_select_all_highlights_every_visible_row():
+    """``Selection(None, None)`` (SELECT_ALL) must highlight every row, not
+    just the ones a partial drag would touch."""
+    content = "one\ntwo\nthree"
+    app = _Harness(content)
+    async with app.run_test(size=(40, 20)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+        app.screen.selections = {widget: Selection(None, None)}
+        await pilot.pause()
+
+        selection_bg = app.screen.get_component_rich_style("screen--selection").bgcolor
+        for row in range(3):
+            strip = widget.render_line(row)
+            bgcolor = list(strip.crop(0, 1))[0].style.bgcolor
+            assert bgcolor == selection_bg

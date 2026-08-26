@@ -156,6 +156,30 @@ class VirtualizedRawContent(ScrollView):
                     hit,
                     hit + len(self._query),
                 )
+        # Visual selection highlight: Static gets this for free from
+        # Visual.to_strips reading widget.text_selection; a hand-rolled
+        # render_line has to do it explicitly or a drag copies the right
+        # text (get_selection, above) while showing no visible feedback at
+        # all. Follows the same precedent as Textual's own Log widget
+        # (textual/widgets/_log.py, ScrollView + hand-rolled render_line):
+        # Selection.get_span(row) already returns the right sub-range for
+        # every case -- full row for SELECT_ALL, `(x, -1)`/`(0, x)` for a
+        # row that is only partially covered (the first/last row of a
+        # multi-row selection), `(0, -1)` for a fully-covered middle row --
+        # so no separate wrap-boundary-vs-line-boundary logic is needed
+        # here; `row` is already the same per-wrapped-row domain
+        # `apply_offsets` below uses.
+        selection = self.text_selection
+        if selection is not None:
+            span = selection.get_span(row)
+            if span is not None:
+                select_start, select_end = span
+                if select_end == -1:
+                    select_end = len(piece)
+                selection_style = self.screen.get_component_rich_style(
+                    "screen--selection"
+                )
+                text.stylize(selection_style, select_start, select_end)
         rendered = list(text.render(self.app.console))
         strip = Strip(rendered, len(piece))
         # Embed a per-cell content offset (column-in-piece, document row) so
