@@ -139,7 +139,9 @@ must not leak back into default-mode thresholds.
   effective width.
 
 The Settings label should describe a shared **Library rail**, not imply that the
-width applies only to Media or to the work reader.
+width applies only to Media or to the work reader. Its help copy describes the
+number as a preferred width that may shrink temporarily to keep 40 cells of
+content usable; resize-time compression is not reported as a save or error.
 
 ### Settled behavior matrix
 
@@ -172,8 +174,11 @@ pane state, or width preferences.
 
 The canvas-only emergency stage provides one `LibraryScreen`-owned return seam:
 
-- a visible, focusable, pointer-operable **‹ Library** action remains at the
-  leading edge of every ordinary canvas while `W < 64`;
+- one pinned return bar is mounted once in the shared ordinary `#library-canvas`
+  host, outside route-owned scrolling content; it is hidden without reserving a
+  row at 64+ and shown throughout the canvas-only emergency stage;
+- the bar exposes a visible, focusable, pointer-operable **‹ Library** action,
+  using **< Library** when ASCII glyph substitution is enabled;
 - an emergency `Escape` binding is declared after route-specific Back,
   cancellation, destructive-confirmation, and dirty-editor bindings but before
   the broad list-to-rail focus binding;
@@ -183,11 +188,26 @@ The canvas-only emergency stage provides one `LibraryScreen`-owned return seam:
 - the pointer action calls the same guarded return request and cannot bypass a
   modal, destructive confirmation, running mutation, conflict, or dirty draft;
 - a successful return focuses the selected rail row, falling back to rail search
-  if that row is unavailable, and exposes `esc rail` in the compact footer and
-  the equivalent F1 help entry; and
+  if that row is unavailable;
+- one `LibraryScreen` eligibility projection supplies the action's enabled/guarded
+  presentation, the Escape binding's `check_action`, and footer/F1 copy. It
+  advertises `esc rail` only at a safe top-level canvas state; nested Back,
+  cancel, destructive, conflict, running, and dirty-draft guidance remains
+  authoritative while those states have first refusal; and
 - every emergency-stage interaction advances the existing focus-intent
   generation. A cached pre-entry focus/scroll tuple restores at 64+ only if no
   newer rail/canvas interaction superseded it.
+
+### Resize and performance discipline
+
+Width resolution is pure constant-time arithmetic. `LibraryScreen` retains the
+last applied ordinary width contract and patches rail display, width, minimum,
+and maximum only when that effective tuple changes. Resize, route,
+settings-generation, and emergency-stage synchronization do not recompose the
+rail or canvas, reload destination data, reread configuration, or write
+preferences. Adaptive readers retain their existing equality-guarded in-place
+`sync_layout()` path and bounded post-refresh settling; no new resize worker or
+polling loop is introduced.
 
 When a rail is alongside content at the same settled width and no
 custom override is active, destination switching must produce the same rendered
@@ -280,9 +300,10 @@ not only declared style values.
    emergency rail-only/canvas-only → wide restoration separately for bounded and
    custom declarations, including selected-row and focus/scroll restoration.
    At 60 columns, exercise activation, guarded **‹ Library**/Escape return,
-   focus, footer/F1 copy, and containment for every ordinary route. Exercise
-   63↔64 recovery after a later compact-stage interaction and prove stale
-   pre-entry focus/scroll does not overwrite it.
+   focus, state-aware footer/F1 copy, pinned-bar containment, and ASCII fallback
+   for every ordinary route. Prove the bar is absent without reserved height at
+   64+. Exercise 63↔64 recovery after a later compact-stage interaction and
+   prove stale pre-entry focus/scroll does not overwrite it.
 8. Preserve row-label fitting, search, section disclosure, grip/handle access,
    global focus cycling, and adaptive collapse-order tests. For explicit Library
    priority, assert the exact escape boundary with two five-cell grips:
@@ -290,6 +311,8 @@ not only declared style values.
    `W=33 → Library 23, Items 0, Work 0`. Zero width remains the all-zero sentinel.
 9. Run Library unit/integration suites, generated-CSS integrity when applicable,
    Ruff, compilation, and diff-hygiene gates.
+   Instrument resize synchronization to prove unchanged effective contracts do
+   not recompose, reload, reread configuration, or write preferences.
 10. Perform isolated PTY UAT at representative wide, standard, and compact
    terminal sizes. Report native terminal-emulator-specific acceptance only
    when it was actually run.

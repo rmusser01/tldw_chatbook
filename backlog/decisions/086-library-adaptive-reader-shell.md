@@ -67,9 +67,17 @@ guarded focus/scroll state without persisting effective geometry.
 
 Emergency return is one guarded `LibraryScreen` seam exposed as a visible **‹ Library** action and
 an Escape binding ordered after route-specific Back/cancel/dirty/destructive handlers but before
-the broad list-to-rail focus binding. Modal and in-canvas safety contracts receive first refusal.
-Successful return focuses the selected rail row, is advertised in compact footer/F1 help, and uses
-focus-intent generations so later compact interaction defeats stale wide-recovery restoration.
+the broad list-to-rail focus binding. One pinned bar in the shared ordinary canvas host carries the
+pointer action and ASCII fallback without modifying route-owned scroll content. One eligibility
+projection owns button state, Escape `check_action`, and footer/F1 copy. Modal and in-canvas safety
+contracts receive first refusal; `esc rail` is advertised only when the return can act. Successful
+return focuses the selected rail row and uses focus-intent generations so later compact interaction
+defeats stale wide-recovery restoration.
+
+Resize policy remains pure and in-place. The screen equality-guards the last applied ordinary
+display/width/minimum/maximum tuple; unchanged resize events do not recompose, load destination
+data, reread configuration, write preferences, start workers, or poll. Adaptive shells retain their
+existing equality-guarded `sync_layout()` and bounded post-refresh settling.
 
 With two fixed five-cell adaptive grips, explicit Library priority reaches its 24-cell escape floor
 at `W=34`; below that it compresses as `max(W - 10, 0)`. Therefore `W=34` resolves to Library 24,
