@@ -30,6 +30,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatStream,
     HostedChatTurn,
     HostedHTTPTransportConfig,
+    ReasoningDisposition,
     normalize_hosted_chat_base_url,
     normalize_hosted_chat_response,
     owned_json_post,
@@ -71,6 +72,8 @@ class ZAIResolution:
 
 class ZAIFinishPolicy:
     """Validate Z.ai finishes and allowlisted reasoning content."""
+
+    reasoning_disposition: ReasoningDisposition = "proprietary"
 
     def validate_finish(
         self,

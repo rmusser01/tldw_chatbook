@@ -41,6 +41,8 @@ from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
 
 
 class _FinishPolicy:
+    reasoning_disposition = "ignored"
+
     def validate_finish(
         self,
         *,

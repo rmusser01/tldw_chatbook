@@ -31,6 +31,9 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
     LlamaCppProviderConfig,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
+    ProviderThinkingCaptureError,
     ProviderToolCalls,
     build_llamacpp_chat_payload,
     normalize_llamacpp_base_url,
@@ -53,6 +56,131 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     build_request_capture,
 )
+from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+
+
+def test_provider_thinking_events_are_bounded_and_content_free_in_repr() -> None:
+    canary = "DISPLAYABLE-THINKING-CANARY"
+    event = ProviderThinkingDelta(
+        text=canary,
+        provider="llama_cpp",
+        model="qwen",
+        protocol="chat_completions",
+        source_format="start_anchored_think",
+    )
+
+    assert event.text == canary
+    assert canary not in repr(event)
+    assert dataclasses.fields(event)[0].name == "text"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.model = "other"  # type: ignore[misc]
+
+
+def test_proprietary_thinking_event_cannot_carry_content_surrogates() -> None:
+    event = ProviderProprietaryThinkingEvidence(
+        provider="moonshot",
+        model="kimi-k3",
+        protocol="chat_completions",
+        source_format="reasoning_content",
+    )
+
+    assert {field.name for field in dataclasses.fields(event)} == {
+        "provider",
+        "model",
+        "protocol",
+        "source_format",
+    }
+    assert not hasattr(event, "__dict__")
+    assert "PRIVATE-REASONING-CANARY" not in repr(event)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.provider = "other"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"text": ""},
+        {"text": "x" * (256 * 1024 + 1)},
+        {"provider": ""},
+        {"model": "x" * 201},
+        {"protocol": ""},
+        {"source_format": ""},
+    ],
+)
+def test_provider_thinking_delta_rejects_invalid_or_oversized_values(
+    kwargs: dict[str, str],
+) -> None:
+    values = {
+        "text": "safe",
+        "provider": "llama_cpp",
+        "model": "qwen",
+        "protocol": "chat_completions",
+        "source_format": "start_anchored_think",
+    }
+    values.update(kwargs)
+
+    with pytest.raises(ValueError, match="Invalid provider thinking event") as error:
+        ProviderThinkingDelta(**values)
+
+    invalid_text = values.get("text", "")
+    if invalid_text:
+        assert invalid_text not in str(error.value)
+
+
+def test_provider_resolution_defaults_to_ignored_thinking_capability() -> None:
+    resolution = ConsoleProviderResolution(
+        provider="unknown",
+        base_url="https://example.test/v1",
+        model="reasoner",
+        ready=True,
+        execution_key="unknown",
+    )
+
+    assert resolution.thinking_stream_disposition == "ignored"
+    assert resolution.thinking_round_trip_version is None
+    assert resolution.may_emit_thinking is False
+
+
+def test_gateway_consumes_provider_owned_reasoning_disposition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gateway_module.MoonshotFinishPolicy,
+        "reasoning_disposition",
+        "ignored",
+    )
+
+    assert gateway_module._thinking_stream_capability("moonshot") == {
+        "thinking_stream_disposition": "ignored",
+        "thinking_round_trip_version": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("disposition", "version"),
+    [
+        ("unknown", None),
+        ("ignored", 1),
+        ("displayable", None),
+        ("displayable", True),
+        ("displayable", 2),
+        ("proprietary", None),
+    ],
+)
+def test_provider_resolution_rejects_incoherent_thinking_capability(
+    disposition: str,
+    version: int | None,
+) -> None:
+    with pytest.raises(ValueError, match="Invalid provider thinking capability"):
+        ConsoleProviderResolution(
+            provider="test",
+            base_url="https://example.test/v1",
+            model="reasoner",
+            ready=True,
+            execution_key="test",
+            thinking_stream_disposition=disposition,  # type: ignore[arg-type]
+            thinking_round_trip_version=version,
+        )
 
 
 @pytest.mark.asyncio
@@ -155,6 +283,14 @@ async def test_real_resolution_pins_provider_continuation_protocol_before_prepar
     assert resolution.ready is True
     assert resolution.continuation_protocol == protocol
     assert resolution.api_mode == (protocol if provider_key == "deepseek" else None)
+    expected_disposition = (
+        "proprietary" if provider_key in {"moonshot", "zai"} else "ignored"
+    )
+    assert resolution.thinking_stream_disposition == expected_disposition
+    assert resolution.thinking_round_trip_version == (
+        1 if expected_disposition != "ignored" else None
+    )
+    assert resolution.may_emit_thinking is (expected_disposition != "ignored")
     prepared = gateway.prepare_chat_request(
         resolution,
         [{"_owner": "a1", "role": "assistant", "content": "answer"}],
@@ -642,6 +778,9 @@ async def test_resolve_for_send_dispatches_llamacpp_selection():
     assert resolved.ready is True
     assert resolved.provider == "llama_cpp"
     assert resolved.model == "server-model"
+    assert resolved.thinking_stream_disposition == "displayable"
+    assert resolved.thinking_round_trip_version == 1
+    assert resolved.may_emit_thinking is True
 
 
 @pytest.mark.asyncio
@@ -1842,6 +1981,328 @@ def make_gateway_with_completion(payload: dict) -> ConsoleProviderGateway:
     )
 
 
+class TestDirectPathThinkingEvents:
+    @pytest.mark.asyncio
+    async def test_stream_emits_typed_start_anchored_thinking_with_frozen_identity(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        canary = "DISPLAYABLE-THINKING-CANARY"
+        lines = [
+            f'data: {{"choices":[{{"delta":{{"content":"<think>{canary}</think>Answer"}}}}]}}',
+            "data: [DONE]",
+        ]
+        gateway = make_gateway_with_sse(lines)
+
+        items = [
+            item
+            async for item in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+                provider="local_llamacpp",
+                protocol="chat_completions",
+            )
+        ]
+
+        assert items[1:] == ["Answer"]
+        event = items[0]
+        assert isinstance(event, ProviderThinkingDelta)
+        assert event.text == canary
+        assert (
+            event.provider,
+            event.model,
+            event.protocol,
+            event.source_format,
+        ) == (
+            "local_llamacpp",
+            "qwen",
+            "chat_completions",
+            "start_anchored_think",
+        )
+        assert canary not in repr(event)
+        assert canary not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_stream_with_no_think_tag_emits_no_thinking_event(self) -> None:
+        gateway = make_gateway_with_sse(
+            [
+                'data: {"choices":[{"delta":{"content":"Answer"}}]}',
+                "data: [DONE]",
+            ]
+        )
+
+        items = [
+            item
+            async for item in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+
+        assert items == ["Answer"]
+
+    @pytest.mark.asyncio
+    async def test_unclosed_thinking_emits_partial_then_content_free_failure(
+        self,
+    ) -> None:
+        canary = "UNCLOSED-THINKING-CANARY"
+        gateway = make_gateway_with_sse(
+            [
+                f'data: {{"choices":[{{"delta":{{"content":"<think>{canary}"}}}}]}}',
+                "data: [DONE]",
+            ]
+        )
+        stream = gateway.stream_llamacpp_chat(
+            base_url="http://127.0.0.1:8080",
+            model="qwen",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        event = await anext(stream)
+        assert isinstance(event, ProviderThinkingDelta)
+        with pytest.raises(ProviderThinkingCaptureError) as error:
+            await anext(stream)
+        assert canary not in str(error.value)
+
+    @pytest.mark.asyncio
+    async def test_nonstream_console_send_emits_thinking_before_visible_answer(
+        self,
+    ) -> None:
+        canary = "NONSTREAM-THINKING-CANARY"
+        gateway = make_gateway_with_completion(
+            {"choices": [{"message": {"content": f"<think>{canary}</think>Answer"}}]}
+        )
+        resolution = ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:8080",
+            model="qwen",
+            ready=True,
+            execution_key="llama_cpp",
+            streaming=False,
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+        )
+
+        items = [
+            item
+            async for item in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}]
+            )
+        ]
+
+        assert isinstance(items[0], ProviderThinkingDelta)
+        assert items[0].text == canary
+        assert items[1:] == ["Answer"]
+
+    @pytest.mark.asyncio
+    async def test_nonstream_unclosed_thinking_emits_delta_before_safe_failure(
+        self,
+    ) -> None:
+        canary = "NONSTREAM-UNCLOSED-THINKING-CANARY"
+        gateway = make_gateway_with_completion(
+            {"choices": [{"message": {"content": f"<think>{canary}"}}]}
+        )
+        resolution = ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:8080",
+            model="qwen",
+            ready=True,
+            execution_key="llama_cpp",
+            streaming=False,
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+        )
+        stream = gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+
+        event = await anext(stream)
+        assert isinstance(event, ProviderThinkingDelta)
+        assert event.text == canary
+        with pytest.raises(ProviderThinkingCaptureError) as error:
+            await anext(stream)
+        assert canary not in str(error.value)
+
+
+class _TerminalHostedResponse:
+    def __init__(self, items: list[dict], turn: HostedChatTurn) -> None:
+        self._items = iter(items)
+        self.terminal_turn = turn
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._items)
+
+    def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_proprietary_hosted_reasoning_emits_one_content_free_terminal_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    canary = "PRIVATE-REASONING-CANARY"
+    turn = HostedChatTurn(
+        text="Answer",
+        tool_calls=(),
+        assistant_message={"role": "assistant", "content": "Answer"},
+        finish_reason="stop",
+        reasoning_content=canary,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: _TerminalHostedResponse(
+            [{"choices": [{"delta": {"content": "Answer"}}]}], turn
+        ),
+        environ={},
+    )
+    resolution = ConsoleProviderResolution(
+        provider="moonshot",
+        base_url="https://api.moonshot.ai/v1",
+        model="kimi-k3",
+        ready=True,
+        execution_key="moonshot",
+        continuation_protocol="chat_completions",
+        thinking_stream_disposition="proprietary",
+        thinking_round_trip_version=1,
+    )
+
+    items = [
+        item
+        async for item in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert items[0] == "Answer"
+    assert len(items) == 2
+    evidence = items[1]
+    assert isinstance(evidence, ProviderProprietaryThinkingEvidence)
+    assert (
+        evidence.provider,
+        evidence.model,
+        evidence.protocol,
+        evidence.source_format,
+    ) == (
+        "moonshot",
+        "kimi-k3",
+        "chat_completions",
+        "reasoning_content",
+    )
+    assert canary not in repr(evidence)
+    assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_proprietary_capability_without_current_reasoning_emits_no_event() -> None:
+    turn = HostedChatTurn(
+        text="Answer",
+        tool_calls=(),
+        assistant_message={"role": "assistant", "content": "Answer"},
+        finish_reason="stop",
+        reasoning_content=None,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: _TerminalHostedResponse(
+            [{"choices": [{"delta": {"content": "Answer"}}]}], turn
+        ),
+        environ={},
+    )
+    resolution = ConsoleProviderResolution(
+        provider="zai",
+        base_url="https://api.z.ai/api/paas/v4",
+        model="glm-5.2",
+        ready=True,
+        execution_key="zai",
+        continuation_protocol="chat_completions",
+        thinking_stream_disposition="proprietary",
+        thinking_round_trip_version=1,
+    )
+
+    items = [
+        item
+        async for item in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert items == ["Answer"]
+
+
+@pytest.mark.asyncio
+async def test_vllm_displayable_disposition_splits_start_anchored_thinking() -> None:
+    canary = "VLLM-THINKING-CANARY"
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: iter(
+            [{"choices": [{"delta": {"content": f"<think>{canary}</think>Answer"}}]}]
+        ),
+        environ={},
+    )
+    resolution = ConsoleProviderResolution(
+        provider="vllm",
+        base_url="http://127.0.0.1:8000/v1",
+        model="local-model",
+        ready=True,
+        execution_key="vllm",
+        thinking_stream_disposition="displayable",
+        thinking_round_trip_version=1,
+    )
+
+    items = [
+        item
+        async for item in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert isinstance(items[0], ProviderThinkingDelta)
+    assert items[0].text == canary
+    assert items[0].provider == "vllm"
+    assert items[1:] == ["Answer"]
+
+
+@pytest.mark.asyncio
+async def test_ignored_generic_reasoning_fields_and_tags_remain_visible_only() -> None:
+    canary = "IGNORED-REASONING-CANARY"
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: iter(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "reasoning_content": canary,
+                                "content": "<think>literal</think>Answer",
+                            }
+                        }
+                    ]
+                }
+            ]
+        ),
+        environ={},
+    )
+    resolution = ConsoleProviderResolution(
+        provider="unknown",
+        base_url="https://example.test/v1",
+        model="model",
+        ready=True,
+        execution_key="unknown",
+    )
+
+    items = [
+        item
+        async for item in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert items == ["<think>literal</think>Answer"]
+    assert canary not in repr(items)
+
+
 class TestDirectPathThinkFiltering:
     @pytest.mark.asyncio
     async def test_stream_strips_start_anchored_think_block(self):
@@ -1853,15 +2314,18 @@ class TestDirectPathThinkFiltering:
             "data: [DONE]",
         ]
         gateway = make_gateway_with_sse(lines)
-        chunks = [
-            chunk
-            async for chunk in gateway.stream_llamacpp_chat(
+        items = [
+            item
+            async for item in gateway.stream_llamacpp_chat(
                 base_url="http://127.0.0.1:8080",
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
             )
         ]
-        assert "".join(chunks) == "Hello"
+        assert "".join(
+            item.text for item in items if isinstance(item, ProviderThinkingDelta)
+        ) == "ponder"
+        assert "".join(item for item in items if isinstance(item, str)) == "Hello"
 
     @pytest.mark.asyncio
     async def test_stream_passes_mid_reply_literal_tag(self):
@@ -1933,15 +2397,18 @@ class TestDirectPathThinkFiltering:
                 base_url="http://127.0.0.1:8080",
             )
         )
-        chunks = [
-            chunk
-            async for chunk in gateway.stream_llamacpp_chat(
+        items = [
+            item
+            async for item in gateway.stream_llamacpp_chat(
                 base_url="http://127.0.0.1:8080",
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
             )
         ]
-        assert chunks == []
+        assert "".join(
+            item.text for item in items if isinstance(item, ProviderThinkingDelta)
+        ) == "only pondering"
+        assert not any(isinstance(item, str) for item in items)
         assert len(requests) == 1
 
 
@@ -7163,6 +7630,70 @@ class TestLlamaCppExchangeCapture:
         # Same keyless guarantee the sibling captures hold.
         assert "local-secret" not in _json.dumps(retry_capture.request)
         assert "retry-secret" not in _json.dumps(retry_capture.request)
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_failed_fallback_capture_records_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _EmptyStreamResponse:
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                return
+                yield  # pragma: no cover - generator marker
+
+        class _StreamCtx:
+            async def __aenter__(self):
+                return _EmptyStreamResponse()
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        class _FakeClient:
+            def stream(self, *_args, **_kwargs):
+                return _StreamCtx()
+
+        gateway = ConsoleProviderGateway()
+        monkeypatch.setattr(
+            ConsoleProviderGateway,
+            "_active_http_client",
+            lambda self: _FakeClient(),
+        )
+        event = ProviderThinkingDelta(
+            text="captured",
+            provider="llama_cpp",
+            model="m",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        )
+
+        async def fake_complete(self, **_kwargs):
+            return gateway_module._LocalCompletionResult(
+                items=(event,), capture_failed=True
+            )
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
+        )
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        stream = gateway.stream_chat(
+            self._resolution(streaming=True),
+            [{"role": "user", "content": "q"}],
+            signals=aggregate,
+        )
+
+        assert await anext(stream) is event
+        with pytest.raises(ProviderThinkingCaptureError):
+            await anext(stream)
+
+        retry = [
+            capture
+            for capture in aggregate.exchange_captures()
+            if "retry_of" in capture.request
+        ]
+        assert len(retry) == 1
+        assert retry[0].status == "error"
 
     @pytest.mark.asyncio
     async def test_llamacpp_stream_to_complete_fallback_emits_retry_signal(
