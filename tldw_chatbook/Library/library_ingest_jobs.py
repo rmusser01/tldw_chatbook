@@ -867,7 +867,10 @@ class LibraryIngestJobRegistry:
         return _copy_job(job)
 
     def next_queued(
-        self, *, skip_types: frozenset[str] = frozenset()
+        self,
+        *,
+        skip_types: frozenset[str] = frozenset(),
+        only_types: frozenset[str] | None = None,
     ) -> LibraryIngestJob | None:
         """Return the oldest still-``QUEUED`` job, or ``None`` if none.
 
@@ -876,17 +879,21 @@ class LibraryIngestJobRegistry:
                 returns the oldest queued job of any type; a non-empty set
                 returns the oldest queued job whose ``detected_type`` is not
                 in the set (skip-ahead for the heavy-lane cap).
+            only_types: Optional set of ``detected_type`` values eligible for
+                selection. Used when a parse-pool generation owns one resource
+                class, such as ebooks.
 
         Returns:
             A copy of the oldest queued job in FIFO submission order whose
-            ``detected_type`` is not in ``skip_types``, or ``None`` when no
-            such job is queued.
+            ``detected_type`` passes both filters, or ``None`` when no such
+            job is queued.
         """
         for job in self._jobs:
             if (
                 job.state == IngestJobState.QUEUED
                 and not job.dispatch_held
                 and job.detected_type not in skip_types
+                and (only_types is None or job.detected_type in only_types)
             ):
                 return _copy_job(job)
         return None
