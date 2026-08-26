@@ -70,6 +70,12 @@ generated diagnostic inventory records the same 49 realtime statements under the
 controller, with 90 remaining on `ChatScreen`; aggregate delivery counts are 538
 owners, 1,241 TASK-492 calls, 7,360 TASK-494 calls, and 8 sink files.
 
+The final delivery base `c23113e2e0` changed only durable postcommit close handling
+in the Console chat controller/store. It leaves `ChatScreen`, the realtime family,
+and all ownership/count projections unchanged; its three additional TASK-492
+diagnostics bring the aggregate delivery inventory to 538 owners, 1,244 TASK-492
+calls, 7,360 TASK-494 calls, and 8 sink files.
+
 ## Goals
 
 1. Give the 56 reviewed realtime policy methods one explicit, non-DOM owner.
