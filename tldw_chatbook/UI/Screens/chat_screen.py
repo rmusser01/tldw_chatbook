@@ -9784,7 +9784,8 @@ class ChatScreen(BaseAppScreen):
         self._apply_console_setup_block(blocking)
         if blocking:
             self._maybe_start_console_local_discovery()
-            self.call_after_refresh(modal.focus_primary_action)
+            if not self._resume_navigation_startup_in_progress:
+                self.call_after_refresh(modal.focus_primary_action)
 
     def _maybe_start_console_local_discovery(self) -> None:
         """Start the one-shot local-server discovery worker while blocked.
@@ -9962,7 +9963,11 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         composer.can_focus = not blocking and not self._console_composer_collapsed
-        if blocking and self._is_descendant_or_self(self.app.focused, composer):
+        if (
+            blocking
+            and not self._resume_navigation_startup_in_progress
+            and self._is_descendant_or_self(self.app.focused, composer)
+        ):
             # Pull keyboard focus off the covered composer so typing can't tunnel.
             try:
                 self.query_one(
