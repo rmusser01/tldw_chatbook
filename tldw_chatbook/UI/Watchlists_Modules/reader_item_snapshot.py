@@ -1,6 +1,8 @@
 """Pure, immutable state for a reader's cached item pages."""
 
 from dataclasses import dataclass
+from copy import deepcopy
+from collections.abc import Hashable
 from typing import Any
 
 from ...Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
@@ -29,10 +31,25 @@ class ReaderItemQuery:
         Returns:
             An immutable query value.
         """
+        def scalar(value: Any) -> Any:
+            if type(value) not in (str, int, bool) and value is not None:
+                raise TypeError("reader query values must be scalar")
+            return value
+
+        if isinstance(context_key, tuple):
+            context_key = tuple(scalar(value) for value in context_key)
+        else:
+            context_key = scalar(context_key)
         frozen = []
         for key, value in sorted(kwargs.items()):
-            if key == "statuses" and isinstance(value, list):
-                value = tuple(value)
+            if key == "statuses":
+                if not isinstance(value, (list, tuple)):
+                    raise TypeError("statuses must be a list or tuple")
+                value = tuple(scalar(status) for status in value)
+                if any(not isinstance(status, str) for status in value):
+                    raise TypeError("statuses must contain strings")
+            else:
+                value = scalar(value)
             frozen.append((key, value))
         return cls(context_key, tuple(frozen))
 
@@ -89,7 +106,7 @@ class ReaderItemSnapshot:
         if page.snapshot_count is None:
             raise ValueError("first page must provide snapshot_count")
         items, seen = cls._unique_items(page.items, frozenset())
-        return cls(query, page.snapshot_max_item_id, page.snapshot_count, (items,), seen, page.next_cursor, page.has_more)
+        return cls(query, page.snapshot_max_item_id, page.snapshot_count, (deepcopy(items),), seen, page.next_cursor, page.has_more)
 
     def with_continuation(self, page: WatchlistItemPage) -> tuple["ReaderItemSnapshot", bool]:
         """Stage a continuation page without mutating this committed snapshot.
@@ -106,7 +123,7 @@ class ReaderItemSnapshot:
         if page.snapshot_max_item_id != self.watermark:
             raise ValueError("continuation watermark differs from snapshot")
         items, seen = self._unique_items(page.items, self.seen_ids)
-        pages = self.pages + ((items,) if items else ())
+        pages = tuple(deepcopy(cached) for cached in self.pages) + ((deepcopy(items),) if items else ())
         candidate = ReaderItemSnapshot(
             self.query, self.watermark, self.snapshot_count, pages, seen,
             page.next_cursor, page.has_more, self.pending_arrivals,
@@ -114,7 +131,7 @@ class ReaderItemSnapshot:
         return candidate, bool(items)
 
     @staticmethod
-    def _item_id(item: dict[str, Any]) -> Any:
+    def _item_id(item: dict[str, Any]) -> Hashable | None:
         """Normalize an item's explicit or fallback identity."""
         value = item.get("item_id")
         explicit = value is not None and not (isinstance(value, str) and not value.strip())
@@ -127,7 +144,8 @@ class ReaderItemSnapshot:
                 return int(value)
             except ValueError:
                 pass
-        return value.strip() if isinstance(value, str) else value
+        value = value.strip() if isinstance(value, str) else value
+        return value if isinstance(value, Hashable) else None
 
     @classmethod
     def _unique_items(

@@ -36,6 +36,15 @@ def test_query_freeze_commits_statuses_as_tuple_and_as_kwargs_detaches_list():
     assert query.as_kwargs()["statuses"] == ["new", "reviewed"]
 
 
+def test_query_freeze_rejects_mutable_context_and_non_status_values():
+    with pytest.raises(TypeError):
+        ReaderItemQuery.freeze((["local"],), {})
+    with pytest.raises(TypeError):
+        ReaderItemQuery.freeze(("local",), {"limit": []})
+    with pytest.raises(TypeError):
+        ReaderItemQuery.freeze(("local",), {"statuses": ["new", 1]})
+
+
 def test_start_captures_first_page_and_keeps_empty_page():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {"statuses": []})
     snapshot = ReaderItemSnapshot.start(query, page([], watermark=9, count=0, cursor=None, has_more=False))
@@ -48,6 +57,16 @@ def test_start_captures_first_page_and_keeps_empty_page():
     assert snapshot.cursor is None
     assert not snapshot.has_more
     assert snapshot.pending_arrivals == 0
+
+
+def test_page_and_snapshot_detach_source_rows_but_keep_cached_rows_mutable():
+    row = {"item_id": 1, "title": "before"}
+    first = page([row])
+    row["title"] = "after"
+    assert first.items[0]["title"] == "before"
+    snapshot = ReaderItemSnapshot.start(ReaderItemQuery.freeze(("local",), {}), first)
+    first.items[0]["title"] = "page mutation"
+    assert snapshot.pages[0][0]["title"] == "before"
 
 
 def test_start_requires_first_page_count_and_seeds_seen_ids():
@@ -70,6 +89,17 @@ def test_continuation_stages_copy_and_deduplicates_items():
     assert candidate.pages == (({"item_id": 2}, {"item_id": 1}), ({"id": "0"},))
     assert candidate.seen_ids == frozenset({0, 1, 2})
     assert not candidate.has_more
+    candidate.pages[0][0]["changed"] = True
+    assert "changed" not in original.pages[0][0]
+    assert original.cursor == WatchlistItemCursor(None, 1)
+    assert original.has_more
+    assert original.seen_ids == frozenset({1, 2})
+
+
+def test_unhashable_identity_is_skipped():
+    query = ReaderItemQuery.freeze(("local",), {})
+    snapshot = ReaderItemSnapshot.start(query, page([{"item_id": []}, {"id": {"bad": True}}, {"id": "ok"}]))
+    assert snapshot.seen_ids == frozenset({"ok"})
 
 
 def test_identity_falls_back_from_empty_item_id_and_preserves_string_ids():

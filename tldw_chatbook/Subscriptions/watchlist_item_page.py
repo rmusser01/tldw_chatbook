@@ -1,6 +1,7 @@
 """Immutable values exchanged by the watchlist item reader."""
 
 from dataclasses import dataclass
+from copy import deepcopy
 from typing import Any
 
 
@@ -34,3 +35,7 @@ class WatchlistItemPage:
     snapshot_max_item_id: int
     snapshot_count: int | None
     next_cursor: WatchlistItemCursor | None
+
+    def __post_init__(self) -> None:
+        """Detach row dictionaries from the service response owner."""
+        object.__setattr__(self, "items", tuple(deepcopy(row) for row in self.items))
