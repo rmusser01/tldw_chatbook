@@ -2708,23 +2708,42 @@ class ConsoleChatController:
                     has_durable_identity
                     and self._capture_policy_repository is not None
                 ):
-                    repository_task = asyncio.create_task(
-                        self._run_durable_db_call(
-                            self._capture_policy_repository.replace,
-                            before.conversation_id,
-                            detail,
-                        )
-                    )
-                    while not repository_task.done():
+                    repository = self._capture_policy_repository
+                    repository_settled = asyncio.Event()
+                    repository_result: list[Any] = []
+                    repository_error: list[BaseException] = []
+                    loop = asyncio.get_running_loop()
+
+                    def run_repository_call() -> None:
                         try:
-                            await asyncio.shield(repository_task)
+                            repository_result.append(
+                                repository.replace(
+                                    before.conversation_id,
+                                    detail,
+                                )
+                            )
+                        except BaseException as exc:
+                            repository_error.append(exc)
+                        finally:
+                            loop.call_soon_threadsafe(repository_settled.set)
+
+                    if self._durable_db_call_offloadable():
+                        threading.Thread(
+                            target=run_repository_call,
+                            name="console-capture-policy-write",
+                        ).start()
+                    else:
+                        run_repository_call()
+                    while not repository_settled.is_set():
+                        try:
+                            await repository_settled.wait()
                         except asyncio.CancelledError:
                             reconciliation_cancelled = True
-                            if repository_task.cancelled():
-                                break
-                    if repository_task.cancelled():
-                        raise asyncio.CancelledError
-                    write_status = repository_task.result()
+                    if repository_error:
+                        if reconciliation_cancelled:
+                            raise asyncio.CancelledError from None
+                        raise repository_error[0]
+                    write_status = repository_result[0]
                     if (
                         write_status.status
                         is CapturePolicyWriteStatus.MISSING_CONVERSATION
@@ -2802,13 +2821,22 @@ class ConsoleChatController:
                 if reconciliation.cancelled():
                     break
                 caller_cancelled = True
+            except BaseException:
+                if caller_cancelled:
+                    raise asyncio.CancelledError from None
+                raise
         if reconciliation.cancelled():
             try:
                 self.store.abandon_capture_policy_mutation(reservation)
             except CapturePolicyStaleError:
                 pass
             raise asyncio.CancelledError
-        result = reconciliation.result()
+        try:
+            result = reconciliation.result()
+        except BaseException:
+            if caller_cancelled:
+                raise asyncio.CancelledError from None
+            raise
         if caller_cancelled:
             raise asyncio.CancelledError
         return result

@@ -260,9 +260,63 @@ and closure. It was not marked Done and its acceptance checkboxes remain open.
 
 ### Commit / concerns
 
-- Fix-round commit: pending — `fix(console): retain policy reservation through write`.
+- Fix-round commit: `510be33822` —
+  `fix(console): retain policy reservation through write`.
 - The round-3 worker-lifetime concern is superseded: cancellation can no longer
   release ownership while the repository thread remains unobserved. No
   dependency, schema, or scope change was introduced. Task remains **In
   Progress**; it was not marked Done and its acceptance checkboxes remain open
   for independent review and closure.
+
+## Fix round 5
+
+### Summary
+
+- Replaced the cancelable `asyncio.to_thread` ownership wrapper with one
+  reservation-scoped synchronous worker thread whose result or exception is
+  retained in local state and whose actual settlement signals an
+  `asyncio.Event` back to the reconciliation owner.
+- Cancellation can interrupt the event wait but cannot cancel or erase the
+  worker's settlement channel. The reservation remains owned until the worker
+  reports success/failure and runtime publication or cleanup completes.
+- Recorded caller/reconciliation cancellation takes precedence over a stored
+  repository exception after cleanup; an uncancelled repository exception
+  continues to propagate normally.
+
+### RED evidence
+
+- Exact four-case cancellation/error focus: **2 failed, 2 passed, 20
+  deselected**. Caller cancellation surfaced `RuntimeError("repository
+  failed")` instead of `CancelledError`; directly cancelling the innermost
+  asyncio waiter allowed durable Full while runtime remained `None`.
+- After introducing independently retained worker settlement, the same focus
+  produced **1 failed, 3 passed**: the remaining failure isolated cancellation
+  precedence at the outer `await shield(reconciliation)` exception boundary.
+
+### GREEN / verification evidence
+
+- Exact new cancellation/error regressions: **4 passed, 20 deselected**.
+- Prior plus new cancellation/race focus: **7 passed, 17 deselected**.
+- Cumulative Task 2 fix focus, including Task 1 sanitizer canaries: **18
+  passed, 317 deselected**.
+- Focused Task 1 sanitizer tests: **3 passed, 30 deselected**.
+- Exact Gate 2 command: **558 passed, 2 skipped, 0 failed** in 27.98s. The two
+  skips are the existing sandbox-denied loopback listeners.
+- Changed-file Ruff: **All checks passed**. Production `py_compile`: exit 0.
+  `git diff --check`: exit 0.
+
+### Files changed in fix round 5
+
+- `tldw_chatbook/Chat/console_chat_controller.py`
+- `Tests/Chat/test_console_chat_controller_exchanges.py`
+- `.superpowers/sdd/2026-08-26-console-full-semantic-capture/task-2-report.md`
+
+### Commit / concerns
+
+- Fix-round commit: pending — `fix(console): own policy write settlement`.
+- The worker is one short-lived standard-library thread per accepted durable
+  policy mutation; the existing global mutation reservation bounds this to one
+  active worker. No dependency, schema, or scope change was introduced, and no
+  A1 invariant remains unresolved. Task remains **In Progress**; it was not
+  marked Done and its acceptance checkboxes remain open for independent review
+  and closure.
