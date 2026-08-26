@@ -24,6 +24,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     InputError,
     SchemaError,
 )
+from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
+from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 
 
 SCHEMA_NAME = "rag_char_chat_schema"
@@ -213,6 +217,41 @@ def _seed_v49(path: Path) -> tuple[str, str, str]:
     return conversation_id, assistant_id, user_id
 
 
+def _seed_v49_tombstone(path: Path) -> tuple[str, str]:
+    conversation_id = "historical-delete-conversation"
+    message_id = "historical-delete-message"
+    with chachanotes_db_at_version(path, 49, client_id="v49-delete") as historical:
+        connection = historical.get_connection()
+        connection.execute(
+            "INSERT INTO conversations(id, root_id, title, client_id) "
+            "VALUES (?, ?, 'historical delete', 'v49-delete')",
+            (conversation_id, conversation_id),
+        )
+        connection.execute(
+            "INSERT INTO messages(id, conversation_id, sender, role, content, "
+            "assistant_generation_state, client_id) "
+            "VALUES (?, ?, 'assistant', 'assistant', ?, 'complete', 'v49-delete')",
+            (message_id, conversation_id, "HISTORICAL-VISIBLE-CANARY"),
+        )
+        connection.execute(
+            "UPDATE messages SET deleted = 1, version = 2, "
+            "last_modified = '2026-08-26T00:00:00.000Z' WHERE id = ?",
+            (message_id,),
+        )
+        connection.commit()
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload FROM sync_log WHERE entity = 'messages' "
+                "AND entity_id = ? AND operation = 'delete' AND version = 2",
+                (message_id,),
+            ).fetchone()[0]
+        )
+        assert payload["assistant_generation_state"] == "complete"
+        assert "base_payload_hash" not in payload
+        assert _schema_version(historical) == 49
+    return conversation_id, message_id
+
+
 def test_console_thinking_migration_is_additive_without_evidence_backfill(
     tmp_path: Path,
 ) -> None:
@@ -230,6 +269,123 @@ def test_console_thinking_migration_is_additive_without_evidence_backfill(
         )
     finally:
         db.close_connection()
+
+
+def test_v49_tombstone_migration_marks_content_free_legacy_reconciliation(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "historical-delete-v49.sqlite"
+    conversation_id, message_id = _seed_v49_tombstone(db_path)
+    db = CharactersRAGDB(db_path, client_id="v50-delete")
+    repo = SyncStateRepository(tmp_path / "historical-delete-sync.sqlite")
+    dataset_key = generate_dataset_key()
+    try:
+        payload = json.loads(
+            db.get_connection()
+            .execute(
+                "SELECT payload FROM sync_log WHERE entity = 'messages' "
+                "AND entity_id = ? AND operation = 'delete' AND version = 2",
+                (message_id,),
+            )
+            .fetchone()[0]
+        )
+        expected_base = canonical_payload_hash(
+            {
+                "assistant_generation_state": "complete",
+                "content": "HISTORICAL-VISIBLE-CANARY",
+                "role": "assistant",
+            }
+        )
+        delete_hash = canonical_payload_hash({"deleted": True})
+        intent = db.read_committed_chat_delete_intent(
+            message_id=message_id,
+            message_version=2,
+            payload_hash=delete_hash,
+        )
+
+        assert payload["legacy_pre_v50_base_reconstruction"] is True
+        assert "base_payload_hash" not in payload
+        assert "thinking_blocks_json" not in payload
+        assert "HISTORICAL-VISIBLE-CANARY" not in json.dumps(payload)
+        assert _raw_message(db, message_id)["thinking_blocks_json"] is None
+        assert intent is not None
+        assert intent.base_payload_hash == expected_base
+
+        repo.set_sync_v2_profile_state(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            profile_mode="local_first",
+            device_id="source-device",
+            dataset_id="dataset-1",
+        )
+        result = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=db,
+        ).reconcile_chat_message_delete_intent(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            message_id=message_id,
+            message_version=2,
+            payload_hash=delete_hash,
+        )
+        assert result["status"] == "enqueued"
+        envelope = result["outbox_entry"]["envelope"]
+        assert envelope["routing_metadata"]["conversation_id"] == conversation_id
+        assert envelope["base_version"] == expected_base
+        assert envelope["payload_ciphertext"] is None
+        assert "HISTORICAL-VISIBLE-CANARY" not in json.dumps(envelope)
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "legacy_marker",
+    [True, "true"],
+    ids=["marker-with-base", "non-boolean-marker"],
+)
+def test_delete_intent_rejects_invalid_or_ambiguous_legacy_marker(
+    db: CharactersRAGDB, legacy_marker: object
+) -> None:
+    conversation_id = db.add_conversation({"title": "marker validation"})
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "visible",
+            "assistant_generation_state": "complete",
+        }
+    )
+    assert message_id is not None
+    assert db.soft_delete_message(message_id, expected_version=1)
+    row = (
+        db.get_connection()
+        .execute(
+            "SELECT change_id, payload FROM sync_log WHERE entity = 'messages' "
+            "AND entity_id = ? AND operation = 'delete'",
+            (message_id,),
+        )
+        .fetchone()
+    )
+    payload = json.loads(row["payload"])
+    payload["legacy_pre_v50_base_reconstruction"] = legacy_marker
+    db.get_connection().execute(
+        "UPDATE sync_log SET payload = ? WHERE change_id = ?",
+        (json.dumps(payload), row["change_id"]),
+    )
+    db.get_connection().commit()
+
+    assert (
+        db.read_committed_chat_delete_intent(
+            message_id=message_id,
+            message_version=2,
+            payload_hash=canonical_payload_hash({"deleted": True}),
+        )
+        is None
+    )
 
 
 def test_migration_rebuilds_sync_triggers_without_widening_fts(tmp_path: Path) -> None:

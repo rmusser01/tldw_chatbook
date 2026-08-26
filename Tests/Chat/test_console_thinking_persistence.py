@@ -821,6 +821,22 @@ def test_local_persistence_advertises_exact_thinking_round_trip_v1(
             id="future-v2",
         ),
         pytest.param(
+            type(
+                "BooleanTruePersistence",
+                (),
+                {"thinking_round_trip_version": lambda self: True},
+            )(),
+            id="boolean-true",
+        ),
+        pytest.param(
+            type(
+                "BooleanFalsePersistence",
+                (),
+                {"thinking_round_trip_version": lambda self: False},
+            )(),
+            id="boolean-false",
+        ),
+        pytest.param(
             type("ServerPersistence", (), {"server_mode": True})(),
             id="server-without-contract",
         ),
@@ -879,3 +895,81 @@ def test_thinking_preflight_keeps_unaffected_paths_reachable(
     provider_calls.append("contacted")
 
     assert provider_calls == ["contacted"]
+
+
+class _NonDatabaseGenerationPersistence:
+    def __init__(self) -> None:
+        self.projections: list[dict[str, object]] = []
+
+    def replace_assistant_generation_projection(self, **kwargs: object) -> int:
+        self.projections.append(dict(kwargs))
+        expected = kwargs["expected_version"]
+        assert type(expected) is int
+        return expected + 1
+
+
+def _install_thinking_variant(store: ConsoleChatStore) -> ConsoleChatMessage:
+    live = store._message_or_raise("assistant-1")
+    live.thinking = _thinking("original reasoning")
+    live.assistant_generation_state = "complete"
+    live.variants = ConsoleVariantSet.from_generations(
+        turn_id="assistant-1",
+        generations=[
+            store._generation_variant(live),
+            ConsoleVariant(
+                content="non-database answer",
+                thinking=_thinking("non-database reasoning"),
+                assistant_generation_state="complete",
+            ),
+        ],
+        selected_index=0,
+    )
+    return live
+
+
+def test_complete_projection_succeeds_on_non_database_adapter_without_sync(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "non-db-success.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    store, _session_id = _restored_store(db, conversation_id)
+    persistence = _NonDatabaseGenerationPersistence()
+    store.persistence = persistence  # type: ignore[assignment]
+    _install_thinking_variant(store)
+
+    selected = store.select_variant("assistant-1", 1)
+
+    assert selected.content == "non-database answer"
+    assert selected.thinking == _thinking("non-database reasoning")
+    assert len(persistence.projections) == 1
+    assert persistence.projections[0]["thinking_blocks_json"] == (
+        dump_thinking_blocks_json(_thinking("non-database reasoning"))
+    )
+
+
+def test_configured_sync_without_committed_source_fails_before_non_db_write(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+        ChatSyncV2OutboxProducer,
+    )
+
+    db, conversation_id, repository = _database(tmp_path / "non-db-sync.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    store, _session_id = _restored_store(db, conversation_id)
+    persistence = _NonDatabaseGenerationPersistence()
+    store.persistence = persistence  # type: ignore[assignment]
+    live = _install_thinking_variant(store)
+    before = store._generation_variant(live)
+    store.sync_v2_server_profile_id = "server-a"
+    store.sync_v2_chat_producer = ChatSyncV2OutboxProducer(
+        state_repository=object(),
+        source=None,
+    )
+
+    with pytest.raises(RuntimeError, match="committed-intent source"):
+        store.select_variant("assistant-1", 1)
+
+    assert persistence.projections == []
+    after = store._generation_variant(store._message_or_raise("assistant-1"))
+    assert replace(after, id=before.id) == before

@@ -150,17 +150,24 @@ def _normalize_legacy_chat_delete_intent_payload(
     normalized = dict(payload)
     normalized.setdefault("assistant_generation_state", None)
     normalized.setdefault("base_payload_hash", None)
+    normalized.setdefault("legacy_pre_v50_base_reconstruction", False)
     if set(normalized) != {
         "id",
         "deleted",
         "last_modified",
         "assistant_generation_state",
         "base_payload_hash",
+        "legacy_pre_v50_base_reconstruction",
         "version",
         "client_id",
     }:
         return None
     base_payload_hash = normalized["base_payload_hash"]
+    legacy_marker = normalized["legacy_pre_v50_base_reconstruction"]
+    if type(legacy_marker) is not bool or (
+        legacy_marker and base_payload_hash is not None
+    ):
+        return None
     if base_payload_hash is not None and (
         type(base_payload_hash) is not str
         or re.fullmatch(r"sha256:[0-9a-f]{64}", base_payload_hash) is None
@@ -16772,14 +16779,8 @@ UPDATE db_schema_version
                 row = rows[0]
             if not row["deleted"] or row["operation"] != "delete":
                 return None
-            raw_intent_payload = json.loads(row["payload"])
-            genuinely_legacy_without_hash = (
-                type(raw_intent_payload) is dict
-                and "base_payload_hash" not in raw_intent_payload
-                and "assistant_generation_state" not in raw_intent_payload
-            )
             intent_payload = _normalize_legacy_chat_delete_intent_payload(
-                raw_intent_payload
+                json.loads(row["payload"])
             )
             if (
                 intent_payload is None
@@ -16787,7 +16788,8 @@ UPDATE db_schema_version
             ):
                 return None
             base_payload_hash = intent_payload.pop("base_payload_hash")
-            if base_payload_hash is None and not genuinely_legacy_without_hash:
+            legacy_marker = intent_payload.pop("legacy_pre_v50_base_reconstruction")
+            if base_payload_hash is None and not legacy_marker:
                 return None
             role = row["role"]
             content = row["content"]

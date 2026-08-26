@@ -9,6 +9,20 @@ ALTER TABLE conversations ADD COLUMN thinking_history_policy TEXT DEFAULT NULL
         thinking_history_policy IN ('auto', 'include', 'exclude')
     );
 
+-- Pre-v50 tombstones have no content-free base hash. Mark only those already
+-- committed before this migration so the reader can reconstruct their prior
+-- whole-record hash without treating new hashless tombstones as legacy.
+UPDATE sync_log
+   SET payload = json_set(
+       payload,
+       '$.legacy_pre_v50_base_reconstruction',
+       json('true')
+   )
+ WHERE entity = 'messages'
+   AND operation = 'delete'
+   AND json_valid(payload)
+   AND json_extract(payload, '$.deleted') = 1;
+
 DROP TRIGGER IF EXISTS messages_sync_create;
 DROP TRIGGER IF EXISTS messages_sync_update;
 DROP TRIGGER IF EXISTS messages_sync_delete;

@@ -253,6 +253,10 @@ class ChatSyncV2OutboxProducer:
             A status mapping. Enqueued results include the durable outbox entry;
             skipped results include a reason describing the missing prerequisite.
         """
+        if thinking_blocks_json is not None:
+            raise ValueError(
+                "Thinking requires committed-intent reconciliation before Sync."
+            )
 
         profile = self._sync_ready_profile(
             server_profile_id=server_profile_id,

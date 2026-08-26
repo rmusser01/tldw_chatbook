@@ -227,7 +227,8 @@ def require_thinking_persistence_support(
     if not persistent or not may_emit_thinking:
         return
     version_reader = getattr(persistence, "thinking_round_trip_version", None)
-    if not callable(version_reader) or version_reader() != 1:
+    version = version_reader() if callable(version_reader) else None
+    if type(version) is not int or version != 1:
         raise ConsoleThinkingCompatibilityError(
             "This persistent backend cannot preserve model thinking version 1. "
             "Upgrade it before sending."
@@ -9219,17 +9220,24 @@ class ConsoleChatStore:
         self._validate_generation_variant(message, variant)
         producer = self.sync_v2_chat_producer
         reconcile = getattr(producer, "reconcile_chat_message_intent", None)
+        sync_configured = self.sync_v2_server_profile_id is not None
         has_durable_evidence = self._generation_has_durable_evidence(
             current
         ) or self._generation_has_durable_evidence(variant)
-        if (
-            self.sync_v2_server_profile_id is not None
-            and has_durable_evidence
-            and not callable(reconcile)
-        ):
+        persistence_db = getattr(self.persistence, "db", None)
+        producer_source = getattr(producer, "source", None)
+        committed_source_available = (
+            callable(reconcile)
+            and producer_source is persistence_db
+            and callable(
+                getattr(producer_source, "read_committed_chat_sync_intent", None)
+            )
+            and callable(getattr(producer_source, "get_message_by_id", None))
+        )
+        if sync_configured and has_durable_evidence and not committed_source_available:
             raise RuntimeError(
                 "Whole-generation Sync projection requires committed-intent "
-                "reconciliation."
+                "reconciliation with a committed-intent source."
             )
         candidate = self._generation_owner_candidate(
             message,
@@ -9266,7 +9274,7 @@ class ConsoleChatStore:
             raise RuntimeError("Selected generation persistence did not commit.")
         candidate.provider_continuation_message_version = committed_version
         candidate.provider_continuation_remote = False
-        if callable(reconcile) or has_durable_evidence:
+        if sync_configured and committed_source_available:
             self._refresh_and_project_provider_continuation(candidate)
         else:
             self._enqueue_sync_v2_message_if_ready(candidate)

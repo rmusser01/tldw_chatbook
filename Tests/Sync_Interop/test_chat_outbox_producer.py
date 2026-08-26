@@ -409,6 +409,46 @@ def test_chat_producer_enqueues_encrypted_message_and_updates_summary(tmp_path) 
     )
 
 
+def test_legacy_direct_chat_enqueue_rejects_thinking_before_repository_access(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _local_first_repo(tmp_path)
+    profile_accesses: list[str] = []
+
+    def unexpected_profile_access(**_kwargs):
+        profile_accesses.append("accessed")
+        raise AssertionError("repository must not be consulted")
+
+    monkeypatch.setattr(repo, "get_sync_v2_profile_state", unexpected_profile_access)
+    producer = ChatSyncV2OutboxProducer(
+        state_repository=repo,
+        dataset_keys={"dataset-1": generate_dataset_key()},
+    )
+
+    with pytest.raises(ValueError, match="committed-intent reconciliation"):
+        producer.enqueue_chat_message(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            conversation_id="conversation-1",
+            message_id="message-1",
+            role="assistant",
+            content="visible",
+            thinking_blocks_json="UNCOMMITTED-THINKING-CANARY",
+        )
+
+    assert profile_accesses == []
+    assert (
+        repo.list_sync_v2_outbox_entries(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            dataset_id="dataset-1",
+        )
+        == []
+    )
+
+
 def test_chat_producer_skips_without_local_first_profile_or_dataset_key(
     tmp_path,
 ) -> None:

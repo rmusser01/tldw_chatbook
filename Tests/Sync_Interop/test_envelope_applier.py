@@ -218,6 +218,36 @@ def test_chat_applier_allows_versioned_message_update() -> None:
     assert store.conflicts == []
 
 
+def test_chat_applier_never_matches_an_unreadable_local_hash_sentinel() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    stable_key = "conversation-1:message-1"
+    store.chat_hashes[stable_key] = "invalid-local-chat-message"
+    store.chat_messages[stable_key] = {
+        "assistant_generation_state": "complete",
+        "content": "unreadable local owner",
+        "role": "assistant",
+    }
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    adversarial = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="remote overwrite",
+        base_version="invalid-local-chat-message",
+    )
+
+    result = applier.apply(adversarial)
+
+    assert result["status"] == "conflict"
+    assert result["conflict"]["conflict_type"] == "chat_message_hash_mismatch"
+    assert store.chat_messages[stable_key]["content"] == "unreadable local owner"
+    assert store.chat_hashes[stable_key] == "invalid-local-chat-message"
+
+
 def test_legacy_missing_state_apply_uses_upgraded_canonical_hash_for_update() -> None:
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
