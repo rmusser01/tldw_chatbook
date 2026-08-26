@@ -18,6 +18,7 @@ import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches, QueryError
+from textual.css.styles import StylesBase
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -71,7 +72,11 @@ from tldw_chatbook.Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
 )
-from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
+from tldw_chatbook.Library.library_rail_state import (
+    LibraryLifecycle,
+    LibraryRailPreferences,
+)
+from tldw_chatbook.Library.library_rail_width import OrdinaryRailStyleContract
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LibraryRagPanelState,
@@ -120,6 +125,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
+    LibraryShellState,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -195,6 +201,130 @@ def _build_test_app(
 
 LIBRARY_TEST_SIZE = (170, 48)
 CONVERSATION_PAGER_TEST_SIZES = ((100, 30), (170, 48))
+
+
+_RAIL_STYLE_TEST_SHELL = LibraryShellState(
+    header_line="",
+    sections=(),
+    details_lines=(),
+    selected_row_id="",
+    canvas_kind="empty",
+    canvas_target="",
+    canvas_empty_copy="",
+)
+_RAIL_STYLE_TEST_PREFERENCES = LibraryRailPreferences()
+
+
+class _LibraryRailStyleContractHarness(ConsolidatedCSSApp):
+    """Mount the production rail in the grid relationship it uses in Library."""
+
+    CSS = """
+    #rail-style-contract-host {
+        layout: grid;
+        grid-size: 2;
+        grid-columns: 3fr 13fr;
+        height: 1fr;
+    }
+
+    #rail-style-contract-canvas {
+        height: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rail-style-contract-host"):
+            yield LibraryRail(
+                _RAIL_STYLE_TEST_SHELL,
+                _RAIL_STYLE_TEST_PREFERENCES,
+                id="library-rail",
+            )
+            yield Static("Canvas", id="rail-style-contract-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_rail_applies_reversible_ordinary_width_contracts() -> None:
+    """The rail restores exact ordinary declarations after every presentation."""
+    app = _LibraryRailStyleContractHarness()
+    default = OrdinaryRailStyleContract(True, "3fr", 24, 34)
+    rail_only = OrdinaryRailStyleContract(True, "1fr", 0, None)
+    hidden = OrdinaryRailStyleContract(False, None, None, None)
+
+    async with app.run_test(size=(160, 32)) as pilot:
+        rail = app.query_one("#library-rail", LibraryRail)
+        rail.apply_ordinary_width_contract(default)
+        await pilot.pause()
+
+        assert rail.display is True
+        assert str(rail.styles.width) == "3fr"
+        assert rail.styles.min_width.value == 24
+        assert rail.styles.max_width.value == 34
+        assert abs(rail.region.width - 30) <= 1
+
+        rail.apply_ordinary_width_contract(rail_only)
+        assert str(rail.styles.width) == "1fr"
+        assert rail.styles.min_width.value == 0
+        assert rail.styles.max_width is None
+
+        rail.apply_ordinary_width_contract(hidden)
+        assert rail.display is False
+        assert not rail.styles._inline_styles.has_rule("width")
+        assert not rail.styles._inline_styles.has_rule("min_width")
+        assert not rail.styles._inline_styles.has_rule("max_width")
+
+        rail.apply_ordinary_width_contract(default)
+        assert str(rail.styles.width) == "3fr"
+        assert rail.styles.min_width.value == 24
+        assert rail.styles.max_width.value == 34
+
+        rail.styles.width = 42
+        rail.styles.min_width = 42
+        rail.styles.max_width = 42
+        rail.invalidate_width_contract_owner()
+        rail.apply_ordinary_width_contract(default)
+        assert str(rail.styles.width) == "3fr"
+        assert rail.styles.min_width.value == 24
+        assert rail.styles.max_width.value == 34
+
+
+@pytest.mark.asyncio
+async def test_library_rail_skips_unchanged_matching_width_contract_writes(
+    monkeypatch,
+) -> None:
+    """A matching cached contract performs no inline declaration writes twice."""
+    app = _LibraryRailStyleContractHarness()
+    default = OrdinaryRailStyleContract(True, "3fr", 24, 34)
+
+    async with app.run_test(size=(160, 32)):
+        rail = app.query_one("#library-rail", LibraryRail)
+        rail.apply_ordinary_width_contract(default)
+        assignments: list[str] = []
+        original_setattr = StylesBase.__setattr__
+        original_clear_rule = StylesBase.clear_rule
+
+        def track_assignment(styles, name, value):
+            if styles is rail.styles and name in {
+                "display",
+                "width",
+                "min_width",
+                "max_width",
+            }:
+                assignments.append(name)
+            original_setattr(styles, name, value)
+
+        def track_clear_rule(styles, rule_name):
+            if styles is rail.styles and rule_name in {
+                "width",
+                "min_width",
+                "max_width",
+            }:
+                assignments.append(rule_name)
+            return original_clear_rule(styles, rule_name)
+
+        monkeypatch.setattr(StylesBase, "__setattr__", track_assignment)
+        monkeypatch.setattr(StylesBase, "clear_rule", track_clear_rule)
+        rail.apply_ordinary_width_contract(default)
+
+        assert assignments == []
 
 
 _LegacyStaticLibraryMediaScopeService = StaticLibraryMediaScopeService
