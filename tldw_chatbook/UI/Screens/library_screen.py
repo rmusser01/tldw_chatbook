@@ -5724,6 +5724,22 @@ class LibraryScreen(BaseAppScreen):
         if matches:
             matches.first().display = False
 
+    def _library_adaptive_reader_allocation_is_current(self, reader: Widget) -> bool:
+        """Reject transient reader and compact-box allocations during resize."""
+        try:
+            shell = self.query_one("#library-shell-grid", Widget)
+        except (NoMatches, QueryError):
+            return False
+        compact_box_model = shell.content_region.width == shell.region.width
+        expected_compact_box_model = (
+            shell.region.width < LIBRARY_NOTES_COMPACT_BREAKPOINT
+        )
+        return bool(
+            reader.region.width > 0
+            and reader.region.width == shell.content_region.width
+            and compact_box_model is expected_compact_box_model
+        )
+
     def _sync_library_ordinary_rail_width_contract(self) -> None:
         """Apply the settled ordinary rail contract at the existing UI seams."""
         if self.query(
@@ -5813,7 +5829,11 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         width = shell.region.width
-        if width <= 0:
+        if not self._library_adaptive_reader_allocation_is_current(shell):
+            self.call_after_refresh(
+                self._sync_library_notes_reader_layout_from_shell,
+                priority,
+            )
             return
         previous = self._library_notes_reader_layout
         if (
@@ -5859,7 +5879,11 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         width = shell.region.width
-        if width <= 0:
+        if not self._library_adaptive_reader_allocation_is_current(shell):
+            self.call_after_refresh(
+                self._sync_library_conversation_reader_layout_from_shell,
+                priority,
+            )
             return
         previous = self._library_conversation_reader_layout
         if (
@@ -6189,7 +6213,12 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         width = shell.region.width
-        if width <= 0:
+        if not self._library_adaptive_reader_allocation_is_current(shell):
+            self.call_after_refresh(
+                self._sync_library_media_reader_layout_from_shell,
+                priority,
+                focus_intent,
+            )
             return
         previous = self._library_media_reader_layout
         # ``__init__`` resolves a zero-width sentinel before Textual has

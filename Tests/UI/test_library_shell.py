@@ -5860,17 +5860,13 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
             (153, (False, True, 0, 56, 83)),
             (154, (True, True, 48, 40, 52)),
             (120, (False, True, 0, 56, 50)),
-            # The compact-boundary transition briefly drops below the Items
-            # fit floor; its closed tuple then remains stable through W101.
-            (100, (False, False, 0, 0, 90)),
+            (100, (False, True, 0, 42, 48)),
             (80, (False, False, 0, 0, 70)),
             (60, (False, False, 0, 0, 50)),
             (64, (False, False, 0, 0, 54)),
             (101, (False, False, 0, 0, 91)),
             (102, (False, True, 0, 44, 48)),
-            # Leaving compact briefly crosses the Library reopen threshold;
-            # the final W149 allocation then retains that already-open pane.
-            (153, (True, True, 48, 40, 51)),
+            (153, (False, True, 0, 56, 83)),
             (154, (True, True, 48, 40, 52)),
             (170, (True, True, 48, 40, 68)),
         )
