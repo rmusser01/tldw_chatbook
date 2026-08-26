@@ -15,6 +15,7 @@ from textual.geometry import Size
 from textual.scroll_view import ScrollView
 from textual.selection import Selection
 from textual.strip import Strip
+from textual.timer import Timer
 
 from tldw_chatbook.Utils.text_wrap_index import WrapIndex
 
@@ -40,6 +41,13 @@ class VirtualizedRawContent(ScrollView):
     # Test-only instrumentation; asserting harness wall time is meaningless
     # because pilot.pause() costs ~30 ms per call.
     RENDER_LINE_CALLS: dict[str, int] = {"n": 0}
+
+    # Rebuilding the wrap index costs ~125-155 ms on a 2.5 MB document and
+    # ~400 ms at 6.5 MB (measured). Textual fires many `Resize` events
+    # during a single drag of the pane edge, so `on_resize` coalesces a
+    # burst into one rebuild after this quiet period, mirroring TASK-22211's
+    # hysteresis precedent in the Watchlists layout.
+    REINDEX_DEBOUNCE_SECONDS: float = 0.12
 
     def __init__(
         self,
@@ -81,27 +89,113 @@ class VirtualizedRawContent(ScrollView):
         self._match_index = match_index
         self._max_visible_rows = max_visible_rows
         self._match_lines: tuple[int, ...] = ()
+        self._pending_reindex_width: int | None = None
+        self._reindex_timer: Timer | None = None
 
     def on_resize(self, _event: Any = None) -> None:
-        """Reindex the document if the available width has changed.
+        """Reindex on a width change, debounced after the first layout pass.
+
+        ``on_mount`` runs before this widget has been given a real size
+        (``width`` is still 0 at that point), so the FIRST ``Resize`` --
+        the one that reports the initial layout's width -- is the one that
+        actually delivers first paint and must build immediately, exactly
+        like ``on_mount`` would if it could. Only resizes AFTER that first
+        real build (a user dragging the pane edge, etc.) are debounced via
+        :meth:`_request_reindex`, so a burst collapses into one rebuild
+        without delaying the initial paint.
 
         Args:
             _event: The resize event (unused; the current size is read
                 directly from the widget).
         """
-        self._reindex_if_width_changed()
+        width = self.scrollable_content_region.width or self.size.width
+        if self._indexed_width is None:
+            self._build_index_now(width)
+        else:
+            self._request_reindex(width)
 
     def on_mount(self) -> None:
-        """Build the initial wrap index once the widget has a size."""
-        self._reindex_if_width_changed()
+        """Build the initial wrap index synchronously, if already sized.
 
-    def _reindex_if_width_changed(self) -> None:
-        """Rebuild the wrap index when the rendering width changes.
+        Unlike a debounced resize, this must NOT go through the debounce --
+        a debounced first index would leave the reader showing an empty
+        body for the debounce interval on every open, which is a visible
+        regression. In practice the widget is not yet sized at mount time
+        (``on_resize`` delivers the real first-layout width, handled
+        synchronously there too -- see :meth:`on_resize`), but this call is
+        cheap and correct either way: a zero width no-ops, and a nonzero
+        one here means one less event round-trip before first paint.
+        """
+        width = self.scrollable_content_region.width or self.size.width
+        self._build_index_now(width)
+
+    def on_unmount(self) -> None:
+        """Cancel any pending debounced reindex so it never fires into a
+        detached widget.
+
+        ``is_attached`` (not ``is_mounted``) is the correct attachment
+        check here: this repo has previously hit a widget whose
+        ``is_mounted`` stayed True after ``remove()``, while
+        ``is_attached`` correctly reflects whether it still has a path to
+        the DOM root. Stopping the timer explicitly is still needed even
+        with that guard in place, since an unstopped ``Timer`` otherwise
+        keeps running until it fires.
+        """
+        if self._reindex_timer is not None:
+            self._reindex_timer.stop()
+            self._reindex_timer = None
+
+    def _request_reindex(self, width: int) -> None:
+        """Arm (or re-arm) a single debounce timer to rebuild at ``width``.
+
+        Any previously pending rebuild is superseded -- both its timer and
+        the width it was going to use -- so a burst of resize events pays
+        the rebuild cost exactly once, for the final width, after the
+        burst goes quiet for :data:`REINDEX_DEBOUNCE_SECONDS`.
+
+        Args:
+            width: The candidate rendering width to reindex at once the
+                debounce interval elapses.
+        """
+        self._pending_reindex_width = width
+        if self._reindex_timer is not None:
+            self._reindex_timer.stop()
+            self._reindex_timer = None
+        if self.REINDEX_DEBOUNCE_SECONDS <= 0:
+            # `set_timer(0.0)` never fires in Textual 8 -- a
+            # ZeroDivisionError is raised inside the timer's own task and
+            # swallowed, silently disabling the rebuild. Guard against ever
+            # relying on that path.
+            self._fire_pending_reindex()
+            return
+        self._reindex_timer = self.set_timer(
+            self.REINDEX_DEBOUNCE_SECONDS, self._fire_pending_reindex
+        )
+
+    def _fire_pending_reindex(self) -> None:
+        """Consume the pending width and rebuild, unless already detached.
+
+        This is the timer callback armed by :meth:`_request_reindex`. It
+        can legitimately fire after this widget has been removed from the
+        DOM (the timer was already running when removal happened), so it
+        must check ``is_attached`` rather than assume it is still safe to
+        touch widget state.
+        """
+        self._reindex_timer = None
+        width = self._pending_reindex_width
+        if width is None or not self.is_attached:
+            return
+        self._build_index_now(width)
+
+    def _build_index_now(self, width: int) -> None:
+        """Rebuild the wrap index for ``width`` immediately, no debounce.
 
         No-ops if the width is unchanged or not yet known (zero), so a
         resize that doesn't affect wrapping is cheap.
+
+        Args:
+            width: The rendering width to index against.
         """
-        width = self.scrollable_content_region.width or self.size.width
         if width <= 0 or width == self._indexed_width:
             return
         self.wrap_index = WrapIndex.build(self.source_lines, width)

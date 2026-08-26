@@ -341,6 +341,63 @@ async def test_partial_drag_across_a_tab_matches_static():
 
 
 @pytest.mark.asyncio
+async def test_a_resize_burst_reindexes_once():
+    """Re-indexing costs ~125-155 ms on a 2.5 MB document; a drag-resize
+    must not pay it per event (TASK-22211's hysteresis precedent)."""
+    app = _Harness(DOC)
+    async with app.run_test(size=(100, 40)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+        builds = {"n": 0}
+        original = widget._build_index_now
+
+        def counting(width):
+            builds["n"] += 1
+            return original(width)
+
+        widget._build_index_now = counting
+        for width in (99, 98, 97, 96, 95):
+            widget._request_reindex(width)
+        await pilot.pause(0.3)
+        assert builds["n"] == 1, f"re-indexed {builds['n']} times for one burst"
+
+
+@pytest.mark.asyncio
+async def test_mount_indexes_synchronously_without_debounce():
+    """First paint must not be delayed: on_mount must have a wrap index
+    available immediately after mount, before the debounce interval would
+    ever elapse."""
+    app = _Harness(DOC)
+    async with app.run_test(size=(100, 40)):
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        # No pause at all: on_mount must have already built the index
+        # synchronously, not scheduled it behind REINDEX_DEBOUNCE_SECONDS.
+        assert widget.wrap_index is not None
+
+
+@pytest.mark.asyncio
+async def test_pending_reindex_does_not_fire_after_unmount():
+    """A debounce timer armed just before unmount must not touch the
+    widget once it has been removed from the DOM."""
+    app = _Harness(DOC)
+    async with app.run_test(size=(100, 40)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+        builds = {"n": 0}
+        original = widget._build_index_now
+
+        def counting(width):
+            builds["n"] += 1
+            return original(width)
+
+        widget._build_index_now = counting
+        widget._request_reindex(42)
+        await widget.remove()
+        await pilot.pause(0.3)
+        assert builds["n"] == 0, "reindex fired into a detached widget"
+
+
+@pytest.mark.asyncio
 async def test_partial_drag_starting_and_ending_mid_line_across_a_tab_matches_static():
     """Same acid test as above, but with BOTH endpoints mid-line (neither at
     column 0 nor past the end), which is the more common real-world drag."""
