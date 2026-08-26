@@ -6,9 +6,11 @@ document size, and virtual height must track the wrap index exactly.
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import VerticalScroll
 from textual.events import MouseMove
 from textual.geometry import Offset
 from textual.selection import Selection
+from textual.widgets import Static
 
 from tldw_chatbook.Widgets.Library.library_media_raw_view import VirtualizedRawContent
 
@@ -234,3 +236,54 @@ async def test_select_all_highlights_every_visible_row():
             strip = widget.render_line(row)
             bgcolor = list(strip.crop(0, 1))[0].style.bgcolor
             assert bgcolor == selection_bg
+
+
+class _StaticHarness(App):
+    """Hosts the ``Static`` widget being replaced, for equivalence checks.
+
+    Applies the same empty-content substitution the production body does
+    before ``Static`` ever sees the string (``library_media_content.py``'s
+    ``content or "No stored content."``) -- ``VirtualizedRawContent``
+    performs this substitution internally, so leaving it out here would
+    compare "No stored content." against "" for a reason that has nothing
+    to do with rendering fidelity.
+    """
+
+    def __init__(self, content: str) -> None:
+        super().__init__()
+        self._content = content
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll():
+            yield Static(self._content or "No stored content.", id="old", markup=False)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "plain short line",
+        "wrapping " * 40,
+        "unicode ✓ wide 日本語 text " * 10,
+        "tabbed\tcolumns\there",
+        "trailing newline\n",
+        "",
+        "[Imported] literal brackets",
+    ],
+    ids=["short", "wrapped", "unicode", "tabs", "trailing", "empty", "markup"],
+)
+@pytest.mark.asyncio
+async def test_first_rows_match_the_static_they_replace(content):
+    """The widget must paint what Static painted for the same document."""
+    old_rows = []
+    app = _StaticHarness(content)
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#old", Static)
+        old_rows = [widget.render_line(y).text.rstrip() for y in range(4)]
+    new_rows = []
+    app = _Harness(content)
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        new_rows = [widget.render_line(y).text.rstrip() for y in range(4)]
+    assert new_rows == old_rows

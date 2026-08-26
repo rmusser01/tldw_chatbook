@@ -21,6 +21,12 @@ from tldw_chatbook.Utils.text_wrap_index import WrapIndex
 MATCH_STYLE = Style(reverse=True)
 ACTIVE_MATCH_STYLE = Style(reverse=True, bold=True)
 EMPTY_CONTENT_MESSAGE = "No stored content."
+# Matches Textual's Content.expand_tabs default (textual/content.py) -- the
+# Static this widget replaces renders unstyled content through Content, whose
+# expand_tabs takes the plain str.expandtabs(8) fast path for markup=False,
+# span-free text. Expanding once here, before the wrap index is built, keeps
+# both wrap points and rendered columns aligned with what Static painted.
+TAB_SIZE = 8
 
 
 class VirtualizedRawContent(ScrollView):
@@ -59,7 +65,9 @@ class VirtualizedRawContent(ScrollView):
                 :class:`~textual.scroll_view.ScrollView`.
         """
         super().__init__(**kwargs)
-        self.source_lines = (content or EMPTY_CONTENT_MESSAGE).split("\n")
+        self.source_lines = (
+            (content or EMPTY_CONTENT_MESSAGE).expandtabs(TAB_SIZE).split("\n")
+        )
         self.wrap_index: WrapIndex | None = None
         self._indexed_width: int | None = None
         self._query = query.strip()
