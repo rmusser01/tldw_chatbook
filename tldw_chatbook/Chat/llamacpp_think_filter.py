@@ -1,76 +1,177 @@
-"""Start-anchored, stream-aware ``<think>`` filtering for llama.cpp output.
+"""Start-anchored, stream-aware ``<think>`` splitting for local models.
 
 Qwen-family chat templates emit thinking at the very start of the response
-(an empty ``<think>\\n\\n</think>`` prefix appears in no-think mode on some
+(an empty ``<think>\n\n</think>`` prefix appears in no-think mode on some
 generations). Only a think block that opens at the beginning of the stream
-is stripped; a literal ``<think>`` mid-reply (e.g. the user asked for an XML
-example) is legitimate content and passes through. See ADR-066.
+is split; a literal ``<think>`` mid-reply remains visible content. See
+ADR-066 and ADR-090.
 """
 
 from __future__ import annotations
 
-_OPEN_TAGS = ("<think>", "<thinking>")
-_CLOSE_TAGS = ("</think>", "</thinking>")
+from dataclasses import dataclass, field
+from typing import Literal
+
+from tldw_chatbook.Chat.thinking_blocks import (
+    MAX_THINKING_TEXT_BYTES,
+    ThinkingEnvelopeValidationError,
+)
+
+_OPEN_TO_CLOSE = {
+    "<think>": "</think>",
+    "<thinking>": "</thinking>",
+}
+
+ThinkCaptureStatus = Literal["pending", "complete", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class ThinkSplitChunk:
+    """One content-free-in-repr update from a thinking stream split."""
+
+    thinking: str = field(default="", repr=False)
+    content: str = field(default="", repr=False)
+    status: ThinkCaptureStatus = "pending"
+
+
+class StartAnchoredThinkSplitter:
+    """Split a start-anchored thinking section from visible answer content."""
+
+    def __init__(self) -> None:
+        self._state: Literal["probing", "thinking", "visible"] = "probing"
+        self._buffer = ""
+        self._close_tag = ""
+        self._thinking_bytes = 0
+        self._strip_post_close_newlines = False
+        self._terminal_status: Literal["complete", "failed"] | None = None
+
+    def feed(self, chunk: str) -> ThinkSplitChunk:
+        """Consume one stream chunk without exposing undecided tag fragments."""
+        if type(chunk) is not str:
+            raise TypeError("Thinking stream chunks must be strings.")
+        if self._terminal_status is not None:
+            raise RuntimeError("Thinking stream is already closed.")
+        return self._consume(chunk, terminal=False)
+
+    def flush(self) -> ThinkSplitChunk:
+        """Settle the capture, marking an unclosed anchored block as failed."""
+        if self._terminal_status is not None:
+            return ThinkSplitChunk(status=self._terminal_status)
+        result = self._consume("", terminal=True)
+        assert result.status != "pending"
+        self._terminal_status = result.status
+        return result
+
+    def _consume(self, chunk: str, *, terminal: bool) -> ThinkSplitChunk:
+        if self._state == "visible":
+            return ThinkSplitChunk(
+                content=self._visible_content(chunk),
+                status="complete" if terminal else "pending",
+            )
+
+        if self._state == "probing":
+            self._buffer += chunk
+            stripped = self._buffer.lstrip()
+            opening = next(
+                (tag for tag in _OPEN_TO_CLOSE if stripped.startswith(tag)),
+                None,
+            )
+            if opening is not None:
+                self._state = "thinking"
+                self._close_tag = _OPEN_TO_CLOSE[opening]
+                self._buffer = stripped[len(opening) :]
+            elif stripped and not any(
+                tag.startswith(stripped) for tag in _OPEN_TO_CLOSE
+            ):
+                self._state = "visible"
+                content, self._buffer = self._buffer, ""
+                return ThinkSplitChunk(
+                    content=content,
+                    status="complete" if terminal else "pending",
+                )
+            else:
+                status: ThinkCaptureStatus = (
+                    "failed"
+                    if terminal and stripped
+                    else "complete"
+                    if terminal
+                    else "pending"
+                )
+                if terminal:
+                    self._buffer = ""
+                return ThinkSplitChunk(status=status)
+        else:
+            self._buffer += chunk
+
+        close_at = self._buffer.find(self._close_tag)
+        if close_at >= 0:
+            thinking = self._bounded_thinking(self._buffer[:close_at])
+            remainder = self._buffer[close_at + len(self._close_tag) :]
+            self._buffer = ""
+            self._state = "visible"
+            self._strip_post_close_newlines = True
+            return ThinkSplitChunk(
+                thinking=thinking,
+                content=self._visible_content(remainder),
+                status="complete" if terminal else "pending",
+            )
+
+        if terminal:
+            thinking = self._bounded_thinking(self._buffer)
+            self._buffer = ""
+            return ThinkSplitChunk(thinking=thinking, status="failed")
+
+        held = self._possible_close_suffix_length(self._buffer)
+        emit_through = len(self._buffer) - held
+        thinking = self._bounded_thinking(self._buffer[:emit_through])
+        self._buffer = self._buffer[emit_through:]
+        return ThinkSplitChunk(thinking=thinking)
+
+    def _bounded_thinking(self, text: str) -> str:
+        total = self._thinking_bytes + len(text.encode("utf-8"))
+        if total > MAX_THINKING_TEXT_BYTES:
+            raise ThinkingEnvelopeValidationError("Invalid thinking data: text.")
+        self._thinking_bytes = total
+        return text
+
+    def _possible_close_suffix_length(self, text: str) -> int:
+        maximum = min(len(text), len(self._close_tag) - 1)
+        for length in range(maximum, 0, -1):
+            if self._close_tag.startswith(text[-length:]):
+                return length
+        return 0
+
+    def _visible_content(self, text: str) -> str:
+        if not self._strip_post_close_newlines:
+            return text
+        content = text.lstrip("\n")
+        if content:
+            self._strip_post_close_newlines = False
+        return content
+
+
+def split_start_anchored_thinking(text: str) -> ThinkSplitChunk:
+    """Split one complete response with the exact streaming semantics."""
+    splitter = StartAnchoredThinkSplitter()
+    update = splitter.feed(text)
+    terminal = splitter.flush()
+    return ThinkSplitChunk(
+        thinking=update.thinking + terminal.thinking,
+        content=update.content + terminal.content,
+        status=terminal.status,
+    )
 
 
 class StartAnchoredThinkFilter:
-    """Stateful filter: feed() chunks in, get visible text out; flush() at end."""
+    """Compatibility wrapper that returns only the splitter's visible channel."""
 
     def __init__(self) -> None:
-        self._inside_think = False
-        self._decided_visible = False
-        self._buffer = ""
+        self._splitter = StartAnchoredThinkSplitter()
 
     def feed(self, chunk: str) -> str:
-        """Feed one stream chunk and return its visible text.
-
-        Args:
-            chunk: The next assistant content chunk from the stream. May be
-                empty, and may split a think tag across chunk boundaries.
-
-        Returns:
-            The portion of ``chunk`` (plus any previously buffered text)
-            that is visible reply text. Empty while the stream is still
-            inside a start-anchored think block or while an opening tag is
-            still ambiguous. Once a non-tag start has been seen, all
-            subsequent text passes through unfiltered.
-        """
-        if not chunk:
-            return ""
-        if self._decided_visible:
-            return chunk
-        self._buffer += chunk
-        while True:
-            if self._inside_think:
-                for tag in _CLOSE_TAGS:
-                    idx = self._buffer.find(tag)
-                    if idx != -1:
-                        self._buffer = self._buffer[idx + len(tag):]
-                        self._inside_think = False
-                        self._decided_visible = True
-                        return self._buffer.lstrip("\n")
-                return ""
-            stripped = self._buffer.lstrip()
-            if not stripped:
-                return ""  # whitespace-only so far; keep probing
-            for tag in _OPEN_TAGS:
-                if stripped.startswith(tag):
-                    self._inside_think = True
-                    self._buffer = stripped[len(tag):]
-                    break
-            if self._inside_think:
-                continue  # re-run close-tag scan on the remainder
-            if any(tag.startswith(stripped) for tag in _OPEN_TAGS):
-                return ""  # still ambiguous: could be a split tag opener
-            self._decided_visible = True
-            return self._buffer
+        """Feed one stream chunk and return only visible answer content."""
+        return self._splitter.feed(chunk).content
 
     def flush(self) -> str:
-        """Signal end-of-stream and return any remaining visible tail.
-
-        Returns:
-            Always ``""``: a stream that ends while still probing or inside
-            an unterminated start-anchored think block drops its tail by
-            contract (ADR-066), so there is never a remaining tail to emit.
-        """
-        return ""
+        """Drop an unterminated thinking tail, preserving ADR-066 privacy."""
+        return self._splitter.flush().content
