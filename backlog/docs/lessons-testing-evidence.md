@@ -1249,6 +1249,29 @@ asymmetrically toward failure.
 
 ---
 
+## The A/A control also tells you WHICH metric to report, not just how big a diff must be
+
+**TASK-22215, 2026-08-26.** Measuring input latency during the first 5 s after mount
+(before/after the boot-worker stagger, simulated post-upgrade profile, n=8 per arm,
+interleaved in both orders), the headline that jumped out was the median keypress:
+**before 90.5-92.6 ms, after 71.9-72.8 ms in three of four runs** — a tidy -22%. The A/A
+control (identical tree, two labels, same shape) killed it: its four runs measured 72.7,
+89.5, 77.8, 72.0 ms. The metric is **bimodal**, and both modes appear with the code held
+constant, so any single pair of runs can "show" a 20 ms median win or none at all.
+
+What survived on the same data was the metric whose RANGES separated: worst single
+keypress **625-876 ms before vs 395-467 ms after**, with the A/A control's 426-476 ms
+sitting inside the after range, and mean 111-124 vs 99-109 ms. p95, loop-heartbeat excess
+and time-to-ready were washes, and the warm-boot shape was a wash on everything.
+
+**What to do.** Run the A/A control with the SAME repeat count as the arms, and read its
+per-run spread, not only its aggregate: a metric whose A/A runs are multi-modal cannot
+carry a claim at that n no matter how clean the A/B looks, while a metric whose A/A range
+is narrow and disjoint from one arm can. Report the ones that separate, say "wash" for
+the rest, and never quote a median that the control also produced.
+
+---
+
 ## A crash mid-transfer proves nothing durable if the checkpoint is never written mid-transfer
 
 **TASK-595 Task 10, 2026-07-31.** Asked to write a real-subprocess, SIGKILL-based test

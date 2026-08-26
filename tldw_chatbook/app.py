@@ -305,6 +305,12 @@ from tldw_chatbook.Utils.app_shutdown import (
     register_running_app,
     unregister_running_app,
 )
+from tldw_chatbook.Utils.boot_worker_policy import (
+    BOOT_WORKER_KEY_BY_IDENTITY,
+    MAX_CONCURRENT_STAGGERED_BOOT_WORKERS,
+    STAGGERED_BOOT_WORKER_KEYS,
+    StaggeredBootWorkerGate,
+)
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
@@ -735,6 +741,16 @@ DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 # (the wait ends the moment the last worker finishes) while still bounding a
 # thread worker that will not notice cancellation at all.
 WORKER_CANCELLATION_GRACE_SECONDS = 3.0
+
+# TASK-22215: how often the staggered boot fleet reconciles its admission
+# slots against the workers actually holding them. This is a BACKSTOP for a
+# terminal transition that never reaches `on_worker_state_changed`, not the
+# primary mechanism -- so it is deliberately slow (it costs one dict walk over
+# at most `MAX_CONCURRENT_STAGGERED_BOOT_WORKERS` entries) and stops itself the
+# moment the gate drains. Without it, one lost event would strand every
+# remaining member of the fleet for the whole session: exactly the failure a
+# stagger policy must not introduce.
+BOOT_WORKER_RECONCILE_INTERVAL_SECONDS = 2.0
 
 # task-15472: after first paint, warm the lazy screen-module import cache from
 # a background thread so the FIRST click to each tab doesn't pay for a
@@ -7061,6 +7077,14 @@ class TldwCli(
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False
 
+        # TASK-22215: staggered boot-worker fleet state. The gate is built at
+        # `_ui_ready` (`_start_staggered_boot_workers`); until then there is
+        # deliberately nothing to admit, because every member of the fleet is
+        # post-first-paint work by policy.
+        self._boot_worker_gate: StaggeredBootWorkerGate | None = None
+        self._boot_worker_handles: dict[str, Worker] = {}
+        self._boot_worker_reconcile_timer: Optional[Timer] = None
+
         # --- Assign DB instances for event handlers ---
         if self.prompts_service_initialized:
             # Get the database instance using the get_db_instance() function
@@ -9529,7 +9553,22 @@ class TldwCli(
         hop scheduled onto that thread gets a fresh connection instead of a
         closed one. It is not safe to "improve" this into a close of the
         instance itself.
+
+        TASK-22215: the driver paces itself between chunks (the TASK-22200
+        treatment, now shared) and this worker hands it the Textual worker's
+        cancellation flag -- pacing makes the run longer, and a thread worker
+        that never polls ``is_cancelled`` would make shutdown wait out every
+        remaining pause. Stopping is safe: the resume frontier lives in the
+        database.
         """
+        from textual.worker import NoActiveWorker, get_current_worker
+
+        try:
+            worker = get_current_worker()
+        except NoActiveWorker:
+            worker = None  # direct calls in tests/harnesses run un-cancellable
+        should_abort = (lambda: worker.is_cancelled) if worker is not None else None
+
         db = None
         db_path = get_subscriptions_db_path()
         try:
@@ -9537,7 +9576,7 @@ class TldwCli(
             if db is None:
                 # Only a harness that skipped service wiring gets here.
                 db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
-            backfill_subscription_items_fts(db)
+            backfill_subscription_items_fts(db, should_abort=should_abort)
         except FTSBackfillError as exc:
             logger.opt(exception=True).error(
                 "Subscription items FTS backfill failed for database {} "
@@ -12476,28 +12515,12 @@ class TldwCli(
             group="scheduling",
         )
 
-        # task-688: index subscription_items rows scraped before the FTS5
-        # index existed, so search covers a user's whole back catalogue
-        # without any action on their part. thread=True because this does
-        # blocking sqlite work; never blocks startup or screen mount since
-        # run_worker only schedules it.
-        self.run_worker(
-            self._backfill_subscription_items_fts,
-            thread=True,
-            exclusive=True,
-            group="subscriptions-fts-backfill",
-        )
-
-        # task-21100: reinsert the messages the v45->v46 FTS reset no longer
-        # indexes inline, so an upgraded profile's chat history becomes fully
-        # searchable again without ever blocking boot on the index rewrite.
-        # thread=True for the same reason as the subscriptions backfill above.
-        self.run_worker(
-            self._backfill_chachanotes_messages_fts,
-            thread=True,
-            exclusive=True,
-            group="chachanotes-fts-backfill",
-        )
+        # TASK-22215: the two FTS backfills (task-688 subscription_items,
+        # task-21100 messages) used to start HERE, before first paint, next
+        # to the scheduler. They are whole-table re-tokenizations that
+        # nothing waits on and that resume from a frontier in their own
+        # database, so they belong in the staggered tier -- see
+        # `Utils/boot_worker_policy.py` and `_start_staggered_boot_workers`.
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
         """Build the disk-backed model catalog cache for startup (ADR-020).
@@ -13464,33 +13487,12 @@ class TldwCli(
     def _schedule_deferred_startup_work(self) -> None:
         """Start nonessential services after the first interactive UI frame."""
 
-        # task-21106: Actor Pack crash recovery moved here from __init__ —
-        # synchronous SQLite has no place on the construction path. A thread
-        # worker (not a coroutine) because recovery does blocking DB I/O; the
-        # coordinator's own once-guard makes every later surface-side call
-        # (Personas mount, create_persona) a cached no-op.
-        self.run_worker(
-            self.ensure_actor_pack_recovery,
-            name="deferred_actor_pack_recovery",
-            group="actor_pack_recovery",
-            thread=True,
-            exclusive=True,
-            exit_on_error=False,
-        )
-        # task-22216: the Actor Pack staging crash-sweep moved here from
-        # ActorPackImportService.__init__ (reached from __init__ via
-        # _wire_character_persona_services) — synchronous filesystem I/O
-        # has no place on the construction path. The service's once-gate
-        # also fires at the entry of inspect_archive, so whichever comes
-        # first sweeps and the other is a cached no-op.
-        self.run_worker(
-            self.ensure_actor_pack_staging_sweep,
-            name="deferred_actor_pack_staging_sweep",
-            group="actor_pack_staging_sweep",
-            thread=True,
-            exclusive=True,
-            exit_on_error=False,
-        )
+        # TASK-22215: the boot-time thread fleet starts here, under the
+        # explicit order/concurrency policy in `Utils/boot_worker_policy.py`,
+        # rather than all at once (and rather than partly from `on_mount`,
+        # ahead of first paint, which is where the two FTS backfills used to
+        # start).
+        self._start_staggered_boot_workers()
         self.set_timer(
             DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
             self._schedule_footer_status_updates,
@@ -13529,6 +13531,252 @@ class TldwCli(
                 name="deferred_legacy_citation_migration",
             )
         self._schedule_launch_wake()
+
+    # ------------------------------------------------------------------
+    # TASK-22215: the staggered boot-worker fleet
+    # ------------------------------------------------------------------
+
+    def boot_worker_starters(self) -> dict[str, Callable[[], Optional[Worker]]]:
+        """The start callables for every staggered boot worker, by policy key.
+
+        One table, so the policy (``Utils/boot_worker_policy.py``) and the
+        code that starts the fleet cannot drift apart: a key with no starter
+        -- or a starter with no key -- is a test failure, not a worker that
+        silently never runs.
+
+        Returns:
+            Policy key -> zero-argument callable returning the started
+            ``Worker`` (or ``None`` when there was nothing to start).
+        """
+
+        def start_actor_pack_recovery() -> Worker:
+            # task-21106: Actor Pack crash recovery, moved out of __init__ --
+            # synchronous SQLite has no place on the construction path. A
+            # thread worker (not a coroutine) because recovery does blocking
+            # DB I/O; the coordinator's own once-guard makes every later
+            # surface-side call (Personas mount, create_persona) a cached
+            # no-op -- which is also why this may be staggered at all.
+            return self.run_worker(
+                self.ensure_actor_pack_recovery,
+                name="deferred_actor_pack_recovery",
+                group="actor_pack_recovery",
+                thread=True,
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+        def start_actor_pack_staging_sweep() -> Worker:
+            # task-22216: the Actor Pack staging crash-sweep, moved out of
+            # ActorPackImportService.__init__ (synchronous filesystem I/O on
+            # the construction path). The service's once-gate also fires at
+            # the entry of inspect_archive, so whichever comes first sweeps
+            # and the other is a cached no-op.
+            return self.run_worker(
+                self.ensure_actor_pack_staging_sweep,
+                name="deferred_actor_pack_staging_sweep",
+                group="actor_pack_staging_sweep",
+                thread=True,
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+        def start_chachanotes_fts_backfill() -> Worker:
+            # task-21100: reinsert the messages the v45->v46 FTS reset no
+            # longer indexes inline, so an upgraded profile's chat history
+            # becomes fully searchable again. thread=True: blocking sqlite.
+            # The name is explicit so the (name, group) identity the boot
+            # census pins cannot drift with a method rename.
+            return self.run_worker(
+                self._backfill_chachanotes_messages_fts,
+                name="_backfill_chachanotes_messages_fts",
+                group="chachanotes-fts-backfill",
+                thread=True,
+                exclusive=True,
+            )
+
+        def start_subscriptions_fts_backfill() -> Worker:
+            # task-688: index subscription_items rows scraped before the FTS5
+            # index existed, so search covers a user's whole back catalogue
+            # without any action on their part.
+            return self.run_worker(
+                self._backfill_subscription_items_fts,
+                name="_backfill_subscription_items_fts",
+                group="subscriptions-fts-backfill",
+                thread=True,
+                exclusive=True,
+            )
+
+        return {
+            "actor_pack_recovery": start_actor_pack_recovery,
+            "actor_pack_staging_sweep": start_actor_pack_staging_sweep,
+            "chachanotes_fts_backfill": start_chachanotes_fts_backfill,
+            "subscriptions_fts_backfill": start_subscriptions_fts_backfill,
+        }
+
+    def _start_boot_worker(self, key: str) -> Optional[Worker]:
+        """Start one staggered boot worker.
+
+        Args:
+            key: A key from ``STAGGERED_BOOT_WORKER_KEYS``.
+
+        Returns:
+            The started worker, or None if the key has no starter (which is a
+            wiring bug the policy test catches, not a runtime failure).
+        """
+        starter = self.boot_worker_starters().get(key)
+        if starter is None:
+            self.loguru_logger.warning(
+                f"No starter registered for staggered boot worker {key!r}"
+            )
+            return None
+        return starter()
+
+    def _start_staggered_boot_workers(self) -> None:
+        """Open the admission gate for the post-readiness boot fleet.
+
+        Called once, from ``_schedule_deferred_startup_work`` (the last
+        statement of ``_post_mount_setup``, i.e. after ``_ui_ready``).
+        """
+        if getattr(self, "_shutting_down", False):
+            return
+        self._boot_worker_gate = StaggeredBootWorkerGate(
+            STAGGERED_BOOT_WORKER_KEYS,
+            MAX_CONCURRENT_STAGGERED_BOOT_WORKERS,
+        )
+        self._boot_worker_handles = {}
+        self._admit_staggered_boot_workers()
+
+    def _admit_staggered_boot_workers(self) -> None:
+        """Start whatever the gate admits, then arm the reconcile timer.
+
+        Loops because a starter that raises (or declines to start anything)
+        frees its slot immediately -- the queue must advance past it in the
+        same pass rather than waiting for a completion that will never come.
+        """
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None:
+            return
+        if getattr(self, "_shutting_down", False):
+            self._close_boot_worker_gate("shutdown")
+            return
+        while True:
+            admitted = gate.admit()
+            if not admitted:
+                break
+            for key in admitted:
+                worker: Optional[Worker] = None
+                try:
+                    worker = self._start_boot_worker(key)
+                except Exception:
+                    self.loguru_logger.opt(exception=True).warning(
+                        f"Staggered boot worker {key!r} failed to start"
+                    )
+                if worker is None:
+                    # Nothing is in flight for this key, so no terminal
+                    # transition will ever arrive: release the slot now.
+                    gate.complete(key)
+                    continue
+                self._boot_worker_handles[key] = worker
+        self._arm_boot_worker_reconcile()
+
+    def _release_boot_worker_slot(self, worker: Any) -> None:
+        """Free the slot a finished boot worker held and admit the next.
+
+        Args:
+            worker: The worker whose state just went terminal. Anything that
+                is not a policy member is ignored, so this is safe to call
+                from the app-wide ``Worker.StateChanged`` hook.
+        """
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None:
+            return
+        key = BOOT_WORKER_KEY_BY_IDENTITY.get(
+            (getattr(worker, "name", ""), getattr(worker, "group", ""))
+        )
+        if key is None or not gate.complete(key):
+            return
+        self._boot_worker_handles.pop(key, None)
+        self._admit_staggered_boot_workers()
+
+    def _arm_boot_worker_reconcile(self) -> None:
+        """Keep a slow reconcile running while the fleet is outstanding.
+
+        The gate advances on ``Worker.StateChanged``. This is the backstop
+        for the one thing that hook cannot cover: a terminal transition that
+        never reaches the handler (a worker whose message is dropped during a
+        screen swap, a duck-typed worker). Without it a lost event would
+        strand every remaining member of the fleet for the whole session --
+        the failure mode a stagger policy must not introduce. It stops itself
+        as soon as the gate is drained.
+        """
+        if getattr(self, "_boot_worker_reconcile_timer", None) is not None:
+            return
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None or gate.is_drained or gate.is_closed:
+            return
+        try:
+            self._boot_worker_reconcile_timer = self.set_interval(
+                BOOT_WORKER_RECONCILE_INTERVAL_SECONDS,
+                self._reconcile_boot_worker_slots,
+            )
+        except Exception:  # noqa: BLE001 -- boot never dies on a backstop
+            self.loguru_logger.opt(exception=True).debug(
+                "Could not arm the staggered boot worker reconcile"
+            )
+
+    def _reconcile_boot_worker_slots(self) -> None:
+        """Release slots held by workers that already finished, then advance."""
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None:
+            self._stop_boot_worker_reconcile()
+            return
+        released = False
+        for key, worker in list(self._boot_worker_handles.items()):
+            finished = bool(getattr(worker, "is_finished", False)) or bool(
+                getattr(worker, "is_cancelled", False)
+            )
+            if not finished:
+                continue
+            self._boot_worker_handles.pop(key, None)
+            released = gate.complete(key) or released
+        if released:
+            self._admit_staggered_boot_workers()
+        if gate.is_drained or gate.is_closed:
+            self._stop_boot_worker_reconcile()
+
+    def _stop_boot_worker_reconcile(self) -> None:
+        """Stop the reconcile timer if one is running."""
+        timer = getattr(self, "_boot_worker_reconcile_timer", None)
+        if timer is None:
+            return
+        self._boot_worker_reconcile_timer = None
+        try:
+            timer.stop()
+        except Exception:  # noqa: BLE001 -- teardown must not raise
+            pass
+
+    def _close_boot_worker_gate(self, reason: str) -> None:
+        """Stop admitting staggered boot workers (quit/shutdown).
+
+        Whatever never started is not lost: each staggered member is either
+        re-run by the surface that gates on it (the actor-pack pair) or
+        resumes from a frontier in its own database on the next boot (both
+        FTS backfills). Workers already in flight are cancelled by the normal
+        shutdown path, not here.
+
+        Args:
+            reason: Logged, so a quit-time drop is explainable.
+        """
+        self._stop_boot_worker_reconcile()
+        gate = getattr(self, "_boot_worker_gate", None)
+        if gate is None or gate.is_closed:
+            return
+        dropped = gate.close()
+        if dropped:
+            self.loguru_logger.debug(
+                f"Staggered boot workers not started before {reason}: "
+                f"{', '.join(dropped)} (each resumes or re-runs on demand)"
+            )
 
     def _schedule_launch_wake(self) -> None:
         """Deliver a supervisor wake this install already owed at launch.
@@ -14161,6 +14409,11 @@ class TldwCli(
 
         # Set shutdown flag to prevent new operations
         self._shutting_down = True
+
+        # TASK-22215: stop admitting staggered boot workers before cancelling
+        # the live ones, so a completion arriving mid-teardown cannot start a
+        # fresh thread worker behind the cancel sweep.
+        self._close_boot_worker_gate("shutdown request")
 
         # Cancel all active workers first
         await self._cancel_and_settle_workers("shutdown request")
@@ -14991,6 +15244,24 @@ class TldwCli(
             f"(Group: {worker_group}, State: {event.state})"
         )
 
+        # TASK-22215. The same "one hook sees every transition" property the
+        # diagnostics below rely on is what advances the staggered boot fleet:
+        # a terminal state frees that worker's admission slot and lets the next
+        # member start. Non-members return immediately (one dict lookup), and
+        # the whole thing is best-effort -- a boot stagger must never be able
+        # to break the app-wide worker hook.
+        if event.state in (
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+            WorkerState.CANCELLED,
+        ):
+            try:
+                self._release_boot_worker_slot(event.worker)
+            except Exception:
+                self.loguru_logger.opt(exception=True).debug(
+                    "Staggered boot worker slot release failed"
+                )
+
         # TASK-1240. One hook already sees every worker transition, so failures
         # are recorded without touching any of the 398 run_worker call sites.
         # Only ERROR persists: a start or success event here would emit a line
@@ -15308,6 +15579,10 @@ class TldwCli(
             return
 
         self._shutting_down = True
+        # TASK-22215: the user has approved the quit -- nothing further from
+        # the staggered boot fleet may start (idempotent with the same call in
+        # `on_shutdown_request`, which the quit path reaches later).
+        self._close_boot_worker_gate("quit")
         await self._run_approved_quit_cleanup()
 
     async def _run_approved_quit_cleanup(self) -> None:

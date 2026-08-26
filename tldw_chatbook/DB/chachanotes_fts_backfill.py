@@ -46,19 +46,22 @@ from typing import Callable, Optional, TYPE_CHECKING
 
 from loguru import logger
 
+from .fts_backfill_pacing import (
+    # Re-exported, not dead: this module is the documented home of the pacing
+    # contract, and TASK-22200's tests import the slice size from here.
+    ABORT_POLL_SECONDS as _ABORT_POLL_SECONDS,  # noqa: F401
+    INTER_CHUNK_PAUSE_SECONDS,
+    interruptible_sleep as _interruptible_sleep,
+)
+
 if TYPE_CHECKING:
     from .ChaChaNotes_DB import CharactersRAGDB
 
-#: Pause between chunks. Chosen against measurement, not taste: a default
-#: 500-row chunk of typical chat text holds the write lock for single-digit
-#: milliseconds, so 0.1 s caps the backfill's lock duty cycle at a few
-#: percent while still finishing a 100k-message history in tens of seconds
-#: of added wall time (background thread; nobody is waiting on it).
-INTER_CHUNK_PAUSE_SECONDS = 0.1
-
-#: Slice size for abort-checked sleeps. Also the worst-case extra shutdown
-#: latency a sleeping backfill adds once the worker is cancelled.
-_ABORT_POLL_SECONDS = 0.05
+# TASK-22215 moved the two pacing primitives above into
+# `DB/fts_backfill_pacing.py` so the subscription_items backfill (task-688)
+# could adopt the same rules instead of a second copy of them. Names, values
+# and semantics are unchanged; they are re-exported here because this module
+# is where TASK-22200 built and documented them.
 
 #: Escalating waits before retrying a chunk that lost the lock queue. Each
 #: failed attempt already sat out the connection's 15 s busy handler, so
@@ -99,33 +102,6 @@ def _is_lock_queue_timeout(exc: BaseException) -> bool:
                 return True
         current = current.__cause__ or current.__context__
     return False
-
-
-def _interruptible_sleep(
-    seconds: float,
-    should_abort: Optional[Callable[[], bool]],
-    sleep: Callable[[float], None],
-) -> bool:
-    """Sleep ``seconds``, abort-checked. Returns True if aborted.
-
-    Without ``should_abort`` this is a single ``sleep`` call (keeps injected
-    recorders 1:1 with pauses in tests). With it, the wait is sliced into
-    ``_ABORT_POLL_SECONDS`` steps so a cancelled worker stops within one
-    slice instead of finishing the whole pause.
-    """
-    if seconds <= 0:
-        return bool(should_abort and should_abort())
-    if should_abort is None:
-        sleep(seconds)
-        return False
-    remaining = seconds
-    while remaining > 0:
-        if should_abort():
-            return True
-        step = min(_ABORT_POLL_SECONDS, remaining)
-        sleep(step)
-        remaining -= step
-    return should_abort()
 
 
 def backfill_chachanotes_messages_fts(

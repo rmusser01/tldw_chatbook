@@ -17,9 +17,15 @@ it -- the eighth worker arrives in review, not silently. The allowlist is
 deliberately the superset of everything legitimately observed (fresh-boot
 one-offs and stall-triggered threads included), because the guard's job is
 to catch NEW UNREVIEWED members, not to flake on members that only
-sometimes run. TASK-22215 (stagger/priority policy for this fleet) should
-treat this allowlist as the inventory it reorders; staggering itself is out
-of scope here.
+sometimes run. TASK-22215 (stagger/priority policy for this fleet) took
+this allowlist as the inventory it reorders; staggering itself stays out of
+scope here. That policy now lives in ``tldw_chatbook/Utils/boot_worker_
+policy.py`` and ``Tests/App/test_boot_worker_stagger_policy.py`` cross-checks
+every policy row against the allowlist below, so the two cannot drift: WHICH
+workers may start is pinned here, WHEN and HOW MANY AT ONCE is pinned there.
+No allowlist row changed for that task -- the four staggered members kept
+their (name, group) identity and merely moved from ``on_mount`` to the
+post-``_ui_ready`` tier, which is still inside this census's settle window.
 
 Raising/extending: when this fails, the message prints the unlisted
 starters. Name the feature that added each, decide whether it must really
