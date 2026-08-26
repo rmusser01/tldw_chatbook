@@ -159,11 +159,14 @@ Notes was subsequently verified on implementation commit
 The Notes-specific final review found no remaining actionable issue.
 
 Prompts was subsequently verified on implementation commit
-`d0de6d060`, rebased onto `origin/dev` at `5278449c1`. The Prompt-specific
-independent final review found no remaining Critical or Important issue. Fresh post-rebase gates
-passed 15 focused retained-reader tests, 340 complete Prompt-canvas tests, and 1,126 broader
-Prompt state/controller/widget/service tests; the isolated production-CSS matrix also completed
-successfully.
+`1d617f33f5`, rebased onto `origin/dev` at `794ae11521`. Qodo review hardening
+confined every evidence-driver config/data/XDG path, preserved Info when Basic is
+unavailable, routed invalid saves to the owning Advanced control, and removed the
+unused parallel Prompt reader-state module. Fresh post-review gates passed 17 mounted
+retained-reader tests, 10 Prompt seam/authority tests, and the focused mode and driver
+regressions. The earlier post-rebase gates passed 340 complete Prompt-canvas tests and
+1,126 broader Prompt state/controller/widget/service tests; the isolated production-CSS
+matrix also completed successfully after the driver hardening.
 
 | Obligation group | Result | Evidence |
 | --- | --- | --- |
@@ -176,10 +179,10 @@ successfully.
 | Notes retained list/work topology, independent Items collapse, comfort expansion, compact allocation, focus evacuation, and zero data/preference work on resize | Added and verified | `Tests/UI/test_library_notes_reader.py`; `Tests/Library/test_library_adaptive_reader_state.py`; `Tests/Library/test_library_notes_session.py` (including the no-parallel-authority architecture regression); `Tests/UI/test_library_shell.py -k library_note` (133 passed); live walkthroughs at 170x48 and 90x30 |
 | Notes list/tree identity, Edit/Preview/Info, current-draft preview, selected-versus-loaded fencing, conflict/retry, single delete/Undo, and labelled read-only bulk preview | Preserved and verified | `Tests/UI/test_library_notes_reader.py`; `Tests/UI/test_library_multiselect_notes.py`; `Tests/UI/test_library_shell.py -k library_note`; final reviewer verification of bulk Back/Save/Escape gates |
 | Notes Create/templates, import, lasting sync/recovery, exact placement identity, dirty navigation veto, and separate File Notes source | Preserved and verified | `Tests/UI/test_library_notes_files_sync_journey.py` (29 passed, one unchanged baseline case deselected); `Tests/UI/test_library_notes_folder_navigator.py`; branch-versus-`dev` comparison with no branch-only failures |
-| Prompts retained Items/Work topology, independent Library/Items collapse, comfort expansion, compact allocation, focus evacuation, and resize purity | Added and verified | `Tests/UI/test_library_prompts_reader.py`; `Tests/Library/test_library_prompts_reader_state.py`; complete live 160x50 / 120x35 / 100x30 / 80x24 matrix in `evidence/task-22033/` |
+| Prompts retained Items/Work topology, independent Library/Items collapse, comfort expansion, compact allocation, focus evacuation, and resize purity | Added and verified | `Tests/UI/test_library_prompts_reader.py`; `Tests/Library/test_library_adaptive_reader_state.py`; complete live 160x50 / 120x35 / 100x30 / 80x24 matrix in `evidence/task-22033/` |
 | Prompt browse, exact paging/scope, collections, cross-page bulk authority, read-only bulk preview, import, and retry while Items remains mounted | Preserved and verified | `Tests/UI/test_library_prompts_canvas.py` (340 passed); `Tests/UI/test_library_prompt_collections.py`; `Tests/UI/test_library_prompt_browse_controller.py`; live `prompts-{bulk-readonly-preview,import-work-pane,browse-error,browse-retry}.svg` |
-| One lossless Basic/Advanced/Info draft, hidden-field preservation, validation ownership/focus, selected-versus-loaded detail fencing, history, conflicts, lifecycle, delete/Undo, and retry | Added and verified | `Tests/Library/test_library_prompts_reader_state.py`; `Tests/UI/test_library_prompts_reader.py`; `Tests/Prompt_Management/test_prompt_preservation.py`; 1,126-test broader gate; live `prompts-{preservation-history,validation-focus,detail-failure,detail-retry}.svg` |
-| Local Prompt services, capabilities, databases, controllers, and persistence ownership | Unchanged and verified | `Tests/Library/test_library_prompts_seam.py`; `Tests/Prompt_Management/`; architecture guard rejects parallel reader persistence authority; independent final review found no Critical or Important issue |
+| One lossless Basic/Advanced/Info draft, hidden-field preservation, validation ownership/focus, selected-versus-loaded detail fencing, history, conflicts, lifecycle, delete/Undo, and retry | Added and verified | Mounted production-path regressions in `Tests/UI/test_library_prompts_reader.py`; `Tests/Prompt_Management/test_prompt_preservation.py`; earlier 1,126-test broader gate; live `prompts-{preservation-history,validation-focus,detail-failure,detail-retry}.svg` |
+| Local Prompt services, capabilities, databases, controllers, and persistence ownership | Unchanged and verified | `Tests/Library/test_library_prompts_seam.py`; `Tests/Prompt_Management/`; architecture guard rejects any parallel Prompt reader-state authority; all Qodo Critical/Important findings addressed |
 
 The production-shaped evidence bundle and exact commands are documented in
 [`evidence/task-22031/README.md`](evidence/task-22031/README.md). It contains 105 artifacts,
