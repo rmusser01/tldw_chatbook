@@ -41,12 +41,13 @@ navigation buttons — fix it and press Next again, or go Back.
 | Tools | Built-in tool gates (all off by default) | `[tools]` in config.toml (Settings ▸ Advanced Config) — there is no Tools category |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
+| Voice | Spoken replies (sample + "Test and Hear"; endpoint/model under Advanced) | Settings ▸ Speech & TTS |
+| Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
 
 The Voice step leads with a sample text and **Test and Hear**; the endpoint,
 model, and output settings sit under its "Advanced" section. On terminals
 smaller than about 100×30 the wizard shows a one-line nudge — everything
 still works, steps just scroll.
-| Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
 
 The final summary shows a ✓/✗ line per area, read back from what was actually
 saved — and if the connection check failed while you were setting up (a

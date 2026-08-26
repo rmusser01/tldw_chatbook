@@ -42,7 +42,11 @@ def quiet_startup_stderr() -> None:
         from loguru import logger
 
         logger.remove()
-        logger.add(sys.stderr, level="WARNING")
+        # diagnose=False explicitly: the LOGURU_DIAGNOSE env default binds
+        # only if set before loguru's FIRST import, which this module cannot
+        # control (task-2119's credential-leak incident, documented in the
+        # package __init__). Never rely on the default here.
+        logger.add(sys.stderr, level="WARNING", diagnose=False, backtrace=True)
     except Exception:
         # loguru missing or already torn down: stdlib capping still applies.
         pass

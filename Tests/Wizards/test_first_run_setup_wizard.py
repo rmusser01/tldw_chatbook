@@ -10074,15 +10074,21 @@ async def test_summary_footer_shows_the_effective_config_path(monkeypatch, tmp_p
         await pilot.pause()
         footer = str(step.query_one("#setup-summary-footer", Static).render())
         # TASK-21148 (UAT S-4): long paths middle-truncate on one line
-        # instead of hard-wrapping mid-character — the filename tail and
-        # the path head both survive.
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            middle_truncate_path,
-        )
-
-        assert middle_truncate_path(str(scratch_config), 100) in footer
-        assert footer.count(scratch_config.name[-12:]) >= 1
+        # instead of hard-wrapping mid-character — the budget derives from
+        # the step's width (review follow-up), so assert the structure:
+        # the rendered path is the head and tail of the real path joined by
+        # a single ellipsis (or the full path when it fits).
         assert "Config file:" in footer
+        line = next(
+            ln for ln in footer.splitlines() if ln.startswith("Config file:")
+        )
+        rendered_path = line[len("Config file: "):]
+        full_path = str(scratch_config)
+        if rendered_path != full_path:
+            assert "…" in rendered_path
+            head, _, tail = rendered_path.partition("…")
+            assert full_path.startswith(head) and full_path.endswith(tail)
+        assert footer.count(scratch_config.name[-12:]) >= 1
 
 
 @pytest.mark.asyncio

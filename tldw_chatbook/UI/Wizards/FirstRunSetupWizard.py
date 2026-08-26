@@ -2839,6 +2839,16 @@ class ProviderStep(SetupStep):
     def _on_key_changed(self, event: Input.Changed) -> None:
         if self._updating_connection_controls:
             return
+        # Review TASK-21143 follow-up (P-5): the returned-to-Provider notice
+        # ("this API key was rejected") must not outlive the edit that
+        # addresses it — a stale rejection over a fresh key reads as "still
+        # broken".
+        try:
+            wizard = self.wizard
+            if wizard is not None and hasattr(wizard, "_clear_pinned_step_error"):
+                wizard._clear_pinned_step_error()
+        except Exception:
+            pass
         captured = self._provider_drafts.get(self.selected_provider_key)
         if (
             captured is not None
@@ -7192,7 +7202,7 @@ class SummaryStep(SetupStep):
         try:
             self.query_one("#setup-summary-footer", Static).update(
                 "Config file: "
-                f"{wizard_state.middle_truncate_path(config_path_text, 100)}\n"
+                f"{wizard_state.middle_truncate_path(config_path_text, max(40, (self.size.width or 120) - 18))}\n"
                 "Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
             )
         except Exception:
@@ -9041,9 +9051,16 @@ class SetupWizardContainer(WizardContainer):
         The one-shot ``_advance_confirmed`` flag lets the dialog's "Continue
         anyway" re-enter this method exactly once without re-asking.
         """
+        # Consume the one-shot confirmation UP FRONT (review TASK-21143
+        # follow-up): if the dialog's resolution re-enters while an early
+        # guard trips, a surviving flag would let the NEXT press bypass the
+        # gate silently. Losing a confirmation to a blocked re-entry only
+        # re-asks — the safe direction for a trust gate.
+        confirmed = self._advance_confirmed
+        self._advance_confirmed = False
         if self._advancing or self._failure_action_running or not self.can_proceed:
             return
-        if not self._advance_confirmed:
+        if not confirmed:
             try:
                 step = self.steps[self.current_step]
             except IndexError:
@@ -9053,7 +9070,6 @@ class SetupWizardContainer(WizardContainer):
                 if prompt:
                     self._push_advance_confirmation(prompt)
                     return
-        self._advance_confirmed = False
         self._set_advancing(True)
         self.run_worker(self._advance(), exclusive=True, group="setup-wizard-advance")
 
