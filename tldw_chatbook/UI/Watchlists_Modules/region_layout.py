@@ -156,57 +156,64 @@ def resolve_effective_layout(
         read_mode: Whether Read's Feed Items pane is mounted.
         article_focus: Whether every mounted side pane is temporarily hidden.
         priority_target: An expanded mounted pane to collapse last, if any.
-        previous: The previously resolved effective layout, used for
-            hysteresis (TASK-22211, Library reader precedent). A pane that
-            ``previous`` holds collapsed only re-expands once ``width``
-            clears its bare boundary by `LAYOUT_HYSTERESIS_WIDTH`, so
-            sub-hysteresis width oscillation at a boundary is absorbed.
-            Hysteresis only ever suppresses *expansion* -- collapse still
-            happens exactly at the bare boundary, so the result never
-            requires more width than the bare resolution did. ``None``
-            (a first resolve, or a manual gesture that should re-resolve
-            fresh) behaves exactly as before the parameter existed.
+        previous: Previously resolved effective layout used for hysteresis.
 
     Returns:
         A new effective layout with no solo or restore state.
     """
     mounted = READ_SIDE_PANE_ORDER if read_mode else MANAGEMENT_SIDE_PANE_ORDER
     priority = READ_COLLAPSE_PRIORITY if read_mode else MANAGEMENT_COLLAPSE_PRIORITY
-    collapsed = set(preferred.collapsed).intersection(mounted)
+    preferred_collapsed = set(preferred.collapsed).intersection(mounted)
 
     if article_focus:
-        return RegionLayout(collapsed=frozenset(collapsed.union(mounted)))
+        return RegionLayout(
+            collapsed=frozenset(preferred_collapsed.union(mounted))
+        )
 
     required_width = (
         CENTRE_COMFORT_WIDTH
         + len(mounted) * PANE_GRIP_WIDTH
-        + sum(PANE_MINIMUM_WIDTHS[region] for region in mounted if region not in collapsed)
+        + sum(
+            PANE_MINIMUM_WIDTHS[region]
+            for region in mounted
+            if region not in preferred_collapsed
+        )
     )
-    candidates = [region for region in priority if region not in collapsed]
+    candidates = [
+        region for region in priority if region not in preferred_collapsed
+    ]
     if priority_target in candidates:
         candidates.remove(priority_target)
         candidates.append(priority_target)
 
+    nominal_collapsed = set(preferred_collapsed)
     for region in candidates:
         if required_width <= width:
             break
-        collapsed.add(region)
+        nominal_collapsed.add(region)
         required_width -= PANE_MINIMUM_WIDTHS[region]
 
-    if previous is not None:
-        # Hysteresis, per region, in the same collapse-priority order as
-        # the greedy pass: a pane the previous effective layout had
-        # collapsed stays collapsed unless the width clears the current
-        # requirement by the hysteresis margin. Each suppressed pane's
-        # minimum width is deducted before the next pane is judged, so two
-        # nearby boundaries compose (the later pane's expand boundary
-        # accounts for the earlier pane staying collapsed).
-        for region in candidates:
-            if region in collapsed or not previous.is_collapsed(region):
-                continue
-            if required_width + LAYOUT_HYSTERESIS_WIDTH <= width:
-                continue
-            collapsed.add(region)
-            required_width -= PANE_MINIMUM_WIDTHS[region]
+    if previous is None:
+        return RegionLayout(collapsed=frozenset(nominal_collapsed))
 
-    return RegionLayout(collapsed=frozenset(collapsed))
+    nominally_open = set(mounted).difference(nominal_collapsed)
+    previously_open = set(mounted).difference(previous.collapsed)
+    accepted_open = nominally_open.intersection(previously_open)
+    accepted_width = (
+        CENTRE_COMFORT_WIDTH
+        + len(mounted) * PANE_GRIP_WIDTH
+        + sum(PANE_MINIMUM_WIDTHS[region] for region in accepted_open)
+    )
+
+    for region in reversed(candidates):
+        if region not in nominally_open or region not in previous.collapsed:
+            continue
+        reopened_width = accepted_width + PANE_MINIMUM_WIDTHS[region]
+        if width < reopened_width + LAYOUT_HYSTERESIS_WIDTH:
+            break
+        accepted_open.add(region)
+        accepted_width = reopened_width
+
+    return RegionLayout(
+        collapsed=frozenset(set(mounted).difference(accepted_open))
+    )
