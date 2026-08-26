@@ -62,7 +62,7 @@ class TestChatPersistenceService:
         service = ChatPersistenceService(db_instance)
         monkeypatch.setattr(
             db_instance,
-            "get_message_by_id",
+            "get_message_by_id_without_blob",
             lambda _message_id: {"version": True, "deleted": False},
         )
         monkeypatch.setattr(

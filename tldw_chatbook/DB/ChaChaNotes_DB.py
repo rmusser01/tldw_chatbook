@@ -3240,6 +3240,17 @@ UPDATE db_schema_version
                 conn.execute("PRAGMA synchronous=NORMAL;")
 
                 conn.execute("PRAGMA foreign_keys = ON;")
+                # task-22224: a HELD connection needs true autocommit (see
+                # Library_Ingest_Jobs_DB.py's module docstring -- the store
+                # template -- for the rule). Under the legacy default, one
+                # bare DML statement auto-BEGINs a DEFERRED transaction that
+                # ``TransactionContextManager`` then silently BORROWS at
+                # depth 0, degrading ``transaction(immediate=True)`` to a
+                # deferred snapshot nothing ever commits. With autocommit,
+                # the manager's explicit BEGIN [IMMEDIATE] is the only
+                # transaction owner; ``commit()``/``rollback()`` outside an
+                # explicit BEGIN are no-ops.
+                conn.isolation_level = None
                 self._local.conn = conn
                 logger.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}"
@@ -11358,6 +11369,49 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching message ID {message_id}: {e}")
             raise
 
+    def get_message_by_id_without_blob(
+        self, message_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve one non-deleted message row without hydrating the image BLOB.
+
+        TASK-22226 sibling of ``get_message_by_id``, following the
+        TASK-22206 narrow-projection precedent
+        (``get_message_tree_rows_for_conversation``): the exact same select
+        list EXCEPT the ``image_data`` BLOB, which is replaced by a
+        ``has_image`` flag (0/1) so callers that only need DB-normalized
+        scalars (``version``, timestamps, ``feedback``, ...) never copy
+        megabytes of image bytes out of SQLite. Callers that need the actual
+        bytes hydrate them separately via ``get_message_images_by_ids`` (or
+        ``get_message_by_id``).
+
+        Args:
+            message_id: The string UUID of the message.
+
+        Returns:
+            A dictionary with all ``get_message_by_id`` fields except
+            ``image_data``, plus ``has_image`` (0/1), if the message exists
+            and is not deleted; else None.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = (
+            "SELECT id, conversation_id, parent_message_id, sender, role, content,"
+            " (image_data IS NOT NULL) AS has_image, image_mime_type, timestamp,"
+            " ranking, last_modified, version, client_id, deleted, feedback,"
+            " usage_json, metadata_json, provider_continuation_json,"
+            " assistant_generation_state FROM messages WHERE id = ? AND deleted = 0"
+        )
+        try:
+            cursor = self.execute_query(query, (message_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error fetching message ID {message_id} (no-blob): {e}"
+            )
+            raise
+
     def set_message_attachments(self, message_id: str, rows: list[dict]) -> None:
         """Replace the extra attachments (positions >= 1) for a message.
 
@@ -16712,10 +16766,12 @@ UPDATE db_schema_version
 
         try:
             conn = self.get_connection()
-            # Vacuum must be run outside of a transaction
-            conn.isolation_level = None
+            # VACUUM must run outside a transaction. The connection is
+            # permanently in autocommit (isolation_level=None, task-22224),
+            # so no toggle is needed -- the old restore-to-"" here would have
+            # silently flipped this thread's held connection back to legacy
+            # implicit-transaction mode for the rest of its life.
             conn.execute("VACUUM")
-            conn.isolation_level = ""  # Restore default
             logger.info(f"Successfully vacuumed database: {self.db_path_str}")
         except Exception as e:
             logger.error(f"Failed to vacuum database: {e}")
@@ -19475,6 +19531,11 @@ class TransactionContextManager:
         else:
             # This is the outermost transaction
             self.conn = self.db.get_connection()
+            # task-22224: with the held connection in autocommit, this borrow
+            # branch is reachable only when a caller explicitly issued BEGIN
+            # on the connection itself -- the legacy implicit-DEFERRED leak
+            # (bare DML silently degrading transaction(immediate=True) to a
+            # borrowed deferred snapshot) can no longer arm it.
             if self.conn.in_transaction:
                 self.borrows_native_transaction = True
                 self.db._local.transaction_depth = 1
