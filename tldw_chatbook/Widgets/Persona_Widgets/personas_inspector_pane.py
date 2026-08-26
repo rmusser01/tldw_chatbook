@@ -142,6 +142,7 @@ class PersonasInspectorPane(VerticalScroll):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._has_selection = False
+        self._card_actions_visible = True
         self._is_unsaved = False
         self._selected_kind: str | None = None
         self._console_actions_enabled = False
@@ -175,6 +176,11 @@ class PersonasInspectorPane(VerticalScroll):
         disabled with a reason. Zero restores the selection-owned gates.
         """
         self._marked_count = max(0, int(count))
+        self._apply_action_state()
+
+    def set_card_actions_visible(self, visible: bool) -> None:
+        """Retain whether card-level actions belong in the current center view."""
+        self._card_actions_visible = bool(visible)
         self._apply_action_state()
 
     def compose(self) -> ComposeResult:
@@ -570,7 +576,9 @@ class PersonasInspectorPane(VerticalScroll):
         # per-button kind gating below is unchanged for when they render.
         self.query_one("#personas-validation-summary", Static).display = selected
         self.query_one("#personas-readiness-header", Static).display = selected
-        self.query_one("#personas-inspector-actions", Vertical).display = selected
+        self.query_one("#personas-inspector-actions", Vertical).display = (
+            selected and self._card_actions_visible
+        )
         # F-036: only characters have saved conversations - the section hides
         # for persona/dictionary/lore selections (the task-443 kind idiom)
         # instead of dangling a header over an empty list.

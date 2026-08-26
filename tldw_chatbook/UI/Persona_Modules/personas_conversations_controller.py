@@ -15,15 +15,18 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from textual.css.query import QueryError
+from textual.widgets import Button
 
 from ...Character_Chat.Character_Chat_Lib import (
     list_character_conversations,
     retrieve_conversation_messages_for_ui,
 )
 from ...Constants import (
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_MODE,
+    TAB_CHAT,
     TAB_LIBRARY,
 )
 from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
@@ -61,6 +64,8 @@ class PersonasConversationsController:
         # set only by show_conversation_view so the Send-to-Console-draft
         # handler can tell an in-flight load from a completed one.
         self._loaded_conversation_id: str | None = None
+        self._failed_conversation_id: str | None = None
+        self._resume_in_flight_conversation_id: str | None = None
 
     def reset(self) -> None:
         self._conversation_rows = {}
@@ -69,6 +74,8 @@ class PersonasConversationsController:
         self._open_conversation_transcript = ""
         self._open_conversation_truncated = False
         self._loaded_conversation_id = None
+        self._failed_conversation_id = None
+        self._resume_in_flight_conversation_id = None
 
     # ===== Listing =====
 
@@ -145,6 +152,9 @@ class PersonasConversationsController:
         self._open_conversation_transcript = ""
         self._open_conversation_truncated = False
         self._loaded_conversation_id = None
+        self._failed_conversation_id = None
+        self._resume_in_flight_conversation_id = None
+        self._set_resume_button_busy(False)
         try:
             view = screen.query_one(PersonasConversationTranscriptWidget)
             view.set_title(self._open_conversation_title or "Conversation")
@@ -190,7 +200,10 @@ class PersonasConversationsController:
             logger.opt(exception=True).warning(
                 f"Could not load messages for conversation {conversation_id}.",
             )
-            history = []
+            self.screen.app.call_from_thread(
+                self.show_conversation_error, conversation_id
+            )
+            return
         messages: list[dict] = []
         transcript_lines: list[str] = []
         for user_message, bot_message in history:
@@ -243,11 +256,31 @@ class PersonasConversationsController:
         view.set_title(self._open_conversation_title or "Conversation")
         await view.load_messages(messages, speaker_names=speaker_names)
         screen._show_center(_CONVERSATION_VIEW_ID)
-        # Sync header title and console actions for the loaded transcript;
-        # focus the transcript so arrow keys scroll it (the helper refuses to
-        # steal focus from active typing).
+        # Sync header title and actions without moving focus away from the
+        # conversations list the user is browsing.
         screen._sync_title_and_console_actions()
-        screen.call_after_refresh(screen._focus_conversation_transcript)
+
+    async def show_conversation_error(self, conversation_id: str) -> None:
+        """Display a recoverable error for the current preview only."""
+        screen = self.screen
+        if not screen.is_mounted or screen.state.active_mode != "characters":
+            return
+        if (
+            screen.state.selected_entity_kind != "character"
+            or self._open_conversation_id != conversation_id
+        ):
+            return
+        self._loaded_conversation_id = None
+        self._failed_conversation_id = conversation_id
+        self._open_conversation_transcript = ""
+        self._open_conversation_truncated = False
+        try:
+            view = screen.query_one(PersonasConversationTranscriptWidget)
+        except QueryError:
+            return
+        await view.show_error()
+        screen._show_center(_CONVERSATION_VIEW_ID)
+        screen._sync_title_and_console_actions()
 
     # ===== Conversation actions =====
 
@@ -264,7 +297,10 @@ class PersonasConversationsController:
         if self._loaded_conversation_id != conversation_id:
             # The transcript worker has not delivered this conversation yet
             # (or a newer selection superseded the loaded one).
-            screen._notify("Conversation is still loading.", "warning")
+            if self._failed_conversation_id == conversation_id:
+                screen._notify("Conversation preview couldn't load.", "warning")
+            else:
+                screen._notify("Conversation is still loading.", "warning")
             return
         character_name = screen.state.selected_entity_name or "Character"
         title = self._open_conversation_title or "Untitled conversation"
@@ -278,6 +314,52 @@ class PersonasConversationsController:
         )
         if staged:
             screen._notify("Conversation staged in Console.", "information")
+
+    def resume_in_console(self) -> None:
+        """Navigate to Console with only the open saved-conversation ID."""
+        target_id = str(self._open_conversation_id or "").strip()
+        if not target_id or target_id not in self._conversation_rows:
+            self.screen._notify(
+                "This conversation is no longer available. Refresh conversations and "
+                "try again.",
+                "warning",
+            )
+            return
+        if self._resume_in_flight_conversation_id == target_id:
+            return
+        self._resume_in_flight_conversation_id = target_id
+        self._set_resume_button_busy(True)
+        self.screen.post_message(
+            NavigateToScreen(
+                TAB_CHAT,
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: target_id},
+            )
+        )
+        self.screen.set_timer(
+            1.0, partial(self._restore_resume_button, target_id)
+        )
+
+    def _set_resume_button_busy(self, busy: bool) -> None:
+        """Paint the shared Resume button's local source-side state."""
+        try:
+            button = self.screen.query_one("#personas-conversation-resume", Button)
+        except QueryError:
+            return
+        button.disabled = busy
+        button.label = "Opening Console…" if busy else "Resume chat"
+
+    def _restore_resume_button(self, target_id: str) -> None:
+        """Release the exact target when navigation leaves Roleplay mounted."""
+        screen = self.screen
+        if (
+            self._resume_in_flight_conversation_id != target_id
+            or str(self._open_conversation_id or "").strip() != target_id
+            or not screen.is_mounted
+            or screen.app.screen is not screen
+        ):
+            return
+        self._resume_in_flight_conversation_id = None
+        self._set_resume_button_busy(False)
 
     def open_in_library(self) -> None:
         """Route the open conversation to Library.

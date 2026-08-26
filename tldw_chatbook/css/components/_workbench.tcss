@@ -56,6 +56,17 @@
     color: $ds-status-blocked;
 }
 
+/* Resume is briefly disabled while Roleplay dispatches ID-only navigation.
+   Neutralize the generic opacity stack and keep the busy label readable while
+   the raised surface and dim treatment still distinguish the disabled state. */
+#personas-conversation-resume:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    background: $ds-surface-raised;
+    color: rgb(245,245,245);
+    text-style: none;
+}
+
 .workbench-command-strip,
 .workbench-mode-strip {
     height: 1;
