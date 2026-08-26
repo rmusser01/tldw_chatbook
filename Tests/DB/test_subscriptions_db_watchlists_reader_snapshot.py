@@ -142,6 +142,7 @@ def test_reader_first_page_metadata_and_rows_share_one_wal_read_snapshot(
     """A concurrent delete after the high-water cannot split one page."""
     path = tmp_path / "reader-snapshot.db"
     high_water_seen = threading.Event()
+    writer_ready = threading.Event()
     writer_done = threading.Event()
     writer_errors: list[Exception] = []
     worker: threading.Thread | None = None
@@ -156,24 +157,28 @@ def test_reader_first_page_metadata_and_rows_share_one_wal_read_snapshot(
         source_id = _source(reader, "atomic")
         oldest = _item(reader, source_id, "oldest", published="2026-01-01T00:00:00Z")
         newest = _item(reader, source_id, "newest", published="2026-01-02T00:00:00Z")
+        writer_db = SubscriptionsDB(path)
+        writer_db.close()
 
         def writer() -> None:
-            connection: sqlite3.Connection | None = None
             try:
+                writer_db.conn
+                writer_ready.set()
                 assert high_water_seen.wait(1), "reader never captured a high-water"
-                # Autocommit makes completion of this one-statement delete
-                # unambiguous without waiting for a context-manager commit.
-                connection = sqlite3.connect(path, timeout=1, isolation_level=None)
-                connection.execute("DELETE FROM subscription_items WHERE id = ?", (newest,))
+                with writer_db.transaction() as connection:
+                    connection.execute(
+                        "DELETE FROM subscription_items WHERE id = ?", (newest,)
+                    )
             except Exception as error:  # surfaced below on the test thread
                 writer_errors.append(error)
             finally:
-                if connection is not None:
-                    connection.close()
+                writer_ready.set()
                 writer_done.set()
+                writer_db.close()
 
         worker = threading.Thread(target=writer)
         worker.start()
+        assert writer_ready.wait(1), "writer connection did not initialize"
         page = reader.get_reader_items_page(limit=10)
         worker.join(1)
 

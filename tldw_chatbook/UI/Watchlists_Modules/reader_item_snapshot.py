@@ -80,6 +80,7 @@ class ReaderItemSnapshot:
         seen_ids: Stable identities already admitted to visible pages.
         cursor: Cursor for the next traversal request.
         has_more: Whether traversal has another candidate page.
+        pending_items: Backend-ordered rows displaced from a full visible page.
         pending_arrivals: Count of arrivals held outside visible pages.
     """
 
@@ -90,6 +91,7 @@ class ReaderItemSnapshot:
     seen_ids: frozenset[Any]
     cursor: WatchlistItemCursor | None
     has_more: bool
+    pending_items: tuple[dict[str, Any], ...] = ()
     pending_arrivals: int = 0
 
     @classmethod
@@ -109,9 +111,38 @@ class ReaderItemSnapshot:
         if page.snapshot_count is None:
             raise ValueError("first page must provide snapshot_count")
         items, seen = cls._unique_items(page.items, frozenset())
-        return cls(query, page.snapshot_max_item_id, page.snapshot_count, (deepcopy(items),), seen, page.next_cursor, page.has_more)
+        return cls(
+            query=query,
+            watermark=page.snapshot_max_item_id,
+            snapshot_count=page.snapshot_count,
+            pages=(deepcopy(items),),
+            seen_ids=seen,
+            cursor=page.next_cursor,
+            has_more=page.has_more,
+        )
 
-    def with_continuation(self, page: WatchlistItemPage) -> tuple["ReaderItemSnapshot", bool]:
+    def with_pending_items(
+        self, items: tuple[dict[str, Any], ...]
+    ) -> "ReaderItemSnapshot":
+        """Stage displaced backend rows for the next service continuation."""
+        pending, _ = self._unique_items(
+            (*self.pending_items, *items), self.seen_ids
+        )
+        return ReaderItemSnapshot(
+            query=self.query,
+            watermark=self.watermark,
+            snapshot_count=self.snapshot_count,
+            pages=tuple(deepcopy(page) for page in self.pages),
+            seen_ids=self.seen_ids,
+            cursor=self.cursor,
+            has_more=self.has_more,
+            pending_items=deepcopy(pending),
+            pending_arrivals=self.pending_arrivals,
+        )
+
+    def with_continuation(
+        self, page: WatchlistItemPage, *, page_size: int | None = None
+    ) -> tuple["ReaderItemSnapshot", bool]:
         """Stage a continuation page without mutating this committed snapshot.
 
         Args:
@@ -125,13 +156,65 @@ class ReaderItemSnapshot:
         """
         if page.snapshot_max_item_id != self.watermark:
             raise ValueError("continuation watermark differs from snapshot")
-        items, seen = self._unique_items(page.items, self.seen_ids)
-        pages = tuple(deepcopy(cached) for cached in self.pages) + ((deepcopy(items),) if items else ())
-        candidate = ReaderItemSnapshot(
-            self.query, self.watermark, self.snapshot_count, pages, seen,
-            page.next_cursor, page.has_more, self.pending_arrivals,
+        items, _ = self._unique_items(
+            (*self.pending_items, *page.items), self.seen_ids
         )
-        return candidate, bool(items)
+        visible = items if page_size is None else items[:page_size]
+        pending = () if page_size is None else items[page_size:]
+        visible, seen = self._unique_items(visible, self.seen_ids)
+        pages = tuple(deepcopy(cached) for cached in self.pages) + (
+            (deepcopy(visible),) if visible else ()
+        )
+        candidate = ReaderItemSnapshot(
+            query=self.query,
+            watermark=self.watermark,
+            snapshot_count=self.snapshot_count,
+            pages=pages,
+            seen_ids=seen,
+            cursor=page.next_cursor,
+            has_more=page.has_more,
+            pending_items=deepcopy(pending),
+            pending_arrivals=self.pending_arrivals,
+        )
+        return candidate, bool(visible)
+
+    def with_pending_page(
+        self, page_size: int
+    ) -> tuple["ReaderItemSnapshot", bool]:
+        """Publish one final page from staged rows after service exhaustion."""
+        visible = self.pending_items[:page_size]
+        if not visible:
+            return self, False
+        visible, seen = self._unique_items(visible, self.seen_ids)
+        pending = self.pending_items[page_size:]
+        return (
+            ReaderItemSnapshot(
+                query=self.query,
+                watermark=self.watermark,
+                snapshot_count=self.snapshot_count,
+                pages=tuple(deepcopy(page) for page in self.pages)
+                + (deepcopy(visible),),
+                seen_ids=seen,
+                cursor=self.cursor,
+                has_more=self.has_more,
+                pending_items=deepcopy(pending),
+                pending_arrivals=self.pending_arrivals,
+            ),
+            True,
+        )
+
+    def close_to_cached_pages(self) -> "ReaderItemSnapshot":
+        """Drop an unreachable service tail and advertise only cached rows."""
+        return ReaderItemSnapshot(
+            query=self.query,
+            watermark=self.watermark,
+            snapshot_count=sum(len(page) for page in self.pages),
+            pages=tuple(deepcopy(page) for page in self.pages),
+            seen_ids=self.seen_ids,
+            cursor=None,
+            has_more=False,
+            pending_arrivals=self.pending_arrivals,
+        )
 
     @staticmethod
     def _item_id(item: dict[str, Any]) -> Hashable | None:
@@ -208,4 +291,4 @@ class ReaderItemSnapshot:
             raise IndexError(index)
         if index < self.page_count - 1:
             return True
-        return self.has_more
+        return bool(self.pending_items) or self.has_more

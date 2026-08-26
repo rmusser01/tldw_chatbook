@@ -10192,15 +10192,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
             candidate = ReaderItemSnapshot.start(query, page)
             if displaced_rows:
-                candidate, _ = candidate.with_continuation(
-                    WatchlistItemPage(
-                        items=tuple(displaced_rows),
-                        has_more=page.has_more,
-                        snapshot_max_item_id=page.snapshot_max_item_id,
-                        snapshot_count=None,
-                        next_cursor=page.next_cursor,
-                    )
-                )
+                candidate = candidate.with_pending_items(tuple(displaced_rows))
             rows = list(candidate.page(0))
 
             def commit() -> None:
@@ -10354,22 +10346,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         try:
             for _ in range(self._MAX_DUPLICATE_CONTINUATIONS):
-                if not candidate.has_more or candidate.cursor is None:
+                if candidate.has_more and candidate.cursor is not None:
+                    page = await self._controller.list_reader_items_page(
+                        runtime_backend=self.runtime_backend,
+                        limit=_ITEMS_PAGE_SIZE,
+                        **query.as_kwargs(),
+                        snapshot_max_item_id=candidate.watermark,
+                        after=candidate.cursor,
+                    )
+                    if not isinstance(page, WatchlistItemPage):
+                        raise TypeError("Reader item service returned an invalid page")
+                    if not current():
+                        return False
+                    candidate, appended = candidate.with_continuation(
+                        page, page_size=_ITEMS_PAGE_SIZE
+                    )
+                elif candidate.pending_items:
+                    candidate, appended = candidate.with_pending_page(
+                        _ITEMS_PAGE_SIZE
+                    )
+                else:
                     break
-                page = await self._controller.list_reader_items_page(
-                    runtime_backend=self.runtime_backend,
-                    limit=_ITEMS_PAGE_SIZE,
-                    **query.as_kwargs(),
-                    snapshot_max_item_id=candidate.watermark,
-                    after=candidate.cursor,
-                )
-                if not isinstance(page, WatchlistItemPage):
-                    raise TypeError("Reader item service returned an invalid page")
-                if not current():
-                    return False
-                candidate, appended = candidate.with_continuation(page)
                 if not appended:
-                    if candidate.has_more:
+                    if candidate.has_more or candidate.pending_items:
                         continue
                     async with self._items_page_presentation_lock:
                         if not current():
@@ -12404,6 +12403,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 item_id, status="reviewed"
             )
         self._repaint_visible_status_cells()
+        committed = self._items_snapshot
+        refreshed = await self._replace_items_snapshot(reason="refresh")
+        if not refreshed and committed is not None and self._items_snapshot is committed:
+            closed = committed.close_to_cached_pages()
+            self._items_snapshot = closed
+            self._items_snapshot_count = closed.snapshot_count
+            self._items_has_next = closed.has_next(self._items_page_index)
+            self._push_items_pager_state()
         self._request_tree_counts_refresh()
         if callable(notify):
             notify(f"Marked {len(ids)} read — press u to undo.")

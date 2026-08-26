@@ -39,7 +39,7 @@ from loguru import logger
 # Local Imports
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
-from .sql_validation import validate_identifier
+from .sql_validation import get_safe_order_by_clause, validate_identifier
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..Utils.fts5_match_forms import quote_fts5_token
@@ -2514,8 +2514,10 @@ class SubscriptionsDB(BaseDB):
         "s.last_successful_check AS subscription_last_successful_check"
     )
     _AGENT_SEARCH_PAGE_LIMIT = 50
-    _AGENT_ITEM_ORDER_BY = "i.effective_date DESC, i.id ASC"
-    _READER_ITEM_ORDER_BY = "i.effective_date DESC, i.id DESC"
+    _AGENT_ITEM_ORDER_PROFILE = "subscription_items_agent"
+    _READER_ITEM_ORDER_PROFILE = "subscription_items_reader"
+    _AGENT_ITEM_ORDER_BY = get_safe_order_by_clause(_AGENT_ITEM_ORDER_PROFILE)
+    _READER_ITEM_ORDER_BY = get_safe_order_by_clause(_READER_ITEM_ORDER_PROFILE)
     _AGENT_MEMBERSHIP_SOURCE_LIMIT = 50
     _AGENT_MEMBERSHIP_COLLECTION_LIMIT = 20
     _AGENT_RESOLUTION_CANDIDATE_LIMIT = 20
@@ -2653,7 +2655,7 @@ class SubscriptionsDB(BaseDB):
         select_columns: Optional[str] = None,
         select_params: Sequence[Any] = (),
         fts_select_columns: Optional[str] = None,
-        order_by: str = _AGENT_ITEM_ORDER_BY,
+        order_profile: str = _AGENT_ITEM_ORDER_PROFILE,
     ) -> List[Any]:
         """The `search` half of `get_new_items`: FTS5 MATCH, LIKE fallback.
 
@@ -2666,12 +2668,7 @@ class SubscriptionsDB(BaseDB):
         ``\\`` stay literal). Either way the caller gets rows; the search
         box must never raise into the reader.
         """
-        if order_by == self._AGENT_ITEM_ORDER_BY:
-            selected_order_by = self._AGENT_ITEM_ORDER_BY
-        elif order_by == self._READER_ITEM_ORDER_BY:
-            selected_order_by = self._READER_ITEM_ORDER_BY
-        else:
-            raise ValueError("Unsupported internal item ordering")
+        selected_order_by = get_safe_order_by_clause(order_profile)
         columns = select_columns or self._LIST_ITEM_COLUMNS
         fts_columns = fts_select_columns or columns
         effective_fts_select_params = () if fts_select_columns else select_params

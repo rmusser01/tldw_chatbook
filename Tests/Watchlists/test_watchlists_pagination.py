@@ -70,8 +70,9 @@ def _page(
     snapshot_count: int | None = None,
     has_more: bool = False,
     cursor: WatchlistItemCursor | None = None,
+    day: int = 13,
 ) -> WatchlistItemPage:
-    rows = _items(ids)
+    rows = _items(ids, day=day)
     if cursor is None and has_more and rows:
         last = rows[-1]
         cursor = WatchlistItemCursor(
@@ -718,15 +719,17 @@ async def test_full_query_pin_caches_displaced_terminal_row(reason):
         assert await screen._replace_items_snapshot(reason=reason) is True
         snapshot = screen._items_snapshot
         assert len(snapshot.page(0)) == 50
-        assert snapshot.page_count == 2
+        assert snapshot.page_count == 1
         assert snapshot.has_next(0) is True
         assert snapshot.cursor is None
         assert snapshot.has_more is False
-        assert snapshot.seen_ids == frozenset({100, *range(1, 51)})
+        assert [row["item_id"] for row in snapshot.pending_items] == [1]
+        assert snapshot.seen_ids == frozenset({100, *range(2, 51)})
 
         controller.list_reader_items_page.reset_mock()
         assert await screen._load_next_items_page() is True
         assert [row["item_id"] for row in screen._loaded_items] == [1]
+        assert screen._items_snapshot.pending_items == ()
         assert sum(
             row["item_id"] == 1
             for page in screen._items_snapshot.pages
@@ -734,6 +737,94 @@ async def test_full_query_pin_caches_displaced_terminal_row(reason):
         ) == 1
         assert await screen._load_next_items_page() is False
         assert controller.list_reader_items_page.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["filter", "search"])
+async def test_query_pin_merges_displaced_row_with_service_continuation(reason):
+    controller = AsyncMock()
+    controller.list_reader_items_page.side_effect = [
+        _page([100], high_water=100, snapshot_count=1, day=10),
+        _page(
+            range(50, 0, -1),
+            high_water=100,
+            snapshot_count=51,
+            has_more=True,
+            day=13,
+        ),
+        _page([0], high_water=100, day=12),
+    ]
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._replace_items_snapshot(reason="initial") is True
+        screen._selected_content_item = screen._loaded_items[0]
+        if reason == "filter":
+            screen._items_status_filter = "unread"
+        else:
+            screen._items_search_query = "needle"
+
+        assert await screen._replace_items_snapshot(reason=reason) is True
+        assert screen._loaded_items[-1]["item_id"] == 100
+
+        controller.list_reader_items_page.reset_mock()
+        assert await screen._load_next_items_page() is True
+        assert [row["item_id"] for row in screen._loaded_items] == [1, 0]
+        assert controller.list_reader_items_page.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_rebuilds_multi_page_unread_snapshot():
+    controller = AsyncMock()
+    controller.list_reader_items_page.side_effect = [
+        _page(
+            range(60, 10, -1),
+            high_water=60,
+            snapshot_count=60,
+            has_more=True,
+        ),
+        _page([], high_water=60, snapshot_count=0),
+    ]
+    controller.mark_all_read.return_value = list(range(1, 61))
+
+    async with _open_screen(controller) as (screen, _pilot):
+        screen._items_status_filter = "unread"
+        assert await screen._replace_items_snapshot(reason="filter") is True
+        assert screen._items_snapshot.snapshot_count == 60
+        assert screen._items_snapshot.has_next(0) is True
+
+        await screen._mark_all_read_worker()
+
+        assert controller.list_reader_items_page.await_count == 2
+        assert screen._items_snapshot.snapshot_count == 0
+        assert screen._loaded_items == []
+        assert screen._items_snapshot.has_next(0) is False
+        assert await screen._load_next_items_page() is False
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_closes_uncached_tail_when_rebuild_fails():
+    controller = AsyncMock()
+    controller.list_reader_items_page.side_effect = [
+        _page(
+            range(60, 10, -1),
+            high_water=60,
+            snapshot_count=60,
+            has_more=True,
+        ),
+        RuntimeError("offline"),
+    ]
+    controller.mark_all_read.return_value = list(range(1, 61))
+
+    async with _open_screen(controller) as (screen, _pilot):
+        screen._items_status_filter = "unread"
+        assert await screen._replace_items_snapshot(reason="filter") is True
+
+        await screen._mark_all_read_worker()
+
+        assert controller.list_reader_items_page.await_count == 2
+        assert screen._items_snapshot.snapshot_count == 50
+        assert screen._items_snapshot.has_next(0) is False
+        assert await screen._load_next_items_page() is False
 
 
 @pytest.mark.asyncio
