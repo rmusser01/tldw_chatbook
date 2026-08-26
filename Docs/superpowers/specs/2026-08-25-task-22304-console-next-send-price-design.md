@@ -70,10 +70,12 @@ When a binary/media attachment is pending, the full-request headline is unavaila
 ```text
 Next request: cost unavailable
 Input text: ~1,284 tokens · ~$0.0039
-Reply text: up to 4,096 tokens · ~$0.0835
+Reply text: up to 4,096 tokens · ~$0.0836
 Attachments: 2 · media cost not estimated
 anthropic · claude-sonnet-4-6 · rates as of 2026-08-01
 ```
+
+The same honesty rule applies when canonical conversation history already carries multimodal content. Text parts remain countable, non-text parts are excluded from the text token estimate, the headline stays unavailable, and the tooltip adds `Media context: N items · media cost not estimated`. If pending attachments and historical media are both present, both caveat lines appear so the counts retain their distinct meaning.
 
 If the input token estimate fails, the input line reads `Input: token estimate unavailable`. If no maximum response-token value is configured, the reply line reads `Reply: limit not configured`. Either condition makes the total unavailable. Missing provider/model identifiers are omitted from the provenance line rather than leaving empty separators.
 
@@ -89,6 +91,8 @@ The estimated text input is the locally estimated token count of:
 4. staged prompt-eligible evidence text from `console_prompted_evidence_text`.
 
 Inline text-file attachments already become draft text and are therefore counted normally. Pending binary/media attachments are not assigned fabricated tokens or dollars; their count is surfaced and the full total remains unavailable.
+
+Canonical historical multimodal rows are projected to their text parts before local token estimation. Each non-text content part is counted only for the `Media context` caveat; it contributes neither tokens nor dollars, and its presence makes the full total unavailable.
 
 For known text pricing:
 
@@ -112,17 +116,17 @@ Add one focused no-DOM module at `tldw_chatbook/UI/Console_Modules/send_price.py
 - deterministic tooltip formatting;
 - a thin memoized orchestration controller.
 
-The pure builder receives token counts, maximum reply tokens, resolved `ModelPricing` or `None`, provider/model identifiers, and pending attachment count. It performs no I/O, global config reads, widget access, or catalog refresh, and remains directly unit-testable without constructing its controller.
+The pure builder receives token counts, maximum reply tokens, resolved `ModelPricing` or `None`, provider/model identifiers, pending attachment count, and historical non-text media-part count. It performs no I/O, global config reads, widget access, or catalog refresh, and remains directly unit-testable without constructing its controller.
 
 Construct the controller in `wiring.py`, following the existing named late-binding dependency contract. Its dependencies are limited to accessors for:
 
 - active session settings;
 - the current Console chat store;
-- the chat controller's canonical synchronous provider-history projection;
+- the chat controller's named, read-only canonical synchronous provider-history projection;
 - the pending live-work launch/staged context;
 - the pricing catalog and token counter, injectable for tests.
 
-The controller starts from the same `_provider_messages_for_session` projection used by native dispatch. That projection already folds a seeded leading assistant greeting into the system row and excludes transcript-only system rows, failed/empty rows, leading assistant rows, and assistant generation states that are not legal provider history. The controller then adds the live draft and prompt-eligible staged evidence for estimation, resolves model pricing, counts pending attachments, and returns the tooltip. Later asynchronous send-time transforms (skills, dictionaries, world info, compaction, provider serialization, and tools) remain outside this pre-send UI estimate; the tooltip is an estimate, not a frozen wire receipt. The controller owns a verified `TokenEstimateCache` entry whose signature contains provider, model, canonical projected history rows (including the resolved system/greeting row), staged text, and draft text. A cache key collision can only cause recomputation because every hit is checked against the complete signature. `wiring.py` is the sole owner of the named late-binding callback graph; `ChatScreen` does not construct, query through, or mutate estimate internals.
+The chat controller exposes a named read-only wrapper around the same `_provider_messages_for_session` projection used by native dispatch. That projection already folds a seeded leading assistant greeting into the system row and excludes transcript-only system rows, failed/empty rows, leading assistant rows, and assistant generation states that are not legal provider history. The send-price controller then extracts only string content and `type == "text"` parts from those projected rows, counts non-text parts as unpriced historical media, and adds the live draft and prompt-eligible staged evidence for estimation. This prevents image/audio-like content blocks from receiving the generic local tokenizer's fabricated text price. The controller resolves model pricing, counts pending attachments, and returns the tooltip. Later asynchronous send-time transforms (skills, dictionaries, world info, compaction, provider serialization, and tools) remain outside this pre-send UI estimate; the tooltip is an estimate, not a frozen wire receipt. The controller owns a verified `TokenEstimateCache` entry whose signature contains provider, model, canonical text-only projected history rows (including the resolved system/greeting row), staged text, and draft text. A cache key collision can only cause recomputation because every hit is checked against the complete signature. `wiring.py` is the sole owner of the named late-binding callback graph; `ChatScreen` does not construct, query through, or mutate estimate internals.
 
 ### Composer presentation
 
@@ -169,6 +173,7 @@ No network call, database write, or price persistence occurs. Unexpected estimat
 - Token counter failure: keep the dollar affordance, name the unavailable input estimate, and omit a numeric total.
 - Missing reply limit: keep the dollar affordance, name the unconfigured limit, and omit a numeric total.
 - Pending media: keep the dollar affordance, show text components when available, name the attachment count, and omit a full-request numeric total.
+- Historical media: count only its text parts, name the non-text media-part count separately, and omit a full-request numeric total.
 - Controller failure: fall back to a short `Next request: cost unavailable` tooltip; never block or alter dispatch.
 - Blocked Send: existing recovery copy always wins over estimate copy.
 
@@ -186,6 +191,7 @@ No network call, database write, or price persistence occurs. Unexpected estimat
 
 - Context starts from the dispatch path's canonical provider-history projection, then includes the live draft and prompt-eligible staged evidence exactly once.
 - Failed/empty rows, transcript-only system rows, and disallowed assistant states remain excluded; a seeded leading assistant greeting is represented only through the folded system row.
+- Historical multimodal rows contribute only their text parts; non-text parts force the headline unavailable and appear in the `Media context` caveat.
 - Repeated identical syncs reuse the verified estimate; draft, provider, model, settings, history, or staged-text changes recompute.
 - Attachment-count changes update the caveat without assigning media cost.
 - A token-counter exception preserves the detailed unavailable-input line, reply line, and provenance; broader controller/catalog failures degrade to the short unavailable presentation.

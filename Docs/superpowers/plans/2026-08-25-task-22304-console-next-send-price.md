@@ -29,7 +29,7 @@
 - Reference: `tldw_chatbook/Chat/cost_display.py`
 - Reference: `tldw_chatbook/LLM_Calls/pricing_catalog.py`
 
-- [ ] Add table-driven pure tests for known pricing, unknown pricing, explicit local zero pricing, missing input tokens, missing reply limit, pending attachments, and blank provenance identifiers. Use an exact `ModelPricing` fixture and assert the full tooltip text, including comma-grouped tokens, `up to`, `~$`, and `as_of` copy.
+- [ ] Add table-driven pure tests for known pricing, unknown pricing, explicit local zero pricing, missing input tokens, missing reply limit, pending attachments, historical media, and blank provenance identifiers. Use an exact `ModelPricing` fixture and assert the full tooltip text, including comma-grouped tokens, `up to`, `~$`, `as_of`, and distinct `Attachments`/`Media context` caveats.
 
   ```python
   def test_build_next_send_price_formats_known_upper_bound() -> None:
@@ -78,11 +78,12 @@
       provider: str,
       model: str,
       attachment_count: int = 0,
+      historical_media_count: int = 0,
   ) -> ConsoleNextSendPrice:
       ...
   ```
 
-  Compute known text components with `round(tokens * rate / 1_000_000, 6)` and format dollars only after a value is known. Build provenance by joining only nonblank provider/model parts, followed by either `rates as of ...` or `pricing not configured`. Pending attachments change the input/reply prefixes to `Input text`/`Reply text`, append the count caveat, and force the headline unavailable.
+  Compute known text components with `round(tokens * rate / 1_000_000, 6)` and format dollars only after a value is known. Build provenance by joining only nonblank provider/model parts, followed by either `rates as of ...` or `pricing not configured`. Pending attachments or historical media change the input/reply prefixes to `Input text`/`Reply text`, append their distinct count caveats, and force the headline unavailable.
 
 - [ ] Run the pure tests and verify GREEN.
 
@@ -106,12 +107,16 @@
 
 - Modify: `Tests/UI/test_console_send_price.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/send_price.py`
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py`
+- Modify: `Tests/Chat/test_console_chat_controller.py`
 - Reference: `tldw_chatbook/Chat/console_chat_store.py`
 - Reference: `tldw_chatbook/Chat/console_cost_tracker.py`
 - Reference: `tldw_chatbook/Chat/console_display_state.py`
 - Reference: `tldw_chatbook/Chat/console_session_settings.py`
 
-- [ ] Add controller tests using tiny fake settings/store/launch accessors, an injectable canonical provider-history accessor, and injectable catalog/counter callables. Capture the exact counter input and prove that it starts with the accessor's already-filtered provider rows, then contains the nonblank live draft and `console_prompted_evidence_text(launch)` exactly once and in request order.
+- [ ] Add a focused `ConsoleChatController` test for a named read-only `provider_messages_for_next_send_estimate(session_id)` seam. Assert it returns the same value as `_provider_messages_for_session(session_id)` and does not mutate the store. This exposes the existing canonical synchronous projection without coupling wiring to a private method.
+
+- [ ] Add send-price controller tests using tiny fake settings/store/launch accessors, the injectable canonical provider-history accessor, and injectable catalog/counter callables. Capture the exact counter input and prove that it starts with the accessor's already-filtered provider rows, then contains the nonblank live draft and `console_prompted_evidence_text(launch)` exactly once and in request order.
 
   ```python
   controller = ConsoleSendPriceController(
@@ -137,15 +142,17 @@
 
 - [ ] Add an attachment-only controller test: a blank draft with one pending binary/media attachment must still return a presentation, retain any known projected-history text components, force the total unavailable, and include `Attachments: 1 · media cost not estimated`. Only a blank draft with zero attachments returns `None`.
 
+- [ ] Add a historical-multimodal controller test whose canonical row contains one text part plus one image/non-text part. Assert the counter receives only the text part, the non-text part receives no token/dollar value, the headline is unavailable, and the tooltip includes `Media context: 1 item · media cost not estimated`. Cover the plural form and simultaneous pending/historical caveats in the pure tests.
+
 - [ ] Add degradation tests: missing store/session produces an unavailable tooltip rather than raising. A token-counter exception must call the pure builder with `input_tokens=None`, retaining `Input: token estimate unavailable`, the reply line, and provenance. Catalog or broader accessor/controller failures may return the short `ConsoleNextSendPrice("Next request: cost unavailable")` fallback and must never affect send readiness.
 
-- [ ] Run the controller selection and verify RED because `ConsoleSendPriceController` is absent:
+- [ ] Run the controller selection and named history-seam test and verify RED because both APIs are absent:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py -q --tb=short -p no:warnings -k "controller or cache or context or unavailable"
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_controller.py -q --tb=short -p no:warnings -k "controller or cache or context or unavailable or provider_messages_for_next_send_estimate"
   ```
 
-- [ ] Implement `ConsoleSendPriceController` in the no-DOM module with named keyword-only callables and an owned `TokenEstimateCache`:
+- [ ] Add the read-only `ConsoleChatController.provider_messages_for_next_send_estimate(session_id)` method as the named seam over the existing canonical synchronous projection, then implement `ConsoleSendPriceController` in the no-DOM module with named keyword-only callables and an owned `TokenEstimateCache`:
 
   ```python
   class ConsoleSendPriceController:
@@ -176,16 +183,16 @@
           return state.tooltip if state is not None else None
   ```
 
-  Copy role/content from the canonical projected history without reimplementing its filters, tolerate a closed/missing active session, and use a cache key containing the active session id. Verify every hit with `token_estimate_signature(rows, model, provider_config_key(provider))`; attachment count stays outside this signature because it does not change text tokenization. Catch token-counter errors around only the memoized compute, set `input_tokens=None`, and continue through the pure builder.
+  Copy role/content from the canonical projected history without reimplementing its turn filters. For string content, copy it verbatim. For sequence content, join only mapping parts with `type == "text"` and string `text`, while counting every other part as historical media; omit a projected row only when it has no text at all. Tolerate a closed/missing active session and use a cache key containing the active session id. Verify every hit with `token_estimate_signature(rows, model, provider_config_key(provider))`; attachment and historical-media counts stay outside this signature because they do not change text tokenization, but are read on every presentation build. Catch token-counter errors around only the memoized compute, set `input_tokens=None`, and continue through the pure builder.
 
 - [ ] Pin the shared projection boundary with pathological fixtures in the controller/integration tests: the injected canonical history must contain the folded seeded-greeting system row but omit transcript-only system rows, failed rows, empty speech placeholders, leading assistant rows, and assistant states disallowed from provider history. This prevents the estimator from drifting by adding its own raw-store filtering.
 
-- [ ] Run all `test_console_send_price.py` tests and verify GREEN, then run Ruff checks for the two files.
+- [ ] Run `test_console_send_price.py` plus the focused canonical-projection test and verify GREEN, then run Ruff checks for the four changed files.
 
 - [ ] Commit the controller:
 
   ```bash
-  git add tldw_chatbook/UI/Console_Modules/send_price.py Tests/UI/test_console_send_price.py
+  git add tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/Chat/console_chat_controller.py Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_controller.py
   git commit -m "feat(console): estimate the pending request context"
   ```
 
@@ -271,7 +278,7 @@
       chat_store_accessor=lambda: screen._console_chat_store,
       provider_history_accessor=(
           lambda session_id: screen._ensure_console_chat_controller()
-          ._provider_messages_for_session(session_id)
+          .provider_messages_for_next_send_estimate(session_id)
       ),
       pending_launch_accessor=lambda: screen._pending_console_launch_context,
   )
@@ -335,8 +342,8 @@
 - [ ] Run final static and patch checks:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py
   git diff --check
   git status --short
   ```
