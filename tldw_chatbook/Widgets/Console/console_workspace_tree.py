@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from itertools import chain
 from typing import Literal
 
 import textual
@@ -186,6 +187,14 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     # fresh immutable tuple, never mutated, so the shared default is safe.
     _tooltip_memo_key: tuple[str | None, str, str, bool, int] | None = None
 
+    # TASK-22202: last completed ``sync_projection`` inputs — (projection,
+    # expanded ids, search flag). A value-equal push (the 5 Hz run-tick path
+    # while nothing changed) returns before any per-row work. Class-level
+    # default for the same hand-built-fixture reason as the tooltip memo.
+    _projection_memo: (
+        tuple[tuple[WorkspaceTreeWorkspace, ...], frozenset[str], bool] | None
+    ) = None
+
     if ascii_glyph_mode():
         ICON_NODE = "> "
         ICON_NODE_EXPANDED = "v "
@@ -242,6 +251,8 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         # per-cursor-move and per-projection-push calls skip the cell-width
         # measurement and the tooltip write when nothing relevant changed.
         self._tooltip_memo_key: tuple[str | None, str, str, bool, int] | None = None
+        # TASK-22202: see the class-level declaration.
+        self._projection_memo = None
 
     @staticmethod
     def _workspace_label(workspace: WorkspaceTreeWorkspace) -> Text:
@@ -326,9 +337,31 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         *,
         expanded_workspace_ids: set[str] | frozenset[str],
     ) -> None:
-        """Apply a keyed immutable projection without clearing the native Tree."""
+        """Apply a keyed immutable projection without clearing the native Tree.
+
+        TASK-22202: a push whose projection, expansion preferences, and search
+        state all match the last COMPLETED pass returns immediately — zero node
+        writes, zero allocations, zero invalidations, no tooltip work. This is
+        the 5 Hz run-tick path while nothing visible changed. The memo compares
+        by identity first (the TASK-22201 tick build serves one shared state
+        object within a tick) and by value across ticks (fresh, value-equal
+        tuples of frozen dataclasses). It is cleared before a full pass runs
+        (a raising pass can never leave a skippable half-applied tree), on
+        every expansion change (gestures, search disclosure), and on unmount.
+        """
 
         projection = tuple(workspaces)
+        expanded = frozenset(expanded_workspace_ids)
+        memo = self._projection_memo
+        if (
+            memo is not None
+            and memo[2] == self._search_active
+            and memo[1] == expanded
+            and (memo[0] is projection or memo[0] == projection)
+        ):
+            self._preferred_expanded_workspace_ids = set(expanded)
+            return
+        self._projection_memo = None
         hovered_node = (
             self.get_node_at_line(self.hover_line) if self.hover_line >= 0 else None
         )
@@ -450,12 +483,15 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                     )
         finally:
             self._syncing = False
+        # TASK-22202: lazy chain instead of materializing the full node set —
+        # ``any`` short-circuits at the first selectable node (every workspace
+        # node qualifies), so the non-empty case is O(1).
         self.can_focus = any(
             node.data is not None and node.data.selectable
-            for node in (
-                *self.workspace_nodes.values(),
-                *self.conversation_nodes.values(),
-                *self.auxiliary_nodes.values(),
+            for node in chain(
+                self.workspace_nodes.values(),
+                self.conversation_nodes.values(),
+                self.auxiliary_nodes.values(),
             )
         )
         if (
@@ -475,6 +511,9 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             if current_hovered_data is None or current_hovered_data.key != hovered_key:
                 self.hover_line = -1
         self._update_tooltip()
+        # TASK-22202: stored only after the pass fully completed, so a raising
+        # pass leaves the memo empty and the next push reconciles for real.
+        self._projection_memo = (projection, expanded, self._search_active)
 
     def render_label(
         self,
@@ -544,6 +583,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self.workspace_nodes.clear()
         self.conversation_nodes.clear()
         self.auxiliary_nodes.clear()
+        self._projection_memo = None
 
     def _remove_workspace(self, workspace_id: str) -> None:
         node = self.workspace_nodes.pop(workspace_id)
@@ -726,6 +766,10 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                 if node.is_expanded
             )
             self._search_workspace_ids_snapshot = frozenset(self.workspace_nodes)
+            # TASK-22202: search-state flips change what sync_projection would
+            # do with the same inputs; never serve a cross-flip skip. (The
+            # memo key carries the flag too — this is the explicit belt.)
+            self._projection_memo = None
         if active:
             self._search_active = True
             for workspace_id in forced_workspace_ids:
@@ -735,6 +779,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             return
         if not self._search_active:
             return
+        self._projection_memo = None
         snapshot = self._search_expansion_snapshot or frozenset()
         original_workspace_ids = self._search_workspace_ids_snapshot or frozenset()
         self._search_active = False
@@ -827,6 +872,9 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self, event: Tree.NodeExpanded[WorkspaceTreeNodeData]
     ) -> None:
         self.hover_line = -1
+        # TASK-22202: disclosure changed outside sync_projection — the next
+        # push must reconcile for real, not skip on the last pass's memo.
+        self._projection_memo = None
         self._record_expansion_gesture(event.node)
         self._update_tooltip()
 
@@ -834,6 +882,8 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self, event: Tree.NodeCollapsed[WorkspaceTreeNodeData]
     ) -> None:
         self.hover_line = -1
+        # TASK-22202: see on_tree_node_expanded.
+        self._projection_memo = None
         node = event.node
         cursor = self.cursor_node
         ancestor = cursor.parent if cursor is not None else None

@@ -8806,3 +8806,42 @@ guards that assert the transaction statements SQLite actually ran
 (`set_trace_callback`), pinned red-first against both failure modes (loud
 "cannot start a transaction within a transaction" and ChaChaNotes' silent
 borrow, which surfaces only as an EMPTY trace).
+---
+
+## A cap silently turns a proportional control back into the flat constant it replaced — and formula tests stay green through it (TASK-22214, 2026-08-25)
+
+TASK-21113 replaced a flat inter-route sleep in the screen pre-importer with a
+proportional one, `min(previous_import_cost * ratio, cap)`, cap 0.10 s, and
+pinned it with 18 tests. Two months of payload growth later every route the
+pacing existed for was asking for a 150-600 ms gap and getting 0.10 s: the
+control had degenerated back into exactly the flat sleep it was written to
+replace, at ~66% GIL duty. **All 18 tests stayed green**, because they assert
+the arithmetic (`min(cost*ratio, cap)` computes correctly) and the arithmetic
+was never wrong. What had changed was the *regime*: which term of the `min()`
+wins in production.
+
+The evidence that settled it was not a duty number but the requested-gap
+series itself, logged from the real thread: before `[0.0, 0.1, 0.1, 0.002,
+0.003, 0.1]` — clipped flat on exactly the expensive routes, the cheap ones
+untouched — after `[0.0, 0.529, 0.245, 0.003, 0.113, 0.303]`. One printed
+list makes "the cap has eaten the mechanism" unarguable in a way an aggregate
+percentage does not.
+
+**What to do.** When you ship a bounded proportional control (a cap, a floor,
+a clamp, a max-backoff, a LIMIT), the tests that prove the formula are not
+tests that the bound is still in the intended regime. Add one assertion that
+pins the *relationship* between the bound and the measured quantity it bounds
+— here, `cap >= 1.0 s` documented as "above the heaviest measured single-route
+cost", which reds if anyone restores a sub-second cap — and, where the
+quantity can grow on its own (payload, row counts, file sizes), a budget guard
+on that quantity so the growth itself lands in review. Log the per-step
+requested values, not just the aggregate: a clipped series is visible at a
+glance, a 66%-vs-48% duty average is not.
+
+Related trap from the same task: **a mutation that adds an already-resident
+import is not a payload regression and a good guard SHOULD stay green on it.**
+Importing `Chunking.Chunk_Lib` into a screen module left the census unmoved
+(an earlier route already had it) and looked at first like a surviving mutant;
+the real-growth mutant (a genuinely new 40k-LOC module on that route) was
+caught and named the route. Before recording a survivor as a gap, check that
+the mutation actually changes the quantity under test.
