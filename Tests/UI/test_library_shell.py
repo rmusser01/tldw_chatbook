@@ -4785,6 +4785,11 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
             await _wait_for_selector(screen, pilot, "#library-collections-panel")
             screen._library_collections_selected_id = "collection-guard"
             await screen.arm_library_collection_delete(Button.Pressed(Button()))
+            guarded_focus = await _wait_for_selector(
+                screen, pilot, "#library-confirm-delete-collection"
+            )
+            guarded_focus.focus()
+            await pilot.pause()
         else:
             await screen._select_library_rail_row(LIBRARY_ROW_CREATE_PROMPT)
             await _wait_for_selector(screen, pilot, "#library-prompt-name")
@@ -4802,23 +4807,39 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
         eligibility = screen._library_emergency_return_eligibility()
         assert eligibility.visible and eligibility.guarded and not eligibility.enabled
         assert screen.check_action("library_emergency_return", ()) is False
+        if guard_kind == "destructive":
+            assert screen.check_action("library_list_focus_rail", ()) is False
         assert (
             dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
             != "rail"
         )
+        if guard_kind == "destructive":
+            assert (
+                dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+                is None
+            )
         bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
         assert bar.disabled is True
         await pilot.click("#library-emergency-return")
         await pilot.pause()
         assert screen._library_emergency_stage == "canvas-only"
+        if guard_kind == "destructive":
+            screen.action_library_list_focus_rail()
+            await pilot.pause()
+            assert guarded_focus.has_focus
 
         screen.action_show_workbench_help()
         await pilot.pause()
         panel = host.screen
         assert isinstance(panel, WorkbenchHelpPanel)
         assert dict(panel.state.shortcuts).get("esc") != "rail"
+        if guard_kind == "destructive":
+            assert dict(panel.state.shortcuts).get("esc") is None
         await pilot.press("escape")
         await pilot.pause()
+        if guard_kind == "destructive":
+            assert host.screen is screen
+            assert guarded_focus.has_focus
         await pilot.press("escape")
         await pilot.pause()
         assert screen._library_emergency_stage == "canvas-only"
@@ -4828,6 +4849,8 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
             assert screen._library_export_quality_choices_visible is False
         elif guard_kind == "destructive":
             assert screen._library_collection_pending_delete_id == "collection-guard"
+            assert guarded_focus.display is True
+            assert guarded_focus.has_focus
         else:
             assert screen._library_prompt_conflict_snapshot is None
 

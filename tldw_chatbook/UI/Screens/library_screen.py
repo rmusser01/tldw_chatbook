@@ -4156,6 +4156,9 @@ class LibraryScreen(BaseAppScreen):
         # task-4023 AC#7: Collections shares the list-canvas Escape
         # contract (focus hop toward the rail) and its footer set.
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            emergency = self._library_emergency_return_eligibility()
+            if emergency.visible and emergency.guarded:
+                return self.LIBRARY_GENERAL_SHORTCUTS
             return self.LIBRARY_LIST_SHORTCUTS
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             shortcuts: list[tuple[str, str]] = []
@@ -24192,6 +24195,8 @@ class LibraryScreen(BaseAppScreen):
             # contract (it was the one browse canvas where Escape was
             # inert) -- a plain list surface's Escape is a focus hop
             # toward the rail, never navigation.
+            if self._library_emergency_return_eligibility().visible:
+                return False
             if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
                 return bool(self._library_conversation_escape_label())
             return (
@@ -27863,6 +27868,8 @@ class LibraryScreen(BaseAppScreen):
         step -- the focus hop toward the rail happens only from a quiet
         list.
         """
+        if self._library_emergency_return_eligibility().visible:
+            return
         if self._close_open_library_choice_strip():
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
