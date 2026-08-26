@@ -508,15 +508,15 @@ def _persisted_store(
     # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`, so
     # an ephemeral session keeps the send on the `create_message` path these
     # doubles actually observe.
-    # Ephemeral IFF there is no persistence, which is production's own rule:
-    # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`, and
-    # a durable turn is refused when the adapter cannot `commit_durable_turn` or
-    # its `db` is None. With a real spy attached the session is durable and the
-    # write path is exercised against real SQLite; without one, a temporary chat
-    # is the only shape that still sends.
+    # EPHEMERAL, as #2104 established. Making these durable was tried and
+    # reverted: two tests here CLOSE the session mid-collection, which retires
+    # the durable preparation, so the in-flight effect release then raises
+    # "Durable postcommit fingerprint changed." (production behaviour, filed as
+    # TASK-22303). Converting this module to durable sessions is part of
+    # TASK-22301's assertion rewrite, not a drive-by change.
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="llama_cpp"),
-        ephemeral=persistence is None,
+        ephemeral=True,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
@@ -580,7 +580,7 @@ def _recording_citation_store(
     store = _RecordingCitationStore(persistence=persistence)
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="openai", model="repair-model"),
-        ephemeral=persistence is None,
+        ephemeral=True,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
