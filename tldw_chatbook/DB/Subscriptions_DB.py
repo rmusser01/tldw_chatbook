@@ -468,6 +468,16 @@ class SubscriptionsDB(BaseDB):
         silently orphaned ``subscription_items`` whenever a subscription was
         deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
         each enable it per connection.
+
+        task-22224 EXCEPTION -- connections here keep the legacy default
+        isolation level for now instead of the store template's
+        ``isolation_level = None`` (rule: ``Library_Ingest_Jobs_DB.py``
+        module docstring). This file's write paths knowingly rely on the
+        legacy implicit-BEGIN policy (see the long TASK-1362 comment above
+        the extraction-fingerprint migration, which documents the reliance
+        and works around its DDL gap with an explicit BEGIN IMMEDIATE), so
+        flipping requires this file's own commit/write-site census first --
+        its own task. Do NOT copy this pattern into new stores.
         """
         if self._read_only:
             conn = connect_private_sqlite(
