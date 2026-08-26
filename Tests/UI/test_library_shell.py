@@ -4327,8 +4327,141 @@ async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row_id", "specific_action"),
+    (
+        (LIBRARY_ROW_INGEST_MEDIA, "library_ingest_back"),
+        (LIBRARY_ROW_INGEST_EXPORT, "library_export_back"),
+        (LIBRARY_ROW_CREATE_STUDY, "library_handoff_back"),
+        (LIBRARY_ROW_CREATE_FLASHCARDS, "library_handoff_back"),
+        (LIBRARY_ROW_CREATE_QUIZZES, "library_handoff_back"),
+    ),
+)
+async def test_library_safe_emergency_escape_returns_without_leaving_route(
+    row_id: str, specific_action: str
+) -> None:
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(row_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message=f"{row_id} did not enter emergency canvas stage",
+        )
+        assert screen.check_action(specific_action, ()) is False
+        assert screen.check_action("library_emergency_return", ()) is True
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state())["esc"] == "rail"
+        )
+        assert (
+            "escape",
+            "Return to Library rail",
+        ) in screen._active_library_binding_shortcuts()
+
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert dict(panel.state.shortcuts)["esc"] == "rail"
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "rail-only",
+            message=f"{row_id} Escape did not return to rail stage",
+        )
+        assert screen._library_selected_row_id == row_id
+        assert getattr(screen.focused, "row_id", None) == row_id
+
+
+def test_library_emergency_escape_binding_follows_specific_guards() -> None:
+    actions = [
+        binding[1]
+        for binding in LibraryScreen.BINDINGS
+        if isinstance(binding, tuple) and binding[0] == "escape"
+    ]
+    emergency = actions.index("library_emergency_return")
+    assert actions.index("library_ingest_back") < emergency
+    assert actions.index("library_export_back") < emergency
+    assert actions.index("library_handoff_back") < emergency
+    assert emergency < actions.index("library_list_focus_rail")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row_id", "shell_selector"),
+    (
+        (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+        (LIBRARY_ROW_BROWSE_CONVERSATIONS, "#library-conversations-reader-shell"),
+        (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+    ),
+)
+async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
+    row_id: str, shell_selector: str, monkeypatch
+) -> None:
+    from textual.css.styles import RenderStyles
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(row_id)
+        shell = await _wait_for_selector(screen, pilot, shell_selector)
+        canvas = screen.query_one("#library-canvas", Vertical)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        await _wait_for_condition(
+            pilot,
+            lambda: canvas.styles.width.value == shell.effective_layout.items_width,
+            message=f"{row_id} adaptive items width did not settle",
+        )
+        writes: list[tuple[str, str]] = []
+        canvas_styles = canvas.styles
+        original_set_rule = RenderStyles.set_rule
+
+        def tracked_set_rule(styles, rule_name, value):
+            if styles is canvas_styles:
+                writes.append((rule_name, str(value)))
+            return original_set_rule(styles, rule_name, value)
+
+        monkeypatch.setattr(RenderStyles, "set_rule", tracked_set_rule)
+        await pilot.resize_terminal(62, 30)
+        await pilot.pause()
+        await pilot.resize_terminal(63, 30)
+        await pilot.pause()
+        layout = shell.effective_layout
+        assert screen._library_emergency_stage is None
+        assert canvas.display is layout.items_open
+        assert rail.display is layout.library_open
+        assert canvas.styles.width.value == layout.items_width
+        assert canvas.styles.min_width.value == layout.items_width
+        assert canvas.styles.max_width.value == layout.items_width
+        assert shell.library_grip.display and shell.items_grip.display
+        assert ("width", "13fr") not in writes
+        assert ("min_width", "40") not in writes
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message="Ordinary route did not reclaim emergency geometry",
+        )
+        assert screen.query_one("#library-canvas").styles.width.value == 1
+
+
+@pytest.mark.asyncio
 async def test_library_emergency_projection_keeps_editor_back_authoritative() -> None:
     """The bar, Escape gate, footer, and F1 binding filter share one guard."""
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryProductionCSSHarness(app)
@@ -4336,33 +4469,35 @@ async def test_library_emergency_projection_keeps_editor_back_authoritative() ->
     async with host.run_test(size=(63, 30)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
-        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
-        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
-        assert screen._library_emergency_return_eligibility().enabled
-        assert screen.check_action("library_emergency_return", ()) is True
-        assert (
-            dict(screen._library_footer_shortcuts_for_current_state())["esc"] == "rail"
-        )
-        assert bar.disabled is False
-
         await screen._select_library_rail_row(LIBRARY_ROW_CREATE_PROMPT)
         editor = await _wait_for_selector(screen, pilot, "#library-prompt-name")
         editor.focus()
         await pilot.press("x")
         await pilot.pause()
         screen._register_footer_shortcuts()
-
         eligibility = screen._library_emergency_return_eligibility()
         assert eligibility.visible and eligibility.guarded and not eligibility.enabled
         assert screen.check_action("library_emergency_return", ()) is False
-        assert dict(screen._library_footer_shortcuts_for_current_state())["esc"] == (
-            "back to list"
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state())["esc"]
+            == "back to list"
         )
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
         assert bar.disabled is True
-        assert ("escape", "Return to Library rail") not in (
-            screen._active_library_binding_shortcuts()
-        )
+        assert (
+            "escape",
+            "Return to Library rail",
+        ) not in screen._active_library_binding_shortcuts()
+
+        await pilot.click("#library-emergency-return")
+        await pilot.pause()
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert dict(panel.state.shortcuts).get("esc") != "rail"
+        await pilot.press("escape")
+        await pilot.pause()
 
         screen.action_library_emergency_return()
         assert screen._library_emergency_stage == "canvas-only"
@@ -4428,6 +4563,310 @@ async def test_library_emergency_restore_is_defeated_by_newer_return_interaction
             message="Second emergency geometry did not release.",
         )
         assert getattr(screen.focused, "id", None) != "library-rag-query-input"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row_id", "scroll_id", "focus_id"),
+    (
+        (LIBRARY_ROW_INGEST_MEDIA, "library-ingest-canvas", "library-ingest-path"),
+        (LIBRARY_ROW_INGEST_EXPORT, "library-export-canvas", "library-export-name"),
+        (LIBRARY_ROW_BROWSE_SKILLS, "library-skills-canvas", "library-skills-filter"),
+    ),
+)
+async def test_library_emergency_restores_real_route_scroll_owner(
+    row_id: str, scroll_id: str, focus_id: str
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 12)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(row_id)
+        route_scroll = await _wait_for_selector(screen, pilot, f"#{scroll_id}")
+        if row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            await route_scroll.mount(Static("scroll receipt\n" * 30))
+        focus = await _wait_for_selector(screen, pilot, f"#{focus_id}")
+        focus.focus()
+        await pilot.pause()
+        expected_y = min(3, int(route_scroll.max_scroll_y))
+        assert expected_y > 0
+        route_scroll.scroll_to(y=expected_y, animate=False, force=True)
+        await pilot.pause()
+        await pilot.resize_terminal(63, 12)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message=f"{row_id} did not enter emergency stage",
+        )
+        receipt = screen._library_emergency_restore_receipt
+        assert receipt is not None
+        assert receipt.owner_id == scroll_id
+        assert receipt.scroll_owner_id == scroll_id
+        assert receipt.focus.scroll_offset == (0, expected_y)
+        route_scroll.scroll_to(y=0, animate=False, force=True)
+        await pilot.pause()
+        await pilot.resize_terminal(64, 12)
+        await _wait_for_condition(
+            pilot,
+            lambda: int(route_scroll.scroll_y) == expected_y,
+            message=f"{row_id} scroll was not restored",
+        )
+        assert getattr(screen.focused, "id", None) == focus_id
+
+
+@pytest.mark.asyncio
+async def test_library_canvas_entry_defeats_an_older_emergency_receipt() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        search = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        search.focus()
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_restore_receipt is not None,
+            message="Search receipt was not captured",
+        )
+        stale = screen._library_emergency_restore_receipt
+        assert stale is not None
+        await screen._open_library_export_canvas(ExportScope(kind="everything"))
+        assert screen._library_stage_interaction_generation > stale.generation
+        await pilot.resize_terminal(64, 30)
+        await pilot.pause()
+        export_name = screen.query_one("#library-export-name", Input)
+        export_name.focus()
+        screen._restore_library_emergency_receipt(stale)
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        assert getattr(screen.focused, "id", None) != "library-rag-query-input"
+
+
+@pytest.mark.asyncio
+async def test_library_notes_compact_interaction_defeats_an_older_receipt() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        notes_filter = await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        notes_filter.focus()
+        stale = screen._capture_library_emergency_restore_receipt(
+            screen.query_one("#library-rail", LibraryRail),
+            screen.query_one("#library-canvas", Vertical),
+        )
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_stage == "rail",
+            message="Compact Notes did not enter rail stage",
+        )
+        assert screen._library_stage_interaction_generation > stale.generation
+        focused = screen.focused
+        screen._restore_library_emergency_receipt(stale)
+        assert screen.focused is focused
+
+
+@pytest.mark.asyncio
+async def test_library_63_64_width_only_transition_does_no_non_layout_work(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(64, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        route = await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas", Vertical)
+        probes = {
+            "snapshot": Mock(wraps=screen._load_library_reader_preference_snapshot),
+            "raw": Mock(wraps=library_screen_module.read_cli_config_serialized),
+            "cached": Mock(wraps=library_screen_module.get_cli_setting),
+            "write": Mock(wraps=library_screen_module.save_setting_to_cli_config),
+            "batch": Mock(wraps=library_screen_module.save_settings_to_cli_config),
+            "persist": AsyncMock(wraps=screen._persist_library_reader_preference),
+            "service": AsyncMock(wraps=screen._run_library_service_call),
+            "worker": Mock(wraps=screen.run_worker),
+            "load": Mock(wraps=screen._request_library_prompts_browse),
+            "screen_refresh": Mock(wraps=screen.refresh),
+            "rail_refresh": Mock(wraps=rail.refresh),
+            "canvas_refresh": Mock(wraps=canvas.refresh),
+            "route_refresh": Mock(wraps=route.refresh),
+        }
+        for target, name, key in (
+            (screen, "_load_library_reader_preference_snapshot", "snapshot"),
+            (screen, "_persist_library_reader_preference", "persist"),
+            (screen, "_run_library_service_call", "service"),
+            (screen, "run_worker", "worker"),
+            (screen, "_request_library_prompts_browse", "load"),
+            (screen, "refresh", "screen_refresh"),
+            (rail, "refresh", "rail_refresh"),
+            (canvas, "refresh", "canvas_refresh"),
+            (route, "refresh", "route_refresh"),
+        ):
+            monkeypatch.setattr(target, name, probes[key])
+        for name, key in (
+            ("read_cli_config_serialized", "raw"),
+            ("get_cli_setting", "cached"),
+            ("save_setting_to_cli_config", "write"),
+            ("save_settings_to_cli_config", "batch"),
+        ):
+            monkeypatch.setattr(library_screen_module, name, probes[key])
+
+        await pilot.resize_terminal(63, 30)
+        await pilot.pause()
+        await pilot.resize_terminal(64, 30)
+        await pilot.pause()
+        for key in (
+            "snapshot",
+            "raw",
+            "cached",
+            "write",
+            "batch",
+            "persist",
+            "service",
+            "worker",
+            "load",
+        ):
+            assert probes[key].call_count == 0, key
+        for key in (
+            "screen_refresh",
+            "rail_refresh",
+            "canvas_refresh",
+            "route_refresh",
+        ):
+            recomposes = [
+                call
+                for call in probes[key].call_args_list
+                if call.kwargs.get("recompose") is True
+            ]
+            assert recomposes == [], key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guard_kind", ("cancel", "destructive", "conflict", "running"))
+async def test_library_emergency_real_guards_keep_specific_action_authoritative(
+    guard_kind: str, monkeypatch
+) -> None:
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        if guard_kind in {"cancel", "running"}:
+            await screen._select_library_rail_row(LIBRARY_ROW_INGEST_EXPORT)
+            await _wait_for_selector(screen, pilot, "#library-export-name")
+            if guard_kind == "cancel":
+                screen.query_one("#library-export-quality", Button).press()
+                await _wait_for_selector(
+                    screen, pilot, "#library-export-quality-choices"
+                )
+            else:
+                monkeypatch.setattr(screen, "_start_library_export_worker", Mock())
+                screen._library_export_counts = {"notes": 1}
+                screen._library_export_form["destination"] = "/tmp/library-guard.zip"
+                screen.handle_library_export_submit(Button.Pressed(Button()))
+                await pilot.pause()
+        elif guard_kind == "destructive":
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+            await _wait_for_selector(screen, pilot, "#library-collections-panel")
+            screen._library_collections_selected_id = "collection-guard"
+            await screen.arm_library_collection_delete(Button.Pressed(Button()))
+        else:
+            await screen._select_library_rail_row(LIBRARY_ROW_CREATE_PROMPT)
+            await _wait_for_selector(screen, pilot, "#library-prompt-name")
+            screen._enter_library_prompt_conflict(
+                name="Guarded",
+                author="",
+                details="",
+                system_prompt="",
+                user_prompt="",
+                keywords_text="",
+            )
+            await pilot.pause()
+
+        screen._register_footer_shortcuts()
+        eligibility = screen._library_emergency_return_eligibility()
+        assert eligibility.visible and eligibility.guarded and not eligibility.enabled
+        assert screen.check_action("library_emergency_return", ()) is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            != "rail"
+        )
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        assert bar.disabled is True
+        await pilot.click("#library-emergency-return")
+        await pilot.pause()
+        assert screen._library_emergency_stage == "canvas-only"
+
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert dict(panel.state.shortcuts).get("esc") != "rail"
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_emergency_stage == "canvas-only"
+        if guard_kind == "running":
+            assert screen._library_export_status == "Cancelling…"
+        elif guard_kind == "cancel":
+            assert screen._library_export_quality_choices_visible is False
+        elif guard_kind == "destructive":
+            assert screen._library_collection_pending_delete_id == "collection-guard"
+        else:
+            assert screen._library_prompt_conflict_snapshot is None
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_modal_owns_escape_and_hides_rail_guidance() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_INGEST_EXPORT)
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+
+        screen.query_one("#library-export-destination", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(host.screen, FileSave),
+            message="Export destination dialog did not open",
+        )
+        dialog = host.screen
+        assert isinstance(dialog, FileSave)
+        eligibility = screen._library_emergency_return_eligibility()
+        assert eligibility.visible and eligibility.guarded and not eligibility.enabled
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            != "rail"
+        )
+        assert any(
+            binding.key == "escape" and binding.action == "request_safe_cancel"
+            for binding in dialog.BINDINGS
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert host.screen is screen
+        assert screen._library_emergency_stage == "canvas-only"
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
 
 
 @pytest.mark.asyncio

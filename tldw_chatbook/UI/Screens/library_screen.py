@@ -857,7 +857,9 @@ class _LibraryEmergencyRestoreReceipt:
     """Portable focus/scroll state owned by one interaction generation."""
 
     owner_id: str
+    scroll_owner_id: str
     focus: LibraryEntryFocusIdentity
+    route_key: tuple[object, ...]
     generation: int
 
 
@@ -5317,9 +5319,17 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_notes_compact_stage_applies(self) -> bool:
         """Scope single-stage behavior to Library entry and active Notes routes."""
-        return self._library_notes_workflow_active() and (
-            self._library_notes_stage == "rail"
-            or self._library_notes_compact_workflow_active()
+        if self._library_notes_compact_workflow_active():
+            return True
+        if self._library_selected_row_id or self._library_rail_collapsed:
+            return False
+        return (
+            self._library_lifecycle
+            not in (
+                LibraryLifecycle.UNKNOWN,
+                LibraryLifecycle.STARTER,
+            )
+            and self._library_notes_stage == "rail"
         )
 
     def _library_ordinary_route_active(self) -> bool:
@@ -5342,7 +5352,8 @@ class LibraryScreen(BaseAppScreen):
         """Project the sole guarded truth for narrow canvas-to-rail recovery."""
         visible = self._library_emergency_stage == "canvas-only"
         guarded = bool(
-            self._library_open_choice_strip() is not None
+            (self.is_mounted and self.app.screen is not self)
+            or self._library_open_choice_strip() is not None
             or self._library_prompt_editor_active()
             or self._library_skill_editor_active()
             or self._library_prompts_mutation_in_flight
@@ -5383,13 +5394,22 @@ class LibraryScreen(BaseAppScreen):
         """Restore only when no newer rail/canvas/Notes interaction won."""
         if receipt.generation != self._library_stage_interaction_generation:
             return
+        if receipt.route_key != self._library_entry_route_key():
+            return
         try:
             owner = self.query_one(f"#{receipt.owner_id}", Widget)
+            scroll_owner = self.query_one(f"#{receipt.scroll_owner_id}", Widget)
         except (NoMatches, QueryError):
+            return
+        rail_query = self.query("#library-rail")
+        current_rail = rail_query.first(LibraryRail) if rail_query else None
+        if owner not in (self._library_entry_canvas_owner(), current_rail):
+            return
+        if owner not in scroll_owner.ancestors_with_self:
             return
         target: Widget | None = None
         if receipt.focus.source_id:
-            for candidate in owner.query(Widget):
+            for candidate in Widget.query(owner, Widget):
                 if any(
                     str(getattr(candidate, attribute, "") or "")
                     == receipt.focus.source_id
@@ -5412,8 +5432,10 @@ class LibraryScreen(BaseAppScreen):
                 target = None
         if target is not None and not getattr(target, "disabled", False):
             target.focus()
-        if receipt.focus.scroll_offset is not None and hasattr(owner, "scroll_to"):
-            owner.scroll_to(
+        if receipt.focus.scroll_offset is not None and hasattr(
+            scroll_owner, "scroll_to"
+        ):
+            scroll_owner.scroll_to(
                 x=receipt.focus.scroll_offset[0],
                 y=receipt.focus.scroll_offset[1],
                 animate=False,
@@ -5425,9 +5447,31 @@ class LibraryScreen(BaseAppScreen):
     ) -> _LibraryEmergencyRestoreReceipt:
         """Capture current stage focus and its retained owner's scroll tuple."""
         focused = self.focused
-        owner = canvas
+        owner = self._library_entry_canvas_owner() or canvas
         if focused is not None and rail in focused.ancestors_with_self:
             owner = rail
+        scroll_owner: Widget | None = None
+        if focused is not None and owner in focused.ancestors_with_self:
+            scroll_owner = next(
+                (
+                    candidate
+                    for candidate in focused.ancestors_with_self
+                    if isinstance(candidate, VerticalScroll)
+                    and owner in candidate.ancestors_with_self
+                ),
+                None,
+            )
+        if scroll_owner is None and isinstance(owner, VerticalScroll):
+            scroll_owner = owner
+        if scroll_owner is None:
+            scroll_owner = next(
+                (
+                    candidate
+                    for candidate in Widget.query(owner, VerticalScroll)
+                    if candidate.display
+                ),
+                owner,
+            )
         source_id = ""
         if focused is not None:
             for attribute in (
@@ -5444,17 +5488,19 @@ class LibraryScreen(BaseAppScreen):
                     source_id = str(value)
                     break
         scroll_offset = (
-            (int(owner.scroll_x), int(owner.scroll_y))
-            if hasattr(owner, "scroll_x") and hasattr(owner, "scroll_y")
+            (int(scroll_owner.scroll_x), int(scroll_owner.scroll_y))
+            if hasattr(scroll_owner, "scroll_x") and hasattr(scroll_owner, "scroll_y")
             else None
         )
         return _LibraryEmergencyRestoreReceipt(
             owner_id=str(owner.id or "library-canvas"),
+            scroll_owner_id=str(scroll_owner.id or owner.id or "library-canvas"),
             focus=LibraryEntryFocusIdentity(
                 widget_id=str(getattr(focused, "id", "") or ""),
                 source_id=source_id,
                 scroll_offset=scroll_offset,
             ),
+            route_key=self._library_entry_route_key(),
             generation=self._library_stage_interaction_generation,
         )
 
@@ -5469,6 +5515,16 @@ class LibraryScreen(BaseAppScreen):
         """Apply one full-width ordinary stage below the hard floor."""
         width = min(shell.region.width, self.size.width)
         if width <= 0:
+            return False
+        if self.query(
+            "#library-media-reader-shell, "
+            "#library-conversations-reader-shell, "
+            "#library-notes-reader-shell"
+        ):
+            self._library_emergency_stage = None
+            self._library_emergency_restore_receipt = None
+            for bar in self.query(LibraryEmergencyReturn):
+                bar.display = False
             return False
         emergency = (
             self._library_ordinary_route_active() and ordinary_emergency_required(width)
@@ -7201,6 +7257,7 @@ class LibraryScreen(BaseAppScreen):
                 then=lambda: self._focus_library_note_control("#library-notes-sort"),
             )
             return
+        self._advance_library_stage_interaction()
         self._library_notes_stage = "rail"
         self._library_notes_explicit_stage_intent = False
         self._supersede_library_notes_navigation()
@@ -20383,6 +20440,7 @@ class LibraryScreen(BaseAppScreen):
                 self._advance_library_stage_interaction()
                 self._library_emergency_stage = "canvas-only"
             self._apply_library_notes_stage_visibility()
+            self.call_after_refresh(self._apply_library_notes_stage_visibility)
         else:
             self._library_emergency_stage = None
             self._library_emergency_restore_receipt = None
@@ -24081,11 +24139,20 @@ class LibraryScreen(BaseAppScreen):
         if action == "library_prompt_editor_back":
             return self._library_prompt_editor_active()
         if action == "library_ingest_back":
-            return self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+            return (
+                self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+                and not self._library_emergency_return_eligibility().enabled
+            )
         if action == "library_export_back":
-            return self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+            return (
+                self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+                and not self._library_emergency_return_eligibility().enabled
+            )
         if action == "library_handoff_back":
-            return self._library_selected_row_id in LIBRARY_STUDY_HANDOFF_ROW_IDS
+            return (
+                self._library_selected_row_id in LIBRARY_STUDY_HANDOFF_ROW_IDS
+                and not self._library_emergency_return_eligibility().enabled
+            )
         if action == "library_media_bulk_delete_cancel":
             # task-3020 AC2: only while the bulk-delete confirmation is
             # genuinely armed -- mirrors the single-item viewer confirm's
@@ -24443,6 +24510,9 @@ class LibraryScreen(BaseAppScreen):
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
             return
         if self._close_open_library_choice_strip():
+            return
+        if self._library_export_running:
+            self.handle_library_export_cancel(None)
             return
         origin = self._library_export_origin_row_id
         self._library_export_origin_row_id = ""
