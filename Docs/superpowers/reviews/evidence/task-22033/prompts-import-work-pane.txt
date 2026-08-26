@@ -2,29 +2,29 @@
  ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  More ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Library | Local
-     Prompts (1)                                    Import prompts
-     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
-     ▊ Filter prompts… (Enter)                ▎     ▊ File or folder path…                         ▎
-     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
-
-       collection: All prompts                         Browse…     Import     Cancel
-        sort: Newest     Select
-        Import…     Export…
-      Release assistant
-      Prompt · Local · System + User
-
-
---->                                           <---
-
-
-
-     1-1 of 1 · Page 1 of 1
-     Already on the first page. · No more
-     results.
-        ○ Previous     ○ Next
-
-
-
-
-
-  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit
+┌──────────────────────────┐          Import prompts
+│ Navigation               │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+│     Import…              │          ▊ File or folder path…                                       ▎
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+│ ▊ Search Library…     ▎  │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │             Browse…     Import     Cancel
+│                          │
+│ ───────────────────────  │
+│  Browse            ▾     │
+│    Media (0)             │
+│    Conversations (0)     │
+│    Notes (0+)            │
+│  ▸ Prompts (1) — reuse   │<--- --->
+│    Skills (0)            │
+│    Collections           │
+│    Search / RAG          │
+│ ───────────────────────▃ │
+│  Create            ▾     │
+│    New note              │
+│    New prompt            │
+│    New skill             │
+│ ───────────────────────  │
+│  Study             ▾     │
+│    Study decks           │
+└──────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

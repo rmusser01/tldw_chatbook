@@ -20,7 +20,7 @@ class LibraryPromptWorkPane(LibraryPromptsListCanvas):
 
     def compose(self) -> ComposeResult:
         """Compose the active editor/task or a stable no-selection surface."""
-        if self.mode == "list" and self.import_open:
+        if self.import_open:
             yield Static(
                 "Import prompts",
                 id="library-prompt-import-heading",

@@ -1,0 +1,8 @@
+{
+  "editor_locked": true,
+  "loaded_id": 1,
+  "loaded_name": "Release assistant",
+  "notice": "Couldn't load the selected Prompt. Check the local Library and retry. Still showing \u201cRelease assistant\u201d while \u201cIncident assistant\u201d remains selected.",
+  "selected_id": 2,
+  "svg": "prompts-detail-failure.svg"
+}

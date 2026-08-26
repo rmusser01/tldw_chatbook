@@ -1,10 +1,12 @@
 {
+  "editor_hidden": true,
   "identities": [
-    5026667776,
-    4809770336
+    5156564592,
+    5199011216
   ],
   "import_path_visible": true,
   "items_retained": true,
+  "opened_from_editor": true,
   "svg": "prompts-import-work-pane.svg",
   "work_retained": true
 }

@@ -6850,7 +6850,7 @@ async def test_library_prompt_mutation_vetoes_every_import_seam(tmp_path):
         try:
             button = Button()
             path_input = Input()
-            screen.handle_library_prompts_import(Button.Pressed(button))
+            await screen.handle_library_prompts_import(Button.Pressed(button))
             screen.handle_library_prompts_import_cancel(Button.Pressed(button))
             screen.handle_library_prompts_import_browse(Button.Pressed(button))
             screen.handle_library_prompts_import_path_changed(

@@ -142,6 +142,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         import_status: Muted outcome line shown below the Import row
             (e.g. ``"2 imported · 1 skipped (duplicate name)"``), or
             ``""`` when idle/not yet run.
+        identity_mismatch: Whether the selected Items identity differs from
+            the last successfully loaded Work identity. The editor remains
+            visible but read-only until the selection loads or is retried.
+        detail_notice: Truthful selected-versus-loaded loading or failure copy.
+        detail_retryable: Whether the current detail failure exposes Retry.
     """
 
     def __init__(
@@ -179,6 +184,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         write_in_flight: bool = False,
         bulk_read_only: bool = False,
         bulk_included: bool | None = None,
+        identity_mismatch: bool = False,
+        detail_notice: str = "",
+        detail_retryable: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -212,6 +220,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.write_in_flight = write_in_flight
         self.bulk_read_only = bulk_read_only
         self.bulk_included = bulk_included
+        self.identity_mismatch = identity_mismatch
+        self.detail_notice = detail_notice
+        self.detail_retryable = detail_retryable
         self.more_actions_open = False
         self.styles.width = "1fr"
         self.styles.min_width = 40
@@ -219,11 +230,18 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
     def compose(self) -> ComposeResult:
         if self.mode == "loading":
             yield Static(
-                "Loading prompt…",
+                self.detail_notice or "Loading prompt…",
                 id="library-prompt-loading",
                 classes="destination-purpose",
                 markup=False,
             )
+            if self.detail_retryable:
+                yield Button(
+                    "Retry",
+                    id="library-prompt-detail-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
             return
         if self.mode == "editor":
             yield from self._compose_editor()
@@ -265,6 +283,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         write_in_flight: bool = False,
         bulk_read_only: bool = False,
         bulk_included: bool | None = None,
+        identity_mismatch: bool = False,
+        detail_notice: str = "",
+        detail_retryable: bool = False,
     ) -> None:
         """Apply a complete prompt snapshot within the mounted canvas.
 
@@ -325,6 +346,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.write_in_flight = write_in_flight
         self.bulk_read_only = bulk_read_only
         self.bulk_included = bulk_included
+        self.identity_mismatch = identity_mismatch
+        self.detail_notice = detail_notice
+        self.detail_retryable = detail_retryable
         self.refresh(recompose=True)
 
     async def set_editor_mode(self, mode: str) -> None:
@@ -378,7 +402,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         )
         for selector in ("#library-prompt-system", "#library-prompt-user"):
             self.query_one(selector, TextArea).read_only = (
-                effective != "basic" or self.bulk_read_only
+                effective != "basic"
+                or self.bulk_read_only
+                or self.identity_mismatch
             )
         if focused_will_hide:
             self.call_after_refresh(
@@ -1162,7 +1188,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         effective_mode = (
             "advanced" if self.basic_unavailable_reason else self.editor_mode
         )
-        item_locked = self.mutation_in_flight or self.bulk_read_only
+        item_locked = (
+            self.mutation_in_flight
+            or self.bulk_read_only
+            or self.identity_mismatch
+        )
         with Vertical(id="library-prompt-editor-shell"):
             with VerticalScroll(id="library-prompt-editor-content"):
                 if self.mutation_in_flight:
@@ -1184,6 +1214,21 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 )
                 bulk_status.display = self.bulk_read_only
                 yield bulk_status
+                detail_status = Static(
+                    self.detail_notice,
+                    id="library-prompt-detail-status",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+                detail_status.display = self.identity_mismatch
+                yield detail_status
+                if self.identity_mismatch and self.detail_retryable:
+                    yield Button(
+                        "Retry",
+                        id="library-prompt-detail-retry",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
                 yield Button(
                     library_disabled_action_label(
                         "‹ Back to list", item_locked
@@ -1330,7 +1375,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     )
                     yield TextArea(
                         basic_system,
-                        read_only=effective_mode != "basic" or self.bulk_read_only,
+                        read_only=effective_mode != "basic" or item_locked,
                         id="library-prompt-system",
                     )
                     yield Static(
@@ -1346,7 +1391,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     )
                     yield TextArea(
                         basic_user,
-                        read_only=effective_mode != "basic" or self.bulk_read_only,
+                        read_only=effective_mode != "basic" or item_locked,
                         id="library-prompt-user",
                     )
                 keywords = Input(

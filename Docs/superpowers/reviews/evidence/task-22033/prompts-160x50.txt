@@ -29,9 +29,9 @@
 │ │    Study decks           │     │                                      │                                                                                    │
 │ │                          │     │                                      │     Modified now · v1                                                              │
 │ │    Flashcards            │     │ 1-1 of 1 · Page 1 of 1               │                                                                                    │
-│ │                          │     │ Loading page 1… · Page is loading.   │                                                                                    │
-│ │    Quizzes               │     │     ○ Previous         ○ Next        │                                                                                    │
-│ │                          │     │                                      │     Collections                                                                    │
+│ │                          │     │ Already on the first page. · No      │                                                                                    │
+│ │    Quizzes               │     │ more results.                        │                                                                                    │
+│ │                          │     │     ○ Previous         ○ Next        │     Collections                                                                    │
 │ │ ──────────────────────── │     │                                      │     No collections                                                                 │
 │ │  Import / Export    ▾    │     │                                      │       Manage collections                                                           │
 │ │    Import…               │     │                                      │       Apply memberships                                                            │
@@ -47,4 +47,4 @@
 │ │                          │     │                                      │                                     Use in Console                                 │
 │ └──────────────────────────┘     └──────────────────────────────────────┘                                      More actions                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

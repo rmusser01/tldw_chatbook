@@ -16,22 +16,44 @@ from pathlib import Path
 WORKTREE = Path(__file__).resolve().parents[5]
 EVIDENCE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("TASK22033_DATA_DIR", ""))
+SCRATCH_ROOT = Path(os.environ.get("TASK22033_SCRATCH_ROOT", ""))
 REQUIRED_ENV = (
-    "HOME",
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
     "XDG_CACHE_HOME",
     "TLDW_CONFIG_PATH",
     "TLDW_TEST_MODE",
     "TASK22033_DATA_DIR",
+    "TASK22033_SCRATCH_ROOT",
 )
 missing = [name for name in REQUIRED_ENV if not os.environ.get(name)]
 if missing:
     raise SystemExit(f"refusing unisolated run; missing: {', '.join(missing)}")
-home = Path(os.environ["HOME"]).resolve()
 config_path = Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
-if home not in config_path.parents or home not in DATA_DIR.resolve().parents:
-    raise SystemExit("config/data must be contained by the scratch HOME")
+scratch_root = SCRATCH_ROOT.resolve()
+if (
+    scratch_root not in config_path.parents
+    or scratch_root not in DATA_DIR.resolve().parents
+):
+    raise SystemExit("config/data must be contained by TASK22033_SCRATCH_ROOT")
+app_data_dir = scratch_root / "app-data"
+for isolated_dir in (
+    scratch_root,
+    DATA_DIR.resolve(),
+    app_data_dir,
+    config_path.parent,
+    Path(os.environ["XDG_CONFIG_HOME"]).resolve(),
+    Path(os.environ["XDG_DATA_HOME"]).resolve(),
+    Path(os.environ["XDG_CACHE_HOME"]).resolve(),
+):
+    isolated_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    isolated_dir.chmod(0o700)
+if not config_path.exists():
+    config_path.write_text(
+        f'[paths]\ndata_dir = "{app_data_dir.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
 
 sys.path.insert(0, str(WORKTREE))
 
@@ -359,12 +381,12 @@ async def bulk_preview(summary: dict[str, object]) -> None:
 
 
 async def import_and_retry(summary: dict[str, object]) -> None:
-    app, _db, _prompt_id, _uuid, _definition = _seed_real_prompt("import")
+    app, _db, prompt_id, _uuid, _definition = _seed_real_prompt("import")
     host = LibraryProductionCSSHarness(app)
     async with host.run_test(size=(100, 30)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
         items = screen.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
         work = screen.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
         identities = [id(items), id(work)]
@@ -374,11 +396,22 @@ async def import_and_retry(summary: dict[str, object]) -> None:
             "items_retained": screen.query_one("#library-prompts-canvas") is items,
             "work_retained": screen.query_one("#library-prompt-work-pane") is work,
             "identities": identities,
+            "opened_from_editor": screen._selected_prompt_id == prompt_id,
+            "editor_hidden": not bool(work.query("#library-prompt-name")),
             "import_path_visible": screen.query_one(
                 "#library-prompts-import-path", Input
             ).display,
         }
-        assert facts["items_retained"] and facts["work_retained"]
+        assert all(
+            facts[key]
+            for key in (
+                "items_retained",
+                "work_retained",
+                "opened_from_editor",
+                "editor_hidden",
+                "import_path_visible",
+            )
+        )
         _capture(host, "prompts-import-work-pane", facts)
         summary["import"] = facts
 
@@ -444,6 +477,84 @@ async def import_and_retry(summary: dict[str, object]) -> None:
         summary["retry"] = facts
 
 
+async def detail_failure_and_retry(summary: dict[str, object]) -> None:
+    """Capture truthful selected-versus-loaded detail recovery."""
+    app, db, first_id, _uuid, _definition = _seed_real_prompt("detail-retry")
+    second_id, _second_uuid, _message = db.add_prompt(
+        name="Incident assistant",
+        author="Grace",
+        details="Prepares incident summaries",
+        system_prompt="Preserve verified facts.",
+        user_prompt="Summarize {incident}.",
+        keywords=["incident", "summary"],
+    )
+    service = app.prompt_scope_service
+    original_get_prompt = service.get_prompt
+
+    async def fail_second_detail(*, prompt_identifier, **kwargs):
+        if prompt_identifier == second_id:
+            raise RuntimeError("simulated live detail failure")
+        return await original_get_prompt(
+            prompt_identifier=prompt_identifier,
+            **kwargs,
+        )
+
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, first_id)
+        service.get_prompt = fail_second_detail
+        screen.query_one(f"#library-prompt-row-{second_id}", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-detail-retry")
+        status = screen.query_one("#library-prompt-detail-status", Static)
+        failure = {
+            "selected_id": screen._selected_prompt_id,
+            "loaded_id": screen._library_prompt_loaded_id,
+            "loaded_name": screen.query_one("#library-prompt-name", Input).value,
+            "editor_locked": screen.query_one(
+                "#library-prompt-name", Input
+            ).disabled,
+            "notice": str(status.renderable),
+        }
+        assert failure["selected_id"] == second_id
+        assert failure["loaded_id"] == first_id
+        assert failure["loaded_name"] == "Release assistant"
+        assert failure["editor_locked"] is True
+        assert "remains selected" in failure["notice"]
+        _capture(host, "prompts-detail-failure", failure)
+
+        service.get_prompt = original_get_prompt
+        screen.query_one("#library-prompt-detail-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_loaded_id == second_id
+                and screen.query_one("#library-prompt-name", Input).value
+                == "Incident assistant"
+            ),
+            message="Live Prompt detail retry did not adopt the selection",
+        )
+        recovered = {
+            "selected_id": screen._selected_prompt_id,
+            "loaded_id": screen._library_prompt_loaded_id,
+            "loaded_name": screen.query_one("#library-prompt-name", Input).value,
+            "editor_locked": screen.query_one(
+                "#library-prompt-name", Input
+            ).disabled,
+            "retry_visible": bool(screen.query("#library-prompt-detail-retry")),
+        }
+        assert recovered["selected_id"] == recovered["loaded_id"] == second_id
+        assert recovered["loaded_name"] == "Incident assistant"
+        assert recovered["editor_locked"] is False
+        assert recovered["retry_visible"] is False
+        _capture(host, "prompts-detail-retry", recovered)
+        summary["detail_recovery"] = {
+            "failure": failure,
+            "recovered": recovered,
+        }
+
+
 async def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     summary: dict[str, object] = {
@@ -452,7 +563,13 @@ async def main() -> None:
         "data": str(DATA_DIR.resolve()),
         "sizes": [list(size) for size in SIZES],
     }
-    selected = set(sys.argv[1:]) or {"geometry", "preservation", "bulk", "import"}
+    selected = set(sys.argv[1:]) or {
+        "geometry",
+        "preservation",
+        "bulk",
+        "import",
+        "detail",
+    }
     if "geometry" in selected:
         await geometry_matrix(summary)
     if "preservation" in selected:
@@ -462,6 +579,8 @@ async def main() -> None:
         await bulk_preview(summary)
     if "import" in selected:
         await import_and_retry(summary)
+    if "detail" in selected:
+        await detail_failure_and_retry(summary)
     (EVIDENCE_DIR / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

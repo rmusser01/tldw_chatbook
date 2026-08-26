@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 from unittest.mock import Mock
 
 import pytest
@@ -192,6 +194,307 @@ async def test_import_replaces_only_work_content_and_keeps_list_mounted(
         assert screen.query_one("#library-prompt-work-pane") is work
         assert not prompts_list.query("#library-prompts-import-path")
         assert work.query_one("#library-prompts-import-path").is_mounted
+
+
+@pytest.mark.asyncio
+async def test_import_from_clean_editor_replaces_work_and_cancel_restores_editor(
+    tmp_path,
+) -> None:
+    prompt_id, service = _seed_prompt(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        work = screen.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
+
+        screen.query_one("#library-prompts-import", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-import-path")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(work.query("#library-prompt-name")) == 0,
+            message="Prompt editor content remained mounted behind Import",
+        )
+
+        assert screen.query_one("#library-prompt-work-pane") is work
+        assert len(work.query("#library-prompt-name")) == 0
+        screen.query_one("#library-prompts-import-cancel", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-name")
+        assert screen.query_one("#library-prompt-name", Input).value == (
+            "Release assistant"
+        )
+        assert screen._selected_prompt_id == prompt_id
+
+
+@pytest.mark.asyncio
+async def test_import_from_dirty_editor_is_vetoed_without_hiding_draft(tmp_path) -> None:
+    prompt_id, service = _seed_prompt(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_editor_armed,
+            message="Prompt editor did not arm",
+        )
+        name = screen.query_one("#library-prompt-name", Input)
+        name.value = "Unsaved release assistant"
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_dirty,
+            message="Prompt draft did not become dirty",
+        )
+
+        screen.query_one("#library-prompts-import", Button).press()
+        await pilot.pause()
+
+        assert not screen.query("#library-prompts-import-path")
+        assert screen.query_one("#library-prompt-name", Input).value == (
+            "Unsaved release assistant"
+        )
+        assert screen._selected_prompt_id == prompt_id
+
+
+@pytest.mark.asyncio
+async def test_items_browse_settles_while_prompt_editor_remains_open(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompt_id, service = _seed_prompt(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        controller = screen._library_prompt_browse_controller
+        prior_token = controller.result.request_token
+
+        screen.query_one("#library-prompts-sort", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-sort-name")
+        screen.query_one("#library-prompts-sort-name", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.result.request_token > prior_token
+                and controller.result.status == "ready"
+            ),
+            message="Retained Prompt Items browse did not settle in editor mode",
+        )
+
+        assert screen._library_prompts_view == "editor"
+        assert screen._selected_prompt_id == prompt_id
+        assert screen.query_one("#library-prompt-name", Input).value == (
+            "Release assistant"
+        )
+
+        async def request_and_wait(**changes) -> None:
+            prior_request = controller.result.request_token
+            screen._request_library_prompts_browse(
+                dataclasses.replace(controller.mutation_refresh_scope, **changes),
+                focus_identity=None,
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    controller.result.request_token > prior_request
+                    and controller.result.status != "loading"
+                ),
+                message=f"Retained Prompt Items request did not settle: {changes}",
+            )
+            assert controller.result.status != "error"
+            assert screen._library_prompts_view == "editor"
+            assert screen._selected_prompt_id == prompt_id
+
+        await request_and_wait(query="release", page=1)
+        await request_and_wait(query="", collection_id=999_999, page=1)
+        await request_and_wait(collection_id=None, page=2)
+
+        original_browse = service.browse_prompts
+
+        async def fail_browse(**_kwargs):
+            raise RuntimeError("temporary browse failure")
+
+        monkeypatch.setattr(service, "browse_prompts", fail_browse)
+        failed_token = controller.result.request_token
+        screen._request_library_prompts_browse(
+            dataclasses.replace(
+                controller.mutation_refresh_scope,
+                collection_id=None,
+                page=1,
+            ),
+            focus_identity=None,
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.result.request_token > failed_token
+                and controller.result.status == "error"
+            ),
+            message="Retained Prompt Items request did not expose retry",
+        )
+        monkeypatch.setattr(service, "browse_prompts", original_browse)
+        retry_token = controller.result.request_token
+        screen.query_one("#library-prompts-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.result.request_token > retry_token
+                and controller.result.status == "ready"
+            ),
+            message="Retained Prompt Items retry did not settle",
+        )
+
+        membership_token = controller.result.request_token
+        screen._refresh_library_prompt_after_membership_apply()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.result.request_token > membership_token
+                and controller.result.status == "ready"
+            ),
+            message="Membership Apply did not refresh retained Prompt Items",
+        )
+        assert screen.query_one("#library-prompt-name", Input).value == (
+            "Release assistant"
+        )
+
+
+@pytest.mark.asyncio
+async def test_same_prompt_older_detail_load_cannot_overwrite_newer_generation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    prompt_id, service = _seed_prompt(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        older = asyncio.Future()
+        newer = asyncio.Future()
+        replies = iter((older, newer))
+
+        async def delayed_detail(*_args, **_kwargs):
+            return await next(replies)
+
+        monkeypatch.setattr(screen, "_run_library_service_call", delayed_detail)
+        first = asyncio.create_task(screen._refresh_library_prompt_detail(prompt_id))
+        await pilot.pause()
+        second = asyncio.create_task(screen._refresh_library_prompt_detail(prompt_id))
+        await pilot.pause()
+        newer.set_result(
+            {
+                "local_id": prompt_id,
+                "name": "Newer detail",
+                "author": "Ada",
+                "details": "new",
+                "system_prompt": "Be exact.",
+                "user_prompt": "Summarize {changes}.",
+                "keywords": ["release"],
+                "version": 3,
+            }
+        )
+        await second
+        older.set_result(
+            {
+                "local_id": prompt_id,
+                "name": "Older detail",
+                "author": "Ada",
+                "details": "old",
+                "system_prompt": "Be exact.",
+                "user_prompt": "Summarize {changes}.",
+                "keywords": ["release"],
+                "version": 2,
+            }
+        )
+        await first
+        await pilot.pause()
+
+        assert screen._library_prompt_detail is not None
+        assert screen._library_prompt_detail["name"] == "Newer detail"
+        assert screen._library_prompt_version == 3
+
+
+@pytest.mark.asyncio
+async def test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, service = _real_prompt_scope_service(tmp_path)
+    first_id, _uuid, _message = db.add_prompt(
+        name="First prompt",
+        author="Ada",
+        details="first",
+        system_prompt="First system",
+        user_prompt="First user",
+        keywords=["first"],
+    )
+    second_id, _uuid, _message = db.add_prompt(
+        name="Second prompt",
+        author="Grace",
+        details="second",
+        system_prompt="Second system",
+        user_prompt="Second user",
+        keywords=["second"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, first_id)
+        original_get_prompt = service.get_prompt
+
+        def fail_second(*, prompt_identifier, **kwargs):
+            if prompt_identifier == second_id:
+                raise RuntimeError("simulated detail failure")
+            return original_get_prompt(prompt_identifier=prompt_identifier, **kwargs)
+
+        monkeypatch.setattr(service, "get_prompt", fail_second)
+        screen.query_one(f"#library-prompt-row-{second_id}", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-detail-retry")
+
+        assert screen._selected_prompt_id == second_id
+        assert screen._library_prompt_loaded_id == first_id
+        assert screen.query_one("#library-prompt-name", Input).value == "First prompt"
+        assert screen.query_one("#library-prompt-name", Input).disabled is True
+        assert "showing “first prompt”" in str(
+            screen.query_one("#library-prompt-detail-status", Static).renderable
+        ).lower()
+
+        monkeypatch.setattr(service, "get_prompt", original_get_prompt)
+        screen.query_one("#library-prompt-detail-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_loaded_id == second_id
+                and screen.query_one("#library-prompt-name", Input).value
+                == "Second prompt"
+            ),
+            message="Prompt detail retry did not load the selected identity",
+        )
+        assert screen.query_one("#library-prompt-name", Input).disabled is False
 
 
 @pytest.mark.asyncio

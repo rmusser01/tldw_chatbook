@@ -22,7 +22,7 @@
 │      │                                                      │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
 │      │                                                      │     ▊ release, summary                              ▎  │
 │      │ 1-1 of 1 · Page 1 of 1                               │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
-│      │ Loading page 1… · Page is loading.                   │                                                        │
+│      │ Already on the first page. · No more results.        │                                                        │
 │      │     ○ Previous         ○ Next                        │     Author                                             │
 │      │                                                      │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
 │      │                                                      │     ▊ Ada                                           ▎  │

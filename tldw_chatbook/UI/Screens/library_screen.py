@@ -1623,6 +1623,7 @@ def _sync_library_canvas(
     allow_screen_fallback: bool = True,
     notes_focus_identity: LibraryNotesFocusIdentity | None = None,
     deferred_guard: Callable[[], bool] | None = None,
+    sync_prompt_work: bool = True,
 ) -> bool:
     """Canvas-scoped targeted update for a Library browse canvas (Tier 2).
 
@@ -1670,6 +1671,9 @@ def _sync_library_canvas(
             entry focus is detached, when automatic reconciliation owns sync.
         deferred_guard: Ownership predicate checked by deferred retained-owner
             DOM work before and after each await.
+        sync_prompt_work: Whether a Prompt Items projection should also sync
+            the independent retained Work pane. Browse-only settlements pass
+            ``False`` so live editor widgets, cursor, and undo state survive.
 
     Returns:
         True when the mounted canvas accepted the state; otherwise False.
@@ -1733,10 +1737,11 @@ def _sync_library_canvas(
                 "#library-prompts-canvas", LibraryPromptsListCanvas
             )
             sync_kwargs = screen._library_prompts_list_canvas_kwargs()
-            work_panes = screen.query("#library-prompt-work-pane")
-            if work_panes:
-                prompt_work = work_panes.first(LibraryPromptWorkPane)
-                prompt_work_kwargs = screen._library_prompt_work_pane_kwargs()
+            if sync_prompt_work:
+                work_panes = screen.query("#library-prompt-work-pane")
+                if work_panes:
+                    prompt_work = work_panes.first(LibraryPromptWorkPane)
+                    prompt_work_kwargs = screen._library_prompt_work_pane_kwargs()
         elif kind == "skills":
             canvas = screen.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
             sync_kwargs = screen._library_skills_canvas_kwargs()
@@ -3560,6 +3565,12 @@ class LibraryScreen(BaseAppScreen):
         # strip replaces the list toolbar row (the Notes Sort pattern).
         self._library_prompts_sort_choices_visible: bool = False
         self._library_prompt_detail: Mapping[str, Any] | None = None
+        self._library_prompt_loaded_id: int | None = None
+        self._library_prompt_detail_generation: int = 0
+        self._library_prompt_detail_loading: bool = False
+        self._library_prompt_detail_selected_name: str = ""
+        self._library_prompt_detail_error: str = ""
+        self._library_prompt_detail_retryable: bool = False
         self._library_prompt_original_name: str = ""
         self._library_prompt_version: int | None = None
         self._library_prompt_dirty: bool = False
@@ -3584,7 +3595,6 @@ class LibraryScreen(BaseAppScreen):
             request_is_active=lambda: (
                 self._library_selected_row_id
                 in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
-                and self._library_prompts_view == "list"
             ),
         )
         self._library_media_browse_controller = LibraryMediaBrowseController(
@@ -7933,6 +7943,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_onboarding_generation += 1
         self._library_conversation_request_generation += 1
         self._invalidate_library_prompts_browse()
+        self._invalidate_library_prompt_detail_generation()
         self._library_media_lifecycle_generation += 1
         self._library_media_browse_controller.invalidate()
         lifecycle_worker = self._library_lifecycle_persist_worker
@@ -15513,11 +15524,16 @@ class LibraryScreen(BaseAppScreen):
             "write_in_flight": False,
             "bulk_read_only": False,
             "bulk_included": None,
+            "identity_mismatch": False,
+            "detail_notice": "",
+            "detail_retryable": False,
         }
 
     def _library_prompt_work_pane_kwargs(self) -> dict[str, Any]:
         """Return active non-list content for the retained Prompt work pane."""
         values = self._library_prompts_canvas_kwargs()
+        if self._library_prompts_import_open:
+            values["mode"] = "list"
         values.update(
             state=None,
             browse_result=None,
@@ -15558,9 +15574,9 @@ class LibraryScreen(BaseAppScreen):
             "conflict": False,
             "status": "",
             "show_open_existing": False,
-            "import_open": False,
-            "import_path": "",
-            "import_status": "",
+            "import_open": self._library_prompts_import_open,
+            "import_path": self._library_prompts_import_path,
+            "import_status": self._library_prompts_import_status,
             "dirty": self._library_prompt_dirty,
             "can_update_original": False,
             "include_starter_content": (self._library_prompt_include_starter_content),
@@ -15574,6 +15590,9 @@ class LibraryScreen(BaseAppScreen):
             "write_in_flight": self._library_prompt_write_worker_is_active(),
             "bulk_read_only": False,
             "bulk_included": None,
+            "identity_mismatch": False,
+            "detail_notice": "",
+            "detail_retryable": False,
         }
         if self._library_prompts_view == "editor":
             values["mode"] = "editor"
@@ -15584,6 +15603,14 @@ class LibraryScreen(BaseAppScreen):
                 values["conflict"] = True
             elif self._library_prompt_detail is None:
                 values["mode"] = "loading"
+                values["detail_notice"] = (
+                    self._library_prompt_detail_failure_notice()
+                    if self._library_prompt_detail_error
+                    else self._library_prompt_loading_notice()
+                )
+                values["detail_retryable"] = (
+                    self._library_prompt_detail_retryable
+                )
             else:
                 values["editor_state"] = self._current_library_prompt_editor_state()
                 values["status"] = self._library_prompt_status
@@ -15594,6 +15621,18 @@ class LibraryScreen(BaseAppScreen):
                 values["can_update_original"] = (
                     self._library_prompt_can_update_original()
                 )
+                values["identity_mismatch"] = (
+                    self._selected_prompt_id != self._library_prompt_loaded_id
+                )
+                if values["identity_mismatch"]:
+                    values["detail_notice"] = (
+                        self._library_prompt_detail_failure_notice()
+                        if self._library_prompt_detail_error
+                        else self._library_prompt_loading_notice()
+                    )
+                    values["detail_retryable"] = (
+                        self._library_prompt_detail_retryable
+                    )
             if values["editor_state"] is not None:
                 values["basic_unavailable_reason"] = (
                     self._library_prompt_basic_unavailable_reason(
@@ -15816,16 +15855,18 @@ class LibraryScreen(BaseAppScreen):
         button.label = library_choice_label("collection", escape_markup(label))
 
     def _refresh_library_prompt_after_membership_apply(self) -> None:
-        """Invalidate list data and refresh counts after membership Apply.
+        """Refresh retained Items and Library counts after membership Apply.
 
-        The Prompt editor remains mounted here, so the browse controller's
-        active-list guard intentionally prevents service dispatch. The clean
-        Back-to-list path requests this invalidated exact scope once the list
-        owns the canvas again. Prompt Save state is never changed here.
+        The Prompt editor remains mounted in Work while the independent Items
+        projection reloads its exact applied scope. Prompt Save state is never
+        changed here.
         """
         if self._library_prompts_mutation_in_flight:
             return
-        self._library_prompt_browse_controller.invalidate()
+        self._request_library_prompts_browse(
+            self._library_prompt_browse_controller.mutation_refresh_scope,
+            focus_identity="library-prompt-memberships-apply",
+        )
         self._refresh_local_source_snapshot()
 
     def _load_library_prompt_memberships(self) -> None:
@@ -15951,7 +15992,6 @@ class LibraryScreen(BaseAppScreen):
             or not self._library_entry_reconcile_is_current(generation, route_key)
             or self._library_selected_row_id
             not in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
-            or self._library_prompts_view != "list"
         ):
             return LibraryEntryReconcileResult.SUPERSEDED
 
@@ -15996,6 +16036,7 @@ class LibraryScreen(BaseAppScreen):
             "prompts",
             then=restore_focus,
             allow_screen_fallback=False,
+            sync_prompt_work=False,
         ):
             return LibraryEntryReconcileResult.APPLIED
         return LibraryEntryReconcileResult.FAILED
@@ -22786,6 +22827,31 @@ class LibraryScreen(BaseAppScreen):
             focus_identity="library-prompts-retry"
         )
 
+    @on(Button.Pressed, "#library-prompt-detail-retry")
+    def handle_library_prompt_detail_retry(self, event: Button.Pressed) -> None:
+        """Retry only the still-selected Prompt detail with a fresh fence."""
+        event.stop()
+        prompt_id = self._selected_prompt_id
+        if (
+            self._library_prompts_mutation_in_flight
+            or not self._library_prompt_detail_retryable
+            or type(prompt_id) is not int
+        ):
+            return
+        generation, mutation_generation = (
+            self._claim_library_prompt_detail_generation()
+        )
+        self.run_worker(
+            self._refresh_library_prompt_detail(
+                prompt_id,
+                request_generation=generation,
+                mutation_generation=mutation_generation,
+            ),
+            exclusive=True,
+            group="library_prompt_detail",
+        )
+        _sync_library_canvas(self, "prompts")
+
     @on(Button.Pressed, "#library-prompts-page-previous")
     def handle_library_prompts_page_previous(self, event: Button.Pressed) -> None:
         """Request the previous exact Prompt page."""
@@ -25892,7 +25958,7 @@ class LibraryScreen(BaseAppScreen):
         self._render_library_skill_trust_panel()
 
     @on(Button.Pressed, "#library-prompts-import")
-    def handle_library_prompts_import(self, event: Button.Pressed) -> None:
+    async def handle_library_prompts_import(self, event: Button.Pressed) -> None:
         """Open the inline Import row below the prompts toolbar.
 
         Idempotent while already open -- pressing Import… again does not
@@ -25907,6 +25973,9 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompts_mutation_in_flight:
             return
         if self._library_prompts_import_open:
+            return
+        if not await self._flush_library_prompt_save():
+            self._notify_prompt_dirty_veto()
             return
         self._library_prompts_import_open = True
         self._library_prompts_import_path = ""
@@ -26370,9 +26439,12 @@ class LibraryScreen(BaseAppScreen):
             return
         self._acknowledge_library_destination_change()
         self._clear_library_prompt_selection(announce=True)
-        self._invalidate_library_prompts_browse()
-        self._reset_library_prompt_editor_state()
+        if self._library_prompt_detail is None:
+            self._reset_library_prompt_editor_state()
         self._selected_prompt_id = prompt_id
+        self._library_prompt_detail_selected_name = str(
+            getattr(event.button, "prompt_name", "") or f"Prompt {prompt_id}"
+        )
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
         self._library_prompts_view = "editor"
         # Exclusive in its own group so rapidly switching rows cancels
@@ -26380,11 +26452,106 @@ class LibraryScreen(BaseAppScreen):
         # slower older fetch finish and overwrite the newer selection's
         # editor.
         self.run_worker(
-            self._refresh_library_prompt_detail(prompt_id),
+            self._refresh_library_prompt_detail(
+                prompt_id,
+                expected_version=getattr(event.button, "prompt_version", None),
+            ),
             exclusive=True,
             group="library_prompt_detail",
         )
         _sync_library_canvas(self, "prompts")
+
+    def _claim_library_prompt_detail_generation(self) -> tuple[int, int]:
+        """Start one Prompt detail request and return its complete async fence."""
+        self._library_prompt_detail_generation += 1
+        self._library_prompt_detail_loading = True
+        self._library_prompt_detail_error = ""
+        self._library_prompt_detail_retryable = False
+        return (
+            self._library_prompt_detail_generation,
+            self._library_prompt_mutation_generation,
+        )
+
+    def _invalidate_library_prompt_detail_generation(self) -> None:
+        """Refuse every pending Prompt detail settlement."""
+        self._library_prompt_detail_generation += 1
+        self._library_prompt_detail_loading = False
+        self._library_prompt_detail_error = ""
+        self._library_prompt_detail_retryable = False
+
+    def _library_prompt_loading_notice(self) -> str:
+        """Describe selected/loaded Prompt identity without conflating them."""
+        selected = self._library_prompt_detail_selected_name or (
+            f"Prompt {self._selected_prompt_id}"
+            if self._selected_prompt_id is not None
+            else "prompt"
+        )
+        loaded = self._library_prompt_original_name.strip()
+        if loaded and self._library_prompt_loaded_id != self._selected_prompt_id:
+            return f'Loading “{selected}”… showing “{loaded}” until ready.'
+        return f'Loading “{selected}”…'
+
+    def _library_prompt_detail_failure_notice(self) -> str:
+        """Combine a scoped failure with truthful selected/loaded identity."""
+        copy = self._library_prompt_detail_error
+        loaded = self._library_prompt_original_name.strip()
+        selected = self._library_prompt_detail_selected_name or (
+            f"Prompt {self._selected_prompt_id}"
+            if self._selected_prompt_id is not None
+            else "the selected Prompt"
+        )
+        if loaded and self._library_prompt_loaded_id != self._selected_prompt_id:
+            return (
+                f'{copy} Still showing “{loaded}” while “{selected}” remains '
+                "selected."
+            )
+        return copy
+
+    def _library_prompt_detail_request_is_current(
+        self,
+        *,
+        prompt_id: int,
+        generation: int,
+        mutation_generation: int,
+        entry_route_key: tuple[object, ...] | None,
+    ) -> bool:
+        """Return whether one detail outcome still owns the Prompt work pane."""
+        return bool(
+            generation == self._library_prompt_detail_generation
+            and mutation_generation == self._library_prompt_mutation_generation
+            and prompt_id == self._selected_prompt_id
+            and self._library_prompts_view == "editor"
+            and (
+                entry_route_key is None
+                or entry_route_key == self._library_entry_route_key()
+            )
+        )
+
+    def _apply_library_prompt_detail_failure(
+        self,
+        *,
+        copy: str,
+        retryable: bool,
+        entry_origin: bool,
+    ) -> LibraryEntryReconcileResult | None:
+        """Keep loaded work truthful while exposing one scoped detail failure."""
+        self._library_prompt_detail_loading = False
+        self._library_prompt_detail_error = copy
+        self._library_prompt_detail_retryable = retryable
+        synced = False
+        if self.is_mounted:
+            synced = _sync_library_canvas(
+                self,
+                "prompts",
+                allow_screen_fallback=not entry_origin,
+            )
+        if entry_origin:
+            return (
+                LibraryEntryReconcileResult.APPLIED
+                if synced
+                else LibraryEntryReconcileResult.FAILED
+            )
+        return None
 
     async def _refresh_library_prompt_detail(
         self,
@@ -26393,6 +26560,9 @@ class LibraryScreen(BaseAppScreen):
         open_history: bool = False,
         expected_history_scope: tuple[str, int] | None = None,
         entry_origin: bool = False,
+        request_generation: int | None = None,
+        mutation_generation: int | None = None,
+        expected_version: int | None = None,
     ) -> LibraryEntryReconcileResult | None:
         """Fetch and store the full detail for a selected Library prompt.
 
@@ -26414,6 +26584,10 @@ class LibraryScreen(BaseAppScreen):
             expected_history_scope: Optional exact restore/editor session identity.
                 Generic detail fetches omit this guard.
         """
+        if request_generation is None or mutation_generation is None:
+            request_generation, mutation_generation = (
+                self._claim_library_prompt_detail_generation()
+            )
         entry_route_key = self._library_entry_route_key() if entry_origin else None
         if expected_history_scope is not None and not (
             self._library_prompt_history_controller.matches_scope(
@@ -26425,21 +26599,23 @@ class LibraryScreen(BaseAppScreen):
         service = getattr(self.app_instance, "prompt_scope_service", None)
         get_prompt = getattr(service, "get_prompt", None)
         if not callable(get_prompt):
-            self._library_prompt_detail = None
-            self._library_prompt_version = None
-            if self.is_mounted:
-                synced = _sync_library_canvas(
-                    self,
-                    "prompts",
-                    allow_screen_fallback=not entry_origin,
+            if not self._library_prompt_detail_request_is_current(
+                prompt_id=prompt_id,
+                generation=request_generation,
+                mutation_generation=mutation_generation,
+                entry_route_key=entry_route_key,
+            ):
+                return (
+                    LibraryEntryReconcileResult.SUPERSEDED
+                    if entry_origin
+                    else None
                 )
-                if entry_origin:
-                    return (
-                        LibraryEntryReconcileResult.APPLIED
-                        if synced
-                        else LibraryEntryReconcileResult.FAILED
-                    )
-            return None
+            return self._apply_library_prompt_detail_failure(
+                copy="Couldn't load the selected Prompt. The local service is unavailable.",
+                retryable=True,
+                entry_origin=entry_origin,
+            )
+        failed = False
         try:
             detail = await self._run_library_service_call(
                 get_prompt,
@@ -26453,6 +26629,7 @@ class LibraryScreen(BaseAppScreen):
                 f"Failed to load Library prompt detail for {prompt_id!r}."
             )
             detail = None
+            failed = True
         if expected_history_scope is not None:
             state = self._library_prompt_history_controller.state
             if not (
@@ -26469,26 +26646,51 @@ class LibraryScreen(BaseAppScreen):
             open_history = state.is_open
         # Discard out-of-order results: the same stale-race guard as
         # ``_refresh_library_note_detail``.
-        if (
-            prompt_id != self._selected_prompt_id
-            or self._library_prompts_view != "editor"
-            or (
-                entry_route_key is not None
-                and entry_route_key != self._library_entry_route_key()
-            )
+        if not self._library_prompt_detail_request_is_current(
+            prompt_id=prompt_id,
+            generation=request_generation,
+            mutation_generation=mutation_generation,
+            entry_route_key=entry_route_key,
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         if not isinstance(detail, Mapping):
-            logger.info(
-                f"Library prompt {prompt_id!r} is no longer available; returning to list."
-            )
-            self._reset_library_prompt_editor_state()
+            if failed:
+                return self._apply_library_prompt_detail_failure(
+                    copy=(
+                        "Couldn't load the selected Prompt. Check the local Library "
+                        "and retry."
+                    ),
+                    retryable=True,
+                    entry_origin=entry_origin,
+                )
+            logger.info(f"Library prompt {prompt_id!r} is no longer available.")
             self._request_library_prompts_browse(
                 self._library_prompt_browse_controller.mutation_refresh_scope,
                 focus_identity=None,
             )
             self._refresh_local_source_snapshot()
-            return LibraryEntryReconcileResult.APPLIED if entry_origin else None
+            return self._apply_library_prompt_detail_failure(
+                copy="The selected Prompt is no longer available.",
+                retryable=False,
+                entry_origin=entry_origin,
+            )
+        detail_version = detail.get("version")
+        if (
+            expected_version is not None
+            and type(detail_version) is int
+            and detail_version != expected_version
+        ):
+            return self._apply_library_prompt_detail_failure(
+                copy=(
+                    "The selected Prompt changed since this Items page loaded. "
+                    "Retry to load its current version."
+                ),
+                retryable=True,
+                entry_origin=entry_origin,
+            )
+        self._library_prompt_detail_loading = False
+        self._library_prompt_detail_error = ""
+        self._library_prompt_detail_retryable = False
         self._adopt_library_prompt_persisted_detail(
             detail,
             open_history=open_history,
@@ -26533,6 +26735,7 @@ class LibraryScreen(BaseAppScreen):
         if type(prompt_id) is not int:
             prompt_id = self._library_prompt_detail.get("id")
         if type(prompt_id) is int:
+            self._library_prompt_loaded_id = prompt_id
             self._selected_prompt_id = prompt_id
         self._library_prompt_block_state = editor_state.block_editor_state
         self._library_prompt_detached_structured = False
@@ -26564,6 +26767,7 @@ class LibraryScreen(BaseAppScreen):
             detached.pop(source_field, None)
         self._library_prompt_detail = detached
         self._selected_prompt_id = None
+        self._library_prompt_loaded_id = None
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_conflict_snapshot = None
@@ -26862,7 +27066,9 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompts_mutation_in_flight:
             return
         self._clear_library_prompt_selection(announce=True)
+        self._invalidate_library_prompt_detail_generation()
         self._selected_prompt_id = None
+        self._library_prompt_loaded_id = None
         self._library_prompts_view = "editor"
         self._library_prompt_detail = {}
         editor_state = build_prompt_editor_state(
@@ -26889,7 +27095,10 @@ class LibraryScreen(BaseAppScreen):
         tracking clean for the next prompt.
         """
         self._library_prompts_view = "list"
+        self._invalidate_library_prompt_detail_generation()
         self._library_prompt_detail = None
+        self._library_prompt_loaded_id = None
+        self._library_prompt_detail_selected_name = ""
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_dirty = False
@@ -27739,6 +27948,12 @@ class LibraryScreen(BaseAppScreen):
             return
 
         new_id = result_id if is_create else prompt_id
+        self._selected_prompt_id = new_id
+        self._library_prompt_loaded_id = new_id
+        self._library_prompt_detail_selected_name = name
+        self._library_prompt_detail_loading = False
+        self._library_prompt_detail_error = ""
+        self._library_prompt_detail_retryable = False
         version = result.get("version") if isinstance(result, Mapping) else None
         self._library_prompt_version = (
             version

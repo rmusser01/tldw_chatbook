@@ -6,8 +6,26 @@
     "status": "Read-only preview \u00b7 Not included in bulk selection",
     "svg": "prompts-bulk-readonly-preview.svg"
   },
-  "config": "/private/tmp/task22033-live-final.n2hC32/config.toml",
-  "data": "/private/tmp/task22033-live-final.n2hC32/data/verify_task22033",
+  "config": "/private/tmp/task22033-live-final.nakRS9/config/config.toml",
+  "data": "/private/tmp/task22033-live-final.nakRS9/data",
+  "detail_recovery": {
+    "failure": {
+      "editor_locked": true,
+      "loaded_id": 1,
+      "loaded_name": "Release assistant",
+      "notice": "Couldn't load the selected Prompt. Check the local Library and retry. Still showing \u201cRelease assistant\u201d while \u201cIncident assistant\u201d remains selected.",
+      "selected_id": 2,
+      "svg": "prompts-detail-failure.svg"
+    },
+    "recovered": {
+      "editor_locked": false,
+      "loaded_id": 2,
+      "loaded_name": "Incident assistant",
+      "retry_visible": false,
+      "selected_id": 2,
+      "svg": "prompts-detail-retry.svg"
+    }
+  },
   "geometry": [
     {
       "basic_default": true,
@@ -265,12 +283,14 @@
     }
   ],
   "import": {
+    "editor_hidden": true,
     "identities": [
-      5026667776,
-      4809770336
+      5156564592,
+      5199011216
     ],
     "import_path_visible": true,
     "items_retained": true,
+    "opened_from_editor": true,
     "svg": "prompts-import-work-pane.svg",
     "work_retained": true
   },
@@ -280,7 +300,7 @@
     "history_title": "Retained history (3)",
     "mode": "info",
     "persisted_version": 3,
-    "prompt_uuid": "1cb4c0e5-cef3-4f4a-a771-dafd1fbefaec",
+    "prompt_uuid": "8164e99c-b71c-485f-a651-ce50f3311493",
     "provenance": "Persisted source: Local \u00b7 Prompt \u00b7 structured format",
     "svg": "prompts-preservation-history.svg"
   },
