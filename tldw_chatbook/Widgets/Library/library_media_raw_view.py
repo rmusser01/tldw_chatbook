@@ -13,6 +13,7 @@ from rich.style import Style
 from rich.text import Text
 from textual.geometry import Size
 from textual.scroll_view import ScrollView
+from textual.selection import Selection
 from textual.strip import Strip
 
 from tldw_chatbook.Utils.text_wrap_index import WrapIndex
@@ -156,7 +157,72 @@ class VirtualizedRawContent(ScrollView):
                     hit + len(self._query),
                 )
         rendered = list(text.render(self.app.console))
-        return Strip(rendered, len(piece)).adjust_cell_length(width)
+        strip = Strip(rendered, len(piece))
+        # Embed a per-cell content offset (column-in-piece, document row) so
+        # Textual's mouse hit-testing (Compositor.get_widget_and_offset_at)
+        # can resolve a real (x, y) inside this row. A ScrollView that
+        # renders its own Strips gets none of this for free the way a
+        # Content-backed Static does -- without it, every drag over this
+        # widget resolves to a `None` content offset and Textual silently
+        # degrades the selection to "select this whole widget"
+        # (`Selection(None, None)`), losing the old Static's precise
+        # drag-select rather than raising anything visible.
+        strip = strip.apply_offsets(0, row)
+        return strip.adjust_cell_length(width)
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Map a screen selection back to SOURCE text.
+
+        Rows in ``selection`` are wrap-index rows -- the same document-space
+        row ``render_line`` embeds via ``Strip.apply_offsets`` -- not source
+        line indices, and each endpoint's column is relative to that row's
+        own wrapped segment (``render_line`` resets the column to 0 at the
+        start of every row). A selection spanning a wrap boundary inside one
+        source line must rejoin the segments it covers without inserting a
+        newline the document does not contain; a selection spanning two
+        source lines must contain exactly one newline between them.
+
+        Args:
+            selection: The selection to extract. Either endpoint may be
+                ``None``, meaning "start of document" / "end of document"
+                respectively -- ``Selection(None, None)`` selects
+                everything, matching :data:`textual.selection.SELECT_ALL`.
+
+        Returns:
+            A tuple of the extracted text and a trailing delimiter (mirrors
+            ``Static``/``Log``'s ``"\\n"`` convention), or ``None`` if the
+            widget has no content to select from yet.
+        """
+        if self.wrap_index is None:
+            return None
+        height = self.wrap_index.virtual_height
+        if height <= 0:
+            return None
+
+        start = selection.start
+        end = selection.end
+        first_row, start_col = (0, 0) if start is None else (start.y, start.x)
+        last_row, end_col = (height - 1, None) if end is None else (end.y, end.x)
+        first_row = max(0, min(first_row, height - 1))
+        last_row = max(0, min(last_row, height - 1))
+
+        collected: list[str] = []
+        previous_line: int | None = None
+        for row in range(first_row, last_row + 1):
+            line_index, segment_index = self.wrap_index.row_to_line(row)
+            segments = self.wrap_index.segments(line_index)
+            piece = segments[segment_index] if segment_index < len(segments) else ""
+            if row == first_row and row == last_row:
+                piece = piece[start_col:end_col]
+            elif row == first_row:
+                piece = piece[start_col:]
+            elif row == last_row:
+                piece = piece[:end_col]
+            if previous_line is not None and line_index != previous_line:
+                collected.append("\n")
+            collected.append(piece)
+            previous_line = line_index
+        return "".join(collected), "\n"
 
     def set_match_lines(self, match_lines: tuple[int, ...]) -> None:
         """Record which SOURCE lines match, for active-match styling.
