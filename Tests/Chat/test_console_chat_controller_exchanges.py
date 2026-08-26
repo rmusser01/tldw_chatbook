@@ -369,6 +369,68 @@ async def test_repeated_cancellation_still_reconciles_durable_policy(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_cancelled_reconciliation_task_terminates_and_releases_reservation(
+    monkeypatch,
+):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+    started = threading.Event()
+    release = threading.Event()
+    committed = threading.Event()
+    durable = {}
+
+    class Repository:
+        def replace(self, conversation_id, detail):
+            started.set()
+            release.wait(5)
+            durable[conversation_id] = detail
+            committed.set()
+            return CapturePolicyWriteResult(CapturePolicyWriteStatus.STORED, None)
+
+    controller._capture_policy_repository = Repository()
+    monkeypatch.setattr(
+        controller_module, "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=1),
+    )
+    real_shield = asyncio.shield
+    shield_calls = 0
+
+    async def cancel_child_once(awaitable):
+        nonlocal shield_calls
+        shield_calls += 1
+        if shield_calls == 1:
+            assert await asyncio.to_thread(started.wait, 2)
+            awaitable.cancel()
+            release.set()
+        if shield_calls > 2:
+            raise RuntimeError("cancelled child was re-polled")
+        return await real_shield(awaitable)
+
+    monkeypatch.setattr(controller_module.asyncio, "shield", cancel_child_once)
+    before = controller.capture_policy_snapshot(session.id)
+
+    with pytest.raises(asyncio.CancelledError):
+        await controller.replace_conversation_capture_detail(
+            session.id, CaptureDetail.FULL,
+            expected_policy_revision=before.policy_revision,
+        )
+
+    assert shield_calls <= 2
+    assert await asyncio.to_thread(committed.wait, 2)
+    assert durable["conversation-1"] is CaptureDetail.FULL
+    assert controller.capture_policy_snapshot(
+        session.id
+    ).conversation_detail is None
+    current = controller.capture_policy_snapshot(session.id)
+    follow_up = controller.set_next_capture_detail(
+        session.id, CaptureDetail.SAFE,
+        expected_policy_revision=current.policy_revision,
+    )
+    assert follow_up.status is controller_module.CapturePolicyMutationStatus.APPLIED
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "origin", [ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED]
 )

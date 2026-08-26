@@ -168,7 +168,52 @@ and closure. It was not marked Done and its acceptance checkboxes remain open.
 
 ### Commit / concerns
 
-- Fix-round commit: recorded after commit below.
+- Fix-round commit: `786f36133b` —
+  `fix(console): reconcile capture policy cancellation`.
 - Both scoped re-review findings are addressed without dependency, schema, or
   scope changes. Task remains **In Progress**; acceptance checkboxes remain
   open for independent review and closure.
+
+## Fix round 3
+
+### Summary
+
+- Replaced the durable-child polling loop with one independently shielded
+  reconciliation task that owns persistence, runtime publication, and
+  reservation cleanup.
+- Repeated outer cancellation is recorded and re-propagated only after
+  reconciliation settles. A reconciliation task that is itself cancelled is
+  detected as terminal, never re-polled, releases the reservation, and raises
+  an honest bounded `CancelledError`.
+
+### RED evidence
+
+- Direct cancelled-child regression: **1 failed, 19 deselected**. The test's
+  bounded spin guard raised `RuntimeError: cancelled child was re-polled`,
+  proving the old loop retried an already-cancelled task.
+
+### GREEN / verification evidence
+
+- Exact cancelled-reconciliation plus repeated-outer-cancel focus: **2 passed,
+  18 deselected**.
+- Cumulative Task 2 fix focus including Task 1 sanitizer canaries: **19 passed,
+  312 deselected**.
+- Exact Gate 2 command: **554 passed, 2 skipped, 0 failed** in 25.44s. The two
+  skips are the existing sandbox-denied loopback listeners.
+- Changed-file Ruff: **All checks passed**. Production `py_compile`: exit 0.
+  `git diff --check`: exit 0.
+
+### Files changed in fix round 3
+
+- `tldw_chatbook/Chat/console_chat_controller.py`
+- `Tests/Chat/test_console_chat_controller_exchanges.py`
+- `.superpowers/sdd/2026-08-26-console-full-semantic-capture/task-2-report.md`
+
+### Commit / concerns
+
+- Fix-round commit: recorded after commit below.
+- The remaining scoped A1 finding is addressed without dependency, schema, or
+  scope changes. A directly cancelled reconciliation reports cancellation and
+  releases ownership even if its already-started worker thread later commits;
+  it does not falsely publish an applied runtime result. Task remains **In
+  Progress** for independent review.
