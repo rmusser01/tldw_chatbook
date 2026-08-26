@@ -102,27 +102,26 @@ Input uses the standard uncached input rate. The estimate does not assume a prom
 
 ## Architecture
 
-### Pure estimate model
+### Send-price module
 
-Add a focused pure module under `tldw_chatbook/Chat/` that owns:
+Add one focused no-DOM module at `tldw_chatbook/UI/Console_Modules/send_price.py`, keeping all new Console-specific behavior/state inside the boundary required by the screen decomposition. The module owns:
 
 - an immutable next-send estimate/presentation value;
-- upper-bound text cost math;
+- pure upper-bound text cost math;
 - honest availability decisions;
-- deterministic tooltip formatting.
+- deterministic tooltip formatting;
+- a thin memoized orchestration controller.
 
-The builder receives token counts, maximum reply tokens, resolved `ModelPricing` or `None`, provider/model identifiers, and pending attachment count. It performs no I/O, global config reads, widget access, or catalog refresh.
+The pure builder receives token counts, maximum reply tokens, resolved `ModelPricing` or `None`, provider/model identifiers, and pending attachment count. It performs no I/O, global config reads, widget access, or catalog refresh, and remains directly unit-testable without constructing its controller.
 
-### Console orchestration controller
-
-Add a no-DOM controller under `tldw_chatbook/UI/Console_Modules/` and construct it in `wiring.py`, following the existing named late-binding dependency contract. Its dependencies are limited to accessors for:
+Construct the controller in `wiring.py`, following the existing named late-binding dependency contract. Its dependencies are limited to accessors for:
 
 - active session settings;
 - the current Console chat store;
 - the pending live-work launch/staged context;
 - the pricing catalog and token counter, injectable for tests.
 
-The controller builds the exact request rows, resolves model pricing, counts pending attachments, and returns the tooltip for the current draft. It owns a verified `TokenEstimateCache` entry whose signature contains provider, model, system prompt, complete history rows, staged text, and draft text. A cache key collision can only cause recomputation because every hit is checked against the complete signature.
+The controller builds the exact request rows, resolves model pricing, counts pending attachments, and returns the tooltip for the current draft. It owns a verified `TokenEstimateCache` entry whose signature contains provider, model, system prompt, complete history rows, staged text, and draft text. A cache key collision can only cause recomputation because every hit is checked against the complete signature. `wiring.py` is the sole owner of the named late-binding callback graph; `ChatScreen` does not construct, query through, or mutate estimate internals.
 
 ### Composer presentation
 
@@ -138,7 +137,7 @@ During `sync_action_state`:
 
 The cached `_send_label` remains the unsuffixed base label. This prevents repeated draft-side resyncs from producing `Send | $ | $` and lets Queue/Preparing state transitions remain authoritative.
 
-The mounted ChatScreen passes a late-binding callback when it constructs the composer. No new estimate method or state is added to `ChatScreen`; new Console behavior remains in `UI/Console_Modules/` in line with the screen-size ratchet.
+The mounted ChatScreen only forwards a late-binding callback owned by `wiring.py` when it constructs the composer. No new estimate method or state is added to `ChatScreen`; new Console behavior remains in `UI/Console_Modules/` in line with the screen-size ratchet.
 
 ## Refresh and data flow
 
