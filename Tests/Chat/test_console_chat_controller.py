@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleDispatchRecoveryActionId,
     ConsoleDispatchRecoveryKind,
     ConsoleDispatchRecoveryState,
     ConsoleNextSendHistoryProjection,
@@ -47,6 +48,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleVariantSet,
     ConsoleWorkspaceContext,
     MessageAttachment,
+    console_dispatch_recovery_from_checkpoint,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
@@ -56,6 +58,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpoint,
+    ConsoleDispatchReconstructability,
     ConsoleDispatchCheckpointState,
     ConsoleDispatchResultStatus,
     ConsoleDispatchWriteResult,
@@ -7214,6 +7217,154 @@ def _terminal_thinking(assistant_id: str, status: str):
         )
     )
     return capture.settle(status).envelope
+
+
+def _install_retryable_dispatch_recovery(
+    store: ConsoleChatStore,
+    session,
+    assistant: ConsoleChatMessage,
+) -> None:
+    user = next(
+        message
+        for message in store.messages_for_session(session.id)
+        if message.role is ConsoleMessageRole.USER
+    )
+    destination = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="test-model",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    checkpoint = ConsoleDispatchCheckpoint(
+        assistant_message_id=assistant.id,
+        user_message_id=user.id,
+        conversation_id=session.persisted_conversation_id or session.id,
+        preparation_id="recovery-preparation",
+        attempt_id="prior-attempt",
+        state=ConsoleDispatchCheckpointState.ACCEPTED,
+        checkpoint_revision=1,
+        user_message_version=1,
+        assistant_message_version=1,
+        origin="manual",
+        queue_entry_id=None,
+        frozen_authority=_library_authority("prior-attempt"),
+        resolved_destination=destination,
+        reconstructability=ConsoleDispatchReconstructability(True, True, True, None),
+    )
+    store._dispatch_recoveries_by_session[session.id] = (
+        console_dispatch_recovery_from_checkpoint(checkpoint)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["stopped", "failed"])
+async def test_dispatch_recovery_preflight_preserves_prior_generation_token(
+    tmp_path,
+    monkeypatch,
+    terminal_status: str,
+) -> None:
+    db, store, session, assistant, checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name=f"recovery-preflight-{terminal_status}",
+    )
+    try:
+        owned = store._message_or_raise(assistant.id)
+        owned.status = terminal_status
+        owned.assistant_generation_state = terminal_status
+        assert store.persist_selected_generation(assistant.id) is True
+        before_row = copy.deepcopy(db.get_message_by_id(assistant.persisted_message_id))
+        before_live = store.get_message(assistant.id)
+        prior_token = store.begin_generation_attempt(assistant.id)
+        _install_retryable_dispatch_recovery(store, session, assistant)
+
+        gateway = ThinkingStreamingGateway()
+        resolution = await gateway.resolve_for_send(None)
+        context = controller_module._DispatchRetryContext(
+            resolution=resolution,
+            authority=_library_authority("replacement-attempt"),
+            destination=resolution.resolved_destination,
+            provider_messages=[],
+            turn_context=None,
+        )
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+        async def resolve_context(*_args, **_kwargs):
+            return context
+
+        monkeypatch.setattr(
+            controller, "_resolve_dispatch_retry_context", resolve_context
+        )
+        store.persistence = _UnsupportedThinkingPersistence(store.persistence)
+
+        result = await controller.retry_dispatch_recovery(session.id)
+
+        assert result.accepted is False
+        assert gateway.provider_contacts == 0
+        assert store.get_message(assistant.id) == before_live
+        assert db.get_message_by_id(assistant.persisted_message_id) == before_row
+        assert store._generation_attempt_is_current(assistant.id, prior_token)
+
+        store.settle_message_thinking(
+            assistant.id,
+            _terminal_thinking(assistant.id, terminal_status),
+            generation_token=prior_token,
+        )
+
+        after_row = db.get_message_by_id(assistant.persisted_message_id)
+        assert after_row is not None and before_row is not None
+        assert int(after_row["version"]) == int(before_row["version"]) + 1
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == "paired answer"
+        assert reloaded.assistant_generation_state == terminal_status
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late serialized evidence"
+        assert reloaded.thinking.blocks[0].status == terminal_status
+        assert reloaded.provider_continuation == checkpoint
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+def test_dispatch_recovery_release_invalidates_only_exact_replacement_token(
+    issue_newer_token: bool,
+) -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="prior answer",
+    )
+    _install_retryable_dispatch_recovery(store, session, assistant)
+    claimed = store.claim_dispatch_recovery_action(
+        session.id,
+        ConsoleDispatchRecoveryActionId.RETRY_RESPONSE,
+    )
+    assert claimed is not None
+    replacement_token = store.begin_generation_attempt(assistant.id)
+    newer_token = (
+        store.begin_generation_attempt(assistant.id) if issue_newer_token else None
+    )
+
+    assert store.release_dispatch_recovery_action(
+        session.id,
+        assistant.id,
+        generation_token=replacement_token,
+    )
+
+    if newer_token is None:
+        assert not store._generation_attempt_is_current(assistant.id, replacement_token)
+    else:
+        assert store._generation_attempt_is_current(assistant.id, newer_token)
 
 
 def _wait_for_generation_owner_users(

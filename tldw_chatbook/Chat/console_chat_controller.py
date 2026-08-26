@@ -3280,12 +3280,15 @@ class ConsoleChatController:
         self,
         session_id: str,
         assistant_message_id: str,
+        *,
+        generation_token: int | None = None,
     ) -> None:
         """Publish one rollback-preserved owner before any queue can advance."""
 
         self.store.mark_dispatch_recovery_needed(
             session_id,
             assistant_message_id,
+            generation_token=generation_token,
         )
         self._set_run_state(
             ConsoleRunState(
@@ -7216,6 +7219,7 @@ class ConsoleChatController:
                 else "That response recovery action is unavailable.",
             )
         retry_attempt_id: str | None = None
+        generation_token: int | None = None
         try:
             if self._recovery_has_live_postcommit_continuation(session_id, claimed):
                 preparation_id = claimed.preparation_id
@@ -7237,6 +7241,7 @@ class ConsoleChatController:
                 self.store.release_dispatch_recovery_action(
                     session_id,
                     claimed.assistant_message_id,
+                    generation_token=generation_token,
                 )
                 return thinking_block
             checkpoint = claimed.checkpoint
@@ -7284,17 +7289,20 @@ class ConsoleChatController:
                 self._restore_dispatch_recovery_after_settlement_failure(
                     session_id,
                     claimed.assistant_message_id,
+                    generation_token=generation_token,
                 )
             else:
                 self.store.release_dispatch_recovery_action(
                     session_id,
                     claimed.assistant_message_id,
+                    generation_token=generation_token,
                 )
             raise
         except _DispatchRecoveryRefusal as exc:
             self.store.release_dispatch_recovery_action(
                 session_id,
                 claimed.assistant_message_id,
+                generation_token=generation_token,
             )
             return ConsoleSubmitResult(False, False, str(exc))
         except Exception:
@@ -7307,11 +7315,13 @@ class ConsoleChatController:
                 self._restore_dispatch_recovery_after_settlement_failure(
                     session_id,
                     claimed.assistant_message_id,
+                    generation_token=generation_token,
                 )
             else:
                 self.store.release_dispatch_recovery_action(
                     session_id,
                     claimed.assistant_message_id,
+                    generation_token=generation_token,
                 )
                 self._set_run_state(
                     ConsoleRunState(ConsoleRunStatus.BLOCKED, visible_copy),

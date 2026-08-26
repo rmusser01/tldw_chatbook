@@ -2151,6 +2151,8 @@ class ConsoleChatStore:
         self,
         session_id: str,
         assistant_message_id: str,
+        *,
+        generation_token: int | None = None,
     ) -> bool:
         """Re-enable one failed in-flight intent without changing ownership."""
 
@@ -2158,12 +2160,15 @@ class ConsoleChatStore:
             return self._release_dispatch_recovery_action(
                 session_id,
                 assistant_message_id,
+                generation_token=generation_token,
             )
 
     def _release_dispatch_recovery_action(
         self,
         session_id: str,
         assistant_message_id: str,
+        *,
+        generation_token: int | None = None,
     ) -> bool:
         """Restore one recovery baseline while its generation owner is held."""
 
@@ -2177,7 +2182,10 @@ class ConsoleChatStore:
                 )
             baseline = self._dispatch_recovery_message_baselines.pop(session_id, None)
         if baseline is not None:
-            self._invalidate_generation_attempt_locked(assistant_message_id)
+            if generation_token is not None and self._generation_attempt_is_current(
+                assistant_message_id, generation_token
+            ):
+                self._invalidate_generation_attempt_locked(assistant_message_id)
             try:
                 message = self._message_or_raise(assistant_message_id)
             except KeyError:
@@ -2197,12 +2205,15 @@ class ConsoleChatStore:
         self,
         session_id: str,
         assistant_message_id: str,
+        *,
+        generation_token: int | None = None,
     ) -> bool:
         """Restore one exact owner and expose it as unresolved recovery."""
 
         released = self.release_dispatch_recovery_action(
             session_id,
             assistant_message_id,
+            generation_token=generation_token,
         )
         with self._preparation_lock:
             current = self._dispatch_recoveries_by_session.get(session_id)
