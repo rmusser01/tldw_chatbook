@@ -81,7 +81,11 @@ from ..Console_Modules.status_row import (
 # body actually uses. Tests that steer a controller patch it on the module
 # that defines it (`..Console_Modules.dictation` and friends) rather than
 # through this module's namespace -- see task-3023, which repointed them.
-from ..Console_Modules.character_avatar_layout import fit_character_avatar_cell_box
+from ..Console_Modules.character_avatar_layout import (
+    CharacterAvatarPrerender,
+    build_character_avatar_prerender_job,
+    fit_character_avatar_cell_box,
+)
 from ..Console_Modules.dictation import (
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
@@ -1600,6 +1604,10 @@ def _character_avatar_fallback_renderable(
     double the horizontal detail of the previous half-block Pixels build
     with the same universal Block Elements font coverage.
 
+    TASK-22221: the renderer itself now lives in ``character_avatar_layout``
+    so the rail's off-loop prerender and this inline fallback are the same
+    code, not two copies that could drift.
+
     Args:
         pil: The decoded portrait.
         box_cols: Target width in columns (task-1661: rail-derived).
@@ -1611,10 +1619,12 @@ def _character_avatar_fallback_renderable(
             to monochrome when ``NO_COLOR`` is set, which is one confirmed
             way a user sees no portrait at all.
     """
-    from ...Utils.mosaic_render import mosaic_from_image
+    from ..Console_Modules.character_avatar_layout import (
+        render_character_avatar_mosaic,
+    )
 
-    return mosaic_from_image(
-        pil, box_cols, box_lines, fit="contain", monochrome=monochrome
+    return render_character_avatar_mosaic(
+        pil, box_cols, box_lines, monochrome=monochrome
     )
 
 
@@ -10024,6 +10034,7 @@ class ChatScreen(BaseAppScreen):
         spec: dict | None,
         *,
         box: tuple[int, int] | None = None,
+        prerendered: "CharacterAvatarPrerender | None" = None,
     ) -> Widget:
         """Build a fresh avatar widget from the cached spec (data, not a widget).
 
@@ -10040,6 +10051,15 @@ class ChatScreen(BaseAppScreen):
         poll). Any image-build failure -- graphics mount OR the rich_pixels
         fallback -- degrades to the same text placeholder used for the
         no-image case.
+
+        Args:
+            spec: The cached avatar spec, or None.
+            box: The rail's target cell box, if it has one.
+            prerendered: A renderable already built off the event loop
+                (TASK-22221). Used ONLY when its recorded image, resolved
+                box, and colour mode still match what this build resolves --
+                otherwise the mosaic is rebuilt inline, which is exactly what
+                a viewport that moved mid-render must fall back to.
         """
         if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
             hint = (
@@ -10098,12 +10118,18 @@ class ChatScreen(BaseAppScreen):
 
             pixels = spec.get("pixels")
             if pixels is None and spec.get("pil") is not None:
-                pixels = _character_avatar_fallback_renderable(
-                    spec["pil"],
-                    box_cols=box_cols,
-                    box_lines=box_lines,
-                    monochrome=bool(getattr(self.app, "no_color", False)),
-                )
+                monochrome = bool(getattr(self.app, "no_color", False))
+                if prerendered is not None and prerendered.matches(
+                    spec["pil"], (box_cols, box_lines), monochrome
+                ):
+                    pixels = prerendered.renderable
+                else:
+                    pixels = _character_avatar_fallback_renderable(
+                        spec["pil"],
+                        box_cols=box_cols,
+                        box_lines=box_lines,
+                        monochrome=monochrome,
+                    )
             widget = Static(
                 pixels if pixels is not None else "",
                 id="console-character-avatar-image",
@@ -13321,13 +13347,25 @@ class ChatScreen(BaseAppScreen):
                 # value instead.
                 character_avatar_widget_builder = None
                 character_avatar_fit_box = None
+                character_avatar_prerender_job = None
                 character_avatar_name = ""
                 if show_character_section:
 
-                    def character_avatar_widget_builder(box=None):
+                    def character_avatar_widget_builder(box=None, prerendered=None):
                         return self._build_character_avatar_widget(
                             self._active_character_avatar,
                             box=box,
+                            prerendered=prerendered,
+                        )
+
+                    def character_avatar_prerender_job(box):
+                        """Snapshot the live spec + colour mode for an off-loop
+                        render of ``box`` (TASK-22221); the eligibility policy
+                        and the job itself are the pure module's."""
+                        return build_character_avatar_prerender_job(
+                            self._active_character_avatar,
+                            box,
+                            monochrome=bool(getattr(self.app, "no_color", False)),
                         )
 
                     def character_avatar_fit_box(
@@ -13374,6 +13412,7 @@ class ChatScreen(BaseAppScreen):
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
                     character_avatar_fit_box=character_avatar_fit_box,
+                    character_avatar_prerender_job=character_avatar_prerender_job,
                     workspace_tree_expanded_ids=(
                         self._workspace.workspace_tree_expansion_preferences()
                     ),

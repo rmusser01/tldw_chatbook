@@ -1,5 +1,6 @@
 from io import BytesIO
 
+import pytest
 from PIL import Image as PILImage
 
 from tldw_chatbook.Chat.console_image_view import (
@@ -357,3 +358,89 @@ def test_scale_image_for_cell_box_leaves_source_unmodified():
     scale_image_for_cell_box(source, 16, 8)
 
     assert source.size == (512, 512)
+
+
+# --- TASK-22221: the size-only form must be an EXACT stand-in for the resample ---
+# `fit_character_avatar_cell_box` reads only `.width`/`.height` off the scaled
+# copy and throws the pixels away, once per distinct rail viewport size during a
+# resize drag, on the event loop. `scale_image_pixel_size_for_cell_box` replaces
+# that with arithmetic -- so it has to agree with PIL everywhere, including the
+# rounding corners (`round_aspect` picks floor or ceil by aspect error) and the
+# no-enlargement early return.
+
+
+@pytest.mark.parametrize(
+    "source_size",
+    [
+        (1, 1),
+        (1, 1000),
+        (1000, 1),
+        (3, 7),
+        (17, 5),
+        (64, 64),
+        (300, 1200),
+        (1200, 300),
+        (999, 1000),
+        (1000, 999),
+        (1024, 1024),
+    ],
+)
+def test_scale_image_pixel_size_matches_the_real_resample(source_size):
+    """The arithmetic size must equal the resampled copy's size, exactly."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import (
+        scale_image_for_cell_box,
+        scale_image_pixel_size_for_cell_box,
+    )
+
+    source = PILImage.new("RGB", source_size)
+    boxes = [
+        (1, 1),
+        (1, 2),
+        (2, 1),
+        (5, 3),
+        (16, 8),
+        (24, 30),
+        (37, 13),
+        (60, 30),
+        (80, 40),
+        (100, 1),
+        (1, 100),
+        (2000, 2000),
+    ]
+    for box_cols, box_lines in boxes:
+        resampled = scale_image_for_cell_box(source, box_cols, box_lines)
+        assert scale_image_pixel_size_for_cell_box(
+            source_size[0], source_size[1], box_cols, box_lines
+        ) == (resampled.width, resampled.height), (source_size, box_cols, box_lines)
+
+
+def test_scale_image_pixel_size_sweeps_the_rail_drag_range_without_resampling(
+    monkeypatch,
+):
+    """A whole drag's worth of fits must agree with PIL and resample nothing."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import (
+        scale_image_for_cell_box,
+        scale_image_pixel_size_for_cell_box,
+    )
+
+    source = PILImage.new("RGB", (1024, 768))
+    expected = [
+        (
+            cols,
+            scale_image_for_cell_box(source, cols, 30).size,
+        )
+        for cols in range(1, 121)
+    ]
+
+    def forbidden_resize(*_args, **_kwargs):
+        raise AssertionError("the size-only form must never resample")
+
+    monkeypatch.setattr(PILImage.Image, "resize", forbidden_resize)
+    monkeypatch.setattr(PILImage.Image, "thumbnail", forbidden_resize)
+
+    for cols, size in expected:
+        assert scale_image_pixel_size_for_cell_box(1024, 768, cols, 30) == size, cols
