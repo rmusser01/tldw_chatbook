@@ -12,6 +12,8 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleVariant,
+    ConsoleVariantSet,
 )
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
@@ -22,6 +24,12 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
     dump_thinking_blocks_json,
     parse_thinking_blocks_json,
+)
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
 )
 
 
@@ -63,6 +71,25 @@ def _restored_store(db, conversation_id: str) -> tuple[ConsoleChatStore, str]:
         active_leaf_persisted_id="assistant-1",
     )
     return store, session.id
+
+
+def _continuation(content: str) -> ProviderContinuationCheckpoint:
+    return ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content=content,
+                reasoning_blocks=("private reasoning",),
+                calls=(),
+            ),
+        ),
+    )
 
 
 def test_restore_hydrates_supported_thinking(tmp_path: Path) -> None:
@@ -140,6 +167,248 @@ def test_persist_selected_generation_replaces_projection_and_refreshes_version(
     assert row["content"] == "new answer"
     assert row["thinking_blocks_json"] == dump_thinking_blocks_json(message.thinking)
     assert message.provider_continuation_message_version == row["version"]
+
+
+def test_persisted_variant_swipe_uses_current_row_version_for_every_selection(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "swipe-version.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    original_thinking = dump_thinking_blocks_json(_thinking("original reasoning"))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (original_thinking,),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+
+    store.begin_variant_stream("assistant-1")
+    store.replace_message_thinking("assistant-1", _thinking("new reasoning"))
+    store.append_stream_chunk("assistant-1", "new answer")
+    store.finalize_variant_stream("assistant-1")
+    after_new = db.get_message_by_id("assistant-1")
+
+    restored = store.select_variant("assistant-1", 0)
+    after_original = db.get_message_by_id("assistant-1")
+
+    assert restored.content == "original answer"
+    assert restored.thinking == _thinking("original reasoning")
+    assert after_original["content"] == "original answer"
+    assert after_original["thinking_blocks_json"] == original_thinking
+    assert after_original["version"] == after_new["version"] + 1
+    assert restored.provider_continuation_message_version == after_original["version"]
+
+
+def test_failed_variant_projection_preserves_live_and_durable_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "swipe-failure.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    original_thinking = dump_thinking_blocks_json(_thinking("original reasoning"))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (original_thinking,),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    live.variants = ConsoleVariantSet.from_generations(
+        turn_id="assistant-1",
+        generations=[
+            ConsoleVariant(
+                content="original answer",
+                thinking=_thinking("original reasoning"),
+                assistant_generation_state="complete",
+            ),
+            ConsoleVariant(
+                content="alternative answer",
+                thinking=_thinking("alternative reasoning"),
+                assistant_generation_state="complete",
+            ),
+        ],
+        selected_index=0,
+    )
+
+    def fail_projection(**_kwargs: object) -> int:
+        raise RuntimeError("injected projection failure")
+
+    monkeypatch.setattr(
+        store.persistence,
+        "replace_assistant_generation_projection",
+        fail_projection,
+    )
+
+    with pytest.raises(RuntimeError, match="injected projection failure"):
+        store.select_variant("assistant-1", 1)
+
+    unchanged = store.get_message("assistant-1")
+    durable = db.get_message_by_id("assistant-1")
+    assert unchanged.variants is not None
+    assert unchanged.variants.selected_index == 0
+    assert unchanged.content == "original answer"
+    assert unchanged.thinking == _thinking("original reasoning")
+    assert durable["content"] == "original answer"
+    assert durable["thinking_blocks_json"] == original_thinking
+
+
+def test_add_variant_persists_one_evidence_free_complete_generation(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "manual-variant.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    old_thinking = dump_thinking_blocks_json(_thinking("old reasoning"))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'old answer', thinking_blocks_json = ?, "
+        "usage_json = ?, assistant_generation_state = 'complete' "
+        "WHERE id = 'assistant-1'",
+        (old_thinking, ProviderUsage(uncached_input=2, output=3).to_json()),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+
+    added = store.add_variant("assistant-1", "manual alternative")
+    row = db.get_message_by_id("assistant-1")
+
+    assert added.content == "manual alternative"
+    assert added.thinking is None
+    assert added.usage is None
+    assert added.provider_continuation is None
+    assert added.assistant_generation_state == "complete"
+    assert row["content"] == "manual alternative"
+    assert row["thinking_blocks_json"] is None
+    assert row["usage_json"] is None
+    assert row["provider_continuation_json"] is None
+    assert row["assistant_generation_state"] == "complete"
+
+
+def test_add_variant_rejects_unknown_thinking_before_live_mutation(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "manual-unknown.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    raw = '{ "version" : 99, "future" : {"secret":"value"} }'
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'durable answer', thinking_blocks_json = ? "
+        "WHERE id = 'assistant-1'",
+        (raw,),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+
+    with pytest.raises(ConsoleThinkingCompatibilityError):
+        store.add_variant("assistant-1", "must not apply")
+
+    unchanged = store.get_message("assistant-1")
+    assert unchanged.content == "durable answer"
+    assert unchanged.variants is None
+    assert db.get_message_by_id("assistant-1")["thinking_blocks_json"] == raw
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{ "version" : 99, "future" : {"secret":"value"} }',
+        json.dumps({"version": 1, "blocks": [{"text": "do-not-leak"}]}),
+    ],
+)
+def test_prepare_retry_rejects_unreadable_thinking_before_provider_visible_mutation(
+    tmp_path: Path, raw: str
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "retry-blocked.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'failed answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'failed' WHERE id = 'assistant-1'",
+        (raw,),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    live.status = "failed"
+
+    with pytest.raises(ConsoleThinkingCompatibilityError):
+        store.prepare_message_retry("assistant-1")
+
+    unchanged = store.get_message("assistant-1")
+    assert unchanged.content == "failed answer"
+    assert unchanged.status == "failed"
+    assert "assistant-1" not in store._failed_retry_message_ids
+
+
+def test_first_terminal_create_persists_complete_generation_in_initial_row(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "atomic-create.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    store, session_id = _restored_store(db, conversation_id)
+    message = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    live = store._message_or_raise(message.id)
+    live.thinking = _thinking("atomic reasoning")
+    live.provider_continuation = _continuation("atomic answer")
+    live.assistant_generation_state = "streaming"
+    usage = ProviderUsage(uncached_input=7, output=11)
+    store.set_message_usage(message.id, usage)
+    store.append_stream_chunk(message.id, "atomic answer")
+
+    completed = store.mark_message_complete(message.id)
+    row = db.get_message_by_id(message.id)
+
+    assert completed.persisted_message_id == message.id
+    assert row["version"] == 1
+    assert row["content"] == "atomic answer"
+    assert row["thinking_blocks_json"] == dump_thinking_blocks_json(completed.thinking)
+    assert row["usage_json"] == usage.to_json()
+    assert row["provider_continuation_json"] == dump_provider_continuation_json(
+        completed.provider_continuation
+    )
+    assert row["assistant_generation_state"] == "complete"
+    assert completed.provider_continuation_message_version == 1
+
+
+def test_failed_atomic_terminal_create_remains_unsaved_retryable_and_unrecorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "atomic-failure.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    service = ChatPersistenceService(db)
+    store, session_id = _restored_store(db, conversation_id)
+    store.persistence = service
+    message = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    live = store._message_or_raise(message.id)
+    live.thinking = _thinking("retryable reasoning")
+    live.assistant_generation_state = "streaming"
+    store.append_stream_chunk(message.id, "retryable answer")
+    calls: list[dict[str, object]] = []
+
+    def fail_create(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        raise RuntimeError("injected create failure")
+
+    monkeypatch.setattr(service, "create_message", fail_create)
+
+    result = store.mark_message_complete(message.id)
+
+    assert len(calls) == 1
+    assert calls[0]["content"] == "retryable answer"
+    assert calls[0]["thinking_blocks_json"] == dump_thinking_blocks_json(
+        _thinking("retryable reasoning")
+    )
+    assert calls[0]["assistant_generation_state"] == "complete"
+    assert db.get_message_by_id(message.id) is None
+    assert result.persisted_message_id is None
+    assert result.status == "streaming"
+    assert result.assistant_generation_state == "streaming"
+    assert message.id in store._pending_persistence_message_ids
+    assert store.message_completion_generation(message.id) == 0
 
 
 def test_malformed_known_thinking_is_content_free_and_blocks_generation(

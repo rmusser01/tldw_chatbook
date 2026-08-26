@@ -11816,7 +11816,7 @@ UPDATE db_schema_version
             "SELECT id, conversation_id, parent_message_id, sender, role, content,"
             " (image_data IS NOT NULL) AS has_image, image_mime_type, timestamp,"
             " ranking, last_modified, version, client_id, deleted, feedback,"
-            " usage_json, metadata_json, provider_continuation_json,"
+            " usage_json, metadata_json, provider_continuation_json, thinking_blocks_json,"
             " assistant_generation_state FROM messages WHERE id = ? AND deleted = 0"
         )
         try:

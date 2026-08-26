@@ -982,7 +982,6 @@ class ConsoleVariant:
     )
     provider_continuation_warning: str | None = None
     provider_continuation_remote: bool = False
-    provider_continuation_message_version: int | None = None
     provider_continuation_actions_enabled: bool = True
     assistant_generation_state: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))

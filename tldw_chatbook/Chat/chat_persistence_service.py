@@ -1237,6 +1237,9 @@ class ChatPersistenceService:
         citation_write: SealedCitationWrite | None = None,
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        thinking_blocks_json: Optional[str] = None,
+        provider_continuation_json: Optional[str] = None,
+        assistant_generation_state: Optional[str] = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -1301,6 +1304,12 @@ class ChatPersistenceService:
                 (task-2364: engine provenance, interrupted flag, transcript
                 status), written into the row's local-only
                 ``metadata_json`` column via ``CharactersRAGDB.add_message``.
+            thinking_blocks_json: Canonical thinking envelope owned by this
+                initial assistant generation.
+            provider_continuation_json: Canonical private continuation owned
+                by this initial assistant generation.
+            assistant_generation_state: Portable lifecycle state for the
+                initial assistant generation.
 
         Returns:
             The newly created message's id.
@@ -1371,6 +1380,9 @@ class ChatPersistenceService:
             "client_id": self.db.client_id,
             "usage_json": usage_json,
             "metadata_json": metadata_json,
+            "thinking_blocks_json": thinking_blocks_json,
+            "provider_continuation_json": provider_continuation_json,
+            "assistant_generation_state": assistant_generation_state,
         }
         if prepared_citation is not None:
             # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
@@ -1478,6 +1490,11 @@ class ChatPersistenceService:
             "image_data": message_payload["image_data"],
             "image_mime_type": message_payload["image_mime_type"],
             "client_id": message_payload["client_id"],
+            "usage_json": message_payload["usage_json"],
+            "metadata_json": message_payload["metadata_json"],
+            "provider_continuation_json": message_payload["provider_continuation_json"],
+            "thinking_blocks_json": message_payload["thinking_blocks_json"],
+            "assistant_generation_state": message_payload["assistant_generation_state"],
             "feedback": feedback,
         }
         if any(

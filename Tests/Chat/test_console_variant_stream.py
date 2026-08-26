@@ -19,8 +19,13 @@ import pytest
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleVariant,
+    ConsoleVariantSet,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleThinkingCompatibilityError,
+)
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ThinkingEnvelope,
@@ -146,14 +151,16 @@ def test_select_variant_swaps_complete_generation() -> None:
     original.provider_continuation = ProviderContinuationCheckpoint(
         schema_version=1,
         checkpoint_revision=1,
-        provider="llama_cpp",
+        provider="moonshot",
         protocol="chat_completions",
-        model="test-model",
-        api_base_url="http://127.0.0.1:8000/v1",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
         state="complete",
         rounds=(
             ContinuationRound(
-                assistant_content="original", reasoning_blocks=(), calls=()
+                assistant_content="original",
+                reasoning_blocks=("private reasoning",),
+                calls=(),
             ),
         ),
     )
@@ -190,10 +197,39 @@ def test_add_variant_keeps_original_generation_owned_by_original_variant() -> No
     added = store.add_variant(mid, "manual alternative")
 
     assert added.thinking is None
-    assert added.assistant_generation_state is None
+    assert added.assistant_generation_state == "complete"
     restored = store.select_variant(mid, 0)
     assert restored.thinking == _thinking("original thinking")
     assert restored.assistant_generation_state == "complete"
+
+
+@pytest.mark.parametrize("blocked_owner", [False, True])
+def test_select_variant_rejects_unpersistable_generation_before_live_mutation(
+    blocked_owner: bool,
+) -> None:
+    store, _session, mid = _store_with_answer()
+    message = store._message_or_raise(mid)
+    message.thinking_actions_enabled = not blocked_owner
+    message.variants = ConsoleVariantSet.from_generations(
+        turn_id=message.turn_id or message.id,
+        generations=[
+            ConsoleVariant(content="original"),
+            ConsoleVariant(
+                content="future",
+                opaque_thinking_json='{"version":99,"secret":"future"}',
+                thinking_actions_enabled=False,
+            ),
+        ],
+    )
+
+    with pytest.raises(ConsoleThinkingCompatibilityError):
+        store.select_variant(mid, 1)
+
+    unchanged = store.get_message(mid)
+    assert unchanged.content == "original"
+    assert unchanged.variants is not None
+    assert unchanged.variants.selected_index == 0
+    assert mid not in store._failed_retry_message_ids
 
 
 @pytest.mark.parametrize("terminal", ["mark_message_stopped", "mark_message_failed"])
@@ -234,6 +270,54 @@ def test_normal_terminal_updates_thinking_envelope_status(
 
     assert settled.thinking is not None
     assert {block.status for block in settled.thinking.blocks} == {expected_status}
+
+
+@pytest.mark.parametrize(
+    ("terminal", "expected_status"),
+    [
+        ("mark_message_complete", "complete"),
+        ("mark_message_stopped", "stopped"),
+        ("mark_message_failed", "failed"),
+    ],
+)
+def test_terminal_settlement_only_updates_current_thinking_round(
+    terminal: str, expected_status: str
+) -> None:
+    store, _session, mid = _store_with_answer()
+    live = store._message_or_raise(mid)
+    live.thinking = ThinkingEnvelope(
+        (
+            DisplayableThinkingBlock(
+                block_id="earlier",
+                round_ordinal=0,
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="think_tag",
+                status="failed",
+                text="earlier terminal reasoning",
+            ),
+            DisplayableThinkingBlock(
+                block_id="current",
+                round_ordinal=1,
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="think_tag",
+                status="complete",
+                text="current reasoning",
+            ),
+        )
+    )
+    live.status = "streaming"
+
+    settled = getattr(store, terminal)(mid)
+
+    assert settled.thinking is not None
+    assert [block.status for block in settled.thinking.blocks] == [
+        "failed",
+        expected_status,
+    ]
 
 
 class _ScriptedGateway:

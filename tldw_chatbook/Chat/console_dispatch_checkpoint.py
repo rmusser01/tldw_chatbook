@@ -362,24 +362,20 @@ def _bounded_dump(value: Mapping[str, object], cap: int) -> str:
 def _authority_value(authority: ConsoleTurnLibraryAuthority) -> dict[str, object]:
     policy = authority.policy
     valid_source_shape = (
-        (
-            policy.source == "durable"
-            and type(policy.policy_revision) is int
-            and policy.policy_revision >= 1
-            and policy.error_code is None
-        )
-        or (
-            policy.source in {"new_session", "temporary"}
-            and policy.policy_revision is None
-            and policy.error_code is None
-        )
-        or (
-            policy.source in {"missing", "unavailable"}
-            and policy.policy_revision is None
-            and policy.auto_retrieve is ConsoleAutoRetrieve.NEVER
-            and policy.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
-            and (policy.source != "missing" or policy.error_code is None)
-        )
+        policy.source == "durable"
+        and type(policy.policy_revision) is int
+        and policy.policy_revision >= 1
+        and policy.error_code is None
+    ) or (
+        policy.source in {"new_session", "temporary"}
+        and policy.policy_revision is None
+        and policy.error_code is None
+    ) or (
+        policy.source in {"missing", "unavailable"}
+        and policy.policy_revision is None
+        and policy.auto_retrieve is ConsoleAutoRetrieve.NEVER
+        and policy.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
+        and (policy.source != "missing" or policy.error_code is None)
     )
     if (
         not isinstance(policy.auto_retrieve, ConsoleAutoRetrieve)
@@ -443,14 +439,9 @@ def dump_console_turn_library_authority_json(
     return _bounded_dump(_authority_value(authority), CHECKPOINT_AUTHORITY_MAX_BYTES)
 
 
-def parse_console_turn_library_authority_json(
-    value: object,
-) -> ConsoleTurnLibraryAuthority:
+def parse_console_turn_library_authority_json(value: object) -> ConsoleTurnLibraryAuthority:
     """Strictly parse canonical bounded frozen authority JSON."""
-    if (
-        type(value) is not str
-        or len(value.encode("utf-8")) > CHECKPOINT_AUTHORITY_MAX_BYTES
-    ):
+    if type(value) is not str or len(value.encode("utf-8")) > CHECKPOINT_AUTHORITY_MAX_BYTES:
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     data = _exact_mapping(_strict_load(value), _AUTHORITY_KEYS)
     policy = _exact_mapping(data["policy"], _POLICY_KEYS)
@@ -467,24 +458,20 @@ def parse_console_turn_library_authority_json(
             "Invalid checkpoint data."
         ) from exc
     valid_source_shape = (
-        (
-            policy["source"] == "durable"
-            and type(policy["policy_revision"]) is int
-            and cast(int, policy["policy_revision"]) >= 1
-            and error_code is None
-        )
-        or (
-            policy["source"] in {"new_session", "temporary"}
-            and policy["policy_revision"] is None
-            and error_code is None
-        )
-        or (
-            policy["source"] in {"missing", "unavailable"}
-            and policy["policy_revision"] is None
-            and auto_retrieve is ConsoleAutoRetrieve.NEVER
-            and assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
-            and (policy["source"] != "missing" or error_code is None)
-        )
+        policy["source"] == "durable"
+        and type(policy["policy_revision"]) is int
+        and cast(int, policy["policy_revision"]) >= 1
+        and error_code is None
+    ) or (
+        policy["source"] in {"new_session", "temporary"}
+        and policy["policy_revision"] is None
+        and error_code is None
+    ) or (
+        policy["source"] in {"missing", "unavailable"}
+        and policy["policy_revision"] is None
+        and auto_retrieve is ConsoleAutoRetrieve.NEVER
+        and assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
+        and (policy["source"] != "missing" or error_code is None)
     )
     source_types = _identifier_tuple(data["source_types"])
     if (
@@ -539,12 +526,11 @@ def parse_console_turn_library_authority_json(
     return authority
 
 
-def dump_console_resolved_destination_json(
-    destination: ConsoleResolvedDestination,
-) -> str:
+def dump_console_resolved_destination_json(destination: ConsoleResolvedDestination) -> str:
     """Serialize a credential-free resolved destination to canonical JSON."""
-    if not isinstance(destination, ConsoleResolvedDestination) or not isinstance(
-        destination.egress_class, ConsoleEgressClass
+    if (
+        not isinstance(destination, ConsoleResolvedDestination)
+        or not isinstance(destination.egress_class, ConsoleEgressClass)
     ):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     endpoint_identity = cast(str, _string(destination.endpoint_identity))
@@ -561,14 +547,9 @@ def dump_console_resolved_destination_json(
     )
 
 
-def parse_console_resolved_destination_json(
-    value: object,
-) -> ConsoleResolvedDestination:
+def parse_console_resolved_destination_json(value: object) -> ConsoleResolvedDestination:
     """Strictly parse a canonical bounded resolved destination."""
-    if (
-        type(value) is not str
-        or len(value.encode("utf-8")) > CHECKPOINT_DESTINATION_MAX_BYTES
-    ):
+    if type(value) is not str or len(value.encode("utf-8")) > CHECKPOINT_DESTINATION_MAX_BYTES:
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     data = _exact_mapping(_strict_load(value), _DESTINATION_KEYS)
     endpoint_identity = cast(str, _string(data["endpoint_identity"]))
@@ -608,7 +589,9 @@ def dump_console_dispatch_reconstructability_json(
             "attachments_reconstructable": reconstructability.attachments_reconstructable,
             "evidence_reconstructable": reconstructability.evidence_reconstructable,
             "prefill_reconstructable": reconstructability.prefill_reconstructable,
-            "opaque_reference": _opaque_reference(reconstructability.opaque_reference),
+            "opaque_reference": _opaque_reference(
+                reconstructability.opaque_reference
+            ),
         },
         CHECKPOINT_RECONSTRUCTABILITY_MAX_BYTES,
     )
@@ -624,7 +607,10 @@ def parse_console_dispatch_reconstructability_json(
     ):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     data = _exact_mapping(_strict_load(value), _RECONSTRUCTABILITY_KEYS)
-    if any(type(data[key]) is not bool for key in _RECONSTRUCTABILITY_KEYS[:3]):
+    if any(
+        type(data[key]) is not bool
+        for key in _RECONSTRUCTABILITY_KEYS[:3]
+    ):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     reconstructability = ConsoleDispatchReconstructability(
         attachments_reconstructable=cast(bool, data["attachments_reconstructable"]),
