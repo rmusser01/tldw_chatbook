@@ -4474,7 +4474,6 @@ async def test_library_emergency_projection_keeps_editor_back_authoritative() ->
         editor.focus()
         await pilot.press("x")
         await pilot.pause()
-        screen._register_footer_shortcuts()
         eligibility = screen._library_emergency_return_eligibility()
         assert eligibility.visible and eligibility.guarded and not eligibility.enabled
         assert screen.check_action("library_emergency_return", ()) is False
@@ -4647,6 +4646,161 @@ async def test_library_canvas_entry_defeats_an_older_emergency_receipt() -> None
 
 
 @pytest.mark.asyncio
+async def test_library_emergency_user_click_defeats_an_older_restore_receipt(
+    tmp_path,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    prompts_db = PromptsDatabase(
+        tmp_path / "emergency-focus-prompts.db",
+        client_id="emergency-focus-prompts",
+    )
+    prompts_db.add_prompt(
+        name="Focus receipt",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Keep newer focus",
+    )
+    app.prompt_scope_service = PromptScopeService(
+        local_service=LocalPromptService(prompts_db),
+        server_service=None,
+    )
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(80, 60)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+            await _wait_for_selector(screen, pilot, "#library-prompts-filter")
+            first = await _wait_for_selector(screen, pilot, "#library-prompts-sort")
+            first.focus()
+            await pilot.pause()
+            await pilot.resize_terminal(63, 60)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_emergency_restore_receipt is not None,
+                message="Prompts receipt was not captured",
+            )
+            receipt = screen._library_emergency_restore_receipt
+            assert receipt is not None
+            await pilot.pause()
+            assert screen._library_stage_interaction_generation == receipt.generation
+
+            await pilot.click("#library-prompts-filter")
+            await pilot.pause()
+            later = screen.focused
+            assert getattr(later, "id", None) == "library-prompts-filter"
+            assert later is not first
+            assert screen._library_entry_canvas_owner() in later.ancestors_with_self
+            assert screen._library_stage_interaction_generation > receipt.generation
+
+            await pilot.resize_terminal(64, 60)
+            await pilot.pause()
+            assert getattr(screen.focused, "id", None) == "library-prompts-filter"
+    finally:
+        prompts_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_collection_mutation_syncs_return_truth() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+        bar = await _wait_for_selector(screen, pilot, "#library-emergency-return")
+        assert bar.disabled is False
+
+        assert screen._claim_library_collections_mutation() is True
+        assert bar.disabled is True
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            is None
+        )
+
+        screen._release_library_collections_mutation()
+        await pilot.pause()
+        assert bar.disabled is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "rail"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_ingest_consent_syncs_return_truth(
+    monkeypatch, tmp_path
+) -> None:
+    source = tmp_path / "warned.pdf"
+    source.write_text("%PDF-1.4 dummy")
+    preflight = PreflightResult(
+        type_groups={"pdf": [str(source)]},
+        warnings=[
+            {
+                "feature": "pdf_processing",
+                "label": "PDF processing",
+                "hint": "Install pdfplumber.",
+                "command": "pip install pdfplumber",
+            }
+        ],
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=1,
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "analyze_path",
+        lambda path, scan_limit=1000, **_kwargs: preflight,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.media_db = object()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+        path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        path_input.value = str(source)
+        screen._trigger_library_ingest_preflight(str(source))
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_ingest_form.preflight is preflight,
+            message="warned ingest pre-flight never landed",
+        )
+        await pilot.pause()
+        await pilot.pause()
+        path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        assert isinstance(path_input, Input)
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        assert bar.disabled is False
+
+        start = screen.query_one("#library-ingest-start", Button)
+        assert start.disabled is False, screen._build_library_ingest_state()
+        start.press()
+        await pilot.pause()
+        assert screen._library_ingest_start_consent is not None
+        assert bar.disabled is True
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "cancel"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_ingest_start_consent is None
+        assert bar.disabled is False
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+            == "rail"
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_notes_compact_interaction_defeats_an_older_receipt() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -4803,7 +4957,6 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
             )
             await pilot.pause()
 
-        screen._register_footer_shortcuts()
         eligibility = screen._library_emergency_return_eligibility()
         assert eligibility.visible and eligibility.guarded and not eligibility.enabled
         assert screen.check_action("library_emergency_return", ()) is False
@@ -4847,6 +5000,11 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
             assert screen._library_export_status == "Cancelling…"
         elif guard_kind == "cancel":
             assert screen._library_export_quality_choices_visible is False
+            assert bar.disabled is False
+            assert (
+                dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+                == "rail"
+            )
         elif guard_kind == "destructive":
             assert screen._library_collection_pending_delete_id == "collection-guard"
             assert guarded_focus.display is True

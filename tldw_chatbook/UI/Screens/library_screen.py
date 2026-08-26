@@ -2170,6 +2170,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[tuple[str, str], ...]:
         """Return prioritized Ingest hints, including Retry only when live."""
         shortcuts = list(self.LIBRARY_INGEST_SHORTCUTS)
+        if getattr(self, "_library_ingest_start_consent", None) is not None:
+            shortcuts[1] = ("esc", "cancel")
         registry = getattr(
             getattr(self, "app_instance", None), "library_ingest_jobs", None
         )
@@ -5349,6 +5351,20 @@ class LibraryScreen(BaseAppScreen):
         self._library_stage_interaction_generation += 1
         return self._library_stage_interaction_generation
 
+    def _advance_library_ordinary_emergency_user_interaction(
+        self, target: Widget | None
+    ) -> None:
+        """Invalidate restore only for real input inside the ordinary canvas."""
+        if (
+            target is None
+            or self._library_emergency_stage != "canvas-only"
+            or self._library_emergency_restore_receipt is None
+        ):
+            return
+        owner = self._library_entry_canvas_owner()
+        if owner is not None and owner in target.ancestors_with_self:
+            self._advance_library_stage_interaction()
+
     def _library_emergency_return_eligibility(
         self,
     ) -> _LibraryEmergencyReturnEligibility:
@@ -6884,7 +6900,11 @@ class LibraryScreen(BaseAppScreen):
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Let click-driven focus changes supersede resize memory."""
-        del event
+        try:
+            target, _ = self.get_widget_at(event.screen_x, event.screen_y)
+        except NoMatches:
+            target = None
+        self._advance_library_ordinary_emergency_user_interaction(target)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
@@ -6892,6 +6912,7 @@ class LibraryScreen(BaseAppScreen):
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         """Let wheel scrolling supersede resize and list-return memory."""
         del event
+        self._advance_library_ordinary_emergency_user_interaction(self.focused)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
@@ -6899,6 +6920,7 @@ class LibraryScreen(BaseAppScreen):
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         """Let wheel scrolling supersede resize and list-return memory."""
         del event
+        self._advance_library_ordinary_emergency_user_interaction(self.focused)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
@@ -7300,6 +7322,11 @@ class LibraryScreen(BaseAppScreen):
         for bar in self.query(LibraryEmergencyReturn):
             self._sync_library_emergency_return(bar)
 
+    def _sync_library_emergency_guard_presentation(self) -> None:
+        """Repaint guarded return truth after an in-place state transition."""
+        if self.is_mounted and self._library_emergency_stage == "canvas-only":
+            self._register_footer_shortcuts()
+
     def on_key(self, event: Key) -> None:
         """Keyboard affordances: ``/`` anywhere, plus landing accelerators.
 
@@ -7336,6 +7363,8 @@ class LibraryScreen(BaseAppScreen):
         settle-window timer is only ever the LAST resort for a
         still-armed, still-idle request.
         """
+        if event.key in {"tab", "shift+tab", "backtab"}:
+            self._advance_library_ordinary_emergency_user_interaction(self.focused)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
@@ -27839,6 +27868,7 @@ class LibraryScreen(BaseAppScreen):
             return False
         _subject, opener_selector, visibility_attr = open_strip
         setattr(self, visibility_attr, False)
+        self._sync_library_emergency_guard_presentation()
         canvas_kind = {
             "_library_media_type_choices_visible": "media",
             "_library_prompts_sort_choices_visible": "prompts",
@@ -31483,7 +31513,10 @@ class LibraryScreen(BaseAppScreen):
         pre-flight invalidation, rail reset, or Escape. Focus movement and
         an identical pre-flight refresh deliberately preserve it.
         """
+        if self._library_ingest_start_consent is None:
+            return
         self._library_ingest_start_consent = None
+        self._sync_library_emergency_guard_presentation()
 
     def _current_library_ingest_start_consent(
         self,
@@ -31697,6 +31730,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_ingest_start_consent = pending
                 self._library_ingest_start_confirm_armed_at = time.monotonic()
                 self._update_library_ingest_gate(self._build_library_ingest_state())
+                self._sync_library_emergency_guard_presentation()
                 return
             if (
                 time.monotonic() - self._library_ingest_start_confirm_armed_at
@@ -32004,6 +32038,7 @@ class LibraryScreen(BaseAppScreen):
                 if pending.owed:
                     self._library_ingest_start_confirm_armed_at = time.monotonic()
                 self._update_library_ingest_gate(self._build_library_ingest_state())
+                self._sync_library_emergency_guard_presentation()
                 return
             if membership_changed:
                 # The confirmed match finished while preparation ran and no
@@ -32225,6 +32260,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_start_consent = pending
             self._library_ingest_start_confirm_armed_at = time.monotonic()
             self._update_library_ingest_gate(self._build_library_ingest_state())
+            self._sync_library_emergency_guard_presentation()
             return
         except Exception as exc:
             current_job_ids = (
@@ -36658,12 +36694,14 @@ class LibraryScreen(BaseAppScreen):
         if self._library_collections_mutation_in_flight:
             return False
         self._library_collections_mutation_in_flight = True
+        self._sync_library_emergency_guard_presentation()
         return True
 
     def _release_library_collections_mutation(self) -> None:
         """Release Collection mutation ownership and repaint action gates."""
         self._library_collections_mutation_in_flight = False
         if self.is_mounted:
+            self._sync_library_emergency_guard_presentation()
             self.refresh(recompose=True)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
@@ -37320,6 +37358,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_collection_pending_delete_id = (
             self._library_collections_selected_id
         )
+        self._sync_library_emergency_guard_presentation()
         await self._refresh_collections_panel_action_state_widgets()
 
     @on(Button.Pressed, "#library-confirm-delete-collection")
