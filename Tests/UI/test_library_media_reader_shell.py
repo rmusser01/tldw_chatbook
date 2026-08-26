@@ -1315,12 +1315,7 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         assert not shell.effective_layout.library_open
         assert not shell.effective_layout.items_open
         assert (len(service.search_calls), len(service.detail_calls)) == reads
-        assert set(writes) == {
-            ("library.reader", "library_open", False),
-            ("library.media_reader", "items_open", False),
-            ("library.conversations_reader", "items_open", True),
-            ("library.notes_reader", "items_open", True),
-        }
+        assert writes == []
 
         app.app_config["library"]["media_reader"]["items_open"] = True
         screen.request_library_media_layout_refresh(2)
@@ -1328,7 +1323,4 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         await pilot.pause()
         assert shell.effective_layout.items_open
         assert (len(service.search_calls), len(service.detail_calls)) == reads
-        assert writes.count(("library.reader", "library_open", False)) == 2
-        assert writes.count(("library.media_reader", "items_open", True)) == 1
-        assert writes.count(("library.conversations_reader", "items_open", True)) == 2
-        assert writes.count(("library.notes_reader", "items_open", True)) == 2
+        assert writes == []

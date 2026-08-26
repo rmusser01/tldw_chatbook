@@ -104,6 +104,12 @@ from ...Utils.adaptive_reader_state import (
     normalize_adaptive_reader_preferences,
     resolve_adaptive_reader_layout,
 )
+from ...Library.library_rail_width import (
+    LIBRARY_EMERGENCY_WIDTH,
+    OrdinaryRailPresentation,
+    OrdinaryRailStyleContract,
+    resolve_ordinary_rail_contract,
+)
 from ...Library.library_conversation_reader_state import (
     LIBRARY_CONVERSATION_PAGE_SIZE,
     ConversationReaderRequest,
@@ -190,7 +196,6 @@ from ...Library.library_media_reader_state import (
     begin_selection,
     enter_external_detail,
     leave_external_detail,
-    normalize_media_reader_preferences,
     resolve_media_reader_layout,
     set_mode,
     set_more_open,
@@ -3150,12 +3155,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_reader_state = ConversationReaderState()
         self._library_conversation_reader_loaded_metadata: Mapping[str, Any] = {}
         self._library_conversation_reader_selected_metadata: Mapping[str, Any] = {}
-        self._library_conversation_reader_preferences = (
-            self._load_library_conversation_reader_preferences()
-        )
-        self._library_notes_reader_preferences = (
-            self._load_library_notes_reader_preferences()
-        )
+        (
+            self._library_reader_shared_preferences,
+            self._library_media_reader_preferences,
+            self._library_conversation_reader_preferences,
+            self._library_notes_reader_preferences,
+        ) = self._load_library_reader_preference_snapshot()
         self._library_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
             resolve_adaptive_reader_layout(
                 0,
@@ -3268,9 +3273,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_unfiltered_selected_id = ""
         self._library_media_filter_restore_id = ""
         self._library_media_filter_select_first = False
-        self._library_media_reader_preferences = (
-            self._load_library_media_reader_preferences()
-        )
         self._library_reader_durable_preferences["media_items"] = (
             self._library_media_reader_preferences.items_open
         )
@@ -3289,6 +3291,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_layout_refresh_generation = (
             self._library_reader_layout_refresh_generation
         )
+        self._library_rail_geometry_owner: Literal["ordinary", "adaptive"] | None = None
+        self._library_ordinary_rail_contract_state: (
+            tuple[int, OrdinaryRailStyleContract] | None
+        ) = None
         self._library_media_reader_layout: MediaReaderEffectiveLayout = (
             resolve_media_reader_layout(0, self._library_media_reader_preferences)
         )
@@ -5342,6 +5348,7 @@ class LibraryScreen(BaseAppScreen):
             # stage toggles below predate the permanent Notes work pane and
             # would hide its retained Items sibling or move focus to an
             # unrelated legacy handle.
+            self._sync_library_ordinary_rail_width_contract()
             return
         compact_single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
@@ -5398,6 +5405,7 @@ class LibraryScreen(BaseAppScreen):
             pass
         else:
             note_back.display = not wide_focused_task
+        self._sync_library_ordinary_rail_width_contract()
 
     def _hide_library_adaptive_reader_rail_collapse(self) -> None:
         """Hide the rail's legacy collapse control beside adaptive grips."""
@@ -5405,51 +5413,99 @@ class LibraryScreen(BaseAppScreen):
         if matches:
             matches.first().display = False
 
-    def _load_library_conversation_reader_preferences(
-        self,
-    ) -> AdaptiveReaderLayoutPreferences:
-        """Read shared Library geometry plus Conversations Items preferences."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        raw: dict[str, Any] = {}
-        if isinstance(app_config, Mapping):
-            library_config = app_config.get("library")
-            if isinstance(library_config, Mapping):
-                destination = library_config.get("conversations_reader")
-                if isinstance(destination, Mapping):
-                    raw.update(destination)
-                reader = library_config.get("reader")
-                if isinstance(reader, Mapping):
-                    for key in (
-                        "library_open",
-                        "custom_widths_enabled",
-                        "library_width",
-                    ):
-                        if key in reader:
-                            raw[key] = reader[key]
-        return normalize_adaptive_reader_preferences(raw)
+    def _claim_library_adaptive_rail_width_owner(self) -> None:
+        """Invalidate ordinary declarations when an adaptive shell owns geometry."""
+        if self._library_rail_geometry_owner == "adaptive":
+            return
+        try:
+            rail = self.query_one("#library-rail", LibraryRail)
+        except (NoMatches, QueryError):
+            return
+        rail.invalidate_width_contract_owner()
+        self._library_rail_geometry_owner = "adaptive"
+        self._library_ordinary_rail_contract_state = None
 
-    def _load_library_notes_reader_preferences(
+    def _sync_library_ordinary_rail_width_contract(self) -> None:
+        """Apply the settled ordinary rail contract at the existing UI seams."""
+        if self.query(
+            "#library-media-reader-shell, "
+            "#library-conversations-reader-shell, "
+            "#library-notes-reader-shell"
+        ):
+            self._claim_library_adaptive_rail_width_owner()
+            return
+        try:
+            shell = self.query_one("#library-shell-grid", Widget)
+            rail = self.query_one("#library-rail", LibraryRail)
+            canvas = self.query_one("#library-canvas", Widget)
+        except (NoMatches, QueryError):
+            return
+        width = shell.content_region.width
+        if width < LIBRARY_EMERGENCY_WIDTH:
+            return
+        if not rail.display:
+            presentation = OrdinaryRailPresentation.HIDDEN
+        elif not canvas.display:
+            presentation = OrdinaryRailPresentation.RAIL_ONLY
+        else:
+            presentation = OrdinaryRailPresentation.ALONGSIDE
+        shared = self._library_reader_shared_preferences
+        contract = resolve_ordinary_rail_contract(
+            width,
+            presentation,
+            shared.custom_widths_enabled,
+            shared.library_width,
+        )
+        if self._library_rail_geometry_owner == "adaptive":
+            rail.invalidate_width_contract_owner()
+        rail.apply_ordinary_width_contract(contract)
+        self._library_rail_geometry_owner = "ordinary"
+        self._library_ordinary_rail_contract_state = (width, contract)
+
+    def _load_library_reader_preference_snapshot(
         self,
-    ) -> AdaptiveReaderLayoutPreferences:
-        """Read shared Library geometry plus Notes-list preferences."""
+    ) -> tuple[
+        AdaptiveReaderLayoutPreferences,
+        MediaReaderLayoutPreferences,
+        AdaptiveReaderLayoutPreferences,
+        AdaptiveReaderLayoutPreferences,
+    ]:
+        """Normalize one shared reader snapshot plus destination Items choices."""
         app_config = getattr(self.app_instance, "app_config", None)
-        raw: dict[str, Any] = {}
+        library_config: Mapping[str, Any] = {}
         if isinstance(app_config, Mapping):
-            library_config = app_config.get("library")
-            if isinstance(library_config, Mapping):
-                destination = library_config.get("notes_reader")
-                if isinstance(destination, Mapping):
-                    raw.update(destination)
-                reader = library_config.get("reader")
-                if isinstance(reader, Mapping):
-                    for key in (
-                        "library_open",
-                        "custom_widths_enabled",
-                        "library_width",
-                    ):
-                        if key in reader:
-                            raw[key] = reader[key]
-        return normalize_adaptive_reader_preferences(raw)
+            candidate = app_config.get("library")
+            if isinstance(candidate, Mapping):
+                library_config = candidate
+
+        reader = library_config.get("reader")
+        shared_raw = dict(reader) if isinstance(reader, Mapping) else {}
+        legacy_media = library_config.get("media_reader")
+        if isinstance(legacy_media, Mapping) and "library_open" not in shared_raw:
+            shared_raw["library_open"] = legacy_media.get("library_open")
+        shared = normalize_adaptive_reader_preferences(shared_raw)
+
+        def destination_preferences(
+            section: str,
+        ) -> AdaptiveReaderLayoutPreferences:
+            destination = library_config.get(section)
+            raw = dict(shared_raw)
+            if isinstance(destination, Mapping):
+                raw.update(destination)
+            normalized = normalize_adaptive_reader_preferences(raw)
+            return dataclasses.replace(
+                normalized,
+                library_open=shared.library_open,
+                custom_widths_enabled=shared.custom_widths_enabled,
+                library_width=shared.library_width,
+            )
+
+        return (
+            shared,
+            destination_preferences("media_reader"),
+            destination_preferences("conversations_reader"),
+            destination_preferences("notes_reader"),
+        )
 
     def _sync_library_notes_reader_layout_from_shell(
         self,
@@ -5462,6 +5518,7 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return
+        self._claim_library_adaptive_rail_width_owner()
         width = shell.region.width
         if width <= 0:
             return
@@ -5508,6 +5565,7 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return
+        self._claim_library_adaptive_rail_width_owner()
         width = shell.region.width
         if width <= 0:
             return
@@ -5805,6 +5863,7 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return
+        self._claim_library_adaptive_rail_width_owner()
         width = shell.region.width
         if width <= 0:
             return
@@ -5863,29 +5922,6 @@ class LibraryScreen(BaseAppScreen):
                 *hidden_focus_target,
             )
 
-    def _load_library_media_reader_preferences(
-        self,
-    ) -> MediaReaderLayoutPreferences:
-        """Read shared Library geometry plus Media Items preferences."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        raw: dict[str, Any] = {}
-        if isinstance(app_config, Mapping):
-            library_config = app_config.get("library")
-            if isinstance(library_config, Mapping):
-                media_reader = library_config.get("media_reader")
-                if isinstance(media_reader, Mapping):
-                    raw.update(media_reader)
-                reader = library_config.get("reader")
-                if isinstance(reader, Mapping):
-                    for key in (
-                        "library_open",
-                        "custom_widths_enabled",
-                        "library_width",
-                    ):
-                        if key in reader:
-                            raw[key] = reader[key]
-        return normalize_media_reader_preferences(raw)
-
     def _mirror_library_media_reader_preference(
         self,
         key: Literal["library_open", "items_open"],
@@ -5914,43 +5950,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_layout_refresh_generation = generation
         for authority in self._library_reader_persistence_generations:
             self._library_reader_persistence_generations[authority] += 1
-        self._library_media_reader_preferences = (
-            self._load_library_media_reader_preferences()
-        )
-        self._library_conversation_reader_preferences = (
-            self._load_library_conversation_reader_preferences()
-        )
-        self._library_notes_reader_preferences = (
-            self._load_library_notes_reader_preferences()
-        )
+        (
+            self._library_reader_shared_preferences,
+            self._library_media_reader_preferences,
+            self._library_conversation_reader_preferences,
+            self._library_notes_reader_preferences,
+        ) = self._load_library_reader_preference_snapshot()
         self._sync_library_media_reader_layout_from_shell()
         self._sync_library_conversation_reader_layout_from_shell()
         self._sync_library_notes_reader_layout_from_shell()
-        for destination, pane, value in (
-            (
-                "media",
-                "library",
-                self._library_media_reader_preferences.library_open,
-            ),
-            ("media", "items", self._library_media_reader_preferences.items_open),
-            (
-                "conversations",
-                "items",
-                self._library_conversation_reader_preferences.items_open,
-            ),
-            ("notes", "items", self._library_notes_reader_preferences.items_open),
-        ):
-            authority = self._library_reader_persistence_key(destination, pane)
-            self.run_worker(
-                self._persist_library_reader_preference(
-                    destination,
-                    pane,
-                    value,
-                    self._library_reader_persistence_generations[authority],
-                    verify_failure_from_config=True,
-                ),
-                group=f"library_reader_{authority}_settings_persistence",
-            )
+        self._sync_library_ordinary_rail_width_contract()
 
     def request_library_media_layout_refresh(self, generation: int) -> None:
         """Compatibility alias for callers using the former Media-specific name."""
@@ -6396,6 +6405,7 @@ class LibraryScreen(BaseAppScreen):
         if width <= 0:
             return
         self._sync_library_ingest_rail_for_width(width)
+        self._sync_library_ordinary_rail_width_contract()
         compact = width < LIBRARY_NOTES_COMPACT_BREAKPOINT
         if compact == self._library_notes_compact:
             self._library_notes_pre_resize_focus = None
@@ -6442,6 +6452,7 @@ class LibraryScreen(BaseAppScreen):
         if width <= 0:
             return
         self._sync_library_ingest_rail_for_width(width)
+        self._sync_library_ordinary_rail_width_contract()
         compact = width < LIBRARY_NOTES_COMPACT_BREAKPOINT
         if compact == self._library_notes_compact:
             self._library_notes_pre_resize_focus = None
@@ -7087,6 +7098,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_reader_mounted_authority = True
         self._register_footer_shortcuts()
         self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
+        self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
         if (
             self._library_new_profile_admission
             and not self._library_lifecycle_was_stored
@@ -11169,9 +11181,7 @@ class LibraryScreen(BaseAppScreen):
             ),
             show_explore=get_started and self._library_rail_collapsed,
             continue_action=(
-                self._library_landing_continue_action()
-                if not get_started
-                else None
+                self._library_landing_continue_action() if not get_started else None
             ),
             attention_action=attention_action,
         )
@@ -11979,6 +11989,7 @@ class LibraryScreen(BaseAppScreen):
         shell_grid.styles.height = "1fr"
         shell_grid.styles.min_height = 12
         shell_grid.set_class(self._library_notes_compact, "library-notes-compact")
+        self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
         single_notes_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         ) or (
@@ -29389,9 +29400,7 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     @on(Button.Pressed, "#library-notes-import-receipt")
-    async def handle_library_notes_import_receipt(
-        self, event: Button.Pressed
-    ) -> None:
+    async def handle_library_notes_import_receipt(self, event: Button.Pressed) -> None:
         """Reopen the latest import receipt retained in this app session."""
         event.stop()
         if self._library_notes_mutation_fenced():
@@ -35034,8 +35043,7 @@ class LibraryScreen(BaseAppScreen):
             and viewer.content_query == self._library_media_content_query
             and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
-            and viewer.error_message
-            == (self._library_media_reader_session.error or "")
+            and viewer.error_message == (self._library_media_reader_session.error or "")
             and viewer.reader_mode == self._library_media_reader_session.mode
             and viewer.more_open == self._library_media_reader_session.more_open
             and viewer.external_detail
