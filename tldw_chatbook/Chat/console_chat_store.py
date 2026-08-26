@@ -2154,6 +2154,19 @@ class ConsoleChatStore:
     ) -> bool:
         """Re-enable one failed in-flight intent without changing ownership."""
 
+        with self._generation_owner_scope(assistant_message_id):
+            return self._release_dispatch_recovery_action(
+                session_id,
+                assistant_message_id,
+            )
+
+    def _release_dispatch_recovery_action(
+        self,
+        session_id: str,
+        assistant_message_id: str,
+    ) -> bool:
+        """Restore one recovery baseline while its generation owner is held."""
+
         with self._preparation_lock:
             current = self._dispatch_recoveries_by_session.get(session_id)
             if current is None or current.assistant_message_id != assistant_message_id:
@@ -2164,6 +2177,7 @@ class ConsoleChatStore:
                 )
             baseline = self._dispatch_recovery_message_baselines.pop(session_id, None)
         if baseline is not None:
+            self._invalidate_generation_attempt_locked(assistant_message_id)
             try:
                 message = self._message_or_raise(assistant_message_id)
             except KeyError:
@@ -2326,8 +2340,27 @@ class ConsoleChatStore:
         self,
         session_id: str,
         assistant_message_id: str,
+        *,
+        generation_token: int | None = None,
     ) -> ConsoleChatMessage:
         """Reset only the exact existing assistant owner for retry streaming."""
+
+        with self._generation_owner_scope(assistant_message_id):
+            self._require_generation_attempt_locked(
+                assistant_message_id,
+                generation_token,
+            )
+            return self._prepare_dispatch_recovery_message(
+                session_id,
+                assistant_message_id,
+            )
+
+    def _prepare_dispatch_recovery_message(
+        self,
+        session_id: str,
+        assistant_message_id: str,
+    ) -> ConsoleChatMessage:
+        """Reset a recovery owner after its replacement token is frozen."""
 
         recovery = self.dispatch_recovery_for_session(session_id)
         message = self._message_or_raise(assistant_message_id)
@@ -2370,6 +2403,30 @@ class ConsoleChatStore:
     ) -> bool:
         """Settle one claimed durable or ephemeral owner without a second write."""
 
+        with self._generation_owner_scope(assistant_message_id):
+            return self._settle_dispatch_recovery(
+                session_id,
+                assistant_message_id=assistant_message_id,
+                terminal_state=terminal_state,
+                content=content,
+                metadata_json=metadata_json,
+                provider_continuation_json=provider_continuation_json,
+                provider_continuation=provider_continuation,
+            )
+
+    def _settle_dispatch_recovery(
+        self,
+        session_id: str,
+        *,
+        assistant_message_id: str,
+        terminal_state: str,
+        content: str,
+        metadata_json: str | None = None,
+        provider_continuation_json: str | None = None,
+        provider_continuation: ProviderContinuationCheckpoint | None = None,
+    ) -> bool:
+        """Settle dispatch state while holding its generation owner."""
+
         with self._preparation_lock:
             current = self._dispatch_recoveries_by_session.get(session_id)
             if (
@@ -2384,6 +2441,8 @@ class ConsoleChatStore:
                 ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
                 ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
             }
+        if terminal_state == "discarded":
+            self._invalidate_generation_attempt_locked(assistant_message_id)
         try:
             message = self._message_or_raise(assistant_message_id)
         except KeyError:
@@ -6341,6 +6400,13 @@ class ConsoleChatStore:
         self, message_id: str, content: str
     ) -> ConsoleChatMessage:
         """Update a complete Console message or its currently selected variant."""
+        with self._generation_owner_scope(message_id):
+            return self._update_message_content(message_id, content)
+
+    def _update_message_content(
+        self, message_id: str, content: str
+    ) -> ConsoleChatMessage:
+        """Update content while holding its generation owner."""
         if not content.strip():
             raise ValueError("Message content cannot be blank.")
         message = self._message_or_raise(message_id)
@@ -6358,6 +6424,11 @@ class ConsoleChatStore:
                 "This conversation contains a newer thinking format; "
                 "upgrade before editing it."
             )
+        generation_cleared = (
+            message.role is ConsoleMessageRole.ASSISTANT and content != previous_content
+        )
+        if generation_cleared:
+            self._invalidate_generation_attempt_locked(message.id)
         descendant_ids = self._subtree_ids(session_id, message.id)[1:]
         on_active_path = self._message_is_on_active_path(message.id)
         provenance_cleared = (
@@ -6390,10 +6461,6 @@ class ConsoleChatStore:
                 provider_continuation_actions_enabled=True,
             )
             self._apply_generation_variant(message, message.variants.current)
-        generation_cleared = (
-            message.role is ConsoleMessageRole.ASSISTANT
-            and message.content != previous_content
-        )
         if generation_cleared:
             message.thinking = None
             message.opaque_thinking_json = None
@@ -6401,7 +6468,6 @@ class ConsoleChatStore:
             message.provider_continuation = None
             message.provider_continuation_warning = None
             message.provider_continuation_remote = False
-            message.provider_continuation_message_version = None
             message.provider_continuation_actions_enabled = True
         self._bump_message_speech_revision(message.id)
         if provenance_cleared:
@@ -6410,11 +6476,21 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        persisted = self._persist_existing_message(
-            message,
-            force_metadata_write=provenance_cleared,
-            clear_generation_provenance=generation_cleared,
+        generation_writer = (
+            getattr(self.persistence, "replace_assistant_generation_projection", None)
+            if self.persistence is not None and message.persisted_message_id is not None
+            else None
         )
+        if generation_cleared and callable(generation_writer):
+            persisted = self._persist_selected_generation(message.id)
+            if persisted and provenance_cleared:
+                self._persist_metadata_only(message)
+        else:
+            persisted = self._persist_existing_message(
+                message,
+                force_metadata_write=provenance_cleared,
+                clear_generation_provenance=generation_cleared,
+            )
         if persisted and message.content != previous_content and descendant_ids:
             self._purge_descendants_invalidated_by_edit(
                 session_id, message.id, descendant_ids
@@ -7441,6 +7517,19 @@ class ConsoleChatStore:
         expected_message_version: int,
     ) -> bool:
         """Optimistically clear one whole checkpoint without running tools."""
+        with self._generation_owner_scope(message_id):
+            return self._discard_provider_continuation(
+                message_id,
+                expected_message_version=expected_message_version,
+            )
+
+    def _discard_provider_continuation(
+        self,
+        message_id: str,
+        *,
+        expected_message_version: int,
+    ) -> bool:
+        """Discard one checkpoint while holding its generation owner."""
         message = self._message_or_raise(message_id)
         persisted_id = message.persisted_message_id
         database = getattr(self.persistence, "db", None) if self.persistence else None
@@ -7458,6 +7547,7 @@ class ConsoleChatStore:
             and children.get(message_id)
         ):
             raise RuntimeError("Interrupted run changed; reload before discarding.")
+        self._invalidate_generation_attempt_locked(message_id)
         updater(
             message_id=persisted_id,
             expected_message_version=expected_message_version,
@@ -8808,6 +8898,15 @@ class ConsoleChatStore:
         with self._generation_owner_locks_guard:
             return self._generation_attempt_tokens.get(message_id) == generation_token
 
+    def _require_generation_attempt_locked(
+        self,
+        message_id: str,
+        generation_token: int | None,
+    ) -> None:
+        """Reject a superseding mutation owned by a stale or omitted token."""
+        if not self._generation_attempt_is_current(message_id, generation_token):
+            raise RuntimeError("Generation attempt changed before mutation.")
+
     def _invalidate_generation_attempt(self, message_id: str) -> None:
         """Fence every detached worker for one owner without reviving a prior one."""
         with self._generation_owner_scope(message_id):
@@ -9144,8 +9243,19 @@ class ConsoleChatStore:
         self._persist_new_message_or_defer(session_id=session_id, message=message)
         return self._snapshot(message)
 
-    def prepare_message_retry(self, message_id: str) -> ConsoleChatMessage:
+    def prepare_message_retry(
+        self,
+        message_id: str,
+        *,
+        generation_token: int | None = None,
+    ) -> ConsoleChatMessage:
         """Prepare a failed assistant message to receive replacement stream content."""
+        with self._generation_owner_scope(message_id):
+            self._require_generation_attempt_locked(message_id, generation_token)
+            return self._prepare_message_retry(message_id)
+
+    def _prepare_message_retry(self, message_id: str) -> ConsoleChatMessage:
+        """Prepare a retry after its generation token is frozen."""
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can be retried.")
@@ -9180,6 +9290,11 @@ class ConsoleChatStore:
 
     def add_variant(self, message_id: str, content: str) -> ConsoleChatMessage:
         """Add and select a regenerated variant for an assistant message."""
+        with self._generation_owner_scope(message_id):
+            return self._add_variant(message_id, content)
+
+    def _add_variant(self, message_id: str, content: str) -> ConsoleChatMessage:
+        """Install a manual variant while holding its generation owner."""
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can receive variants.")
@@ -9191,6 +9306,7 @@ class ConsoleChatStore:
         previous_content = message.content
         previous_generation = self._generation_variant(message)
         on_active_path = self._message_is_on_active_path(message.id)
+        self._invalidate_generation_attempt_locked(message.id)
         durably_committed, committed_version = self._persist_generation_variant(
             message,
             new_generation,
@@ -9554,7 +9670,12 @@ class ConsoleChatStore:
             message.provider_continuation_remote = False
         return self._snapshot(message)
 
-    def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
+    def begin_variant_stream(
+        self,
+        message_id: str,
+        *,
+        generation_token: int | None = None,
+    ) -> ConsoleChatMessage:
         """Snapshot current content as the base and reset the buffer for a new variant.
 
         Args:
@@ -9569,6 +9690,12 @@ class ConsoleChatStore:
             KeyError: ``message_id`` does not reference a known message.
             ValueError: The message is not an assistant message.
         """
+        with self._generation_owner_scope(message_id):
+            self._require_generation_attempt_locked(message_id, generation_token)
+            return self._begin_variant_stream(message_id)
+
+    def _begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
+        """Begin a variant after its generation token is frozen."""
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can be regenerated.")
@@ -9705,6 +9832,13 @@ class ConsoleChatStore:
         self, message_id: str, selected_index: int
     ) -> ConsoleChatMessage:
         """Select one existing variant by index."""
+        with self._generation_owner_scope(message_id):
+            return self._select_variant(message_id, selected_index)
+
+    def _select_variant(
+        self, message_id: str, selected_index: int
+    ) -> ConsoleChatMessage:
+        """Select a manual variant while holding its generation owner."""
         message = self._message_or_raise(message_id)
         if message.variants is None:
             raise ValueError("Message has no variants.")
@@ -9717,6 +9851,8 @@ class ConsoleChatStore:
         previous_index = message.variants.selected_index
         previous_status = message.status
         on_active_path = self._message_is_on_active_path(message.id)
+        if selected_index != previous_index:
+            self._invalidate_generation_attempt_locked(message.id)
         durably_committed, committed_version = self._persist_generation_variant(
             message,
             target,

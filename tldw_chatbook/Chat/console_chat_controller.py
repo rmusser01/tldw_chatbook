@@ -7229,6 +7229,16 @@ class ConsoleChatController:
                 await self._settle_recovered_queue_owner(session_id, claimed, result)
                 return result
             context = await self._resolve_dispatch_retry_context(session_id, claimed)
+            thinking_block = self._thinking_persistence_preflight(
+                session_id=session_id,
+                resolution=context.resolution,
+            )
+            if thinking_block is not None:
+                self.store.release_dispatch_recovery_action(
+                    session_id,
+                    claimed.assistant_message_id,
+                )
+                return thinking_block
             checkpoint = claimed.checkpoint
             if checkpoint is None:
                 raise _DispatchRecoveryRefusal(
@@ -7243,9 +7253,13 @@ class ConsoleChatController:
             )
             if started is None:
                 raise RuntimeError("Dispatch recovery changed before provider entry.")
+            generation_token = self.store.begin_generation_attempt(
+                claimed.assistant_message_id
+            )
             self.store.prepare_dispatch_recovery_message(
                 session_id,
                 claimed.assistant_message_id,
+                generation_token=generation_token,
             )
             turn_context = getattr(context, "turn_context", None)
             if not isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -7259,6 +7273,7 @@ class ConsoleChatController:
                 provider_messages=context.provider_messages,
                 assistant_message_id=claimed.assistant_message_id,
                 turn_context=turn_context,
+                generation_token=generation_token,
             )
         except asyncio.CancelledError:
             if self._retry_checkpoint_cas_completed(
@@ -14570,6 +14585,7 @@ class ConsoleChatController:
         turn_context: ConsoleTurnExecutionContext | None = None,
         preparation_id: str | None = None,
         stream_signals: ConsoleProviderStreamSignals | None = None,
+        generation_token: int | None = None,
     ) -> ConsoleSubmitResult:
         try:
             return await self._stream_assistant_response_inner(
@@ -14587,6 +14603,7 @@ class ConsoleChatController:
                 turn_context=turn_context,
                 preparation_id=preparation_id,
                 stream_signals=stream_signals,
+                generation_token=generation_token,
             )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -14618,6 +14635,7 @@ class ConsoleChatController:
         turn_context: ConsoleTurnExecutionContext | None = None,
         preparation_id: str | None = None,
         stream_signals: ConsoleProviderStreamSignals | None = None,
+        generation_token: int | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -14874,6 +14892,7 @@ class ConsoleChatController:
                     continuation_sidecar=continuation_sidecar,
                     continuation_history_target=continuation_target,
                     preparation_id=preparation_id,
+                    generation_token=generation_token,
                 )
             return await self._run_direct_provider_reply(
                 resolution=resolution,
@@ -14890,6 +14909,7 @@ class ConsoleChatController:
                 continuation_target=continuation_target,
                 character_emote_snapshot=character_emote_snapshot,
                 preparation_id=preparation_id,
+                generation_token=generation_token,
             )
         finally:
             if (
@@ -15434,6 +15454,7 @@ class ConsoleChatController:
         continuation_target: ContinuationRestoreTarget | None = None,
         character_emote_snapshot: CharacterEmoteRunSnapshot | None = None,
         preparation_id: str | None = None,
+        generation_token: int | None = None,
     ) -> ConsoleSubmitResult:
         # Dev's citation-repair refactor extracted this streaming body out of
         # the wrapper (`_stream_assistant_response_inner`) into its own
@@ -15508,9 +15529,15 @@ class ConsoleChatController:
             ),
             may_emit_thinking=bool(getattr(resolution, "may_emit_thinking", False)),
         )
-        generation_token = self.store.begin_generation_attempt(assistant_message_id)
+        if generation_token is None:
+            generation_token = self.store.begin_generation_attempt(
+                assistant_message_id
+            )
         if variant_mode:
-            self.store.begin_variant_stream(assistant_message_id)
+            self.store.begin_variant_stream(
+                assistant_message_id,
+                generation_token=generation_token,
+            )
         if character_emote_snapshot is not None and not prepare_retry:
             self.store.begin_character_emote_capture(
                 assistant_message_id,
@@ -15573,7 +15600,10 @@ class ConsoleChatController:
                 )
                 if thinking_event:
                     if prepare_retry and not retry_prepared:
-                        self.store.prepare_message_retry(assistant_message_id)
+                        self.store.prepare_message_retry(
+                            assistant_message_id,
+                            generation_token=generation_token,
+                        )
                         retry_prepared = True
                         if character_emote_snapshot is not None:
                             self.store.begin_character_emote_capture(
@@ -15618,7 +15648,10 @@ class ConsoleChatController:
                     continue
                 if type(chunk) is not str:
                     if prepare_retry and not retry_prepared:
-                        self.store.prepare_message_retry(assistant_message_id)
+                        self.store.prepare_message_retry(
+                            assistant_message_id,
+                            generation_token=generation_token,
+                        )
                         retry_prepared = True
                         if character_emote_snapshot is not None:
                             self.store.begin_character_emote_capture(
@@ -15635,7 +15668,10 @@ class ConsoleChatController:
                     project_thinking(thinking_capture.observe(chunk))
                     continue
                 if prepare_retry and not retry_prepared:
-                    self.store.prepare_message_retry(assistant_message_id)
+                    self.store.prepare_message_retry(
+                        assistant_message_id,
+                        generation_token=generation_token,
+                    )
                     retry_prepared = True
                     if character_emote_snapshot is not None:
                         self.store.begin_character_emote_capture(
@@ -16155,6 +16191,7 @@ class ConsoleChatController:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_history_target: ContinuationRestoreTarget | None = None,
         preparation_id: str | None = None,
+        generation_token: int | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -16363,11 +16400,20 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
             session_id=session_id,
         )
-        generation_token = self.store.begin_generation_attempt(assistant_message_id)
+        if generation_token is None:
+            generation_token = self.store.begin_generation_attempt(
+                assistant_message_id
+            )
         if variant_mode:
-            self.store.begin_variant_stream(assistant_message_id)
+            self.store.begin_variant_stream(
+                assistant_message_id,
+                generation_token=generation_token,
+            )
         elif prepare_retry:
-            self.store.prepare_message_retry(assistant_message_id)
+            self.store.prepare_message_retry(
+                assistant_message_id,
+                generation_token=generation_token,
+            )
 
         # Split the leading session system message off the payload; the
         # agent config carries it (composed with the operating prompt).

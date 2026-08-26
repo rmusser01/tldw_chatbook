@@ -35,12 +35,15 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleDispatchRecoveryKind,
+    ConsoleDispatchRecoveryState,
     ConsoleNextSendHistoryProjection,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
+    ConsoleVariant,
     ConsoleVariantSet,
     ConsoleWorkspaceContext,
     MessageAttachment,
@@ -7213,6 +7216,18 @@ def _terminal_thinking(assistant_id: str, status: str):
     return capture.settle(status).envelope
 
 
+def _wait_for_generation_owner_users(
+    store: ConsoleChatStore,
+    message_id: str,
+    minimum_users: int,
+) -> None:
+    """Wait until the scoped owner registry contains holder plus waiters."""
+    deadline = time.monotonic() + 3
+    while store._generation_runtime_counts(message_id)[1] < minimum_users:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+
 @pytest.mark.parametrize("terminal_status", ["stopped", "failed"])
 def test_late_settlement_decision_serializes_with_terminal_commit(
     tmp_path,
@@ -7263,8 +7278,10 @@ def test_late_settlement_decision_serializes_with_terminal_commit(
         bridge_thread.start()
         assert decision_passed.wait(timeout=3)
         assert persistence.projection_attempts == 0
+        owner_users = store._generation_runtime_counts(assistant.id)[1]
         controller_thread.start()
         assert controller_attempted.wait(timeout=3)
+        _wait_for_generation_owner_users(store, assistant.id, owner_users + 1)
         controller_thread.join(timeout=0.25)
         terminal_committed_early = not controller_thread.is_alive()
         settlement_release.set()
@@ -7338,8 +7355,10 @@ def test_late_settlement_waits_for_terminal_writer_without_conflict(tmp_path) ->
     try:
         controller_thread.start()
         assert persistence.writer_entered.wait(timeout=3)
+        owner_users = store._generation_runtime_counts(assistant.id)[1]
         bridge_thread.start()
         assert bridge_attempted.wait(timeout=3)
+        _wait_for_generation_owner_users(store, assistant.id, owner_users + 1)
         bridge_thread.join(timeout=0.25)
         bridge_completed_early = not bridge_thread.is_alive()
         persistence.writer_release.set()
@@ -7415,7 +7434,10 @@ def test_abandoned_variant_rejects_late_thinking_from_restored_attempt(
 
     worker = threading.Thread(target=settle_abandoned_worker, daemon=True)
     try:
-        store.begin_variant_stream(assistant.id)
+        store.begin_variant_stream(
+            assistant.id,
+            generation_token=generation_token,
+        )
         store.append_stream_chunk(assistant.id, "discarded replacement")
         worker.start()
         assert worker_entered.wait(timeout=3)
@@ -7494,7 +7516,10 @@ def test_new_no_evidence_generation_rejects_prior_worker_settlement(tmp_path) ->
         assert worker_entered.wait(timeout=3)
         new_token = store.begin_generation_attempt(assistant.id)
         assert new_token != old_token
-        store.prepare_message_retry(assistant.id)
+        store.prepare_message_retry(
+            assistant.id,
+            generation_token=new_token,
+        )
         store.append_stream_chunk(assistant.id, "new answer without thinking")
         store.mark_message_complete(assistant.id)
 
@@ -7614,3 +7639,250 @@ def test_generation_runtime_entries_do_not_survive_invalid_or_owner_churn() -> N
     store.begin_generation_attempt(restored.id)
     store.restore_state(sessions=())
     assert store._generation_runtime_counts() == (0, 0, 0)
+
+
+def test_edit_fences_detached_thinking_before_generation_evidence_is_cleared(
+    tmp_path,
+) -> None:
+    """Editing an assistant prevents its prior worker from restoring thinking."""
+    db, store, session, assistant, _checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="edit-fences-worker",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "complete"
+    owned.assistant_generation_state = "complete"
+    owned.thinking = _terminal_thinking(assistant.id, "complete")
+    assert store.persist_selected_generation(assistant.id) is True
+    old_token = store.begin_generation_attempt(assistant.id)
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle_old_worker() -> None:
+        worker_entered.set()
+        assert worker_release.wait(timeout=3)
+        try:
+            store.settle_message_thinking(
+                assistant.id,
+                _terminal_thinking(assistant.id, "complete"),
+                generation_token=old_token,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=settle_old_worker, daemon=True)
+    try:
+        worker.start()
+        assert worker_entered.wait(timeout=3)
+        store.update_message_content(assistant.id, "user-edited answer")
+        expected_live = copy.deepcopy(store.get_message(assistant.id))
+        worker_release.set()
+        worker.join(timeout=3)
+
+        assert not worker.is_alive()
+        assert errors == []
+        assert store.get_message(assistant.id) == expected_live
+        assert expected_live.thinking is None
+        assert expected_live.provider_continuation is None
+        assert store.persist_selected_generation(assistant.id) is True
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == "user-edited answer"
+        assert reloaded.thinking is None
+        assert reloaded.provider_continuation is None
+    finally:
+        worker_release.set()
+        worker.join(timeout=1)
+        db.close_connection()
+
+
+@pytest.mark.parametrize("mutation", ["add", "select"])
+def test_manual_variant_replacement_fences_detached_thinking(
+    tmp_path,
+    mutation: str,
+) -> None:
+    """Manual variant replacement cannot inherit a detached worker's evidence."""
+    db, store, session, assistant, _checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name=f"manual-variant-{mutation}",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "complete"
+    owned.assistant_generation_state = "complete"
+    owned.thinking = _terminal_thinking(assistant.id, "complete")
+    assert store.persist_selected_generation(assistant.id) is True
+    if mutation == "select":
+        owned.variants = ConsoleVariantSet.from_generations(
+            turn_id=assistant.id,
+            generations=[
+                store._generation_variant(owned),
+                ConsoleVariant(
+                    content="manually selected answer",
+                    assistant_generation_state="complete",
+                ),
+            ],
+            selected_index=0,
+        )
+    old_token = store.begin_generation_attempt(assistant.id)
+
+    if mutation == "add":
+        store.add_variant(assistant.id, "manually added answer")
+        expected_content = "manually added answer"
+    else:
+        store.select_variant(assistant.id, 1)
+        expected_content = "manually selected answer"
+    expected_live = copy.deepcopy(store.get_message(assistant.id))
+
+    store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "complete"),
+        generation_token=old_token,
+    )
+
+    assert store.get_message(assistant.id) == expected_live
+    assert expected_live.content == expected_content
+    assert expected_live.thinking is None
+    assert store.persist_selected_generation(assistant.id) is True
+    reloaded = _reload_console_message(
+        db,
+        conversation_id=session.persisted_conversation_id,
+        active_leaf_persisted_id=assistant.persisted_message_id,
+    )
+    assert reloaded.content == expected_content
+    assert reloaded.thinking is None
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_recovery_reset_reuses_fence_for_no_evidence_reply(
+    tmp_path,
+) -> None:
+    """Recovery reset fences the old worker before the replacement reply starts."""
+    db, store, session, assistant, _checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="dispatch-recovery-fence",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.status = "failed"
+    owned.assistant_generation_state = "failed"
+    owned.thinking = _terminal_thinking(assistant.id, "failed")
+    assert store.persist_selected_generation(assistant.id) is True
+    old_token = store.begin_generation_attempt(assistant.id)
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle_old_worker() -> None:
+        worker_entered.set()
+        assert worker_release.wait(timeout=3)
+        try:
+            store.settle_message_thinking(
+                assistant.id,
+                _terminal_thinking(assistant.id, "failed"),
+                generation_token=old_token,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=settle_old_worker, daemon=True)
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+    try:
+        worker.start()
+        assert worker_entered.wait(timeout=3)
+        store._dispatch_recoveries_by_session[session.id] = (
+            ConsoleDispatchRecoveryState(
+                kind=ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+                assistant_message_id=assistant.id,
+                conversation_id=session.id,
+                visible_copy="Response recovery is active.",
+                actions=(),
+                in_flight=True,
+                runtime_active=True,
+            )
+        )
+        replacement_token = store.begin_generation_attempt(assistant.id)
+        store.prepare_dispatch_recovery_message(
+            session.id,
+            assistant.id,
+            generation_token=replacement_token,
+        )
+        worker_release.set()
+        worker.join(timeout=3)
+        assert errors == []
+        assert store.get_message(assistant.id).thinking is None
+
+        store._dispatch_recoveries_by_session.pop(session.id)
+        resolution = await gateway.resolve_for_send(None)
+        result = await controller._run_direct_provider_reply(
+            resolution=resolution,
+            provider_messages=[],
+            assistant_message_id=assistant.id,
+            prepare_retry=False,
+            variant_mode=False,
+            prefill=None,
+            prefill_from_one_shot=False,
+            one_shot_prefill_revision=None,
+            citation_repair_session=None,
+            stream_signals=None,
+            generation_token=replacement_token,
+        )
+
+        assert result.accepted is True
+        assert store._generation_attempt_tokens[assistant.id] == replacement_token
+        assert store.get_message(assistant.id).content == "hello"
+        assert store.get_message(assistant.id).thinking is None
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        assert reloaded.content == "hello"
+        assert reloaded.thinking is None
+    finally:
+        worker_release.set()
+        worker.join(timeout=1)
+        db.close_connection()
+
+
+def test_empty_continuation_discard_reclaims_generation_runtime_owner(
+    tmp_path,
+) -> None:
+    """Discarding an empty continuation removes its token and tolerates late work."""
+    db, store, _session, assistant, _checkpoint, _ = _durable_streaming_generation(
+        tmp_path,
+        name="continuation-discard-fence",
+    )
+    owned = store._message_or_raise(assistant.id)
+    owned.content = ""
+    owned.status = "failed"
+    owned.assistant_generation_state = "failed"
+    assert store.persist_selected_generation(assistant.id) is True
+    old_token = store.begin_generation_attempt(assistant.id)
+    expected_version = owned.provider_continuation_message_version
+    assert type(expected_version) is int
+
+    assert store.discard_provider_continuation(
+        assistant.id,
+        expected_message_version=expected_version,
+    ) is True
+
+    with pytest.raises(KeyError):
+        store.get_message(assistant.id)
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    assert store.settle_message_thinking(
+        assistant.id,
+        _terminal_thinking(assistant.id, "failed"),
+        generation_token=old_token,
+    ) is None
+    assert store._generation_runtime_counts() == (0, 0, 0)
+    db.close_connection()
