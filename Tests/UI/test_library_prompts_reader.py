@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -45,6 +46,39 @@ def _seed_prompt(tmp_path):
     return prompt_id, service
 
 
+def _structured_prompt_definition(*, user_title: str = "Delivery contract"):
+    return {
+        "schema_version": 2,
+        "kind": "block_prompt",
+        "lanes": [
+            {
+                "id": "system",
+                "blocks": [
+                    {
+                        "id": "role",
+                        "title": "Specialized role",
+                        "syntax": "markdown",
+                        "content": "Be exact.",
+                        "mapping_hint": "Advanced-only system mapping hint.",
+                    }
+                ],
+            },
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "delivery",
+                        "title": user_title,
+                        "syntax": "freeform",
+                        "content": "Ship it.",
+                        "mapping_hint": "Advanced-only user mapping hint.",
+                    }
+                ],
+            },
+        ],
+    }
+
+
 @pytest.mark.asyncio
 async def test_basic_edit_reaches_screen_owned_prompt_draft(tmp_path) -> None:
     prompt_id, service = _seed_prompt(tmp_path)
@@ -62,7 +96,6 @@ async def test_basic_edit_reaches_screen_owned_prompt_draft(tmp_path) -> None:
             lambda: screen._library_prompt_editor_armed,
             message="Prompt editor did not arm",
         )
-
         screen.query_one("#library-prompt-user", TextArea).load_text(
             "Summarize the verified changes."
         )
@@ -88,6 +121,125 @@ async def test_basic_edit_reaches_screen_owned_prompt_draft(tmp_path) -> None:
         )
         assert screen._library_prompt_status == (
             "Name is required; enter a Prompt name."
+        )
+
+
+@pytest.mark.asyncio
+async def test_basic_save_preserves_advanced_only_prompt_fields(tmp_path) -> None:
+    definition = _structured_prompt_definition()
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Structured release assistant",
+        author="Advanced Author",
+        details="Keep this Advanced description.",
+        system_prompt="# Specialized role\n\nBe exact.",
+        user_prompt="Ship it.",
+        keywords=["release", "advanced-only"],
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["prompt_editor_mode"] = "basic"
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_editor_armed,
+            message="Prompt editor did not arm",
+        )
+        screen._library_prompt_editor_mode = "basic"
+        work = screen.query_one(
+            "#library-prompt-work-pane", LibraryPromptWorkPane
+        )
+        assert not work.basic_unavailable_reason, work.basic_unavailable_reason
+        await work.set_editor_mode("basic")
+        assert screen.query_one("#library-prompt-basic-region").display is True
+
+        user_prompt = screen.query_one("#library-prompt-user", TextArea)
+        user_prompt.focus()
+        await pilot.press("end")
+        await pilot.press("!")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_dirty,
+            message="Basic edit did not dirty the structured Prompt",
+        )
+        screen.query_one("#library-prompt-save", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_prompt_dirty
+            and screen._library_prompt_version == 2,
+            message="Basic structured Prompt save did not settle",
+        )
+
+    expected = json.loads(json.dumps(definition))
+    expected["lanes"][1]["blocks"][0]["content"] = "Ship it.!"
+    persisted = db.fetch_prompt_details(prompt_id)
+    assert json.loads(persisted["prompt_definition"]) == expected
+    assert persisted["author"] == "Advanced Author"
+    assert persisted["details"] == "Keep this Advanced description."
+    assert db.fetch_keywords_for_prompt(prompt_id) == ["advanced-only", "release"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_advanced_block_routes_save_focus_to_its_owner(tmp_path) -> None:
+    definition = _structured_prompt_definition(user_title="")
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Invalid structured assistant",
+        author="Author",
+        details="Needs a block title.",
+        system_prompt="# Specialized role\n\nBe exact.",
+        user_prompt="Ship it.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["prompt_editor_mode"] = "basic"
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen._library_prompt_editor_mode = "info"
+        await screen.query_one(
+            "#library-prompt-work-pane", LibraryPromptWorkPane
+        ).set_editor_mode("info")
+        title = screen.query_one("#prompt-block-title-delivery", Input)
+
+        assert screen.query_one("#library-prompt-info-region").display is True
+        screen.query_one("#library-prompt-details", Input).value = (
+            "Still needs a block title."
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_dirty,
+            message="Info-view edit did not dirty the invalid Prompt",
+        )
+        screen.query_one("#library-prompt-save", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-prompt-advanced-region").display
+            and screen.focused is title,
+            message="Invalid block save did not route to its Advanced owner",
+        )
+
+        assert screen.query_one("#library-prompt-info-region").display is False
+        assert screen._library_prompt_status == (
+            "Fix block validation errors before saving."
         )
 
 

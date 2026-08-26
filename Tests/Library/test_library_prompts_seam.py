@@ -7,6 +7,7 @@ to read a number.
 """
 
 import asyncio
+import importlib.util
 import threading
 
 import pytest
@@ -23,6 +24,16 @@ from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     PaginatedPromptsResponse,
     PromptBriefResponse,
 )
+
+
+def test_prompts_reader_has_no_parallel_state_authority() -> None:
+    """LibraryScreen remains the only mutable Prompt reader authority."""
+    assert (
+        importlib.util.find_spec(
+            "tldw_chatbook.Library.library_prompts_reader_state"
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

@@ -29,22 +29,35 @@ REQUIRED_ENV = (
 missing = [name for name in REQUIRED_ENV if not os.environ.get(name)]
 if missing:
     raise SystemExit(f"refusing unisolated run; missing: {', '.join(missing)}")
-config_path = Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+
+sys.path.insert(0, str(WORKTREE))
+
+from tldw_chatbook.Utils.path_validation import validate_path  # noqa: E402
+
+
 scratch_root = SCRATCH_ROOT.resolve()
-if (
-    scratch_root not in config_path.parents
-    or scratch_root not in DATA_DIR.resolve().parents
-):
-    raise SystemExit("config/data must be contained by TASK22033_SCRATCH_ROOT")
-app_data_dir = scratch_root / "app-data"
+try:
+    config_path = validate_path(
+        os.environ["TLDW_CONFIG_PATH"], scratch_root, allow_hidden=True
+    )
+    DATA_DIR = validate_path(DATA_DIR, scratch_root, allow_hidden=True)
+    app_data_dir = validate_path(
+        scratch_root / "app-data", scratch_root, allow_hidden=True
+    )
+    xdg_dirs = tuple(
+        validate_path(os.environ[name], scratch_root, allow_hidden=True)
+        for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME")
+    )
+except ValueError as exc:
+    raise SystemExit(
+        "config/data/XDG paths must be contained by TASK22033_SCRATCH_ROOT"
+    ) from exc
 for isolated_dir in (
     scratch_root,
-    DATA_DIR.resolve(),
+    DATA_DIR,
     app_data_dir,
     config_path.parent,
-    Path(os.environ["XDG_CONFIG_HOME"]).resolve(),
-    Path(os.environ["XDG_DATA_HOME"]).resolve(),
-    Path(os.environ["XDG_CACHE_HOME"]).resolve(),
+    *xdg_dirs,
 ):
     isolated_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     isolated_dir.chmod(0o700)
@@ -54,8 +67,6 @@ if not config_path.exists():
         encoding="utf-8",
     )
     config_path.chmod(0o600)
-
-sys.path.insert(0, str(WORKTREE))
 
 from textual.widgets import Button, Collapsible, Input, Static  # noqa: E402
 

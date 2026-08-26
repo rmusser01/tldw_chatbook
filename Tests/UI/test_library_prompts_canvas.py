@@ -585,6 +585,25 @@ async def test_prompt_basic_unavailable_forces_explained_advanced_without_hiding
 
 
 @pytest.mark.asyncio
+async def test_prompt_info_remains_visible_when_basic_is_unavailable():
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(artifact_type="recipe"),
+        editor_mode="info",
+        basic_unavailable_reason="Recipes require Advanced view.",
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+
+        assert canvas.query_one("#library-prompt-basic-region").display is False
+        assert canvas.query_one("#library-prompt-advanced-region").display is False
+        assert canvas.query_one("#library-prompt-info-region").display is True
+
+
+@pytest.mark.asyncio
 async def test_prompt_basic_edit_updates_stable_block_and_hidden_advanced_editor():
     state = _structured_editor_state()
     original_block = state.block_editor_state.definition.lanes[1].blocks[0]

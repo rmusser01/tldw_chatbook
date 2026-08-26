@@ -27787,6 +27787,18 @@ class LibraryScreen(BaseAppScreen):
                 )
             except ValueError as exc:
                 self._update_library_prompt_status_static(str(exc))
+                if block_state.issues:
+                    self._library_prompt_editor_mode = "advanced"
+                    try:
+                        work = self.query_one(
+                            "#library-prompt-work-pane", LibraryPromptWorkPane
+                        )
+                        await work.set_editor_mode("advanced")
+                        work.query_one(
+                            "#library-prompt-block-editor", PromptBlockEditor
+                        ).focus_first_error()
+                    except (NoMatches, QueryError):
+                        pass
                 return
             system_prompt = draft.system_prompt
             user_prompt = draft.user_prompt

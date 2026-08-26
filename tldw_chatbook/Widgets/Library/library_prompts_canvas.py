@@ -1186,7 +1186,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         if editor_state is None:
             return
         effective_mode = (
-            "advanced" if self.basic_unavailable_reason else self.editor_mode
+            "advanced"
+            if self.editor_mode == "basic" and self.basic_unavailable_reason
+            else self.editor_mode
         )
         item_locked = (
             self.mutation_in_flight
