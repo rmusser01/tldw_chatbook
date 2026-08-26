@@ -7,7 +7,11 @@ local-only additions), and a hard delete of the parent message cascades
 straight through via the FK -- there is no soft-delete/version bookkeeping
 for these rows.
 """
+import sqlite3
+from contextlib import contextmanager
+
 import pytest
+from loguru import logger
 
 from Tests.ChaChaNotesDB.historical_bootstrap import (
     chachanotes_db_at_version,
@@ -65,6 +69,57 @@ def test_append_and_read_round_trip(db):
     stored = db.get_message_exchanges(mid)
     assert [(r["run_tag"], r["seq"], r["capture_blob"]) for r in stored] == [
         ("r1", 0, b"blob0"), ("r1", 1, b"blob1")]
+
+
+def test_lowest_exchange_write_error_boundary_is_content_free(db, monkeypatch):
+    message_id = _seed_message(db)
+    canaries = (
+        "SEMANTIC-EXCHANGE-ERROR-CANARY",
+        "/private/exchange/error/path/canary",
+        "QUJD" * 1200,
+    )
+
+    class FailingCursor:
+        def execute(self, _query, _params):
+            raise sqlite3.OperationalError(" | ".join(canaries))
+
+    @contextmanager
+    def failing_transaction(*_args, **_kwargs):
+        yield FailingCursor()
+
+    monkeypatch.setattr(db, "transaction", failing_transaction)
+    diagnostics: list[str] = []
+    sink_id = logger.add(
+        diagnostics.append,
+        level="ERROR",
+        format="{extra[message_id]} {extra[error_type]} {message}",
+    )
+    try:
+        with pytest.raises(Exception) as raised:
+            db.append_message_exchanges_local(
+                message_id,
+                [
+                    {
+                        "run_tag": "canary",
+                        "seq": 0,
+                        "status": "complete",
+                        "abandoned": False,
+                        "capture_detail": "full",
+                        "capture_blob": canaries[-1].encode(),
+                        "created_at": "t",
+                    }
+                ],
+            )
+    finally:
+        logger.remove(sink_id)
+
+    assert type(raised.value).__name__ == "CharactersRAGDBError"
+    boundary_text = f"{raised.value!s} {raised.value!r} {' '.join(diagnostics)}"
+    assert message_id in boundary_text
+    assert "OperationalError" in boundary_text
+    assert "message_exchange_write_failed" in boundary_text
+    for canary in canaries:
+        assert canary not in boundary_text
 
 
 def test_full_capture_column_matches_blob_provenance(db):

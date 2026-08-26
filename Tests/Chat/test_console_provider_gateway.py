@@ -6269,6 +6269,32 @@ class TestSignalsExchangeCapture:
         assert captures[1].response["content"] == "again"
         assert captures[0].run_tag == captures[1].run_tag == aggregate.run_tag
 
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            ("data:image/png;base64,", "QUJD" * 450, "QUJD" * 450, "QUJD" * 450),
+            ("QUJD" * 450, "QUJD" * 450, "QUJD" * 450),
+        ],
+        ids=["split-data-uri", "split-plain-base64"],
+    )
+    def test_final_aggregate_stubs_binary_split_across_small_chunks(self, chunks):
+        assert all(len(chunk) < 4096 for chunk in chunks)
+        aggregate = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True,
+            capture_detail=CaptureDetail.FULL,
+        )
+        call = aggregate.new_usage_call()
+        self._begin(call)
+        for chunk in chunks:
+            call.record_exchange_content(chunk)
+        call.close_exchange()
+
+        content = aggregate.exchange_captures()[0].response["content"]
+
+        assert content.startswith("[")
+        assert "sha256:" in content
+        assert "QUJD" not in content
+
     def test_call_views_inherit_one_frozen_capture_detail(self):
         aggregate = ConsoleProviderStreamSignals(
             exchange_capture_enabled=True,

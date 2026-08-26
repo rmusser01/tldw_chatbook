@@ -5588,6 +5588,16 @@ def get_runtime_config_snapshot(
         )
 
 
+def _published_runtime_config_snapshot() -> RuntimeConfigSnapshot:
+    """Read the already-published config generation without filesystem I/O."""
+
+    with _settings_rebuild_lock(), _config_file_lock():
+        return RuntimeConfigSnapshot(
+            generation=_CONFIG_GENERATION,
+            values=copy.deepcopy(settings),
+        )
+
+
 def run_if_runtime_config_generation_current(
     expected_generation: int,
     action: Callable[[], bool],
@@ -6311,23 +6321,30 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
     """Return the shared runtime capture policy, resolving invalid detail Safe."""
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
+    global _RUNTIME_CAPTURE_POLICY
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         current = _RUNTIME_CAPTURE_POLICY
-    if current is not None:
+        if current is not None and current.generation == _CONFIG_GENERATION:
+            return current
+    snapshot = _published_runtime_config_snapshot()
+    with _RUNTIME_CAPTURE_POLICY_LOCK:
+        current = _RUNTIME_CAPTURE_POLICY
+        if current is not None and current.generation == snapshot.generation:
+            return current
+        console = snapshot.values.get("console", {})
+        if not isinstance(console, Mapping):
+            console = {}
+        try:
+            detail = CaptureDetail(console.get("exchange_capture_detail", "safe"))
+        except (TypeError, ValueError):
+            detail = CaptureDetail.SAFE
+        current = RuntimeCapturePolicy(
+            coerce_bool_setting(console.get("exchange_capture", True), True),
+            detail,
+            snapshot.generation,
+        )
+        _RUNTIME_CAPTURE_POLICY = current
         return current
-    snapshot = get_runtime_config_snapshot()
-    raw_detail = get_cli_setting("console", "exchange_capture_detail", "safe")
-    try:
-        detail = CaptureDetail(raw_detail)
-    except (TypeError, ValueError):
-        detail = CaptureDetail.SAFE
-    return _publish_runtime_capture_policy(
-        coerce_bool_setting(
-            get_cli_setting("console", "exchange_capture", True), True
-        ),
-        detail,
-        snapshot.generation,
-    )
 
 
 def apply_console_capture_settings(

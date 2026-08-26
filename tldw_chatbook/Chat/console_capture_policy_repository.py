@@ -16,6 +16,14 @@ class CapturePolicyWriteStatus(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
+class CapturePolicyReadStatus(str, Enum):
+    """Whether inheritance was conclusively absent or could not be read."""
+
+    ABSENT = "absent"
+    FOUND = "found"
+    UNAVAILABLE_OR_CORRUPT = "unavailable_or_corrupt"
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationCapturePolicy:
     conversation_id: str
@@ -29,15 +37,24 @@ class CapturePolicyWriteResult:
     policy: ConversationCapturePolicy | None
 
 
+@dataclass(frozen=True, slots=True)
+class CapturePolicyReadResult:
+    status: CapturePolicyReadStatus
+    policy: ConversationCapturePolicy | None
+
+
 class ConsoleCapturePolicyRepository:
     """Read and replace local capture detail without touching sync state."""
 
     def __init__(self, db: CharactersRAGDB) -> None:
         self.db = db
 
-    def read(self, conversation_id: str) -> ConversationCapturePolicy | None:
+    def read(self, conversation_id: str) -> CapturePolicyReadResult:
         if type(conversation_id) is not str or not conversation_id.strip():
-            return None
+            return CapturePolicyReadResult(
+                CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                None,
+            )
         try:
             row = self.db.get_connection().execute(
                 "SELECT policy.conversation_id, policy.capture_detail, policy.updated_at "
@@ -46,9 +63,20 @@ class ConsoleCapturePolicyRepository:
                 "WHERE policy.conversation_id = ? AND conversation.deleted = 0",
                 (conversation_id,),
             ).fetchone()
-            return self._from_row(row)
+            if row is None:
+                return CapturePolicyReadResult(CapturePolicyReadStatus.ABSENT, None)
+            policy = self._from_row(row)
+            if policy is None:
+                return CapturePolicyReadResult(
+                    CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                    None,
+                )
+            return CapturePolicyReadResult(CapturePolicyReadStatus.FOUND, policy)
         except Exception:
-            return None
+            return CapturePolicyReadResult(
+                CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                None,
+            )
 
     def replace(
         self, conversation_id: str, detail: CaptureDetail | None

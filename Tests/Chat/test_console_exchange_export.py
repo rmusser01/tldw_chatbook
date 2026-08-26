@@ -146,6 +146,74 @@ def test_non_full_profiles_report_why_full_is_unavailable_for_safe_capture() -> 
     )
 
 
+def test_split_stream_binary_never_reaches_sqlite_or_full_export() -> None:
+    db = CharactersRAGDB(":memory:", "split-stream-binary")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=ConsoleProviderGateway(),
+        )
+        session = store.ensure_session(title="split stream")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=True,
+        )
+        store.append_stream_chunk(assistant.id, "answer")
+        store.mark_message_complete(assistant.id)
+        signals = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True,
+            capture_detail=CaptureDetail.FULL,
+        )
+        call = signals.new_usage_call()
+        call.begin_exchange(
+            provider="anthropic",
+            model="claude-test",
+            endpoint=None,
+            request={},
+            omitted_keys=(),
+        )
+        chunks = (
+            "data:image/png;base64,",
+            "QUJD" * 450,
+            "QUJD" * 450,
+            "QUJD" * 450,
+        )
+        assert all(len(chunk) < 4096 for chunk in chunks)
+        for chunk in chunks:
+            call.record_exchange_content(chunk)
+        call.close_exchange()
+
+        controller._attach_stream_usage(
+            assistant.id,
+            signals,
+            ConsoleProviderResolution(
+                provider="anthropic",
+                base_url=None,
+                model="claude-test",
+                ready=True,
+                execution_key="anthropic",
+            ),
+            partial=False,
+        )
+
+        stored_message = store.get_message(assistant.id)
+        assert stored_message.persisted_message_id is not None
+        row = db.get_message_exchanges(stored_message.persisted_message_id)[0]
+        stored = capture_from_storage(row["capture_blob"], row["capture_detail"])
+        exported = project_exchange_export(
+            stored,
+            TraceExportProfile.FULL_TRACE,
+        ).json_text
+        assert "sha256:" in stored.response["content"]
+        assert "QUJD" not in stored.response["content"]
+        assert "QUJD" not in exported
+    finally:
+        db.close_connection()
+
+
 @pytest.mark.asyncio
 async def test_real_gateway_controller_store_sentinels_across_all_owners(
     tmp_path,

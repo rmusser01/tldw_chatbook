@@ -662,12 +662,21 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         future = (
             "Off" if not snapshot.enabled else snapshot.effective.detail.value.title()
         )
-        active = (
-            "No active run is frozen"
-            if snapshot.active_run_detail is None
-            else f"Active run frozen at {snapshot.active_run_detail.value.title()}"
+        if snapshot.active_run_detail is not None:
+            run_state = (
+                f"Active run frozen at {snapshot.active_run_detail.value.title()}"
+            )
+        elif snapshot.next_detail is not None:
+            run_state = (
+                "Next eligible send: "
+                f"{snapshot.next_detail.value.title()} (armed)"
+            )
+        else:
+            run_state = "No active run is frozen"
+        return (
+            f"“{snapshot.conversation_title}” · Future capture: {future} · c Change…\n"
+            f"{run_state}"
         )
-        return f"Future exchange capture: {future} · c Change…\n{active}"
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Hide the contextual capture binding when no live target exists."""

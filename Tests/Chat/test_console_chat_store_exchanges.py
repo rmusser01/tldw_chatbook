@@ -25,6 +25,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat import console_chat_store as store_module
+from tldw_chatbook.Chat import console_capture_policy_repository as repository_module
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyWriteResult,
     CapturePolicyWriteStatus,
@@ -106,10 +107,13 @@ def test_capture_policy_hydrates_from_the_existing_repository():
         @staticmethod
         def read(conversation_id):
             assert conversation_id == "conversation-1"
-            return ConversationCapturePolicy(
-                conversation_id,
-                CaptureDetail.FULL,
-                "2026-08-26T00:00:00Z",
+            return repository_module.CapturePolicyReadResult(
+                repository_module.CapturePolicyReadStatus.FOUND,
+                ConversationCapturePolicy(
+                    conversation_id,
+                    CaptureDetail.FULL,
+                    "2026-08-26T00:00:00Z",
+                ),
             )
 
     store = ConsoleChatStore()
@@ -120,6 +124,29 @@ def test_capture_policy_hydrates_from_the_existing_repository():
     store.hydrate_session_capture_policy(session.id)
 
     assert store.capture_policy_state(session.id).conversation_detail is CaptureDetail.FULL
+
+
+def test_unavailable_capture_policy_hydration_publishes_explicit_safe_pending() -> None:
+    class Repository:
+        @staticmethod
+        def read(_conversation_id):
+            return repository_module.CapturePolicyReadResult(
+                repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                None,
+            )
+
+    store = ConsoleChatStore()
+    store.capture_policy_repository = Repository()
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+    session.capture_detail_override = CaptureDetail.FULL
+
+    outcome = store.hydrate_session_capture_policy(session.id)
+
+    state = store.capture_policy_state(session.id)
+    assert outcome.status is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
+    assert state.conversation_detail is CaptureDetail.SAFE
+    assert state.save_pending is True
 
 
 def test_failed_staged_safe_flush_stays_safe_and_pending_after_publication():

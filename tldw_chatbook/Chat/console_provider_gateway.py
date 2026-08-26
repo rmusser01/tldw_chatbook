@@ -562,8 +562,10 @@ def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
         provider=flight["provider"], model=flight["model"],
         endpoint=flight["endpoint"], request=flight["request"],
         response={
-            "content": "".join(flight["content"]),
-            "tool_calls": deepcopy(flight["tool_calls"]),
+            # Sanitize once more after aggregation: individually harmless
+            # sub-threshold chunks can form one data URI/base64 body.
+            "content": sanitize_capture_value("".join(flight["content"])),
+            "tool_calls": sanitize_capture_value(deepcopy(flight["tool_calls"])),
             "synthetic_fallback": bool(flight.get("synthetic_fallback", False)),
             "truncation_inventory": tuple(
                 flight.get("response_truncation_inventory", ())

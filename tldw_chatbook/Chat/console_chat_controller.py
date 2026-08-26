@@ -108,6 +108,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     resolve_capture_policy,
 )
 from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyReadStatus,
     CapturePolicyWriteStatus,
     ConsoleCapturePolicyRepository,
 )
@@ -2120,6 +2121,7 @@ class ConsoleChatController:
             else None
         )
         self._capture_policy_hydrated: set[str] = set()
+        self._capture_policy_hydration_errors: dict[str, str] = {}
         self._visual_identity_repository = (
             VisualIdentityRepository(persistence_db)
             if persistence_db is not None
@@ -2629,10 +2631,21 @@ class ConsoleChatController:
     def _hydrate_capture_policy(self, session: ConsoleChatSession) -> None:
         if session.id in self._capture_policy_hydrated:
             return
-        self._capture_policy_hydrated.add(session.id)
         if session.persisted_conversation_id is None:
+            self._capture_policy_hydrated.add(session.id)
+            self._capture_policy_hydration_errors.pop(session.id, None)
             return
-        self.store.hydrate_session_capture_policy(session.id)
+        outcome = self.store.hydrate_session_capture_policy(session.id)
+        if outcome.status in {
+            CapturePolicyReadStatus.ABSENT,
+            CapturePolicyReadStatus.FOUND,
+        }:
+            self._capture_policy_hydrated.add(session.id)
+            self._capture_policy_hydration_errors.pop(session.id, None)
+        else:
+            self._capture_policy_hydration_errors[session.id] = (
+                "conversation_policy_unavailable"
+            )
 
     def capture_policy_snapshot(self, session_id: str) -> CapturePolicySnapshot:
         """Resolve the future policy for one immutable session identity."""
@@ -2664,7 +2677,7 @@ class ConsoleChatController:
             active_run_detail=self._active_capture_details.get(session_id),
             queued_consumer=bool(getattr(queue, "entries", ())),
             save_pending=state.save_pending,
-            error_code=(
+            error_code=self._capture_policy_hydration_errors.get(session_id) or (
                 "invalid_" + "_".join(effective.invalid_sources)
                 if effective.invalid_sources
                 else None
@@ -2836,6 +2849,22 @@ class ConsoleChatController:
             allow_next_send=False,
         ).detail
         has_durable_identity = before.conversation_id is not None
+        privacy_safe_result = inherited is CaptureDetail.SAFE
+        if privacy_safe_result:
+            try:
+                self.store.publish_reserved_capture_safe(
+                    reservation,
+                    session_id=session_id,
+                    save_pending=has_durable_identity,
+                )
+            except KeyError:
+                self.store.abandon_capture_policy_mutation(reservation)
+                return CapturePolicyMutationResult(
+                    CapturePolicyMutationStatus.TARGET_MISSING,
+                    before,
+                    False,
+                    "session_closed",
+                )
 
         async def reconcile() -> CapturePolicyMutationResult:
             reservation_owned = True
@@ -2878,12 +2907,17 @@ class ConsoleChatController:
                         except asyncio.CancelledError:
                             reconciliation_cancelled = True
                     if repository_error:
-                        if reconciliation_cancelled:
-                            raise asyncio.CancelledError from None
-                        raise repository_error[0]
-                    write_status = repository_result[0]
+                        if not privacy_safe_result:
+                            if reconciliation_cancelled:
+                                raise asyncio.CancelledError from None
+                            raise repository_error[0]
+                        session_only = True
+                        write_status = None
+                    else:
+                        write_status = repository_result[0]
                     if (
-                        write_status.status
+                        write_status is not None
+                        and write_status.status
                         is CapturePolicyWriteStatus.MISSING_CONVERSATION
                     ):
                         self.store.abandon_capture_policy_mutation(reservation)
@@ -2896,9 +2930,10 @@ class ConsoleChatController:
                             False,
                             "conversation_missing",
                         )
-                    session_only = (
-                        write_status.status is CapturePolicyWriteStatus.UNAVAILABLE
-                    )
+                    if write_status is not None:
+                        session_only = (
+                            write_status.status is CapturePolicyWriteStatus.UNAVAILABLE
+                        )
                 elif has_durable_identity:
                     session_only = True
                 if session_only and inherited is CaptureDetail.FULL:
@@ -2916,7 +2951,11 @@ class ConsoleChatController:
                     self.store.finish_capture_policy_mutation(
                         reservation,
                         session_id=session_id,
-                        detail=detail,
+                        detail=(
+                            CaptureDetail.SAFE
+                            if session_only and privacy_safe_result
+                            else detail
+                        ),
                         save_pending=session_only and has_durable_identity,
                     )
                 except KeyError:
@@ -2930,6 +2969,9 @@ class ConsoleChatController:
                         "session_closed",
                     )
                 reservation_owned = False
+                if has_durable_identity and not session_only:
+                    self._capture_policy_hydrated.add(session_id)
+                    self._capture_policy_hydration_errors.pop(session_id, None)
                 result = CapturePolicyMutationResult(
                     CapturePolicyMutationStatus.SAFE_SESSION_ONLY
                     if session_only and has_durable_identity
@@ -3061,28 +3103,55 @@ class ConsoleChatController:
         origin: ConsoleSubmissionOrigin,
     ) -> ConsoleProviderStreamSignals:
         """Freeze capture detail once, after an accepted owner exists."""
-        state = self.store.capture_policy_state(session_id)
-        runtime = runtime_capture_policy()
         eligible = origin in {
             ConsoleSubmissionOrigin.MANUAL,
             ConsoleSubmissionOrigin.QUEUED,
         }
-        resolution = resolve_capture_policy(
-            enabled=runtime.enabled,
-            next_send=state.next_detail,
-            conversation=state.conversation_detail,
-            global_default=runtime.detail,
-            allow_next_send=eligible,
-        )
+        try:
+            session = next(
+                (item for item in self.store.sessions() if item.id == session_id),
+                None,
+            )
+            if session is None:
+                raise KeyError(session_id)
+            self._hydrate_capture_policy(session)
+            state = self.store.capture_policy_state(session_id)
+            runtime = runtime_capture_policy()
+            resolution = resolve_capture_policy(
+                enabled=runtime.enabled,
+                next_send=state.next_detail,
+                conversation=state.conversation_detail,
+                global_default=runtime.detail,
+                allow_next_send=eligible,
+            )
+        except Exception as exc:
+            logger.bind(
+                phase="resolution",
+                error_type=type(exc).__name__,
+            ).warning("capture_policy_resolution_failed")
+            return ConsoleProviderStreamSignals(
+                exchange_capture_enabled=False,
+                capture_detail=CaptureDetail.SAFE,
+            )
         signals = ConsoleProviderStreamSignals(
             exchange_capture_enabled=resolution.enabled,
             capture_detail=resolution.detail,
         )
         if eligible and state.next_detail is not None:
-            self.store.consume_session_next_capture_detail(
-                session_id,
-                expected_next_revision=state.next_revision,
-            )
+            try:
+                self.store.consume_session_next_capture_detail(
+                    session_id,
+                    expected_next_revision=state.next_revision,
+                )
+            except Exception as exc:
+                logger.bind(
+                    phase="one_shot_consumption",
+                    error_type=type(exc).__name__,
+                ).warning("capture_policy_resolution_failed")
+                return ConsoleProviderStreamSignals(
+                    exchange_capture_enabled=False,
+                    capture_detail=CaptureDetail.SAFE,
+                )
         return signals
 
     @property

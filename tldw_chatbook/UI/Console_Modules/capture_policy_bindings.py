@@ -103,6 +103,7 @@ def build_capture_policy_bindings(
         count_full=count_full,
         purge_full=purge_full,
         capture_revision=lambda: controller.capture_revision(session_id),
+        purge_availability=lambda: controller.capture_purge_availability(session_id),
     )
 
 

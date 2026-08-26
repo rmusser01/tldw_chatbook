@@ -33,6 +33,10 @@ from textual.worker import WorkerState
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+from tldw_chatbook.Chat.console_chat_controller import (
+    CapturePolicySnapshot,
+    CapturePurgeAvailability,
+)
 from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCostRow,
     ConsoleCostRowTotals,
@@ -43,6 +47,8 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     ExchangeCapture,
     build_request_capture,
+    CapturePolicyResolution,
+    CapturePolicySource,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -57,6 +63,9 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
 )
 from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
     ConsoleExchangeExportDialog,
+)
+from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
+    CapturePolicyBindings,
 )
 
 
@@ -106,6 +115,65 @@ async def _empty_exchanges_loader(
     _native_message_id: str,
 ) -> list[tuple[ExchangeCapture, bool]]:
     return []
+
+
+def _capture_policy_bindings_for_inspector() -> CapturePolicyBindings:
+    snapshot = CapturePolicySnapshot(
+        session_id="session-at-open",
+        conversation_id="conversation-at-open",
+        conversation_title="Immutable titled chat",
+        enabled=True,
+        next_detail=CaptureDetail.FULL,
+        conversation_detail=CaptureDetail.SAFE,
+        global_detail=CaptureDetail.SAFE,
+        effective=CapturePolicyResolution(
+            True,
+            CaptureDetail.FULL,
+            CapturePolicySource.NEXT_SEND,
+            (),
+        ),
+        policy_revision=1,
+        config_generation=2,
+        capture_revision=3,
+        active_run_detail=None,
+        queued_consumer=False,
+        save_pending=False,
+        error_code=None,
+    )
+
+    async def unused_async(*_args, **_kwargs):
+        raise AssertionError("not used")
+
+    return CapturePolicyBindings(
+        target_session_id=snapshot.session_id,
+        target_conversation_id=snapshot.conversation_id,
+        read=lambda: snapshot,
+        apply_next=lambda *_args: (_ for _ in ()).throw(AssertionError("not used")),
+        apply_conversation=unused_async,
+        apply_global=lambda *_args: (_ for _ in ()).throw(AssertionError("not used")),
+        count_full=unused_async,
+        purge_full=unused_async,
+        capture_revision=lambda: snapshot.capture_revision,
+        purge_availability=lambda: CapturePurgeAvailability(True, None),
+    )
+
+
+@pytest.mark.asyncio
+async def test_compact_capture_status_names_title_and_armed_next_send() -> None:
+    app = InspectorHarness(
+        **_default_kwargs(
+            capture_policy_bindings=_capture_policy_bindings_for_inspector(),
+        )
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        status = app.screen.query_one("#console-inspector-policy-status", Static)
+        text = str(status.render())
+
+        assert "Immutable titled chat" in text
+        assert "Next eligible send: Full (armed)" in text
+        assert text.count("\n") == 1
+        assert status.region.height == 2
 
 
 def _default_kwargs(**overrides: object) -> dict[str, object]:

@@ -105,6 +105,8 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
 )
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
 from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyReadResult,
+    CapturePolicyReadStatus,
     CapturePolicyWriteStatus,
     ConsoleCapturePolicyRepository,
 )
@@ -4565,18 +4567,42 @@ class ConsoleChatStore:
             target_session.capture_revision = revision
         return stage.removed_count
 
-    def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyState:
+    def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyReadResult:
         """Hydrate a persisted conversation override into process-local state."""
         with self._capture_policy_lock:
             session = self._session_or_raise(session_id)
             repository = self.capture_policy_repository
-            if session.persisted_conversation_id is not None and repository is not None:
-                policy = repository.read(session.persisted_conversation_id)
-                session.capture_detail_override = (
-                    policy.detail if policy is not None else None
+            if session.persisted_conversation_id is None:
+                return CapturePolicyReadResult(CapturePolicyReadStatus.ABSENT, None)
+            if repository is None:
+                result = CapturePolicyReadResult(
+                    CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                    None,
                 )
+            else:
+                try:
+                    result = repository.read(session.persisted_conversation_id)
+                except Exception:
+                    result = CapturePolicyReadResult(
+                        CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                        None,
+                    )
+            if result.status is CapturePolicyReadStatus.FOUND:
+                if result.policy is None:
+                    result = CapturePolicyReadResult(
+                        CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT,
+                        None,
+                    )
+                else:
+                    session.capture_detail_override = result.policy.detail
+                    session.capture_policy_save_pending = False
+            elif result.status is CapturePolicyReadStatus.ABSENT:
+                session.capture_detail_override = None
                 session.capture_policy_save_pending = False
-            return self.capture_policy_state(session_id)
+            else:
+                session.capture_detail_override = CaptureDetail.SAFE
+                session.capture_policy_save_pending = True
+            return result
 
     def _flush_staged_capture_policy(self, session: ConsoleChatSession) -> None:
         """Best-effort flush of an ephemeral policy after identity publication."""
@@ -4712,6 +4738,22 @@ class ConsoleChatStore:
             self._capture_policy_mutation = token
             self._capture_policy_revision += 1
             return token
+
+    def publish_reserved_capture_safe(
+        self,
+        token: object,
+        *,
+        session_id: str,
+        save_pending: bool,
+    ) -> int:
+        """Publish an explicit Safe override while retaining mutation ownership."""
+        with self._capture_policy_lock:
+            if self._capture_policy_mutation is not token:
+                raise CapturePolicyStaleError
+            session = self._session_or_raise(session_id)
+            session.capture_detail_override = CaptureDetail.SAFE
+            session.capture_policy_save_pending = bool(save_pending)
+            return self._capture_policy_revision
 
     def finish_capture_policy_mutation(
         self,

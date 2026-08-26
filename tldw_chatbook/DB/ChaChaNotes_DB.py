@@ -12460,20 +12460,12 @@ UPDATE db_schema_version
                         ),
                     )
                     written += 1
-        except sqlite3.IntegrityError as e:
-            logger.opt(exception=True).error(
-                f"SQLite integrity error writing message exchanges for message ID {message_id}: {e}"
-            )
-            raise CharactersRAGDBError(
-                f"Database integrity error writing message exchanges: {e}"
-            ) from e
-        except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"Database error writing message exchanges for message ID {message_id}: {e}"
-            )
-            raise CharactersRAGDBError(
-                f"Database error writing message exchanges: {e}"
-            ) from e
+        except sqlite3.Error as error:
+            logger.bind(
+                message_id=message_id,
+                error_type=type(error).__name__,
+            ).error("message_exchange_write_failed")
+            raise CharactersRAGDBError("Message exchange write failed") from error
         return written
 
     def get_message_exchanges(self, message_id: str) -> List[Dict[str, Any]]:

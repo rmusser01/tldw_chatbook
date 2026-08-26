@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
     CapturePolicyMutationResult,
     CapturePolicyMutationStatus,
     CapturePolicySnapshot,
+    CapturePurgeAvailability,
     CapturePurgeResult,
     CapturePurgeStatus,
 )
@@ -55,6 +56,7 @@ class CapturePolicyBindings:
     count_full: Callable[[], Awaitable[int]]
     purge_full: Callable[[int], Awaitable[CapturePurgeResult]]
     capture_revision: Callable[[], int]
+    purge_availability: Callable[[], CapturePurgeAvailability]
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,11 +83,25 @@ OFF_TO_ON_WARNING = (
     "Turning capture On resumes the stored detail. The dormant Full setting "
     "will become active for future exchanges."
 )
-PURGE_FULL_WARNING = (
-    "This performs logical record deletion for stored Full captures in this "
-    "chat. SQLite WAL frames, free pages, filesystem snapshots, prior exports, "
-    "and backups may retain older bytes. The capture policy remains Full."
-)
+PURGE_FULL_WARNING = "Delete stored Full captures"
+
+_PURGE_REASON_COPY = {
+    "target_missing": "Target conversation is no longer available",
+    "purge_in_progress": "A Full-capture deletion is already in progress",
+    "primary_writer_active": "Assistant response is still writing captures",
+    "preparation_active": "A message is still being prepared for capture",
+    "fleet_writer_active": "Fleet child is still able to write captures",
+    "fleet_state_unavailable": "Fleet writer state is unavailable",
+    "exchange_flush_active": "Capture persistence is still in progress",
+    "retained_signals_active": "Provider signals can still attach captures",
+    "stale_capture_revision": "Stored captures changed; review the count again",
+    "persistence_unavailable": "Capture persistence is unavailable",
+    "capture_count_unavailable": "Stored Full capture count is unavailable",
+}
+
+
+def _purge_reason(reason_code: str | None) -> str:
+    return _PURGE_REASON_COPY.get(reason_code, "Full captures cannot be deleted right now")
 
 
 def full_capture_confirmation(*, scope_label: str) -> ConfirmationDialog:
@@ -222,6 +238,13 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
         self.preview = self.preview_for(self.selected_scope, self.selected_detail)
         self.status_text = "Ready"
         self.full_capture_count: int | None = None
+        try:
+            self.purge_availability = bindings.purge_availability()
+        except Exception:
+            self.purge_availability = CapturePurgeAvailability(
+                False,
+                "capture_count_unavailable",
+            )
         self._applying = False
 
     def compose(self) -> ComposeResult:
@@ -231,6 +254,7 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             with VerticalScroll(id="capture-policy-body"):
                 yield Static(
                     "Apply changes exactly one scope. Inherit removes that scope's override.",
+                    id="capture-policy-guidance",
                     markup=False,
                 )
                 with RadioSet(id="capture-policy-scopes"):
@@ -260,13 +284,19 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
                 )
                 yield Static(self._disabled_reason(), id="capture-policy-reason", markup=False)
                 yield Static("Stored Full captures: counting…", id="capture-policy-count", markup=False)
-                yield Button("Delete stored Full captures…", id="capture-policy-purge")
+                yield Button(
+                    "Delete stored Full captures…",
+                    id="capture-policy-purge",
+                    disabled=True,
+                )
             yield Static(self.status_text, id="capture-policy-status", markup=False)
             with Horizontal(id="capture-policy-actions"):
                 yield Button("Cancel", id="capture-policy-cancel")
                 yield Button("Apply", id="capture-policy-apply", variant="primary")
 
     async def on_mount(self) -> None:
+        self._sync_scope_guidance()
+        self._sync_detail_selection()
         self.query_one("#capture-policy-apply", Button).focus()
         await self.refresh_full_count()
 
@@ -329,7 +359,11 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             self._set_status("Failed — Capture Off disables Full edits", error=True)
             return None
         if scope is CaptureScope.GLOBAL and detail is None:
-            detail = fresh.global_detail
+            self._set_status(
+                "Failed — Global default requires explicit Safe or Full",
+                error=True,
+            )
+            return None
         self.preview = self.preview_for(scope, detail)
         if (
             self.global_enabled
@@ -434,26 +468,98 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
         except Exception:
             self.full_capture_count = None
             message = "Stored Full captures: unavailable"
+        try:
+            self.purge_availability = self.bindings.purge_availability()
+        except Exception:
+            self.purge_availability = CapturePurgeAvailability(
+                False,
+                "capture_count_unavailable",
+            )
         if self.is_mounted:
             self.query_one("#capture-policy-count", Static).update(message)
+            self._sync_purge_control()
+
+    async def _fresh_purge_context(
+        self,
+    ) -> tuple[CapturePolicySnapshot, int, CapturePurgeAvailability, int] | None:
+        try:
+            snapshot = self.bindings.read()
+            if snapshot.session_id != self.bindings.target_session_id:
+                return None
+            count = await self.bindings.count_full()
+            availability = self.bindings.purge_availability()
+            revision = self.bindings.capture_revision()
+        except Exception:
+            return None
+        return snapshot, count, availability, revision
+
+    @staticmethod
+    def _purge_confirmation_message(
+        snapshot: CapturePolicySnapshot,
+        count: int,
+    ) -> str:
+        if snapshot.enabled:
+            policy = snapshot.effective.detail.value.title()
+        else:
+            policy = "Off"
+        return (
+            f'Delete {count} stored Full captures from “{snapshot.conversation_title}”? '
+            "This irreversible action performs logical record deletion only. "
+            "SQLite WAL frames, free pages, filesystem snapshots, prior exports, "
+            "and backups may retain older bytes; exports and backups are not deleted. "
+            "Safe captures, messages, usage, and policy are unchanged. "
+            f"The capture policy remains {policy}."
+        )
 
     async def delete_full_captures(self) -> CapturePurgeResult | None:
         """Confirm the bounded logical purge and consume its structured result."""
         if self._applying:
             return None
+        before = await self._fresh_purge_context()
+        if before is None:
+            self._set_status("Failed — stored Full capture state is unavailable", error=True)
+            return None
+        snapshot, count, availability, revision = before
+        if not availability.can_purge:
+            self._set_status(f"Failed — {_purge_reason(availability.reason_code)}", error=True)
+            return None
+        if count <= 0:
+            self._set_status("No stored Full captures to delete")
+            return None
         if not await self._confirm(
-            PURGE_FULL_WARNING,
+            self._purge_confirmation_message(snapshot, count),
             title="Delete stored Full captures?",
             confirm_label="Delete logical records",
         ):
             self._set_status("Deletion cancelled")
             return None
-        revision = self.bindings.capture_revision()
+        after = await self._fresh_purge_context()
+        if after is None:
+            self._set_status("Failed — stored Full capture state is unavailable", error=True)
+            return None
+        fresh_snapshot, fresh_count, fresh_availability, fresh_revision = after
+        if not fresh_availability.can_purge:
+            self._set_status(
+                f"Failed — {_purge_reason(fresh_availability.reason_code)}",
+                error=True,
+            )
+            return None
+        if (
+            fresh_snapshot.conversation_title != snapshot.conversation_title
+            or fresh_count != count
+            or fresh_snapshot.enabled != snapshot.enabled
+            or fresh_snapshot.effective != snapshot.effective
+            or fresh_snapshot.policy_revision != snapshot.policy_revision
+            or fresh_snapshot.config_generation != snapshot.config_generation
+            or fresh_revision != revision
+        ):
+            self._set_status("Failed — capture state changed; review and confirm again", error=True)
+            return None
         self._applying = True
         self._set_controls_disabled(True)
         self._set_status("Applying")
         try:
-            result = await self.bindings.purge_full(revision)
+            result = await self.bindings.purge_full(fresh_revision)
             if result.status is CapturePurgeStatus.DELETED:
                 self.full_capture_count = 0
                 self._set_status(
@@ -463,7 +569,10 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             elif result.status is CapturePurgeStatus.STALE:
                 self._set_status("Failed — stored captures changed; try again", error=True)
             elif result.status is CapturePurgeStatus.BLOCKED:
-                self._set_status("Failed — capture writer is active", error=True)
+                self._set_status(
+                    f"Failed — {_purge_reason(result.reason_code)}",
+                    error=True,
+                )
             else:
                 self._set_status("Failed — stored captures were not deleted", error=True)
             return result
@@ -517,6 +626,7 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             self.selected_detail = self.snapshot.conversation_detail
         else:
             self.selected_detail = self.snapshot.global_detail
+        self._sync_scope_guidance()
         self._sync_detail_selection()
         self.preview = self.preview_for(self.selected_scope, self.selected_detail)
         self.query_one("#capture-policy-effective", Static).update(
@@ -525,6 +635,13 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
 
     @on(RadioSet.Changed, "#capture-policy-details")
     def _detail_changed(self, event: RadioSet.Changed) -> None:
+        if (
+            self.selected_scope is CaptureScope.GLOBAL
+            and event.pressed.id == "capture-policy-detail-inherit"
+        ):
+            self.selected_detail = self.snapshot.global_detail
+            self._sync_detail_selection()
+            return
         self.selected_detail = {
             "capture-policy-detail-inherit": None,
             "capture-policy-detail-safe": CaptureDetail.SAFE,
@@ -536,12 +653,24 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
         )
 
     def _sync_detail_selection(self) -> None:
+        inherit = self.query_one("#capture-policy-detail-inherit", RadioButton)
+        inherit.disabled = self.selected_scope is CaptureScope.GLOBAL
         for detail, selector in (
             (None, "#capture-policy-detail-inherit"),
             (CaptureDetail.SAFE, "#capture-policy-detail-safe"),
             (CaptureDetail.FULL, "#capture-policy-detail-full"),
         ):
             self.query_one(selector, RadioButton).value = self.selected_detail is detail
+
+    def _sync_scope_guidance(self) -> None:
+        if not self.is_mounted:
+            return
+        text = (
+            "Global default requires explicit Safe or Full."
+            if self.selected_scope is CaptureScope.GLOBAL
+            else "Inherit removes this scope's override."
+        )
+        self.query_one("#capture-policy-guidance", Static).update(text)
 
     @on(Button.Pressed, "#capture-policy-apply")
     def _apply_pressed(self, event: Button.Pressed) -> None:
@@ -602,6 +731,8 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
         return text
 
     def _disabled_reason(self) -> str:
+        if not self.purge_availability.can_purge:
+            return _purge_reason(self.purge_availability.reason_code) + "."
         if not self.snapshot.enabled:
             return "Capture Off: Full edits stay disabled until capture is On."
         if self.bindings.target_conversation_id is None:
@@ -620,6 +751,22 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             "#capture-policy-details",
         ):
             self.query_one(selector).disabled = disabled
+        if not disabled:
+            self._sync_purge_control()
+
+    def _sync_purge_control(self) -> None:
+        if not self.is_mounted:
+            return
+        purge = self.query_one("#capture-policy-purge", Button)
+        purge.disabled = (
+            self._applying
+            or not self.purge_availability.can_purge
+            or not isinstance(self.full_capture_count, int)
+            or self.full_capture_count <= 0
+        )
+        self.query_one("#capture-policy-reason", Static).update(
+            self._disabled_reason()
+        )
 
     def _set_status(self, message: str, *, error: bool = False) -> None:
         self.status_text = message

@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
     CapturePolicyMutationResult,
     CapturePolicyMutationStatus,
     CapturePolicySnapshot,
+    CapturePurgeAvailability,
     CapturePurgeResult,
 )
 from tldw_chatbook.Chat.console_exchange_capture import (
@@ -66,6 +67,7 @@ class _PolicyHost:
         self.confirmations: list[str] = []
         self.full_count = 2
         self.capture_revision = snapshot.capture_revision
+        self.availability = CapturePurgeAvailability(True, None)
 
     def bindings(self) -> CapturePolicyBindings:
         async def conversation(
@@ -157,6 +159,7 @@ class _PolicyHost:
             count_full=count,
             purge_full=purge,
             capture_revision=lambda: self.capture_revision,
+            purge_availability=lambda: self.availability,
         )
 
 
@@ -487,11 +490,136 @@ async def test_purge_confirmation_names_logical_deletion_wal_and_policy() -> Non
         dialog._confirm = confirm
         result = await dialog.delete_full_captures()
 
-        assert result is not None and result.removed_count == 2
+        assert result is not None and result.removed_count == 2, dialog.status_text
+        assert "Pinned chat" in messages[0]
+        assert "2 stored Full captures" in messages[0]
+        assert "irreversible" in messages[0]
         assert "logical record deletion" in messages[0]
         assert "WAL" in messages[0]
-        assert "capture policy remains Full" in messages[0]
+        assert "capture policy remains Safe" in messages[0]
+        assert "Safe captures, messages, usage, and policy are unchanged" in messages[0]
+        assert "exports and backups are not deleted" in messages[0]
         assert "Deleted 2" in dialog.status_text
+
+
+@pytest.mark.asyncio
+async def test_purge_is_disabled_with_exact_controller_reason_at_80x24() -> None:
+    host = _PolicyHost(_snapshot())
+    host.availability = CapturePurgeAvailability(False, "fleet_writer_active")
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        purge = dialog.query_one("#capture-policy-purge", Button)
+        reason = str(dialog.query_one("#capture-policy-reason", Static).render())
+        assert purge.disabled is True
+        assert "Fleet child is still able to write captures" in reason
+        assert dialog.query_one("#capture-policy-reason").region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_purge_rechecks_state_after_confirmation_before_mutation() -> None:
+    host = _PolicyHost(_snapshot())
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        async def confirm(_message: str, **_kwargs: str) -> bool:
+            host.snapshot = replace(
+                host.snapshot,
+                conversation_title="Changed title",
+                enabled=False,
+            )
+            host.full_count = 3
+            host.capture_revision += 1
+            host.availability = CapturePurgeAvailability(
+                False,
+                "primary_writer_active",
+            )
+            return True
+
+        dialog._confirm = confirm
+        result = await dialog.delete_full_captures()
+
+        assert result is None
+        assert not any(call[0] == "purge" for call in host.calls)
+        assert dialog.status_text == (
+            "Failed — Assistant response is still writing captures"
+        )
+
+
+@pytest.mark.asyncio
+async def test_purge_rechecks_policy_revision_after_confirmation() -> None:
+    host = _PolicyHost(_snapshot())
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        async def confirm(_message: str, **_kwargs: str) -> bool:
+            host.snapshot = replace(
+                host.snapshot,
+                policy_revision=host.snapshot.policy_revision + 1,
+            )
+            return True
+
+        dialog._confirm = confirm
+        result = await dialog.delete_full_captures()
+
+        assert result is None
+        assert not any(call[0] == "purge" for call in host.calls)
+        assert dialog.status_text == (
+            "Failed — capture state changed; review and confirm again"
+        )
+
+
+@pytest.mark.asyncio
+async def test_blocked_purge_result_preserves_specific_reason() -> None:
+    host = _PolicyHost(_snapshot())
+    bindings = host.bindings()
+
+    async def blocked(_revision: int) -> CapturePurgeResult:
+        return CapturePurgeResult.blocked(5, "retained_signals_active")
+
+    bindings = replace(bindings, purge_full=blocked)
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(bindings)
+        await app.push_screen(dialog)
+        await pilot.pause()
+        dialog._confirm = lambda *_args, **_kwargs: _async_true()
+
+        result = await dialog.delete_full_captures()
+
+        assert result is not None
+        assert dialog.status_text == (
+            "Failed — Provider signals can still attach captures"
+        )
+
+
+@pytest.mark.asyncio
+async def test_global_scope_disables_inherit_and_selects_explicit_detail() -> None:
+    host = _PolicyHost(_snapshot(global_detail=CaptureDetail.FULL))
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        await pilot.click("#capture-policy-scope-global")
+        await pilot.pause()
+
+        inherit = dialog.query_one("#capture-policy-detail-inherit", RadioButton)
+        assert inherit.disabled is True
+        assert inherit.value is False
+        assert dialog.query_one("#capture-policy-detail-full", RadioButton).value
+        guidance = str(dialog.query_one("#capture-policy-guidance", Static).render())
+        assert "Global default requires explicit Safe or Full" in guidance
 
 
 @pytest.mark.asyncio
@@ -501,10 +629,22 @@ async def test_committed_purge_survives_post_commit_refresh_failure() -> None:
         "Controller",
         (),
         {
-            "store": type("Store", (), {"active_session_id": "session-a"})(),
+            "store": type(
+                "Store",
+                (),
+                {
+                    "active_session_id": "session-a",
+                    "stage_full_capture_purge": lambda _self, _session: type(
+                        "Stage", (), {"removed_count": 2}
+                    )(),
+                },
+            )(),
             "purge_full_captures": lambda _self, _session, _revision: host.bindings().purge_full(_revision),
             "capture_revision": lambda _self, _session: 5,
             "capture_policy_snapshot": lambda _self, _session: host.snapshot,
+            "capture_purge_availability": lambda _self, _session: (
+                CapturePurgeAvailability(True, None)
+            ),
         },
     )()
 
