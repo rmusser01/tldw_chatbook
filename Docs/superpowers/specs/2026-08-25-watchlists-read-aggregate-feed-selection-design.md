@@ -1,8 +1,11 @@
 # Watchlists Read Aggregate Feed Selection Design
 
-Status: Approved interactively; written specification review pending  
-Date: 2026-08-25  
-Extends: [Watchlists NetNewsWire Reader and Collapsible Rails Design](2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md)  
+Status: Approved interactively and by specification review
+
+Date: 2026-08-25
+
+Extends: [Watchlists NetNewsWire Reader and Collapsible Rails Design](2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md)
+
 Governed by: [ADR-042: Watchlists reader-first information architecture](../../../backlog/decisions/042-watchlists-reader-first-ia.md)
 
 ## Goal
@@ -308,8 +311,8 @@ Automated coverage must prove:
    commit.
 9. All Unread forces and explains the temporary Unread filter without overwriting the parked manual
    filter.
-10. Mark-read, Mark unread, zero-count display pinning, branch collapse, deletion, and Unassigned
-    membership changes reconcile correctly.
+10. Mark-read, Mark unread, zero-count display pinning, branch collapse, deletion, selected-watchlist
+    membership removal, and Unassigned membership changes reconcile correctly.
 11. Count refreshes and rail rebuilds preserve focus, expansion, scope, and Reader position.
 12. Aggregate branches remain visible on every Watchlists sub-screen while Read-only predicates do
     not alter unrelated management data.
@@ -340,8 +343,10 @@ Out of scope:
 
 ## ADR check
 
-ADR required: no new ADR  
-ADR path: `backlog/decisions/042-watchlists-reader-first-ia.md`  
+ADR required: no new ADR
+
+ADR path: `backlog/decisions/042-watchlists-reader-first-ia.md`
+
 Reason: ADR-042 already decides the reader-first Navigation hierarchy, normalized contextual scope,
 atomic scope commits, and Watchlists-local ownership. This design is a direct, focused extension of
 that accepted decision.
