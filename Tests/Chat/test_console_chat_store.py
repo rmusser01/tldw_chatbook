@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
@@ -1826,6 +1827,62 @@ def test_rollback_restored_session_refuses_reused_session_id():
     assert rolled_back is False
     assert store._sessions[restored.id] is replacement
     assert store.active_session_id == prior.id
+
+
+@pytest.mark.parametrize(
+    ("failure_boundary", "cancelled"),
+    (
+        ("_restore_speech_preferences", False),
+        ("_hydrate_generation_metadata_from_persistence", True),
+    ),
+    ids=("ordinary-exception", "cancellation"),
+)
+def test_restore_persisted_session_is_atomic_after_create(
+    failure_boundary,
+    cancelled,
+    monkeypatch,
+):
+    """Every post-create failure purges only the new runtime session."""
+    class DurableObserver:
+        def __init__(self) -> None:
+            self.mutations: list[tuple[str, str]] = []
+
+        def delete_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("delete", conversation_id))
+
+        def update_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("update", conversation_id))
+
+    persistence = DurableObserver()
+    coordinator = ConsoleLibraryPolicyCoordinator(object())
+    store = ConsoleChatStore(
+        persistence=persistence,
+        library_policy_coordinator=coordinator,
+    )
+    prior = store.create_session(title="Prior")
+    store.set_session_draft(prior.id, "prior draft")
+
+    def fail_post_create(*_args, **_kwargs):
+        if cancelled:
+            raise asyncio.CancelledError
+        raise RuntimeError("post-create restore failed")
+
+    monkeypatch.setattr(store, failure_boundary, fail_post_create)
+    expected_error = asyncio.CancelledError if cancelled else RuntimeError
+
+    with pytest.raises(expected_error):
+        store.restore_persisted_session(
+            title="Failed restore",
+            workspace_id="workspace-restored",
+            persisted_conversation_id="failed-conversation",
+            all_nodes=[],
+        )
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.draft == "prior draft"
+    assert set(coordinator._holders) == {prior.id}
+    assert persistence.mutations == []
 
 
 def test_close_session_keeps_neighbor_policy_and_uses_exact_runtime_purge():

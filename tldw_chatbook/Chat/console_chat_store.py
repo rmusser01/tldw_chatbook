@@ -1700,6 +1700,7 @@ class ConsoleChatStore:
                 project_instruction_state = decode_project_context_json(
                     raw_project_context
                 )
+        prior_active_session_id = self.active_session_id
         session = self.create_session(
             title=title,
             workspace_id=workspace_id,
@@ -1713,48 +1714,58 @@ class ConsoleChatStore:
             project_instruction_state=project_instruction_state,
             activate=activate,
         )
-        session.persisted_conversation_id = str(persisted_conversation_id)
-        self.hydrate_session_capture_policy(session.id)
-        self._hydrate_dispatch_recovery(
-            session.id,
-            str(persisted_conversation_id),
-        )
-        session.library_policy_hydrated = False
-        coordinator = self.library_policy_coordinator
-        if coordinator is not None:
-            session.library_policy_holder.snapshot = normalize_policy_read(None).snapshot
-            session.library_policy_holder.explicitly_staged = False
-            coordinator.register_holder(
+        try:
+            session.persisted_conversation_id = str(persisted_conversation_id)
+            self.hydrate_session_capture_policy(session.id)
+            self._hydrate_dispatch_recovery(
                 session.id,
-                session.persisted_conversation_id,
-                session.library_policy_holder,
+                str(persisted_conversation_id),
             )
-        if session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
-            self._pending_workspace_projections[session.id] = (
-                session.persisted_conversation_id
+            session.library_policy_hydrated = False
+            coordinator = self.library_policy_coordinator
+            if coordinator is not None:
+                session.library_policy_holder.snapshot = normalize_policy_read(
+                    None
+                ).snapshot
+                session.library_policy_holder.explicitly_staged = False
+                coordinator.register_holder(
+                    session.id,
+                    session.persisted_conversation_id,
+                    session.library_policy_holder,
+                )
+            if session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
+                self._pending_workspace_projections[session.id] = (
+                    session.persisted_conversation_id
+                )
+            self._restore_speech_preferences(session)
+            self._resolve_context_policy_on_resume(session.id)
+            restored_nodes = self._hydrate_provider_continuations_from_persistence(
+                session.id,
+                persisted_conversation_id,
+                list(all_nodes),
+                remote_active=remote_active,
             )
-        self._restore_speech_preferences(session)
-        self._resolve_context_policy_on_resume(session.id)
-        restored_nodes = self._hydrate_provider_continuations_from_persistence(
-            session.id,
-            persisted_conversation_id,
-            list(all_nodes),
-            remote_active=remote_active,
-        )
-        self._ingest_full_tree(
-            session.id,
-            restored_nodes,
-            active_leaf_persisted_id=active_leaf_persisted_id,
-        )
-        self._normalize_restored_provider_continuation(
-            session.id, str(persisted_conversation_id)
-        )
-        self._reconcile_restored_chat_sync_intents(
-            session.id, str(persisted_conversation_id)
-        )
-        self._hydrate_generation_metadata_from_persistence(session.id)
-        self._bump_payload_revision(session.id)
-        return session
+            self._ingest_full_tree(
+                session.id,
+                restored_nodes,
+                active_leaf_persisted_id=active_leaf_persisted_id,
+            )
+            self._normalize_restored_provider_continuation(
+                session.id, str(persisted_conversation_id)
+            )
+            self._reconcile_restored_chat_sync_intents(
+                session.id, str(persisted_conversation_id)
+            )
+            self._hydrate_generation_metadata_from_persistence(session.id)
+            self._bump_payload_revision(session.id)
+            return session
+        except BaseException:
+            self.rollback_restored_session(
+                session.id,
+                expected_session=session,
+                prior_active_session_id=prior_active_session_id,
+            )
+            raise
 
     def _hydrate_dispatch_recovery(
         self,

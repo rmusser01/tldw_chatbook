@@ -3400,9 +3400,14 @@ class ConsoleWorkspaceController:
         """Open one saved conversation for both the flat browser and Tree."""
 
         conversation_id = str(conversation_id or "").strip()
-        browser_row = self._find_console_browser_row(
-            row_key or conversation_id,
-            conversation_id=conversation_id,
+        explicit_row_key = str(row_key or "").strip()
+        browser_row = (
+            self._find_console_browser_row(
+                explicit_row_key,
+                conversation_id=conversation_id,
+            )
+            if explicit_row_key
+            else None
         )
         prior_browser_workspace_id: str | None = None
         if browser_row is not None:
@@ -3471,12 +3476,12 @@ class ConsoleWorkspaceController:
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
-                self._set_active_workspace_for_console_session(session_id)
-                self._sync_console_chat_core_state()
-                sync_result = self._sync_native_console_chat_ui_fn()
-                if inspect.isawaitable(sync_result):
-                    await sync_result
-                self._sync_temporary_chip_fn()
+            self._set_active_workspace_for_console_session(session_id)
+            self._sync_console_chat_core_state()
+            sync_result = self._sync_native_console_chat_ui_fn()
+            if inspect.isawaitable(sync_result):
+                await sync_result
+            self._sync_temporary_chip_fn()
             self._focus_composer_if_needed_fn(force=True)
             await self._refresh_console_conversation_browser_after_selection()
         except asyncio.CancelledError:
@@ -3943,10 +3948,17 @@ class ConsoleWorkspaceController:
             if inspect.isawaitable(sync_result):
                 await sync_result
             self._sync_temporary_chip_fn()
-        except BaseException:
+        except Exception:
             logger.opt(exception=True).warning(
                 "Failed to repaint the prior Console session after saved-chat open"
             )
+        finally:
+            try:
+                self._focus_composer_if_needed_fn(force=True)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to focus the prior Console composer after saved-chat open"
+                )
 
     async def _resume_console_workspace_conversation(
         self,
@@ -3981,6 +3993,9 @@ class ConsoleWorkspaceController:
         try:
             tree = await load_console_conversation_tree(self.app_instance, target)
         except ConversationServiceUnavailable:
+            await self._restore_console_session_after_failed_open(
+                store, prior_active_session_id
+            )
             self.app_instance.notify(
                 "Saved conversation resume is unavailable in this build.",
                 severity="warning",
@@ -3990,9 +4005,13 @@ class ConsoleWorkspaceController:
             logger.exception(
                 f"Unable to resume Console saved conversation: conversation_id={target}"
             )
+            await self._restore_console_session_after_failed_open(
+                store, prior_active_session_id
+            )
             self.app_instance.notify(
-                "Unable to load this saved conversation.",
+                CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
                 severity="error",
+                timeout=15,
             )
             return None
 
@@ -4000,6 +4019,9 @@ class ConsoleWorkspaceController:
             # TASK-717: missing record - the caller owns this failure's UX
             # (honest toast + marking the row visibly broken), so do not
             # stack a second notification here.
+            await self._restore_console_session_after_failed_open(
+                store, prior_active_session_id
+            )
             return False
 
         conversation = tree.get("conversation")
