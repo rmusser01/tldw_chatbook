@@ -12,15 +12,15 @@ THINKING_ENVELOPE_VERSION = 1
 MAX_THINKING_BLOCKS = 32
 MAX_THINKING_TEXT_BYTES = 256 * 1024
 MAX_THINKING_ENVELOPE_BYTES = 1024 * 1024
-MAX_THINKING_PROVENANCE_BYTES = 200
-MAX_THINKING_BLOCK_ID_BYTES = 128
+MAX_THINKING_PROVENANCE_CHARS = 200
+MAX_THINKING_BLOCK_ID_CHARS = 128
 
 ThinkingVisibility = Literal["displayable", "proprietary"]
 ThinkingStatus = Literal["complete", "stopped", "failed"]
 ThinkingHistoryPolicy = Literal["auto", "include", "exclude"]
 
-_INVALID_MESSAGE = "Invalid thinking data."
-_MALFORMED_WARNING = "Thinking data could not be read."
+_INVALID_MESSAGE = "Invalid thinking data: {rule}."
+_MALFORMED_WARNING = "Thinking data could not be read: {rule}."
 _UNSUPPORTED_WARNING = "Thinking data version is unsupported."
 _BLOCK_KEYS = frozenset(
     {
@@ -48,19 +48,30 @@ class ThinkingEnvelopeValidationError(ValueError):
 
 
 class _InvalidThinking(Exception):
-    pass
+    """Internal content-free validation failure."""
 
 
-def _fail() -> None:
-    raise _InvalidThinking
+def _fail(rule: str) -> None:
+    raise _InvalidThinking(rule)
 
 
-def _bounded_string(value: object, maximum: int, *, nonblank: bool = True) -> str:
+def _bounded_string(
+    value: object, maximum: int, field: str, *, nonblank: bool = True
+) -> str:
     if type(value) is not str:
-        _fail()
+        _fail(field)
     text = cast(str, value)
-    if (nonblank and not text.strip()) or len(text.encode("utf-8")) > maximum:
-        _fail()
+    if (nonblank and not text.strip()) or len(text) > maximum:
+        _fail(field)
+    return text
+
+
+def _bounded_text(value: object) -> str:
+    if type(value) is not str:
+        _fail("text")
+    text = cast(str, value)
+    if not text or len(text.encode("utf-8")) > MAX_THINKING_TEXT_BYTES:
+        _fail("text")
     return text
 
 
@@ -73,13 +84,18 @@ def _validate_shared_fields(
     source_format: object,
     status: object,
 ) -> None:
-    _bounded_string(block_id, MAX_THINKING_BLOCK_ID_BYTES)
+    _bounded_string(block_id, MAX_THINKING_BLOCK_ID_CHARS, "block_id")
     if type(round_ordinal) is not int or cast(int, round_ordinal) < 0:
-        _fail()
-    for value in (provider, model, protocol, source_format):
-        _bounded_string(value, MAX_THINKING_PROVENANCE_BYTES)
+        _fail("round_ordinal")
+    for field_name, value in {
+        "provider": provider,
+        "model": model,
+        "protocol": protocol,
+        "source_format": source_format,
+    }.items():
+        _bounded_string(value, MAX_THINKING_PROVENANCE_CHARS, field_name)
     if status not in {"complete", "stopped", "failed"}:
-        _fail()
+        _fail("status")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,11 +123,11 @@ class DisplayableThinkingBlock:
                 self.source_format,
                 self.status,
             )
-            _bounded_string(self.text, MAX_THINKING_TEXT_BYTES, nonblank=False)
-            if not self.text:
-                _fail()
-        except _InvalidThinking:
-            raise ThinkingEnvelopeValidationError(_INVALID_MESSAGE) from None
+            _bounded_text(self.text)
+        except _InvalidThinking as error:
+            raise ThinkingEnvelopeValidationError(
+                _INVALID_MESSAGE.format(rule=error)
+            ) from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,8 +154,10 @@ class ProprietaryThinkingBlock:
                 self.source_format,
                 self.status,
             )
-        except _InvalidThinking:
-            raise ThinkingEnvelopeValidationError(_INVALID_MESSAGE) from None
+        except _InvalidThinking as error:
+            raise ThinkingEnvelopeValidationError(
+                _INVALID_MESSAGE.format(rule=error)
+            ) from None
 
 
 ThinkingBlock = DisplayableThinkingBlock | ProprietaryThinkingBlock
@@ -154,20 +172,22 @@ class ThinkingEnvelope:
     def __post_init__(self) -> None:
         try:
             if type(self.blocks) is not tuple or len(self.blocks) > MAX_THINKING_BLOCKS:
-                _fail()
+                _fail("blocks")
             block_ids: set[str] = set()
             prior_ordinal = -1
             for block in self.blocks:
                 if not isinstance(
                     block, (DisplayableThinkingBlock, ProprietaryThinkingBlock)
                 ):
-                    _fail()
+                    _fail("blocks")
                 if block.block_id in block_ids or block.round_ordinal <= prior_ordinal:
-                    _fail()
+                    _fail("block ordering")
                 block_ids.add(block.block_id)
                 prior_ordinal = block.round_ordinal
-        except _InvalidThinking:
-            raise ThinkingEnvelopeValidationError(_INVALID_MESSAGE) from None
+        except _InvalidThinking as error:
+            raise ThinkingEnvelopeValidationError(
+                _INVALID_MESSAGE.format(rule=error)
+            ) from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,13 +206,13 @@ class ThinkingEnvelopeRead:
 
 def _strict_json_loads(value: str) -> object:
     def reject_constant(_value: str) -> None:
-        _fail()
+        _fail("JSON number")
 
     def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
         result: dict[str, object] = {}
         for key, item in pairs:
             if key in result:
-                _fail()
+                _fail("duplicate JSON key")
             result[key] = item
         return result
 
@@ -203,36 +223,40 @@ def _strict_json_loads(value: str) -> object:
 
 def _exact_mapping(value: object, keys: frozenset[str]) -> Mapping[str, object]:
     if type(value) is not dict or set(cast(dict[object, object], value)) != keys:
-        _fail()
+        _fail("allowed keys")
     return cast(Mapping[str, object], value)
 
 
 def _parse_block(value: object) -> ThinkingBlock:
     if type(value) is not dict:
-        _fail()
+        _fail("blocks")
     raw = cast(Mapping[str, object], value)
     visibility = raw.get("visibility")
     expected_keys = _DISPLAYABLE_KEYS if visibility == "displayable" else _BLOCK_KEYS
     item = _exact_mapping(value, expected_keys)
     shared = {
-        "block_id": _bounded_string(item["block_id"], MAX_THINKING_BLOCK_ID_BYTES),
+        "block_id": _bounded_string(
+            item["block_id"], MAX_THINKING_BLOCK_ID_CHARS, "block_id"
+        ),
         "round_ordinal": item["round_ordinal"],
-        "provider": _bounded_string(item["provider"], MAX_THINKING_PROVENANCE_BYTES),
-        "model": _bounded_string(item["model"], MAX_THINKING_PROVENANCE_BYTES),
-        "protocol": _bounded_string(item["protocol"], MAX_THINKING_PROVENANCE_BYTES),
+        "provider": _bounded_string(
+            item["provider"], MAX_THINKING_PROVENANCE_CHARS, "provider"
+        ),
+        "model": _bounded_string(item["model"], MAX_THINKING_PROVENANCE_CHARS, "model"),
+        "protocol": _bounded_string(
+            item["protocol"], MAX_THINKING_PROVENANCE_CHARS, "protocol"
+        ),
         "source_format": _bounded_string(
-            item["source_format"], MAX_THINKING_PROVENANCE_BYTES
+            item["source_format"], MAX_THINKING_PROVENANCE_CHARS, "source_format"
         ),
         "status": item["status"],
     }
     if visibility == "displayable":
-        text = _bounded_string(item["text"], MAX_THINKING_TEXT_BYTES, nonblank=False)
-        if not text:
-            _fail()
+        text = _bounded_text(item["text"])
         return DisplayableThinkingBlock(text=text, **shared)  # type: ignore[arg-type]
     if visibility == "proprietary":
         return ProprietaryThinkingBlock(**shared)  # type: ignore[arg-type]
-    _fail()
+    _fail("visibility")
 
 
 def _envelope_value(envelope: ThinkingEnvelope) -> dict[str, object]:
@@ -259,20 +283,18 @@ def _validate_canonical_size(envelope: ThinkingEnvelope) -> None:
     for chunk in _CANONICAL_ENCODER.iterencode(_envelope_value(envelope)):
         total += len(chunk.encode("utf-8"))
         if total > MAX_THINKING_ENVELOPE_BYTES:
-            _fail()
+            _fail("envelope size")
 
 
 def _parse_value(value: object) -> ThinkingEnvelope:
     if type(value) is not str:
-        _fail()
+        _fail("JSON text")
     raw = cast(str, value)
-    if len(raw.encode("utf-8")) > MAX_THINKING_ENVELOPE_BYTES:
-        _fail()
     item = _exact_mapping(_strict_json_loads(raw), _TOP_LEVEL_KEYS)
     if type(item["version"]) is not int or item["version"] != THINKING_ENVELOPE_VERSION:
-        _fail()
+        _fail("version")
     if type(item["blocks"]) is not list:
-        _fail()
+        _fail("blocks")
     blocks = tuple(_parse_block(block) for block in cast(list[object], item["blocks"]))
     envelope = ThinkingEnvelope(blocks=blocks)
     _validate_canonical_size(envelope)
@@ -283,8 +305,16 @@ def parse_thinking_blocks_json(value: object) -> ThinkingEnvelope:
     """Strictly parse one canonical V1 JSON envelope."""
     try:
         return _parse_value(value)
+    except ThinkingEnvelopeValidationError:
+        raise
+    except _InvalidThinking as error:
+        raise ThinkingEnvelopeValidationError(
+            _INVALID_MESSAGE.format(rule=error)
+        ) from None
     except Exception:
-        raise ThinkingEnvelopeValidationError(_INVALID_MESSAGE) from None
+        raise ThinkingEnvelopeValidationError(
+            _INVALID_MESSAGE.format(rule="JSON syntax")
+        ) from None
 
 
 def read_thinking_blocks_json(value: object) -> ThinkingEnvelopeRead:
@@ -292,7 +322,7 @@ def read_thinking_blocks_json(value: object) -> ThinkingEnvelopeRead:
     if value is None:
         return ThinkingEnvelopeRead()
     if type(value) is not str:
-        return ThinkingEnvelopeRead(warning=_MALFORMED_WARNING)
+        return ThinkingEnvelopeRead(warning=_MALFORMED_WARNING.format(rule="JSON text"))
     raw = cast(str, value)
     try:
         decoded = _strict_json_loads(raw)
@@ -301,10 +331,19 @@ def read_thinking_blocks_json(value: object) -> ThinkingEnvelopeRead:
             and type(decoded.get("version")) is int
             and decoded["version"] != THINKING_ENVELOPE_VERSION
         ):
+            canonical = _CANONICAL_ENCODER.encode(decoded)
+            if len(canonical.encode("utf-8")) > MAX_THINKING_ENVELOPE_BYTES:
+                return ThinkingEnvelopeRead(
+                    warning=_MALFORMED_WARNING.format(rule="envelope size")
+                )
             return ThinkingEnvelopeRead(opaque_json=raw, warning=_UNSUPPORTED_WARNING)
         return ThinkingEnvelopeRead(envelope=_parse_value(raw))
+    except _InvalidThinking as error:
+        return ThinkingEnvelopeRead(warning=_MALFORMED_WARNING.format(rule=error))
     except Exception:
-        return ThinkingEnvelopeRead(warning=_MALFORMED_WARNING)
+        return ThinkingEnvelopeRead(
+            warning=_MALFORMED_WARNING.format(rule="JSON syntax")
+        )
 
 
 def dump_thinking_blocks_json(envelope: ThinkingEnvelope | None) -> str | None:
@@ -314,8 +353,14 @@ def dump_thinking_blocks_json(envelope: ThinkingEnvelope | None) -> str | None:
     try:
         validated = _parse_value(_CANONICAL_ENCODER.encode(_envelope_value(envelope)))
         return _CANONICAL_ENCODER.encode(_envelope_value(validated))
+    except _InvalidThinking as error:
+        raise ThinkingEnvelopeValidationError(
+            _INVALID_MESSAGE.format(rule=error)
+        ) from None
     except Exception:
-        raise ThinkingEnvelopeValidationError(_INVALID_MESSAGE) from None
+        raise ThinkingEnvelopeValidationError(
+            _INVALID_MESSAGE.format(rule="envelope")
+        ) from None
 
 
 def normalize_thinking_history_policy(value: object) -> ThinkingHistoryPolicy:

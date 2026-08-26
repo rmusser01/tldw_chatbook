@@ -13,7 +13,9 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
     ThinkingEnvelopeValidationError,
     MAX_THINKING_BLOCKS,
+    MAX_THINKING_BLOCK_ID_CHARS,
     MAX_THINKING_ENVELOPE_BYTES,
+    MAX_THINKING_PROVENANCE_CHARS,
     MAX_THINKING_TEXT_BYTES,
     dump_thinking_blocks_json,
     normalize_thinking_history_policy,
@@ -85,7 +87,7 @@ def test_parse_rejects_non_string_json_input(value: object) -> None:
 
 
 def test_parse_rejects_boolean_ordinal() -> None:
-    with pytest.raises(ThinkingEnvelopeValidationError):
+    with pytest.raises(ThinkingEnvelopeValidationError, match="round_ordinal"):
         parse_thinking_blocks_json(
             json.dumps(_envelope(_displayable(round_ordinal=True)))
         )
@@ -162,6 +164,38 @@ def test_parse_enforces_block_and_envelope_bounds() -> None:
         parse_thinking_blocks_json(json.dumps(oversized_envelope))
 
 
+def test_character_boundaries_allow_non_ascii_identifier_and_provenance() -> None:
+    block = _displayable(
+        block_id="é" * MAX_THINKING_BLOCK_ID_CHARS,
+        provider="é" * MAX_THINKING_PROVENANCE_CHARS,
+        model="é" * MAX_THINKING_PROVENANCE_CHARS,
+        protocol="é" * MAX_THINKING_PROVENANCE_CHARS,
+        source_format="é" * MAX_THINKING_PROVENANCE_CHARS,
+    )
+
+    assert parse_thinking_blocks_json(json.dumps(_envelope(block))) == ThinkingEnvelope(
+        blocks=(
+            DisplayableThinkingBlock(
+                block_id="é" * MAX_THINKING_BLOCK_ID_CHARS,
+                round_ordinal=0,
+                provider="é" * MAX_THINKING_PROVENANCE_CHARS,
+                model="é" * MAX_THINKING_PROVENANCE_CHARS,
+                protocol="é" * MAX_THINKING_PROVENANCE_CHARS,
+                source_format="é" * MAX_THINKING_PROVENANCE_CHARS,
+                status="complete",
+                text="visible thinking",
+            ),
+        )
+    )
+
+
+def test_parse_accepts_oversized_raw_json_when_canonical_envelope_is_bounded() -> None:
+    raw = "{\n" + (" " * MAX_THINKING_ENVELOPE_BYTES) + '"version":1,"blocks":[]}'
+
+    assert len(raw.encode("utf-8")) > MAX_THINKING_ENVELOPE_BYTES
+    assert parse_thinking_blocks_json(raw) == ThinkingEnvelope(blocks=())
+
+
 def test_unknown_durable_version_is_preserved_while_direct_parse_rejects_it() -> None:
     raw = '{"version":2,"blocks":[]}'
 
@@ -175,12 +209,25 @@ def test_unknown_durable_version_is_preserved_while_direct_parse_rejects_it() ->
     assert not result.generation_actions_enabled
 
 
+def test_oversized_unknown_durable_version_is_not_retained_opaquely() -> None:
+    raw = json.dumps({"version": 2, "blocks": ["x" * MAX_THINKING_ENVELOPE_BYTES]})
+
+    result = read_thinking_blocks_json(raw)
+
+    assert result.envelope is None
+    assert result.opaque_json is None
+    assert result.warning is not None
+    assert "envelope size" in result.warning
+    assert result.generation_actions_enabled
+
+
 def test_malformed_supported_durable_data_is_discarded_without_content() -> None:
     result = read_thinking_blocks_json('{"version":1,"blocks":[{"text":"secret"}]}')
 
     assert result.envelope is None
     assert result.opaque_json is None
     assert result.warning is not None
+    assert "allowed keys" in result.warning
     assert "secret" not in result.warning
     assert result.generation_actions_enabled
 
