@@ -4,8 +4,10 @@
 
 Implemented the ADR-089 shared Console capture-policy controls and governed
 per-call exchange export in commit `d685a90009` (`feat(console): expose
-governed full capture controls`). The Backlog task remains **In Progress** and
-all acceptance criteria remain unchecked for independent review.
+governed full capture controls`) and hardened the independently reviewed
+surface in fix-round commit `478a9f1bae` (`fix(console): harden capture policy
+disclosure`). The Backlog task remains **In Progress** and all acceptance
+criteria remain unchecked for independent review.
 
 ## TDD evidence
 
@@ -38,14 +40,51 @@ all acceptance criteria remain unchecked for independent review.
 - Production sentinel inspection: initial RED assumed DB row order; immutable
   `run_tag` indexing fixed the inspection and it passed 1/1.
 
+### Fix round 1 RED/GREEN
+
+- Global Full acknowledgement: RED collection failed because the distinct
+  restart-aware modal did not exist; GREEN requires its acknowledgement
+  checkbox before enabling the fixed-action confirm button at 80x24.
+- Policy preview: RED showed scope radios and prospective/dormant resolution
+  drifting from the selected scope; GREEN synchronizes radios and resolves the
+  dormant Off state through `resolve_capture_policy(enabled=True, ...)`.
+- Settings coordinator: focused RED established that F9 bypassed the live
+  policy owner; GREEN routes live apply through
+  `apply_global_capture_settings`, including dormant-Full confirmation. The
+  incumbent controller regression continues to prove Off reserves the shared
+  revision and disarms every live next-send override.
+- Purge repaint: RED allowed a post-commit refresh exception to replace a
+  `DELETED` result; GREEN returns the authoritative result and renders
+  `Deleted ...; refresh failed`.
+- Export revision fence: both Full-confirmation and overwrite-confirmation
+  race cases were RED because projection still ran; GREEN is 2/2 and proves
+  `_project_async` is never called after either awaited revision change.
+- Atomic disclosure logging: RED was `TypeError` for the missing privacy-safe
+  mode; GREEN log-sink coverage proves unique path, body, and exception-value
+  canaries are absent while the stable category and exception class remain.
+- Production sentinel: successive REDs exposed a false storage-owner test and
+  a Redacted export that retained a provider-combined automatic system body.
+  GREEN drives the real gateway/controller/store/persistence/cache seam and
+  inspects whole `ExchangeCapture` owners, both exports, and logs.
+- Screen extraction: the first reviewed fix was 20,125 lines versus the Task 4
+  base of 20,099. Moving immutable target resolution, revision binding, and
+  purge repaint integration into `capture_policy_bindings.py` produced GREEN
+  at 20,093 lines and 633 methods versus 20,099/633.
+- Inspector cleanup removed the retired raw exchange Copy/Save prefixes,
+  handlers, direct-call tests, and callable `asdict` clipboard/non-atomic file
+  disclosure paths. The governed Export action is the only exchange boundary.
+
 ## Final gates
 
-- Exact Task 4 privacy/UI matrix: **861 passed, 2 skipped, 0 failed** in
-  374.40 seconds. Both skips were existing loopback-listener cases skipped
+- Exact Task 4 privacy/UI matrix after fix round 1: **867 passed, 2 skipped,
+  0 failed** in 395.53 seconds. Both skips were existing loopback-listener cases skipped
   because the sandbox denied listener creation.
 - Production-shaped 80x24 policy/export/Inspector/live/imported/Settings gate:
-  **101 passed**.
-- Final exchange exporter/sentinel file: **6 passed**.
+  **105 passed**.
+- Settings/config/layout gate: **379 passed**.
+- Focused fix suite including dialogs, Inspector wiring, atomic file behavior,
+  and the Task 4 baseline-delta regression: **77 passed**.
+- Final exchange exporter plus privacy-safe log sentinel focus: **7 passed**.
 - Ruff on every owned Python source and test: **passed**.
 - `py_compile` on every owned production Python module: **passed**.
 - `python -m tldw_chatbook.css.build_css`: **passed**; regenerated modular,
@@ -55,15 +94,20 @@ all acceptance criteria remain unchecked for independent review.
 - Documentation boundary grep for Safe, Full, Anthropic, AGENTS, compression,
   WAL, backup, logical, 64 MiB, and 16 MiB: **passed**.
 - `git diff --check` and staged-diff check: **passed**.
+- Explicit Task 4 architecture delta: **20,093 lines / 633 methods**, below
+  base `1b50778714` at **20,099 / 633**. The older repository-wide ceiling
+  remains independently stale at 17,727/593; Task 4 neither raises nor worsens
+  it, and its dedicated non-regression node passes.
 - The repository-wide suite and the Impeccable detector were not run, as
   required. The controller owns the one permitted detector pass.
 
 ## Sentinel inspection
 
-The durable inspection uses a real in-memory `CharactersRAGDB`, real capture
-blob compression/decompression, in-memory and cache mirrors, Redacted and Full
-export projections, and a filesystem loguru sink. One Safe and one Full
-Anthropic-shaped exchange contain unique system, tagged AGENTS/workspace, RAG,
+The corrected inspection drives `ConsoleProviderGateway`,
+`ConsoleChatController`, `ConsoleChatStore`, the persistence append seam, real
+capture blob compression/decompression, in-memory/cache owners, Redacted and
+Full export projections, and a filesystem loguru sink. One Safe and one Full
+provider exchange contain unique system, tagged AGENTS/workspace, RAG,
 tool-schema, tool-argument/result, ordinary semantic-secret, structured API
 key, endpoint credential/query/fragment, and nested base64 sentinels.
 
@@ -76,11 +120,17 @@ Observed and asserted:
   nested base64 appear in none of the stored/exported projections.
 - Binary content is represented by a deterministic `sha256:` stub.
 - The configured filesystem log sink contains none of the sentinels.
+- The selected filesystem export boundary separately proves its destination,
+  body, and raw exception value never reach logs or traceback metadata.
 
 ## Files and authorized deviations
 
 - Added the exchange exporter, shared capture-policy modal, governed exchange
   export modal, and their focused tests.
+- Fix round 1 added `UI/Console_Modules/capture_policy_bindings.py`, the
+  privacy-safe opt-in for `atomic_write_text`, and the explicit Task 4
+  screen-baseline regression; no default behavior changed for other atomic
+  writer callers.
 - Updated the shared Trace export contract, Conversation Inspector, live and
   imported Trace screen, narrow `chat_screen.py` wiring, canonical F9 Settings,
   Console CSS source/generated bundles, both Console user-guide pages, config
@@ -90,12 +140,14 @@ Observed and asserted:
 - The controller also authorized staging the four mechanically regenerated
   screen/widget CSS artifacts required for honest bundle sync. They were not
   hand-edited.
+- The fix-round CSS build changed only the generated modular timestamp; all
+  five generated artifacts reproduce from their sources.
 - No dependency, second export enum, second policy owner, legacy Settings
   surface, or speculative abstraction was added. No generalizable new lesson
   was identified.
 
 ## Remaining review items
 
-- Independent code/UX/privacy review and the controller-owned one-time
-  Impeccable detector pass remain outstanding.
+- Scoped re-review of fix round 1 remains outstanding. The controller-owned
+  one-time Impeccable detector was already run and was not rerun.
 - Task `TASK-22507.4` therefore remains **In Progress** with ACs unchecked.
