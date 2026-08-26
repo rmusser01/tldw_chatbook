@@ -598,7 +598,7 @@ git commit -m "feat(watchlists): route stable reader pages"
 - Modify: `tldw_chatbook/UI/Screens/watchlists_collections_screen.py:690-715,2380-2515,9635-10005,10558-10655`
 - Modify: `Tests/Watchlists/test_watchlists_pagination.py`
 
-- [ ] **Step 1: Convert the pagination fixture to typed Reader pages and write RED snapshot tests**
+- [x] **Step 1: Convert the pagination fixture to typed Reader pages and write RED snapshot tests**
 
 Replace `controller.list_items.return_value = _items(...)` with a `_page(...)` helper that returns `WatchlistItemPage`. Update the former offset assertions to prove:
 
@@ -626,7 +626,7 @@ controller.list_reader_items_page.assert_awaited_once_with(
 )
 ```
 
-- [ ] **Step 2: Run the pagination file and verify RED**
+- [x] **Step 2: Run the pagination file and verify RED**
 
 Run:
 
@@ -637,7 +637,7 @@ Run:
 
 Expected: failures show the screen still calls offset-based `list_items()` and does not cache pages.
 
-- [ ] **Step 3: Replace page-index query identity with a query-context identity**
+- [x] **Step 3: Replace page-index query identity with a query-context identity**
 
 Make `_items_page_key()` accept an explicit `scope`, status, and search and omit the page index. The key must contain backend, scope kind/id fields, effective status override, normalized manual filter, and casefolded search. This is the snapshot identity; a cursor/page index is state inside the snapshot, not part of the query identity.
 
@@ -653,7 +653,7 @@ self._items_inflight_replacement: tuple[tuple[Any, ...], asyncio.Future[bool]] |
 
 `ReaderItemQuery` is the immutable committed query authority. Build it from the candidate scope plus effective status/search kwargs, and install it only when the candidate snapshot publishes. Attempted filter/search values may live in pending control state, but arrival reconciliation and committed-snapshot identity must read `self._items_snapshot.query`, never the mutable control mirrors. Remove offset-specific committed-page state only after its tests have moved to the new snapshot authority.
 
-- [ ] **Step 4: Implement replacement snapshot loading and transactional presentation**
+- [x] **Step 4: Implement replacement snapshot loading and transactional presentation**
 
 Extract the old `_load_items_once()` publication discipline into:
 
@@ -678,13 +678,13 @@ async def _replace_items_snapshot(
 
 Build and freeze candidate query kwargs from the explicit candidate scope, not `self.tree_scope` or later-mutated control mirrors. Call `controller.list_reader_items_page(limit=50, ...)` with no watermark/cursor. Construct a candidate `ReaderItemSnapshot`, apply its first page under `_items_page_presentation_lock`, and only then replace `_items_snapshot`, `_loaded_items`, page index, count, pager authority, and arrival count. Reuse the existing generation/latest-query guards and row-presentation rollback; do not clear the old rows at request time.
 
-- [ ] **Step 5: Implement Next fetch and cached Previous presentation**
+- [x] **Step 5: Implement Next fetch and cached Previous presentation**
 
 Next first checks `self._items_page_index + 1 < snapshot.page_count`; when true, it calls `_present_cached_items_page()` and performs zero I/O. Only when the user is already on the last cached page may `_load_next_items_page()` read the snapshot's traversal cursor and call the controller with the snapshot watermark. Each backend result is staged through `ReaderItemSnapshot.with_continuation()`; the committed snapshot object remains untouched until candidate rows present successfully. `_present_cached_items_page(index)` likewise performs no I/O, presents the exact cached tuple, and commits the index after presentation succeeds.
 
 If deduplication makes a fetched continuation empty while `has_more=True`, continue from the staged candidate's traversal cursor inside a bounded loop until a unique row appears or `has_more=False`; do not publish the candidate yet. Never append a blank continuation to the visible `pages` list. If the chain ends with `has_more=False` and no unique rows, atomically commit only the staged traversal/seen-id/`has_more` state under the generation guard, keep the current visible page mounted, and disable Next. If candidate row presentation fails or is cancelled, discard the entire candidate chain so committed pages, seen ids, cursor, and `has_more` all remain unchanged.
 
-- [ ] **Step 6: Rewire Refresh, status, search, Next, and Previous**
+- [x] **Step 6: Rewire Refresh, status, search, Next, and Previous**
 
 - Refresh: `_replace_items_snapshot(reason="refresh")` for the committed scope; keep old snapshot until success.
 - Status change: update parked control intent, schedule replacement page 1, and publish only on success.
@@ -712,13 +712,13 @@ Audit every current `_load_items()` call (`rg -n "_load_items\\(" ...`) and repl
 
 The task is not complete while any production `_load_items()` call remains, any replacement call omits `reason`, or any mutation path calls `list_reader_items_page()`.
 
-- [ ] **Step 7: Run the pagination file and verify GREEN**
+- [x] **Step 7: Run the pagination file and verify GREEN**
 
 Run the Step 2 command.
 
 Expected: the converted stable-snapshot pagination file passes with no offset assertions.
 
-- [ ] **Step 8: Commit the UI pagination foundation**
+- [x] **Step 8: Commit the UI pagination foundation**
 
 ```bash
 git add \
