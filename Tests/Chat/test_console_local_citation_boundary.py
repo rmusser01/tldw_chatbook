@@ -63,6 +63,15 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from Tests.console_provider_doubles import provider_resolution, with_destination
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.citation_provenance_runtime import (
+    CitationProvenanceRuntimePolicy,
+)
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationTraceRepository,
+    load_local_citation_identity_context,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 def _first(matches, *, what: str):
@@ -180,14 +189,56 @@ def _citation_builder(
 
 
 class _ReadyCitationPersistence:
-    canonical_citation_writes_ready = True
-    db = None
+    """Records every `create_message` AND performs it against real SQLite.
+
+    A SPY over a real `ChatPersistenceService`, not a stub. The repo requires
+    tests that exercise database behaviour to use a real in-memory SQLite
+    database rather than a mocked DB object (Qodo finding on #2104), and the
+    previous version of this class carried `db = None` and recorded writes
+    without ever performing them -- so nothing here touched a database, and
+    every assertion was about a call that had been observed rather than a row
+    that had been written.
+
+    Recording is preserved deliberately: `create_calls` is what 23 tests in
+    this module assert on, and rewriting those assertions to query rows would
+    have risked weakening them one by one. Spying over the real service keeps
+    the assertions intact while making the writes real, which is the property
+    the rule is actually asking for.
+    """
 
     def __init__(self) -> None:
         self.create_calls: list[dict[str, Any]] = []
+        db = CharactersRAGDB(":memory:", "citation-boundary")
+        identity = load_local_citation_identity_context(db)
+        repository = CitationTraceRepository(
+            db,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=identity,
+            fingerprint_codec=CitationFingerprintCodec(
+                b"0123456789abcdef0123456789abcdef"
+            ),
+        )
+        self._real = ChatPersistenceService(db, citation_repository=repository)
+        self.db = db
 
-    def create_conversation(self, **_kwargs: Any) -> str:
-        return "conversation-1"
+    def __getattr__(self, name: str) -> Any:
+        # Everything the store may reach for -- `update_message_content`,
+        # `promote_console_conversation_bundle`, the attachment seams,
+        # `commit_durable_turn` -- goes to the real service unchanged.
+        return getattr(self._real, name)
+
+    @property
+    def canonical_citation_writes_ready(self) -> bool:
+        return self._real.canonical_citation_writes_ready
+
+    @property
+    def citation_repository(self) -> Any:
+        return self._real.citation_repository
+
+    def create_conversation(self, **kwargs: Any) -> str:
+        return self._real.create_conversation(
+            conversation_id="conversation-1", **kwargs
+        )
 
     def create_message(
         self,
@@ -215,10 +266,10 @@ class _ReadyCitationPersistence:
         if citation_write is not _MISSING:
             call["citation_write"] = citation_write
         self.create_calls.append(call)
-        return message_id or f"persisted-{len(self.create_calls)}"
-
-    def update_message_content(self, **_kwargs: Any) -> bool:
-        return True
+        passthrough = dict(call)
+        if citation_write is not _MISSING:
+            passthrough["citation_write"] = citation_write
+        return self._real.create_message(**passthrough)
 
 
 class _CancelRowFailingPersistence(_ReadyCitationPersistence):
@@ -457,9 +508,15 @@ def _persisted_store(
     # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`, so
     # an ephemeral session keeps the send on the `create_message` path these
     # doubles actually observe.
+    # Ephemeral IFF there is no persistence, which is production's own rule:
+    # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`, and
+    # a durable turn is refused when the adapter cannot `commit_durable_turn` or
+    # its `db` is None. With a real spy attached the session is durable and the
+    # write path is exercised against real SQLite; without one, a temporary chat
+    # is the only shape that still sends.
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="llama_cpp"),
-        ephemeral=True,
+        ephemeral=persistence is None,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
@@ -521,16 +578,9 @@ def _recording_citation_store(
     persistence: _ReadyCitationPersistence | None = None,
 ) -> _RecordingCitationStore:
     store = _RecordingCitationStore(persistence=persistence)
-    # EPHEMERAL, for the same reason as `_persisted_store`: these doubles record
-    # `create_message` calls, which is the citation-write seam under test, and
-    # they carry `db = None`. A non-ephemeral MANUAL send is therefore refused
-    # twice over -- once because the adapter cannot `commit_durable_turn`, and
-    # again by TASK-22030's DB-open gate -- before any provider call. Both gates
-    # are guarded by `not session.ephemeral`, which is production's own carve-out
-    # for a chat that is not being saved.
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="openai", model="repair-model"),
-        ephemeral=True,
+        ephemeral=persistence is None,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
