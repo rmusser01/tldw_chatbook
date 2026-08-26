@@ -276,9 +276,14 @@ def real_citation_stack_factory(tmp_path: Path):
         session = store.ensure_session(
             settings=ConsoleSessionSettings(provider="llama_cpp")
         )
-        session.persisted_conversation_id = persistence.create_conversation(
-            runtime_backend="local"
-        )
+        # Deliberately NOT pre-created. `create_conversation` writes the
+        # conversation row but no `console_conversation_library_policy` row,
+        # and `commit_durable_turn` then takes its "conversation already
+        # exists" branch, finds `policy_row is None`, and refuses the turn
+        # with "Durable Console Library policy no longer matches acceptance."
+        # -- so the send produced a USER row and nothing else. Letting the
+        # first turn create the conversation writes the row and its policy in
+        # the same transaction, which is what production does.
         stack = _RealCitationStack(
             db_path=db_path,
             client_id=client_id,
