@@ -1758,6 +1758,12 @@ class _DurablePostcommitContinuation:
     turn_context: ConsoleTurnExecutionContext
     prepared: _PreparedSendContinuation | None
     committed_context_epoch: int
+    #: TASK-22302: the durable turn commits in `_accept_durable_turn` and
+    #: publishes its live owners in `resume_durable_postcommit`; the terminal
+    #: citation finalizer has to survive that hand-off. It did not -- the
+    #: publish site passed a hard-coded None -- so no durable Console turn
+    #: persisted any citation provenance from `a26cdafd8` onward.
+    terminal_citation_finalizer: TerminalCitationFinalizer | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -5776,6 +5782,7 @@ class ConsoleChatController:
             turn_context=turn_context,
             prepared=prepared_continuation,
             committed_context_epoch=committed_context_epoch,
+            terminal_citation_finalizer=terminal_citation_finalizer,
         )
         with self.store.durable_preparation_lock:
             self.store.validate_durable_acceptance_fingerprint(fingerprint)
@@ -5853,7 +5860,7 @@ class ConsoleChatController:
             _user, assistant = self.store.publish_durable_turn_owners(
                 session_id,
                 commit,
-                terminal_citation_finalizer=None,
+                terminal_citation_finalizer=continuation.terminal_citation_finalizer,
                 defer_terminal_persistence=(
                     continuation.citation_repair_session is not None
                 ),

@@ -4030,6 +4030,19 @@ class ConsoleChatStore:
         if assistant.role is not ConsoleMessageRole.ASSISTANT:
             raise RuntimeError("Committed assistant owner changed role.")
         assistant.persisted_message_id = commit.assistant_message_id
+        # TASK-22302: arm here, AFTER the durable id is assigned.
+        # `append_message` gates arming on its own `persist` flag, which is
+        # False on this path and correctly so -- the checkpoint already wrote
+        # the row. But "this call does not create the row" is not "this message
+        # has no durable row", and arming needs the latter.
+        if (
+            terminal_citation_finalizer is not None
+            and self._citation_persistence_ready()
+        ):
+            self._terminal_citation_finalizers[assistant.id] = (
+                terminal_citation_finalizer
+            )
+            self._terminal_persistence_deferred_ids.add(assistant.id)
         return user, assistant
 
     def publish_committed_identity(
@@ -8112,6 +8125,12 @@ class ConsoleChatStore:
             recovery is not None
             and recovery.assistant_message_id == message.id
             and recovery.in_flight
+            # TASK-22302: do not let this shortcut swallow a turn that still
+            # owes a terminal citation write -- `finalizer` is popped above, so
+            # returning here discards it. Scoped to an actual finalizer, not
+            # `terminal_persistence`, which is also true for a merely DEFERRED
+            # turn that has no citation to seal.
+            and finalizer is None
         ):
             message.status = "complete"
             self._bump_message_speech_revision(message.id)
@@ -8161,6 +8180,21 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
             try:
+                if message.persisted_message_id is not None:
+                    # TASK-22302: the dispatch checkpoint already wrote this row
+                    # with EMPTY content, so the final body must be flushed with
+                    # an UPDATE -- `create_message`'s existing-row handling lives
+                    # inside its `prepared_citation is not None` branch and
+                    # verifies rather than updates, so it cannot carry the body.
+                    #
+                    # This matters most on the FAIL-CLOSED path: `finalize()`
+                    # returns None when the builder cannot seal, leaving no
+                    # `citation_write` at all. Guarding this flush on one would
+                    # leave the durable row empty while the in-memory message
+                    # reads complete -- the answer lost, silently.
+                    self._persist_existing_message(
+                        message, preserve_provider_continuation=True
+                    )
                 self._persist_new_message(
                     session_id=session_id,
                     message=message,
