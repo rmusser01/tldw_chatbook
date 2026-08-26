@@ -8,12 +8,14 @@ from dataclasses import asdict
 import pytest
 from loguru import logger
 
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     ExchangeCapture,
+    capture_from_blob,
     capture_from_storage,
 )
 from tldw_chatbook.Chat.console_exchange_export import (
@@ -27,6 +29,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 def _capture(detail: CaptureDetail) -> ExchangeCapture:
@@ -149,7 +152,8 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
 ) -> None:
     semantic = {
         "system": "SYSTEM-SENTINEL-22507",
-        "instructions": "AGENTS-WORKSPACE-SENTINEL-22507",
+        "project": "AGENTS-PROJECT-SENTINEL-22507",
+        "workspace": "WORKSPACE-INSTRUCTION-SENTINEL-22507",
         "rag": "RAG-SENTINEL-22507",
         "schema": "TOOL-SCHEMA-SENTINEL-22507",
         "arguments": "TOOL-ARGS-SENTINEL-22507",
@@ -163,6 +167,7 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
         "endpoint-pass-22507",
         "endpoint-query-22507",
         "endpoint-fragment-22507",
+        "/private/task-22507/structured-path-sentinel",
         "QUJD" * 2000,
     )
     endpoint = (
@@ -173,7 +178,12 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
         {"role": "system", "content": semantic["system"]},
         {
             "role": "system",
-            "content": semantic["instructions"],
+            "content": semantic["project"],
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+        {
+            "role": "system",
+            "content": semantic["workspace"],
             EPHEMERAL_ORIGIN_KEY: "project_instructions",
         },
         {
@@ -194,6 +204,7 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
                 "description": semantic["schema"],
                 "parameters": {
                     "api_key": structured[1],
+                    "secret": structured[-2],
                     "type": "object",
                     "example_image": "data:image/png;base64," + structured[-1],
                 },
@@ -202,7 +213,11 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
     ]
 
     def provider_call(**_kwargs):
+        # ``chat_api_call`` is the production adapter seam: Anthropic's wire
+        # response is normalized to this provider-independent result before
+        # the Console gateway receives it.
         return {
+            "model": "claude-test",
             "choices": [
                 {
                     "message": {
@@ -217,63 +232,50 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
                                         {
                                             "query": semantic["arguments"],
                                             "api_key": structured[1],
+                                            "image": (
+                                                "data:image/png;base64,"
+                                                + structured[-1]
+                                            ),
                                         }
                                     ),
                                 },
                             }
                         ],
-                    }
+                    },
+                    "finish_reason": "tool_calls",
                 }
-            ]
+            ],
+            "usage": {"input_tokens": 12, "output_tokens": 7},
         }
 
     gateway = ConsoleProviderGateway(chat_api_call_fn=provider_call)
     resolution = ConsoleProviderResolution(
-        provider="openai",
+        provider="anthropic",
         base_url=endpoint,
-        model="gpt-test",
+        model="claude-test",
         ready=True,
-        execution_key="openai",
+        execution_key="anthropic",
         api_key=structured[0],
         streaming=False,
     )
 
-    class Persistence:
-        def __init__(self) -> None:
-            self.rows: list[dict] = []
-            self._message_count = 0
-
-        def create_conversation(self, **_kwargs):
-            return "conversation-sentinel"
-
-        def create_message(self, **_kwargs):
-            self._message_count += 1
-            return f"message-{self._message_count}"
-
-        def update_message_content(self, **_kwargs):
-            return True
-
-        def append_message_exchanges(self, *, message_id, rows):
-            assert message_id == "message-1"
-            self.rows = list(rows)
-            return True
-
-    persistence = Persistence()
-    store = ConsoleChatStore(persistence=persistence)
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    session = store.ensure_session(title="sentinel inspection")
-    assistant = store.append_message(
-        session.id,
-        role=ConsoleMessageRole.ASSISTANT,
-        content="",
-        persist=True,
-    )
-    store.append_stream_chunk(assistant.id, "answer")
-    store.mark_message_complete(assistant.id)
-
     log_path = tmp_path / "capture-inspection.log"
     sink_id = logger.add(log_path, diagnose=False)
+    db = CharactersRAGDB(":memory:", "task-22507-sentinel")
     try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+        session = store.ensure_session(title="sentinel inspection")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=True,
+        )
+        store.append_stream_chunk(assistant.id, "answer")
+        store.mark_message_complete(assistant.id)
+
         signal_owners = []
         for detail in (CaptureDetail.SAFE, CaptureDetail.FULL):
             signals = ConsoleProviderStreamSignals(
@@ -291,13 +293,18 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
                 assistant.id, signals, resolution, partial=False
             )
 
-        store_owner = store.get_message(assistant.id).exchanges
-        cache_owner = tuple(store._exchange_blob_cache[assistant.id].values())
+        stored_message = store.get_message(assistant.id)
+        assert stored_message.persisted_message_id is not None
+        store_owner = stored_message.exchanges
+        cache_blobs = tuple(store._exchange_blob_cache[assistant.id].values())
+        cache_owner = tuple(capture_from_blob(blob) for blob in cache_blobs)
+        rows = db.get_message_exchanges(stored_message.persisted_message_id)
         storage_owner = tuple(
             capture_from_storage(row["capture_blob"], row["capture_detail"])
-            for row in persistence.rows
+            for row in rows
         )
         assert signal_owners and store_owner and cache_owner and storage_owner
+        assert len(signal_owners) == len(store_owner) == len(cache_owner) == len(rows)
         assert signal_owners is not store_owner
         safe = next(c for c in store_owner if c.capture_detail is CaptureDetail.SAFE)
         full = next(c for c in store_owner if c.capture_detail is CaptureDetail.FULL)
@@ -312,16 +319,31 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
             full, TraceExportProfile.FULL_TRACE
         ).json_text
 
-        assert semantic["instructions"] not in safe_text
-        assert semantic["instructions"] not in redacted
-        assert semantic["instructions"] in full_text
-        assert semantic["instructions"] in full_export
+        assert semantic["project"] not in safe_text
+        assert semantic["workspace"] not in safe_text
+        assert semantic["project"] not in redacted
+        assert semantic["workspace"] not in redacted
+        assert semantic["project"] in full_text
+        assert semantic["workspace"] in full_text
+        assert semantic["project"] in full_export
+        assert semantic["workspace"] in full_export
         for value in semantic.values():
-            if value != semantic["instructions"]:
-                assert value in full_export
+            if value not in {semantic["project"], semantic["workspace"]}:
+                assert value in safe_text
+        for value in semantic.values():
+            assert value in full_export
+        assert full.provider == "anthropic"
+        assert full.request["api_endpoint"] == "http://anthropic"
+        assert full.request["system_message"].startswith(semantic["system"])
+        assert full.response["tool_calls"]
+        assert "api_key" in full.omitted_keys
+        assert any(key.endswith(".content") for key in safe.omitted_keys)
+        assert not any(key.endswith(".content") for key in full.omitted_keys)
+        assert full.endpoint == "https://example.test/v1"
         owner_texts = [
             *(json.dumps(asdict(c), default=str) for c in signal_owners),
             *(json.dumps(asdict(c), default=str) for c in store_owner),
+            *(json.dumps(asdict(c), default=str) for c in cache_owner),
             *(json.dumps(asdict(c), default=str) for c in storage_owner),
             redacted,
             full_export,
@@ -329,9 +351,9 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
         for value in structured:
             for owner_index, owner in enumerate(owner_texts):
                 assert value not in owner, (value, owner_index)
-            assert all(value.encode() not in blob for blob in cache_owner)
         assert "sha256:" in full_export
     finally:
+        db.close_connection()
         logger.remove(sink_id)
 
     log_text = log_path.read_text(encoding="utf-8")

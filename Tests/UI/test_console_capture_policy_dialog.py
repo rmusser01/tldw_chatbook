@@ -232,6 +232,34 @@ async def test_global_full_requires_restart_aware_distinct_acknowledgement() -> 
 
 
 @pytest.mark.asyncio
+async def test_masked_global_full_still_requires_distinct_acknowledgement() -> None:
+    host = _PolicyHost(
+        _snapshot(
+            conversation_detail=CaptureDetail.SAFE,
+            global_detail=CaptureDetail.SAFE,
+        )
+    )
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+        requested: list[object] = []
+
+        async def decline(screen: object) -> bool:
+            requested.append(screen)
+            return False
+
+        app.push_screen_wait = decline
+        result = await dialog.apply(CaptureScope.GLOBAL, CaptureDetail.FULL)
+
+        assert result is None
+        assert host.calls == []
+        assert len(requested) == 1
+        assert isinstance(requested[0], GlobalFullCaptureConfirmation)
+
+
+@pytest.mark.asyncio
 async def test_scope_change_syncs_detail_radios_and_prospective_preview() -> None:
     host = _PolicyHost(
         _snapshot(
@@ -277,6 +305,41 @@ async def test_off_preview_resolves_dormant_one_shot_precedence() -> None:
         effective = str(dialog.query_one("#capture-policy-effective", Static).render())
         assert "Dormant Full" in effective
         assert "next send" in effective.lower()
+
+
+@pytest.mark.asyncio
+async def test_off_safe_edit_previews_selected_dormant_resolution_without_mutation() -> None:
+    host = _PolicyHost(
+        _snapshot(
+            enabled=False,
+            conversation_detail=CaptureDetail.FULL,
+            global_detail=CaptureDetail.SAFE,
+            effective=CapturePolicyResolution(
+                False, CaptureDetail.SAFE, CapturePolicySource.DISABLED, ()
+            ),
+        )
+    )
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        before = dialog.snapshot
+        initial = str(dialog.query_one("#capture-policy-effective", Static).render())
+        dialog.query_one("#capture-policy-detail-safe", RadioButton).value = True
+        await pilot.pause()
+        prospective = str(
+            dialog.query_one("#capture-policy-effective", Static).render()
+        )
+
+        assert "Future exchange capture: Off" in prospective
+        assert "Dormant Full" in initial
+        assert "Prospective dormant Safe" in prospective
+        assert dialog.snapshot == before
+        assert dialog.selected_detail is CaptureDetail.SAFE
+        assert dialog.query_one("#capture-policy-detail-safe", RadioButton).value
+        assert not dialog.query_one("#capture-policy-detail-full", RadioButton).value
 
 
 @pytest.mark.asyncio

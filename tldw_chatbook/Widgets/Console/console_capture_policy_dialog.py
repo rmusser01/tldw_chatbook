@@ -331,17 +331,19 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
         if scope is CaptureScope.GLOBAL and detail is None:
             detail = fresh.global_detail
         self.preview = self.preview_for(scope, detail)
-        if self.preview.requires_confirmation and not full_confirmation_done:
-            if scope is CaptureScope.GLOBAL:
-                confirmed = bool(
-                    await self.app.push_screen_wait(global_full_capture_confirmation())
-                )
-            else:
-                confirmed = await self._confirm(
-                    FULL_CAPTURE_WARNING,
-                    title=f"Enable Full capture for {scope.value.replace('_', ' ')}?",
-                    confirm_label="Enable Full",
-                )
+        if scope is CaptureScope.GLOBAL and detail is CaptureDetail.FULL:
+            confirmed = bool(
+                await self.app.push_screen_wait(global_full_capture_confirmation())
+            )
+            if not confirmed:
+                self._set_status("Full policy change cancelled")
+                return None
+        elif self.preview.requires_confirmation and not full_confirmation_done:
+            confirmed = await self._confirm(
+                FULL_CAPTURE_WARNING,
+                title=f"Enable Full capture for {scope.value.replace('_', ' ')}?",
+                confirm_label="Enable Full",
+            )
             if not confirmed:
                 self._set_status("Full policy change cancelled")
                 return None
@@ -579,6 +581,8 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             text = (
                 "Future exchange capture: Off · Dormant "
                 f"{dormant.detail.value.title()} ({dormant.source.value.replace('_', ' ')})"
+                " · Prospective dormant "
+                f"{self.preview.effective_detail.value.title()}"
             )
         else:
             text = (
