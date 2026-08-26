@@ -7,7 +7,10 @@ per-call exchange export in commit `d685a90009` (`feat(console): expose
 governed full capture controls`) and hardened the independently reviewed
 surface in fix-round commit `478a9f1bae` (`fix(console): harden capture policy
 disclosure`), then closed the remaining scoped findings in fix-round commit
-`26218ae5aa` (`fix(console): close remaining capture review gaps`). The Backlog task remains **In Progress** and all acceptance
+`26218ae5aa` (`fix(console): close remaining capture review gaps`). Fix-round-3
+commit `b53bf54631` (`fix(console): keep capture off as kill switch`) removes the
+new acknowledgement regression without weakening enabled Global Full writes.
+The Backlog task remains **In Progress** and all acceptance
 criteria remain unchecked for independent review.
 
 ## TDD evidence
@@ -95,17 +98,29 @@ criteria remain unchecked for independent review.
   `ChatPersistenceService`, in-memory ChaChaNotes SQLite, production exchange
   query, decoded cache blobs, and decoded full storage captures.
 
+### Fix round 3 RED/GREEN
+
+- Capture Off kill switch: RED was **1 failed** in the real Textual harness;
+  cancelling the misleading `GlobalFullCaptureConfirmation` returned `None`
+  and left the policy mutation uncalled when global Full was dormant. GREEN is
+  **2 passed** for the new Off regression plus the retained masked
+  conversation-Safe Global Full cancellation regression. Turning Off now
+  applies the global disabled state without pushing an enable acknowledgement,
+  while every enabled Global + Full write still requires the shared checkbox
+  gate.
+
 ## Final gates
 
-- Exact Task 4 privacy/UI matrix after fix round 2: **869 passed, 2 skipped,
-  0 failed** in 391.35 seconds. Both skips were existing loopback-listener cases skipped
+- Exact Task 4 privacy/UI matrix after fix round 3: **870 passed, 2 skipped,
+  0 failed** in 432.61 seconds. Both skips were existing loopback-listener cases skipped
   because the sandbox denied listener creation.
 - Production-shaped 80x24 policy/export/Inspector/live/imported/Settings gate:
-  **107 passed** in 40.27 seconds.
-- Settings/config/layout gate: **379 passed**.
-- Focused fix suite including dialogs, Inspector wiring, atomic file behavior,
-  exchange export, and the Task 4 baseline-delta regression: **99 passed**.
+  **108 passed** in 39.67 seconds.
+- Settings/config/layout gate: **379 passed** in 313.04 seconds.
+- Full capture-policy dialog file: **14 passed**; focused dialog/export
+  re-review set: **20 passed**.
 - Real SQLite/cache production sentinel focus: **1 passed**.
+- Task 4 base-delta regression: **1 passed**.
 - Ruff on every owned Python source and test: **passed**.
 - `py_compile` on every owned production Python module: **passed**.
 - `python -m tldw_chatbook.css.build_css`: **passed**; regenerated modular,
@@ -171,12 +186,15 @@ Observed and asserted:
 - Fix round 2 changed only the policy modal, its focused tests, and the real
   exchange sentinel; its CSS build again changed only the generated modular
   timestamp.
+- Fix round 3 changed only the policy modal guard and its real Textual harness
+  regression; the required CSS rebuild again changed only the generated
+  modular timestamp.
 - No dependency, second export enum, second policy owner, legacy Settings
   surface, or speculative abstraction was added. No generalizable new lesson
   was identified.
 
 ## Remaining review items
 
-- Scoped re-review of fix round 2 remains outstanding. The controller-owned
+- Scoped re-review of fix round 3 remains outstanding. The controller-owned
   one-time Impeccable detector was already run and was not rerun.
 - Task `TASK-22507.4` therefore remains **In Progress** with ACs unchecked.

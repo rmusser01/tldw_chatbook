@@ -121,6 +121,16 @@ Task 4: fix round 1/5 re-review — 5 prior findings and the Minor raw-path clea
 
 Task 4: fix round 2/5 dispatched from `cc0f5aab81` for the three remaining review findings.
 
+Task 4: fix round 2/5 implemented in `26218ae5aa`; evidence/backlog/progress commit `e6f0bfbe86`. RED reproduced masked Global Full acknowledgement bypass and stale Off-state prospective preview; strict sentinel construction also exposed pre/post-adapter fixture and endpoint expectation errors. Implementer reports focused findings `3 passed`, focused re-review set `99 passed`, exact matrix `869 passed, 2 skipped`, 80x24 `107 passed`, Settings/config/layout `379 passed`, real Anthropic gateway/controller/store/ChatPersistenceService/SQLite/cache sentinel `1 passed`, Task-4 screen delta green at `20,093/633` versus `20,099/633`, and Ruff/py_compile/CSS/docs/diff checks clean.
+
+Task 4: fix round 2/5 scoped re-review dispatched over `cc0f5aab81..e6f0bfbe86`.
+
+Task 4: fix round 2/5 re-review — all 3 prior findings are addressed; 1 new Important regression remains because the unconditional Global+Full acknowledgement intercepts `set_capture_enabled(False)` while preserving dormant global Full, misleadingly blocking the capture-Off kill switch.
+
+Task 4: fix round 3/5 dispatched from `e6f0bfbe86` to restrict Global Full acknowledgement to writes whose intended enabled state is true and cover dormant-Full Off behavior.
+
 Task 4: fix round 1/5 implemented in `478a9f1bae`; exact matrix `867 passed, 2 skipped`, 80x24 gate `105 passed`, Settings/config/layout `379 passed`, exporter + log sentinel `7 passed`, focused fixes `77 passed`, Ruff/py_compile/CSS/docs/diff checks green. The explicit Task 4 screen delta is 20,093 lines/633 methods versus base `1b50778714` at 20,099/633; the older 17,727/593 repository ceiling remains independently stale and was not raised.
 
 Task 4: fix round 2/5 implemented in `26218ae5aa`; scoped Global Full cancellation and Off-state prospective preview are GREEN, and the sentinel now uses Anthropic resolution through the real gateway/controller/store/`ChatPersistenceService`/ChaChaNotes SQLite seam with production queries and decoded cache/storage captures. Exact matrix `869 passed, 2 skipped`, 80x24 gate `107 passed`, Settings/config/layout `379 passed`, focused re-review set `99 passed`, real sentinel `1 passed`, and Ruff/py_compile/CSS/docs/diff checks green. Task 4 remains In Progress with ACs unchecked for scoped re-review.
+
+Task 4: fix round 3/5 implemented in `b53bf54631`; RED proved the dormant-global-Full Off path could be blocked by a misleading enable acknowledgement, while GREEN proves the kill switch mutates without pushing that modal and retains mandatory acknowledgement for masked enabled Global Full writes. Exact matrix `870 passed, 2 skipped`, 80x24 `108 passed`, Settings/config/layout `379 passed`, policy dialog `14 passed`, dialog/export re-review `20 passed`, real sentinel `1 passed`, Task 4 base delta `1 passed`, and Ruff/py_compile/CSS/docs/diff checks green. Task 4 remains In Progress with ACs unchecked for scoped re-review.
