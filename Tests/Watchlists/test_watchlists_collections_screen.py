@@ -876,7 +876,12 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         screen = host.screen_stack[-1]
         await host.workers.wait_for_complete()
         await screen._load_tree_data().wait()
-        assert screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+            ),
+        )
         assert service.list_source_rows(watchlist["id"])[0]["name"] == (
             "Local counted feed"
         )
