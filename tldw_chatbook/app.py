@@ -788,6 +788,15 @@ SPLASH_INITIAL_SCREEN_PREIMPORT_DELAY_SECONDS = 0.2
 # So the configured default tab's module is always already in `sys.modules`
 # before this list is consulted -- and if the initial push raised, this pass
 # never runs at all. Reordering would have moved a `sys.modules` dict hit.
+#
+# TASK-22214 considered the opposite reordering -- biggest routes LAST, so
+# the first seconds after mount only carry the 18 cheap (~5-20 ms) routes --
+# and rejected it: the pre-import exists to protect exactly the first click
+# to Library/Settings, and pushing their imports minutes of route-list later
+# widens the window where that click pays a synchronous import on the event
+# loop (the thing this machinery removes). Heavy-first costs little under
+# proportional pacing: chat is a dict hit at pass time, so its gap is ~0 and
+# library/settings are warm within the pass's first ~0.5 s warm.
 SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS: tuple[str, ...] = ("chat", "library", "settings")
 
 # TASK-21113 pacing for the whole-registry pre-importer. The pass is a
@@ -811,10 +820,59 @@ SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS: tuple[str, ...] = ("chat", "library", "sett
 # multi-hundred-millisecond stretches that actually hurt. That is what the
 # low-core tier is for -- same mechanism, 3x the yield and a much higher cap,
 # so a 400 ms import on a slow box is followed by ~1.2 s of quiet.
+#
+# TASK-22214 re-measured after the payload grew +99 modules / +74.5k LOC:
+# the pass now warms 715 modules / 564,326 LOC beyond the app import (478 /
+# 365,692 of it beyond app+chat, which is what the budget guard pins --
+# Tests/Performance/test_screen_preimport_payload_budget.py). At that size
+# the 0.10 s cap had quietly turned the proportional yield back INTO the
+# flat sleep it was designed to replace: library alone costs 156-183 ms
+# warm and 525-615 ms on a bytecode-compiling boot (M-series; slower
+# hardware proportionally worse), so every heavy route asked for a
+# cost-sized gap and got 0.10 s. Observed directly in the requested-gap
+# series on a cold pass: BEFORE `[0.0, 0.1, 0.1, 0.002, 0.003, 0.1]` --
+# clipped flat exactly on the expensive routes -- AFTER `[0.0, 0.529,
+# 0.245, 0.003, 0.113, 0.303]`, tracking cost.
+#
+# So the caps moved from "binds on every heavy route" to "binds only on
+# pathology". They are kept, rather than removed, purely as a boundedness
+# guard: a pathological multi-second import (or a wild clock reading) must
+# not strand the daemon thread in a minutes-long sleep. 2.0 s sits above
+# the largest single-route cost measured on fast hardware with room for a
+# slower box; 6.0 s is the same 3x multiple the low-core tier applies
+# everywhere else.
+#
+# Measured, interleaved A/B in both orders with an A/A control first
+# (in-pass GIL duty = import time / pass wall time, from a headless Pilot
+# boot instrumented on both sides; n=2-4 per arm):
+#
+#   arm                     duty before   duty after   worst 1 s busy
+#   normal tier, warm       49.7-58.0%    47.4-47.8%   wash (~465 ms both)
+#   normal tier, cold       66.2-66.6%    47.8-48.5%   783 -> 681 ms
+#   low-core tier, warm     23.4-23.5%    23.6-24.2%   WASH (overlapping)
+#   low-core tier, cold     24.1-25.0%    23.7-24.1%   WASH (overlapping)
+#
+# Read honestly: the win is entirely on the NORMAL tier, and the low-core
+# tier is a wash in both cache states -- at ratio 3.0 the old 1.5 s cap was
+# already nearly non-binding (3 x 525 ms = 1.58 s), so raising it to 6.0 s
+# clips one route's gap slightly less. That half is design hardening for
+# hardware slower than anything measurable here, not a measured gain, and
+# the A/A control (58.5% vs 59.8%) says the noise floor is ~1.5 points.
+#
+# The accepted cost is a longer total pass: warm 0.90-0.99 -> 1.14-1.24 s,
+# cold 2.43-2.48 -> 3.43-3.51 s, i.e. the LAST route becomes warm ~254 ms
+# (warm) / ~1.07 s (cold) later than before. Nothing waits on the pass, and
+# first-navigation protection is deliberately not traded away: library is
+# route #2 and its warm-at time is unchanged (351 -> 371 ms warm, 700 ->
+# 693 ms cold), settings slips 499 -> 616 ms warm / 1152 -> 1510 ms cold,
+# and a click landing MID-pass is measurably faster than before (Library
+# first-nav at 0.35 s after ready: 63.5 -> 17.8 ms median), because the
+# thread is now usually in a gap rather than mid-import. The gap sleep is
+# sliced (see `_pause_between_preimports`) so a quit never waits one out.
 SCREEN_PREIMPORT_YIELD_RATIO = 1.0
-SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS = 0.10
+SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS = 2.0
 SCREEN_PREIMPORT_LOW_CORE_YIELD_RATIO = 3.0
-SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS = 1.5
+SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS = 6.0
 # Below this many usable CPUs the pass is throttled rather than switched off:
 # disabling it would push each screen's import back onto the event loop at
 # first navigation, which is work the user has actually asked for, on the
@@ -13870,9 +13928,21 @@ class TldwCli(
         ``SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS`` and abandoned
         immediately on ``_shutting_down`` so neither a wedged navigation nor
         a quit can leave this thread sleeping in a loop.
+
+        The gap sleep itself is sliced into navigation-poll-sized steps with
+        a ``_shutting_down`` check between slices (TASK-22214, the 22200
+        ``_interruptible_sleep`` precedent): with the caps at 2.0 s / 6.0 s
+        a single ``time.sleep(gap)`` would leave a quit waiting out the
+        whole gap before ``_preimport_screens``'s own shutdown check could
+        run. Sliced, the thread notices a quit within one 0.05 s slice.
         """
-        if gap_seconds > 0:
-            time.sleep(gap_seconds)
+        remaining = gap_seconds
+        while remaining > 0:
+            if getattr(self, "_shutting_down", False):
+                return
+            step = min(SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS, remaining)
+            time.sleep(step)
+            remaining -= step
         # Counted, not accumulated: summing 0.05 a hundred times lands either
         # side of 5.0 depending on float rounding, which would make the bound
         # off by one at random.
