@@ -1084,8 +1084,17 @@ class ConsoleSessionController:
             exit_on_error=False,
         )
 
-    def consume_pending_console_first_chat_intent(self) -> bool:
+    def consume_pending_console_first_chat_intent(
+        self,
+        *,
+        defer_presentation: bool = False,
+    ) -> bool:
         """Activate one exact first-run target without overwriting user state.
+
+        Args:
+            defer_presentation: Settle session and handoff ownership without
+                projecting mounted controls or scheduling rollback focus. The
+                ordered Resume opener will present the final target instead.
 
         Returns:
             bool: ``True`` only when the pending intent is applied and
@@ -1116,11 +1125,15 @@ class ConsoleSessionController:
 
         store = self._ensure_console_chat_store()
         prior_active_id = store.active_session_id
-        (
-            prior_control_provider,
-            prior_control_model,
-            prior_focused_widget,
-        ) = self._first_chat_presentation_snapshot_fn()
+        prior_control_provider = None
+        prior_control_model = None
+        prior_focused_widget = None
+        if not defer_presentation:
+            (
+                prior_control_provider,
+                prior_control_model,
+                prior_focused_widget,
+            ) = self._first_chat_presentation_snapshot_fn()
         created_target = None
         refreshed_prior: (
             tuple[
@@ -1148,11 +1161,12 @@ class ConsoleSessionController:
                     prior_canonical_settings=prior_baseline,
                     prior_updated_at=prior_updated_at,
                 )
-            self._resync_mounted_console_after_first_chat_rollback(
-                prior_control_provider=prior_control_provider,
-                prior_control_model=prior_control_model,
-                prior_focused_widget=prior_focused_widget,
-            )
+            if not defer_presentation:
+                self._resync_mounted_console_after_first_chat_rollback(
+                    prior_control_provider=prior_control_provider,
+                    prior_control_model=prior_control_model,
+                    prior_focused_widget=prior_focused_widget,
+                )
 
         def rollback_and_release(message: str) -> bool:
             try:
@@ -1263,14 +1277,15 @@ class ConsoleSessionController:
                 "The first chat target no longer matches provider setup. It was left unchanged.",
             )
 
-        self._apply_first_chat_control_selection_fn(
-            target.settings.provider,
-            target.settings.model,
-        )
-        if self._screen_mounted_accessor():
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
-            self._sync_console_control_bar()
+        if not defer_presentation:
+            self._apply_first_chat_control_selection_fn(
+                target.settings.provider,
+                target.settings.model,
+            )
+            if self._screen_mounted_accessor():
+                self._sync_console_chat_core_state()
+                self._sync_console_settings_summary()
+                self._sync_console_control_bar()
         if not fence_matches(expected_active_id=intent.session_id):
             return rollback_and_release(
                 "Console changed before the first chat finished opening. It will retry.",

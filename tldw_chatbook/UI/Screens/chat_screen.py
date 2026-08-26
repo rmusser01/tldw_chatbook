@@ -10893,14 +10893,16 @@ class ChatScreen(BaseAppScreen):
         self._apply_focus_chrome()
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
-        # This handoff is session/config only and does not need mounted DOM.
-        # Consume it before ordinary UI restoration can create a competing
-        # default session with a different identity.
-        self._session.consume_pending_console_first_chat_intent()
         ordered_resume_pending = (
             self._pending_resume_local_conversation_id is not None
         )
         self._resume_navigation_startup_in_progress = ordered_resume_pending
+        # This handoff is session/config only and does not need mounted DOM.
+        # Consume it before ordinary UI restoration can create a competing
+        # default session with a different identity. An explicit Resume owns
+        # presentation first and settles this as its first ordered intent.
+        if not ordered_resume_pending:
+            self._session.consume_pending_console_first_chat_intent()
         self._notify_console_fleet_teardown_if_any()
         # PR3a-2 Task 5: claim staged auto-wakes SYNCHRONOUSLY, before any
         # timer or worker below can run the first tab sync -- whose
@@ -10974,14 +10976,12 @@ class ChatScreen(BaseAppScreen):
         try:
             if target is None:
                 return
-            try:
-                await self._consume_pending_chat_handoff()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # The handoff consumer has already released and logged its
-                # transient failure; that channel owns its later retry.
-                pass
+            self._session.consume_pending_console_first_chat_intent(
+                defer_presentation=True,
+            )
+            await self._consume_pending_chat_handoff(
+                suppress_released_failure=True,
+            )
             self._consume_pending_console_roleplay_repair()
             await self._consume_pending_console_prompt_insert()
             self.consume_pending_console_provider_intent()
@@ -11460,13 +11460,33 @@ class ChatScreen(BaseAppScreen):
         self._console_runtime().remount_pending_approval()
         self.sync_task_resume_state()
 
-    async def _consume_pending_chat_handoff(self) -> None:
-        """Claim one Chat handoff and stage it directly in native Console."""
+    async def _consume_pending_chat_handoff(
+        self,
+        *,
+        suppress_released_failure: bool = False,
+    ) -> None:
+        """Claim one Chat handoff and stage it directly in native Console.
+
+        Args:
+            suppress_released_failure: Return after a transfer failure only
+                when this invocation released its exact claim for retry.
+        """
         if self._handoff_consumption_in_progress:
             return
 
-        store = self.app_instance.pending_handoffs
-        claim = store.claim(HandoffChannel.CHAT)
+        try:
+            store = self.app_instance.pending_handoffs
+            claim = store.claim(HandoffChannel.CHAT)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Chat handoff acquisition failed "
+                "(channel={}, exception_category={})",
+                HandoffChannel.CHAT.value,
+                type(exc).__name__,
+            )
+            raise
         if claim is None:
             return
 
@@ -11487,10 +11507,29 @@ class ChatScreen(BaseAppScreen):
             self._stage_handoff_as_console_live_work(payload)
             store.acknowledge(claim)
         except asyncio.CancelledError:
-            store.release(claim)
+            try:
+                store.release(claim)
+            except Exception as exc:
+                logger.warning(
+                    "Chat handoff cancellation release failed "
+                    "(channel={}, revision={}, exception_category={})",
+                    claim.channel.value,
+                    claim.revision,
+                    type(exc).__name__,
+                )
             raise
         except Exception as exc:
-            store.release(claim)
+            try:
+                released = store.release(claim)
+            except Exception as release_exc:
+                released = False
+                logger.warning(
+                    "Chat handoff transfer release failed "
+                    "(channel={}, revision={}, exception_category={})",
+                    claim.channel.value,
+                    claim.revision,
+                    type(release_exc).__name__,
+                )
             logger.warning(
                 "Chat handoff transfer failed "
                 "(channel={}, revision={}, exception_category={})",
@@ -11498,6 +11537,8 @@ class ChatScreen(BaseAppScreen):
                 claim.revision,
                 type(exc).__name__,
             )
+            if suppress_released_failure and released:
+                return
             raise
         finally:
             self._handoff_consumption_in_progress = False
@@ -16204,7 +16245,8 @@ class ChatScreen(BaseAppScreen):
                 logger.opt(exception=True).debug(
                     "Unable to reconcile Console session with registry-active workspace"
                 )
-        self._session.consume_pending_console_first_chat_intent()
+        if not ordered_resume_active:
+            self._session.consume_pending_console_first_chat_intent()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via
@@ -16236,16 +16278,13 @@ class ChatScreen(BaseAppScreen):
                 self._fleet.consume_pending_console_fleet_completion,
             )
             self.call_after_refresh(self._restore_console_workbench_focus)
-        repair_dispatched = (
-            False
-            if ordered_resume_active
-            else self._consume_pending_console_roleplay_repair()
-        )
-        if (
-            not repair_dispatched
-            and not self._consume_pending_console_identity_refresh()
-        ):
-            self._dispatch_active_console_roleplay_refresh()
+        if not ordered_resume_active:
+            repair_dispatched = self._consume_pending_console_roleplay_repair()
+            if (
+                not repair_dispatched
+                and not self._consume_pending_console_identity_refresh()
+            ):
+                self._dispatch_active_console_roleplay_refresh()
         if not mount_already_refreshed:
             self.run_worker(
                 self._skill._refresh_console_skill_candidates(), exclusive=False
