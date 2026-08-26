@@ -1,0 +1,318 @@
+{
+  "bulk": {
+    "loaded_prompt_id": 1,
+    "name_disabled": true,
+    "save_disabled": true,
+    "status": "Read-only preview \u00b7 Not included in bulk selection",
+    "svg": "prompts-bulk-readonly-preview.svg"
+  },
+  "config": "/private/tmp/task22033-live-final.n2hC32/config.toml",
+  "data": "/private/tmp/task22033-live-final.n2hC32/data/verify_task22033",
+  "geometry": [
+    {
+      "basic_default": true,
+      "effective": {
+        "items_open": true,
+        "library_open": true,
+        "priority_pane": null
+      },
+      "grip_names": [
+        "Collapse Library pane",
+        "Collapse Prompts pane"
+      ],
+      "regions": {
+        "items": {
+          "height": 43,
+          "width": 40,
+          "x": 35,
+          "y": 5
+        },
+        "items_grip": {
+          "height": 43,
+          "width": 5,
+          "x": 75,
+          "y": 5
+        },
+        "library": {
+          "height": 43,
+          "width": 28,
+          "x": 2,
+          "y": 5
+        },
+        "library_grip": {
+          "height": 43,
+          "width": 5,
+          "x": 30,
+          "y": 5
+        },
+        "shell": {
+          "height": 43,
+          "width": 156,
+          "x": 2,
+          "y": 5
+        },
+        "work": {
+          "height": 43,
+          "width": 78,
+          "x": 80,
+          "y": 5
+        }
+      },
+      "retained_roles": {
+        "items": true,
+        "work": true
+      },
+      "size": [
+        160,
+        50
+      ],
+      "svg": "prompts-160x50.svg"
+    },
+    {
+      "basic_default": true,
+      "effective": {
+        "items_open": true,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Collapse Prompts pane"
+      ],
+      "regions": {
+        "items": {
+          "height": 28,
+          "width": 56,
+          "x": 7,
+          "y": 5
+        },
+        "items_grip": {
+          "height": 28,
+          "width": 5,
+          "x": 63,
+          "y": 5
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 28,
+          "width": 5,
+          "x": 2,
+          "y": 5
+        },
+        "shell": {
+          "height": 28,
+          "width": 116,
+          "x": 2,
+          "y": 5
+        },
+        "work": {
+          "height": 28,
+          "width": 50,
+          "x": 68,
+          "y": 5
+        }
+      },
+      "retained_roles": {
+        "items": true,
+        "work": true
+      },
+      "size": [
+        120,
+        35
+      ],
+      "svg": "prompts-120x35.svg"
+    },
+    {
+      "basic_default": true,
+      "effective": {
+        "items_open": true,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Collapse Prompts pane"
+      ],
+      "regions": {
+        "items": {
+          "height": 25,
+          "width": 42,
+          "x": 5,
+          "y": 4
+        },
+        "items_grip": {
+          "height": 25,
+          "width": 5,
+          "x": 47,
+          "y": 4
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 25,
+          "width": 5,
+          "x": 0,
+          "y": 4
+        },
+        "shell": {
+          "height": 25,
+          "width": 100,
+          "x": 0,
+          "y": 4
+        },
+        "work": {
+          "height": 25,
+          "width": 48,
+          "x": 52,
+          "y": 4
+        }
+      },
+      "retained_roles": {
+        "items": true,
+        "work": true
+      },
+      "size": [
+        100,
+        30
+      ],
+      "svg": "prompts-100x30.svg"
+    },
+    {
+      "basic_default": true,
+      "collapsed": {
+        "items_open": true,
+        "library_open": false,
+        "restore_focusable": [
+          true,
+          true
+        ],
+        "restore_names": [
+          "Expand Library pane",
+          "Collapse Prompts pane"
+        ],
+        "work": {
+          "height": 19,
+          "width": 38,
+          "x": 42,
+          "y": 4
+        }
+      },
+      "effective": {
+        "items_open": false,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Expand Prompts pane"
+      ],
+      "regions": {
+        "items": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "items_grip": {
+          "height": 19,
+          "width": 5,
+          "x": 5,
+          "y": 4
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 19,
+          "width": 5,
+          "x": 0,
+          "y": 4
+        },
+        "shell": {
+          "height": 19,
+          "width": 80,
+          "x": 0,
+          "y": 4
+        },
+        "work": {
+          "height": 19,
+          "width": 70,
+          "x": 10,
+          "y": 4
+        }
+      },
+      "retained_roles": {
+        "items": true,
+        "work": true
+      },
+      "size": [
+        80,
+        24
+      ],
+      "svg": "prompts-80x24.svg"
+    }
+  ],
+  "import": {
+    "identities": [
+      5026667776,
+      4809770336
+    ],
+    "import_path_visible": true,
+    "items_retained": true,
+    "svg": "prompts-import-work-pane.svg",
+    "work_retained": true
+  },
+  "package": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-prompts-reader/tldw_chatbook/__init__.py",
+  "preservation_history": {
+    "hidden_advanced_fields_preserved": true,
+    "history_title": "Retained history (3)",
+    "mode": "info",
+    "persisted_version": 3,
+    "prompt_uuid": "1cb4c0e5-cef3-4f4a-a771-dafd1fbefaec",
+    "provenance": "Persisted source: Local \u00b7 Prompt \u00b7 structured format",
+    "svg": "prompts-preservation-history.svg"
+  },
+  "retry": {
+    "browse_calls": 2,
+    "recovered_row": true,
+    "status": "ready",
+    "svg": "prompts-browse-retry.svg"
+  },
+  "sizes": [
+    [
+      160,
+      50
+    ],
+    [
+      120,
+      35
+    ],
+    [
+      100,
+      30
+    ],
+    [
+      80,
+      24
+    ]
+  ],
+  "validation": {
+    "dirty": true,
+    "focused": "library-prompt-name",
+    "mode": "basic",
+    "status": "Name is required; enter a Prompt name.",
+    "svg": "prompts-validation-focus.svg"
+  }
+}

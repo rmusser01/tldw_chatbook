@@ -4537,9 +4537,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* TASK-202: the prompt editor owns two rows. The only vertical scroll owner
    is the content row; the action area measures to its controls below it. This
    prevents a tall editor from pushing its completion controls past the canvas. */
-#library-prompts-canvas {
+#library-prompts-canvas,
+#library-prompt-work-pane {
     height: 1fr;
     min-height: 0;
+    min-width: 0;
+}
+
+/* Disabled labels carry a visible marker, so the two management actions
+   must share the retained Items width instead of keeping intrinsic widths. */
+#library-prompts-selection-management-actions {
+    width: 100%;
+    min-width: 0;
+}
+
+#library-prompts-selection-management-actions > .library-canvas-action,
+#library-shell-grid.library-notes-compact #library-prompts-selection-management-actions > .library-canvas-action {
+    width: 1fr;
+    min-width: 0;
 }
 
 #library-prompt-editor-shell {

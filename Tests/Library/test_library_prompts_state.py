@@ -3030,6 +3030,7 @@ def _basic_structured_prompt(*, extra_user_block: bool = False):
         ("", "basic"),
         ("BASIC", "basic"),
         ("advanced", "advanced"),
+        ("info", "info"),
         ("future-mode", "basic"),
         (True, "basic"),
     ],
