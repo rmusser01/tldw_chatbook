@@ -1102,6 +1102,13 @@ ConsoleRunLogModal {
     background: $ds-surface-panel;
 }
 
+#library-emergency-return {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
 .library-adaptive-reader-shell {
     width: 1fr;
     min-width: 0;
