@@ -8,6 +8,7 @@ from textual.widgets import Button, Static, TextArea
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
+    LibraryProductionCSSHarness,
     _active_library_screen,
     _build_test_app,
     _open_note_editor,
@@ -15,6 +16,7 @@ from Tests.UI.test_library_shell import (
     _two_conversations,
     _two_notes,
     _wait_for_library_shell,
+    _wait_for_condition,
     _wait_for_selector,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -262,6 +264,49 @@ async def test_eighty_columns_protect_editor_and_keep_both_restore_grips() -> No
         assert shell.items_grip.region.width == 5
         assert shell.library_grip.region.x + shell.library_grip.region.width <= 80
         assert shell.items_grip.region.x + shell.items_grip.region.width <= 80
+
+
+@pytest.mark.asyncio
+async def test_emergency_width_preserves_manual_collapse_and_notes_adaptive_owner() -> (
+    None
+):
+    """Ordinary emergency geometry never mutates requested/adaptive state."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-hub-action-import").focus()
+        screen._library_rail_collapsed = True
+        screen._apply_library_notes_stage_visibility()
+
+        await pilot.resize_terminal(63, 30)
+        await pilot.pause()
+        assert screen._library_emergency_stage == "canvas-only"
+        assert screen._library_rail_collapsed is True
+
+        await pilot.resize_terminal(64, 30)
+        await pilot.pause()
+        assert screen._library_emergency_stage is None
+        assert screen._library_rail_collapsed is True
+        assert screen.query_one("#library-rail").display is False
+        assert screen.query_one("#library-canvas").display is True
+
+        await pilot.resize_terminal(63, 30)
+        await screen._select_library_rail_row("browse-notes")
+        shell = await _wait_for_selector(screen, pilot, "#library-notes-reader-shell")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage is None,
+            message="Adaptive Notes did not release ordinary emergency ownership.",
+        )
+
+        assert screen._library_notes_stage == "notes"
+        assert screen._library_rail_collapsed is True
+        assert isinstance(shell, LibraryAdaptiveReaderShell)
+        assert shell.work.display is True
 
 
 @pytest.mark.asyncio

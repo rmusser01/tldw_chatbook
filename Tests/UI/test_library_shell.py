@@ -158,6 +158,9 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
 )
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
+from tldw_chatbook.Widgets.Library.library_emergency_return import (
+    LibraryEmergencyReturn,
+)
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 from tldw_chatbook.Widgets.Library.library_rail import (
     LIBRARY_RAIL_ROW_PREFIX,
@@ -4201,6 +4204,230 @@ async def test_ordinary_same_contract_resizes_do_no_reader_or_destination_work(
             call.kwargs.get("recompose") for call in canvas_refresh.call_args_list
         )
         assert style_writes == []
+
+
+@pytest.mark.asyncio
+async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(63, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canvas = screen.query_one("#library-canvas", Vertical)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        bar = canvas.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        route_host = canvas.query_one("#library-canvas-route-content", Vertical)
+
+        assert tuple(canvas.children) == (bar, route_host)
+        assert rail.display is True
+        assert canvas.display is False
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_PROMPTS}").press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        assert screen.query_one("#library-emergency-return") is bar
+        assert screen._library_entry_canvas_owner().id == "library-prompts-canvas"
+        assert bar.display is True
+        assert rail.display is False
+        assert canvas.display is True
+        assert (
+            canvas.region.width
+            == screen.query_one("#library-shell-grid").content_region.width
+        )
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SKILLS}").press()
+        await _wait_for_selector(screen, pilot, "#library-skills-canvas")
+        assert screen.query_one("#library-emergency-return") is bar
+        assert tuple(canvas.children) == (bar, route_host)
+
+        await pilot.click("#library-emergency-return")
+        await _wait_for_condition(
+            pilot,
+            lambda: rail.display and not canvas.display,
+            message="Emergency return did not restore the rail-only stage.",
+        )
+
+        await pilot.resize_terminal(64, 24)
+        await _wait_for_condition(
+            pilot,
+            lambda: rail.display and canvas.display,
+            message="Ordinary alongside geometry did not resume at 64 columns.",
+        )
+        assert bar.display is False
+        assert bar.region.height == 0
+
+
+@pytest.mark.asyncio
+async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> None:
+    """Every ordinary rail destination enters one canvas stage and can recover."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    ordinary_rows = (
+        LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_BROWSE_SKILLS,
+        LIBRARY_ROW_BROWSE_COLLECTIONS,
+        LIBRARY_ROW_BROWSE_SEARCH,
+        LIBRARY_ROW_INGEST_MEDIA,
+        LIBRARY_ROW_INGEST_EXPORT,
+        LIBRARY_ROW_CREATE_STUDY,
+        LIBRARY_ROW_CREATE_FLASHCARDS,
+        LIBRARY_ROW_CREATE_QUIZZES,
+    )
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas", Vertical)
+        assert rail.display and not canvas.display
+
+        for row_id in ordinary_rows:
+            await screen._select_library_rail_row(row_id)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_selected_row_id == row_id
+                    and screen.query_one("#library-canvas").display
+                    and not screen.query_one("#library-rail").display
+                    and screen.focused is not None
+                    and getattr(screen.focused, "id", None)
+                    not in {"library-search-input", f"library-row-{row_id}"}
+                ),
+                message=lambda: (
+                    f"{row_id} did not settle focused in canvas-only stage; "
+                    f"focused={getattr(screen.focused, 'id', None)!r}, "
+                    f"stage={screen._library_emergency_stage!r}, "
+                    f"canvas={screen.query_one('#library-canvas').display}, "
+                    f"rail={screen.query_one('#library-rail').display}"
+                ),
+            )
+            assert screen._library_emergency_return_eligibility().enabled
+            screen.action_library_emergency_return()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.query_one("#library-rail").display
+                    and not screen.query_one("#library-canvas").display
+                ),
+                message=f"{row_id} did not return to rail-only stage",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.focused is not None
+                    and any(
+                        getattr(ancestor, "id", None) == "library-rail"
+                        for ancestor in screen.focused.ancestors_with_self
+                    )
+                ),
+                message=f"{row_id} did not restore selected-row/fallback rail focus",
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_projection_keeps_editor_back_authoritative() -> None:
+    """The bar, Escape gate, footer, and F1 binding filter share one guard."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(63, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_PROMPTS)
+        await _wait_for_selector(screen, pilot, "#library-prompts-canvas")
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        assert screen._library_emergency_return_eligibility().enabled
+        assert screen.check_action("library_emergency_return", ()) is True
+        assert (
+            dict(screen._library_footer_shortcuts_for_current_state())["esc"] == "rail"
+        )
+        assert bar.disabled is False
+
+        await screen._select_library_rail_row(LIBRARY_ROW_CREATE_PROMPT)
+        editor = await _wait_for_selector(screen, pilot, "#library-prompt-name")
+        editor.focus()
+        await pilot.press("x")
+        await pilot.pause()
+        screen._register_footer_shortcuts()
+
+        eligibility = screen._library_emergency_return_eligibility()
+        assert eligibility.visible and eligibility.guarded and not eligibility.enabled
+        assert screen.check_action("library_emergency_return", ()) is False
+        assert dict(screen._library_footer_shortcuts_for_current_state())["esc"] == (
+            "back to list"
+        )
+        assert bar.disabled is True
+        assert ("escape", "Return to Library rail") not in (
+            screen._active_library_binding_shortcuts()
+        )
+
+        screen.action_library_emergency_return()
+        assert screen._library_emergency_stage == "canvas-only"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_prompts_view == "editor"
+        assert screen._library_emergency_stage == "canvas-only"
+
+
+@pytest.mark.asyncio
+async def test_library_emergency_restore_is_defeated_by_newer_return_interaction() -> (
+    None
+):
+    """Only an untouched emergency receipt may restore focus at 64 columns."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(80, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        query = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query.focus()
+
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message="Search focus did not enter canvas-only emergency geometry.",
+        )
+        captured_generation = screen._library_stage_interaction_generation
+        assert screen._library_emergency_restore_receipt is not None
+        assert (
+            screen._library_emergency_restore_receipt.generation == captured_generation
+        )
+
+        await pilot.resize_terminal(64, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage is None,
+            message="Emergency geometry did not release at 64 columns.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-rag-query-input",
+            message="Untouched emergency receipt did not restore Search focus.",
+        )
+
+        await pilot.resize_terminal(63, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage == "canvas-only",
+            message="Second emergency entry did not settle.",
+        )
+        screen.action_library_emergency_return()
+        return_generation = screen._library_stage_interaction_generation
+        assert return_generation > captured_generation
+        await pilot.resize_terminal(64, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_emergency_stage is None,
+            message="Second emergency geometry did not release.",
+        )
+        assert getattr(screen.focused, "id", None) != "library-rag-query-input"
 
 
 @pytest.mark.asyncio
