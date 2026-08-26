@@ -268,9 +268,9 @@ async def test_library_rail_applies_reversible_ordinary_width_contracts() -> Non
 
         rail.apply_ordinary_width_contract(hidden)
         assert rail.display is False
-        assert not rail.styles._inline_styles.has_rule("width")
-        assert not rail.styles._inline_styles.has_rule("min_width")
-        assert not rail.styles._inline_styles.has_rule("max_width")
+        assert not rail.styles.inline.has_rule("width")
+        assert not rail.styles.inline.has_rule("min_width")
+        assert not rail.styles.inline.has_rule("max_width")
 
         rail.apply_ordinary_width_contract(default)
         assert rail.display is True

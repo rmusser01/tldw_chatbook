@@ -349,7 +349,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         tuple[float, object, object] | None,
     ]:
         """Return the four inline declarations in a Scalar-safe comparison shape."""
-        inline_styles = styles._inline_styles
+        inline_styles = styles.inline
 
         def scalar_rule(rule_name: str) -> tuple[float, object, object] | None:
             if not inline_styles.has_rule(rule_name):
