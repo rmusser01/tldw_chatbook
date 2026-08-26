@@ -313,10 +313,20 @@ and closure. It was not marked Done and its acceptance checkboxes remain open.
 
 ### Commit / concerns
 
-- Fix-round commit: pending — `fix(console): own policy write settlement`.
+- Fix-round commit: `e411781bd8` —
+  `fix(console): own policy write settlement`.
 - The worker is one short-lived standard-library thread per accepted durable
   policy mutation; the existing global mutation reservation bounds this to one
   active worker. No dependency, schema, or scope change was introduced, and no
   A1 invariant remains unresolved. Task remains **In Progress**; it was not
   marked Done and its acceptance checkboxes remain open for independent review
   and closure.
+
+## Controller closure
+
+- Final scoped re-review: all findings addressed, with no new Critical or
+  Important breakage. The reviewer independently reran the cancellation/error
+  matrix: 6 passed, 18 deselected.
+- The Backlog acceptance criteria are checked and `TASK-22507.2` is **Done**.
+- Final implementation range: `cf586ca823..e411781bd8` plus the Backlog/report
+  closeout commit.
