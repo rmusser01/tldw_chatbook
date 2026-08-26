@@ -19,6 +19,7 @@ class ChatSyncIntentRecord:
     content: str
     parent_message_id: str | None
     provider_continuation_json: str | None
+    thinking_blocks_json: str | None
     assistant_generation_state: str | None
     message_version: int
     payload_hash: str
@@ -115,6 +116,7 @@ class ChatSyncV2OutboxProducer:
             content=source_record.content,
             parent_message_id=source_record.parent_message_id,
             provider_continuation_json=source_record.provider_continuation_json,
+            thinking_blocks_json=source_record.thinking_blocks_json,
             assistant_generation_state=source_record.assistant_generation_state,
             base_version=source_record.base_payload_hash,
             entity_version=source_record.message_version,
@@ -200,6 +202,7 @@ class ChatSyncV2OutboxProducer:
                 source_entity_id=source_record.message_id,
                 source_version=source_record.message_version,
                 source_payload_hash=source_record.payload_hash,
+                supersede_object_history=True,
             )
         )
         return {"status": "enqueued", **projected}
@@ -220,6 +223,7 @@ class ChatSyncV2OutboxProducer:
         variant_index: int | None = None,
         variant_count: int | None = None,
         selected_variant_id: str | None = None,
+        thinking_blocks_json: str | None = None,
         assistant_generation_state: str | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
@@ -240,6 +244,7 @@ class ChatSyncV2OutboxProducer:
             variant_index: Optional selected variant index.
             variant_count: Optional total available variant count for the turn.
             selected_variant_id: Optional selected variant ID.
+            thinking_blocks_json: Optional canonical thinking evidence.
             assistant_generation_state: Portable assistant generation lifecycle state.
             base_version: Optional previous payload hash for versioned updates.
             entity_version: Optional explicit entity version after the mutation.
@@ -268,6 +273,7 @@ class ChatSyncV2OutboxProducer:
             variant_index=variant_index,
             variant_count=variant_count,
             selected_variant_id=selected_variant_id,
+            thinking_blocks_json=thinking_blocks_json,
             assistant_generation_state=assistant_generation_state,
             base_version=base_version,
             entity_version=entity_version,

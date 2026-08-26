@@ -47,7 +47,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import logging
-from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence, TYPE_CHECKING
+from typing import (
+    List,
+    Dict,
+    Optional,
+    Any,
+    Union,
+    Set,
+    Tuple,
+    Sequence,
+    Mapping,
+    TYPE_CHECKING,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
@@ -133,19 +144,27 @@ def _normalize_legacy_chat_sync_intent_payload(
 def _normalize_legacy_chat_delete_intent_payload(
     payload: object,
 ) -> dict[str, Any] | None:
-    """Add only the v45 state key, then enforce the delete intent shape."""
+    """Add nullable legacy keys, then enforce the delete intent shape."""
     if type(payload) is not dict:
         return None
     normalized = dict(payload)
     normalized.setdefault("assistant_generation_state", None)
+    normalized.setdefault("base_payload_hash", None)
     if set(normalized) != {
         "id",
         "deleted",
         "last_modified",
         "assistant_generation_state",
+        "base_payload_hash",
         "version",
         "client_id",
     }:
+        return None
+    base_payload_hash = normalized["base_payload_hash"]
+    if base_payload_hash is not None and (
+        type(base_payload_hash) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", base_payload_hash) is None
+    ):
         return None
     return normalized
 
@@ -11544,7 +11563,8 @@ UPDATE db_schema_version
             with self.transaction(immediate=True) as conn:
                 current = conn.execute(
                     """
-                    SELECT role, content, image_data, deleted, version,
+                    SELECT id, role, content, image_data, deleted, version,
+                           provider_continuation_json, thinking_blocks_json,
                            assistant_generation_state,
                            EXISTS (
                                SELECT 1
@@ -11597,6 +11617,17 @@ UPDATE db_schema_version
                         else "complete"
                     )
 
+                delete_proofs = (
+                    {
+                        message_id: (
+                            expected_message_version + 1,
+                            self._chat_sync_payload_hash_from_row(current),
+                        )
+                    }
+                    if next_deleted and not current["deleted"]
+                    else {}
+                )
+
                 now = self._get_current_utc_timestamp_iso()
                 cursor = conn.execute(
                     """
@@ -11628,6 +11659,7 @@ UPDATE db_schema_version
                         entity="messages",
                         entity_id=message_id,
                     )
+                self._attach_chat_delete_base_hashes(conn, delete_proofs)
             return True
         except sqlite3.IntegrityError:
             raise CharactersRAGDBError(
@@ -12517,6 +12549,32 @@ UPDATE db_schema_version
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
                 if content_changed and not preserve_descendants:
+                    descendant_rows = conn.execute(
+                        """
+                        WITH RECURSIVE descendants(id) AS (
+                            SELECT id
+                              FROM messages
+                             WHERE parent_message_id = ?
+                               AND conversation_id = ? AND deleted = 0
+                            UNION
+                            SELECT child.id
+                              FROM messages AS child
+                              JOIN descendants AS parent
+                                ON child.parent_message_id = parent.id
+                             WHERE child.deleted = 0
+                               AND child.conversation_id = ?
+                        )
+                        SELECT id FROM descendants
+                        """,
+                        (
+                            message_id,
+                            current["conversation_id"],
+                            current["conversation_id"],
+                        ),
+                    ).fetchall()
+                    delete_proofs = self._capture_chat_delete_base_hashes(
+                        conn, tuple(row["id"] for row in descendant_rows)
+                    )
                     conn.execute(
                         """
                         WITH RECURSIVE descendants(id) AS (
@@ -12548,6 +12606,7 @@ UPDATE db_schema_version
                             self.client_id,
                         ),
                     )
+                    self._attach_chat_delete_base_hashes(conn, delete_proofs)
 
                 logger.info(
                     f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}"
@@ -13181,6 +13240,10 @@ UPDATE db_schema_version
                         entity_id=message_id,
                     )
 
+                delete_proofs = self._capture_chat_delete_base_hashes(
+                    conn, (message_id,)
+                )
+
                 cursor = conn.execute(query, params)
 
                 if cursor.rowcount == 0:
@@ -13202,6 +13265,8 @@ UPDATE db_schema_version
                     else:
                         msg = f"Soft delete for message ID {message_id} (expected v{expected_version}) affected 0 rows."
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
+
+                self._attach_chat_delete_base_hashes(conn, delete_proofs)
 
                 logger.info(
                     f"Soft-deleted message ID {message_id} (was v{expected_version}), new version {next_version_val}."
@@ -13268,6 +13333,9 @@ UPDATE db_schema_version
                 """,
                 (message_id, current["conversation_id"], current["conversation_id"]),
             ).fetchall()
+            delete_proofs = self._capture_chat_delete_base_hashes(
+                conn, tuple(row["id"] for row in rows)
+            )
             conn.execute(
                 """
                 WITH RECURSIVE subtree(id) AS (
@@ -13296,6 +13364,7 @@ UPDATE db_schema_version
                     self.client_id,
                 ),
             )
+            self._attach_chat_delete_base_hashes(conn, delete_proofs)
             return [
                 {
                     "message_id": row["id"],
@@ -13304,6 +13373,100 @@ UPDATE db_schema_version
                 }
                 for row in rows
             ]
+
+    @staticmethod
+    def _chat_sync_payload_hash_from_row(row: Mapping[str, Any]) -> str:
+        """Hash one valid live Chat record without retaining its private fields."""
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        role = row["role"]
+        content = row["content"]
+        if type(role) is not str or type(content) is not str:
+            raise InputError("Invalid chat sync record.")
+        private_json = row["provider_continuation_json"]
+        active_continuation = False
+        if private_json is not None:
+            if role != "assistant":
+                raise InputError("Invalid chat sync record.")
+            checkpoint, canonical_private = _validated_provider_continuation(
+                private_json
+            )
+            if canonical_private != private_json:
+                raise InputError("Invalid chat sync record.")
+            active_continuation = checkpoint.state == "active"
+        try:
+            state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=row["assistant_generation_state"],
+                has_valid_active_continuation=active_continuation,
+            )
+        except ValueError:
+            raise InputError("Invalid chat sync record.") from None
+        payload = {
+            "assistant_generation_state": state.value if state is not None else None,
+            "content": content,
+            "role": role,
+        }
+        if private_json is not None:
+            payload["provider_continuation_json"] = private_json
+        thinking_json = row["thinking_blocks_json"]
+        if thinking_json is not None:
+            if role != "assistant":
+                raise InputError("Invalid chat sync record.")
+            canonical_thinking = _validated_thinking_blocks_json(thinking_json)
+            if canonical_thinking != thinking_json:
+                raise InputError("Invalid chat sync record.")
+            payload["thinking_blocks_json"] = canonical_thinking
+        return canonical_payload_hash(payload)
+
+    def _capture_chat_delete_base_hashes(
+        self, conn: sqlite3.Connection, message_ids: Sequence[str]
+    ) -> dict[str, tuple[int, str]]:
+        """Capture content-free delete proofs before a tombstone clears thinking."""
+        if not message_ids:
+            return {}
+        placeholders = ",".join("?" for _ in message_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, role, content, provider_continuation_json,
+                   thinking_blocks_json, assistant_generation_state, version
+              FROM messages
+             WHERE deleted = 0 AND id IN ({placeholders})
+            """,
+            tuple(message_ids),
+        ).fetchall()
+        if len(rows) != len(set(message_ids)):
+            raise CharactersRAGDBError("Chat delete proof owner changed.")
+        return {
+            row["id"]: (
+                int(row["version"]) + 1,
+                self._chat_sync_payload_hash_from_row(row),
+            )
+            for row in rows
+        }
+
+    @staticmethod
+    def _attach_chat_delete_base_hashes(
+        conn: sqlite3.Connection, proofs: Mapping[str, tuple[int, str]]
+    ) -> None:
+        """Attach each hash to exactly one trigger-authored delete intent."""
+        for message_id, (version, base_payload_hash) in proofs.items():
+            cursor = conn.execute(
+                """
+                UPDATE sync_log
+                   SET payload = json_set(payload, '$.base_payload_hash', ?)
+                 WHERE entity = 'messages' AND entity_id = ?
+                   AND version = ? AND operation = 'delete'
+                """,
+                (base_payload_hash, message_id, version),
+            )
+            if cursor.rowcount != 1:
+                raise CharactersRAGDBError(
+                    "Chat delete intent proof was not uniquely attached."
+                )
 
     def get_message_tombstones(
         self, message_ids: Sequence[str]
@@ -16306,11 +16469,15 @@ UPDATE db_schema_version
             content = row["content"]
             if type(role) is not str or type(content) is not str:
                 return None
-            # Full thinking-aware Sync v2 records land in Task 4. This reader
-            # accepts the v50 trigger's nullable field so legacy rows are not
-            # falsely stale, while non-NULL thinking still fails closed.
+            thinking_json = None
             if row["thinking_blocks_json"] is not None:
-                return None
+                if role != "assistant":
+                    return None
+                thinking_json = _validated_thinking_blocks_json(
+                    row["thinking_blocks_json"]
+                )
+                if thinking_json != row["thinking_blocks_json"]:
+                    return None
             if row["assistant_generation_state"] is not None and role != "assistant":
                 return None
             private_json = row["provider_continuation_json"]
@@ -16356,7 +16523,7 @@ UPDATE db_schema_version
                 "content": row["content"],
                 "image_mime_type": row["image_mime_type"],
                 "provider_continuation_json": row["provider_continuation_json"],
-                "thinking_blocks_json": None,
+                "thinking_blocks_json": thinking_json,
                 "assistant_generation_state": row_state.value
                 if row_state is not None
                 else None,
@@ -16382,6 +16549,8 @@ UPDATE db_schema_version
             }
             if private_json is not None:
                 envelope_payload["provider_continuation_json"] = private_json
+            if thinking_json is not None:
+                envelope_payload["thinking_blocks_json"] = thinking_json
             if canonical_payload_hash(envelope_payload) != payload_hash:
                 return None
             return ChatSyncIntentRecord(
@@ -16391,6 +16560,7 @@ UPDATE db_schema_version
                 content=content,
                 parent_message_id=row["parent_message_id"],
                 provider_continuation_json=private_json,
+                thinking_blocks_json=thinking_json,
                 assistant_generation_state=row_state.value
                 if row_state is not None
                 else None,
@@ -16400,6 +16570,7 @@ UPDATE db_schema_version
             )
         except (
             ContinuationValidationError,
+            InputError,
             ValueError,
             json.JSONDecodeError,
             sqlite3.Error,
@@ -16523,6 +16694,14 @@ UPDATE db_schema_version
         }
         if private_json is not None:
             base_payload["provider_continuation_json"] = private_json
+        thinking_json = payload["thinking_blocks_json"]
+        if thinking_json is not None:
+            if role != "assistant":
+                return None
+            thinking_json = _validated_thinking_blocks_json(thinking_json)
+            if thinking_json != payload["thinking_blocks_json"]:
+                return None
+            base_payload["thinking_blocks_json"] = thinking_json
         return canonical_payload_hash(base_payload)
 
     def read_committed_chat_delete_intent(
@@ -16593,13 +16772,22 @@ UPDATE db_schema_version
                 row = rows[0]
             if not row["deleted"] or row["operation"] != "delete":
                 return None
+            raw_intent_payload = json.loads(row["payload"])
+            genuinely_legacy_without_hash = (
+                type(raw_intent_payload) is dict
+                and "base_payload_hash" not in raw_intent_payload
+                and "assistant_generation_state" not in raw_intent_payload
+            )
             intent_payload = _normalize_legacy_chat_delete_intent_payload(
-                json.loads(row["payload"])
+                raw_intent_payload
             )
             if (
                 intent_payload is None
                 or canonical_payload_hash({"deleted": True}) != payload_hash
             ):
+                return None
+            base_payload_hash = intent_payload.pop("base_payload_hash")
+            if base_payload_hash is None and not genuinely_legacy_without_hash:
                 return None
             role = row["role"]
             content = row["content"]
@@ -16678,15 +16866,216 @@ UPDATE db_schema_version
                 message_id=row["id"],
                 message_version=message_version,
                 payload_hash=payload_hash,
-                base_payload_hash=canonical_payload_hash(base_payload),
+                base_payload_hash=(
+                    base_payload_hash
+                    if base_payload_hash is not None
+                    else canonical_payload_hash(base_payload)
+                ),
             )
         except (
             ContinuationValidationError,
+            InputError,
             ValueError,
             json.JSONDecodeError,
             sqlite3.Error,
         ):
             return None
+
+    @staticmethod
+    def _split_chat_sync_stable_key(stable_key: str) -> tuple[str, str] | None:
+        """Split the canonical ``conversation_id:message_id`` Sync key."""
+        if type(stable_key) is not str:
+            return None
+        conversation_id, separator, message_id = stable_key.partition(":")
+        if not separator or not conversation_id or not message_id:
+            return None
+        return conversation_id, message_id
+
+    def get_chat_message_hash(self, stable_key: str) -> str | None:
+        """Return the canonical whole-record Sync hash for one local message."""
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        owner = self._split_chat_sync_stable_key(stable_key)
+        if owner is None:
+            return None
+        conversation_id, message_id = owner
+        row = (
+            self.get_connection()
+            .execute(
+                "SELECT conversation_id, role, content, deleted, "
+                "provider_continuation_json, thinking_blocks_json, "
+                "assistant_generation_state FROM messages WHERE id = ?",
+                (message_id,),
+            )
+            .fetchone()
+        )
+        if row is None or row["conversation_id"] != conversation_id:
+            return None
+        if row["deleted"]:
+            return canonical_payload_hash({"deleted": True})
+        try:
+            role = row["role"]
+            content = row["content"]
+            if type(role) is not str or type(content) is not str:
+                raise ValueError
+            private_json = row["provider_continuation_json"]
+            active_continuation = False
+            if private_json is not None:
+                if role != "assistant":
+                    raise ValueError
+                checkpoint, private_json = _validated_provider_continuation(
+                    private_json
+                )
+                active_continuation = checkpoint.state == "active"
+            state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=row["assistant_generation_state"],
+                has_valid_active_continuation=active_continuation,
+            )
+            payload = {
+                "assistant_generation_state": state.value
+                if state is not None
+                else None,
+                "content": content,
+                "role": role,
+            }
+            if private_json is not None:
+                payload["provider_continuation_json"] = private_json
+            if row["thinking_blocks_json"] is not None:
+                if role != "assistant":
+                    raise ValueError
+                payload["thinking_blocks_json"] = _validated_thinking_blocks_json(
+                    row["thinking_blocks_json"]
+                )
+            return canonical_payload_hash(payload)
+        except (InputError, ValueError):
+            # A present but unreadable owner must look divergent, not absent: this
+            # keeps incoming Sync from replacing opaque local state by accident.
+            return "invalid-local-chat-message"
+
+    def append_chat_message(
+        self, stable_key: str, payload: dict[str, Any], payload_hash: str
+    ) -> None:
+        """Apply one already-validated whole Chat Sync record atomically."""
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        owner = self._split_chat_sync_stable_key(stable_key)
+        if owner is None or canonical_payload_hash(payload) != payload_hash:
+            raise InputError("Invalid chat sync record.")
+        conversation_id, message_id = owner
+        role = payload.get("role")
+        content = payload.get("content")
+        if type(role) is not str or type(content) is not str:
+            raise InputError("Invalid chat sync record.")
+        private_json = payload.get("provider_continuation_json")
+        checkpoint = None
+        if private_json is not None:
+            if role != "assistant":
+                raise InputError("Invalid chat sync record.")
+            checkpoint, private_json = _validated_provider_continuation(private_json)
+        thinking_json = payload.get("thinking_blocks_json")
+        if thinking_json is not None:
+            if role != "assistant":
+                raise InputError("Invalid chat sync record.")
+            thinking_json = _validated_thinking_blocks_json(thinking_json)
+        try:
+            state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=payload.get("assistant_generation_state"),
+                has_valid_active_continuation=(
+                    checkpoint is not None and checkpoint.state == "active"
+                ),
+            )
+        except ValueError:
+            raise InputError("Invalid chat sync record.") from None
+        existing = (
+            self.get_connection()
+            .execute(
+                "SELECT conversation_id, role, version, deleted FROM messages WHERE id = ?",
+                (message_id,),
+            )
+            .fetchone()
+        )
+        if existing is None:
+            self.add_message(
+                {
+                    "id": message_id,
+                    "conversation_id": conversation_id,
+                    "sender": role,
+                    "role": role,
+                    "content": content,
+                    "provider_continuation_json": private_json,
+                    "thinking_blocks_json": thinking_json,
+                    "assistant_generation_state": state.value
+                    if state is not None
+                    else None,
+                }
+            )
+            return
+        if (
+            existing["conversation_id"] != conversation_id
+            or existing["role"] != role
+            or existing["deleted"]
+        ):
+            raise ConflictError(
+                "Chat sync owner is incompatible.",
+                entity="messages",
+                entity_id=message_id,
+            )
+        now = self._get_current_utc_timestamp_iso()
+        with self.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE messages
+                   SET content = ?, provider_continuation_json = ?,
+                       thinking_blocks_json = ?, assistant_generation_state = ?,
+                       last_modified = ?, version = version + 1, client_id = ?
+                 WHERE id = ? AND version = ? AND deleted = 0
+                """,
+                (
+                    content,
+                    private_json,
+                    thinking_json,
+                    state.value if state is not None else None,
+                    now,
+                    self.client_id,
+                    message_id,
+                    existing["version"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ConflictError(
+                    "Chat sync owner changed concurrently.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+
+    def delete_chat_message(self, stable_key: str, payload_hash: str) -> None:
+        """Apply one Chat Sync tombstone and clear its thinking projection."""
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        owner = self._split_chat_sync_stable_key(stable_key)
+        if owner is None or payload_hash != canonical_payload_hash({"deleted": True}):
+            raise InputError("Invalid chat sync tombstone.")
+        conversation_id, message_id = owner
+        row = (
+            self.get_connection()
+            .execute(
+                "SELECT conversation_id, version, deleted FROM messages WHERE id = ?",
+                (message_id,),
+            )
+            .fetchone()
+        )
+        if row is None or row["conversation_id"] != conversation_id:
+            return
+        if not row["deleted"]:
+            self.soft_delete_message(message_id, expected_version=row["version"])
 
     def list_current_committed_chat_sync_intents(
         self, conversation_id: str
@@ -16720,6 +17109,7 @@ UPDATE db_schema_version
             query = """
                 SELECT m.id, m.conversation_id, m.role, m.content,
                        m.provider_continuation_json,
+                       m.thinking_blocks_json,
                        m.assistant_generation_state, m.deleted, m.version,
                        intent.operation
                   FROM messages AS m
@@ -16800,6 +17190,19 @@ UPDATE db_schema_version
                     }
                     if private_json is not None:
                         payload["provider_continuation_json"] = private_json
+                    thinking_json = row["thinking_blocks_json"]
+                    if thinking_json is not None:
+                        if role != "assistant":
+                            continue
+                        try:
+                            canonical_thinking = _validated_thinking_blocks_json(
+                                thinking_json
+                            )
+                        except InputError:
+                            continue
+                        if canonical_thinking != thinking_json:
+                            continue
+                        payload["thinking_blocks_json"] = canonical_thinking
                     payload_hash = canonical_payload_hash(payload)
                     source = self.read_committed_chat_sync_intent(
                         message_id=message_id,

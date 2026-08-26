@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+from tldw_chatbook.Chat.provider_continuation import (
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
+)
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ThinkingEnvelope,
@@ -77,6 +82,7 @@ MESSAGE_DELETE_PAYLOAD_KEYS = {
     "deleted",
     "last_modified",
     "assistant_generation_state",
+    "base_payload_hash",
     "version",
     "client_id",
 }
@@ -105,7 +111,7 @@ def _thinking(text: str = "thinkingonlycanary") -> str:
 
 
 def _active_continuation() -> str:
-    return json.dumps(
+    raw = json.dumps(
         {
             "schema_version": 1,
             "checkpoint_revision": 1,
@@ -130,6 +136,7 @@ def _active_continuation() -> str:
             ],
         }
     )
+    return dump_provider_continuation_json(parse_provider_continuation_json(raw))
 
 
 def _schema_version(db: CharactersRAGDB) -> int:
@@ -602,9 +609,10 @@ def test_local_only_writes_stay_out_of_sync_and_tombstones_hide_thinking(
         }
     )
     assert message_id is not None
+    continuation = _active_continuation()
     db.get_connection().execute(
         "UPDATE messages SET provider_continuation_json = ? WHERE id = ?",
-        ("single-continuation", message_id),
+        (continuation, message_id),
     )
     db.get_connection().commit()
     db.get_connection().execute("DELETE FROM sync_log")
@@ -618,9 +626,13 @@ def test_local_only_writes_stay_out_of_sync_and_tombstones_hide_thinking(
     assert db.get_message_by_id(message_id) is None
     tombstone = _raw_message(db, message_id)
     assert tombstone["thinking_blocks_json"] is None
-    assert tombstone["provider_continuation_json"] == "single-continuation"
+    assert tombstone["provider_continuation_json"] == continuation
     delete_payload = _payloads(db, "messages")[-1]
     assert set(delete_payload) == MESSAGE_DELETE_PAYLOAD_KEYS
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", delete_payload["base_payload_hash"])
+    assert "thinking_blocks_json" not in delete_payload
+    assert "thinkingonlycanary" not in json.dumps(delete_payload)
+    assert _payloads(db, "messages") == [delete_payload]
 
 
 def test_subtree_tombstones_clear_thinking_but_retain_continuation(
@@ -645,9 +657,11 @@ def test_subtree_tombstones_clear_thinking_but_retain_continuation(
         }
     )
     assert root_id is not None and child_id is not None
+    root_continuation = _active_continuation()
+    child_continuation = _active_continuation()
     db.get_connection().executemany(
         "UPDATE messages SET provider_continuation_json = ? WHERE id = ?",
-        (("root-continuation", root_id), ("child-continuation", child_id)),
+        ((root_continuation, root_id), (child_continuation, child_id)),
     )
     db.get_connection().commit()
 
@@ -659,8 +673,8 @@ def test_subtree_tombstones_clear_thinking_but_retain_continuation(
     assert root["deleted"] == child["deleted"] == 1
     assert root["thinking_blocks_json"] is None
     assert child["thinking_blocks_json"] is None
-    assert root["provider_continuation_json"] == "root-continuation"
-    assert child["provider_continuation_json"] == "child-continuation"
+    assert root["provider_continuation_json"] == root_continuation
+    assert child["provider_continuation_json"] == child_continuation
 
 
 def test_content_edit_tombstones_descendant_thinking_only(
@@ -684,9 +698,10 @@ def test_content_edit_tombstones_descendant_thinking_only(
         }
     )
     assert root_id is not None and child_id is not None
+    continuation = _active_continuation()
     db.get_connection().execute(
         "UPDATE messages SET provider_continuation_json = ? WHERE id = ?",
-        ("descendant-continuation", child_id),
+        (continuation, child_id),
     )
     db.get_connection().commit()
 
@@ -699,7 +714,7 @@ def test_content_edit_tombstones_descendant_thinking_only(
     child = _raw_message(db, child_id)
     assert child["deleted"] == 1
     assert child["thinking_blocks_json"] is None
-    assert child["provider_continuation_json"] == "descendant-continuation"
+    assert child["provider_continuation_json"] == continuation
 
 
 def test_continuation_discard_tombstone_clears_thinking_in_raw_storage(

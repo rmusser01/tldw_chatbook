@@ -217,6 +217,23 @@ class ConsoleThinkingCompatibilityError(RuntimeError):
     """A generation mutation would replace unreadable durable thinking."""
 
 
+def require_thinking_persistence_support(
+    persistence: ConsoleChatPersistence | None,
+    *,
+    persistent: bool,
+    may_emit_thinking: bool,
+) -> None:
+    """Fail before send when a durable backend cannot round-trip thinking V1."""
+    if not persistent or not may_emit_thinking:
+        return
+    version_reader = getattr(persistence, "thinking_round_trip_version", None)
+    if not callable(version_reader) or version_reader() != 1:
+        raise ConsoleThinkingCompatibilityError(
+            "This persistent backend cannot preserve model thinking version 1. "
+            "Upgrade it before sending."
+        )
+
+
 def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
     """Represent a missing durable projection seam in an immutable plan."""
     return False
@@ -433,6 +450,9 @@ class ConsoleChatPersistence(Protocol):
     #: pre-persistence scope selection with no diagnostic). Declaring it
     #: here makes the seam an explicit, checkable part of the contract.
     db: Any | None
+
+    def thinking_round_trip_version(self) -> int:
+        """Return the exact supported durable thinking envelope version."""
 
     def commit_durable_turn(
         self,
@@ -9197,6 +9217,20 @@ class ConsoleChatStore:
         current = current or self._generation_variant(message)
         self._validate_generation_variant(message, current)
         self._validate_generation_variant(message, variant)
+        producer = self.sync_v2_chat_producer
+        reconcile = getattr(producer, "reconcile_chat_message_intent", None)
+        has_durable_evidence = self._generation_has_durable_evidence(
+            current
+        ) or self._generation_has_durable_evidence(variant)
+        if (
+            self.sync_v2_server_profile_id is not None
+            and has_durable_evidence
+            and not callable(reconcile)
+        ):
+            raise RuntimeError(
+                "Whole-generation Sync projection requires committed-intent "
+                "reconciliation."
+            )
         candidate = self._generation_owner_candidate(
             message,
             current=current,
@@ -9232,7 +9266,10 @@ class ConsoleChatStore:
             raise RuntimeError("Selected generation persistence did not commit.")
         candidate.provider_continuation_message_version = committed_version
         candidate.provider_continuation_remote = False
-        self._enqueue_sync_v2_message_if_ready(candidate)
+        if callable(reconcile) or has_durable_evidence:
+            self._refresh_and_project_provider_continuation(candidate)
+        else:
+            self._enqueue_sync_v2_message_if_ready(candidate)
         return True, committed_version
 
     @staticmethod
@@ -10776,7 +10813,17 @@ class ConsoleChatStore:
             return False
         if message.exchanges:
             self._persist_exchanges_only(message)
-        if had_provider_continuation:
+        refresh_preserved_continuation = had_provider_continuation
+        if clear_generation_provenance and not refresh_preserved_continuation:
+            database = getattr(self.persistence, "db", None)
+            getter = getattr(database, "get_message_by_id", None)
+            if callable(getter):
+                committed = getter(message.persisted_message_id)
+                refresh_preserved_continuation = bool(
+                    committed is not None
+                    and committed.get("provider_continuation_json") is not None
+                )
+        if refresh_preserved_continuation:
             self._refresh_and_project_provider_continuation(message)
             return True
         self._refresh_generation_owner_version(message)
@@ -10807,6 +10854,9 @@ class ConsoleChatStore:
         if row is None:
             raise RuntimeError("Durable continuation owner is unavailable.")
         safe = read_provider_continuation_json(row.get("provider_continuation_json"))
+        thinking = read_thinking_blocks_json(row.get("thinking_blocks_json"))
+        if thinking.warning is not None or thinking.opaque_json is not None:
+            raise RuntimeError("Durable thinking owner is unreadable.")
         message.provider_continuation = safe.checkpoint
         message.provider_continuation_message_version = int(row["version"])
         message.provider_continuation_remote = False
@@ -10827,6 +10877,10 @@ class ConsoleChatStore:
         if safe.checkpoint is not None:
             payload["provider_continuation_json"] = dump_provider_continuation_json(
                 safe.checkpoint
+            )
+        if thinking.envelope is not None:
+            payload["thinking_blocks_json"] = dump_thinking_blocks_json(
+                thinking.envelope
             )
         try:
             reconcile(

@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleThinkingCompatibilityError,
+    require_thinking_persistence_support,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
@@ -379,9 +380,8 @@ def test_generation_outbox_candidate_owns_exact_target_variant_metadata(
     )
     _insert(db, repository, _acceptance(conversation_id))
     db.get_connection().execute(
-        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
-        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
-        (dump_thinking_blocks_json(_thinking("original reasoning")),),
+        "UPDATE messages SET content = 'original answer', "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'"
     )
     store, _session_id = _restored_store(db, conversation_id)
     live = store._message_or_raise("assistant-1")
@@ -392,7 +392,6 @@ def test_generation_outbox_candidate_owns_exact_target_variant_metadata(
                 store._generation_variant(live),
                 ConsoleVariant(
                     content="alternative answer",
-                    thinking=_thinking("alternative reasoning"),
                     assistant_generation_state="complete",
                 ),
             ],
@@ -403,7 +402,7 @@ def test_generation_outbox_candidate_owns_exact_target_variant_metadata(
     def capture_candidate(candidate: ConsoleChatMessage, **_kwargs: object) -> None:
         owner = store._message_or_raise("assistant-1")
         assert owner.content == "original answer"
-        assert owner.thinking == _thinking("original reasoning")
+        assert owner.thinking is None
         if action == "add":
             assert owner.variants is None
         else:
@@ -431,6 +430,44 @@ def test_generation_outbox_candidate_owns_exact_target_variant_metadata(
         result.variants.turn_id,
         result.variants.selected_index,
         tuple(result.variants.variants),
+    )
+
+
+def test_generation_with_thinking_refuses_incomplete_sync_producer_before_commit(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "incomplete-sync.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (dump_thinking_blocks_json(_thinking("original reasoning")),),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    live.variants = ConsoleVariantSet.from_generations(
+        turn_id="assistant-1",
+        generations=[
+            store._generation_variant(live),
+            ConsoleVariant(
+                content="alternative answer",
+                thinking=_thinking("alternative reasoning"),
+                assistant_generation_state="complete",
+            ),
+        ],
+        selected_index=0,
+    )
+    store.sync_v2_server_profile_id = "server-a"
+    store.sync_v2_chat_producer = object()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="committed-intent reconciliation"):
+        store.select_variant("assistant-1", 1)
+
+    row = db.get_message_by_id("assistant-1")
+    assert row is not None
+    assert row["content"] == "original answer"
+    assert row["thinking_blocks_json"] == dump_thinking_blocks_json(
+        _thinking("original reasoning")
     )
 
 
@@ -754,3 +791,91 @@ def test_normal_terminal_projects_paired_thinking_status(
 
     assert row["assistant_generation_state"] == expected_status
     assert {block.status for block in durable.blocks} == {expected_status}
+
+
+def test_local_persistence_advertises_exact_thinking_round_trip_v1(
+    tmp_path: Path,
+) -> None:
+    db, _conversation_id, _repository = _database(tmp_path / "capability.sqlite")
+    try:
+        assert ChatPersistenceService(db).thinking_round_trip_version() == 1
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "persistence",
+    [
+        None,
+        object(),
+        pytest.param(
+            type(
+                "LegacyPersistence", (), {"thinking_round_trip_version": lambda self: 0}
+            )(),
+            id="legacy-v0",
+        ),
+        pytest.param(
+            type(
+                "FuturePersistence", (), {"thinking_round_trip_version": lambda self: 2}
+            )(),
+            id="future-v2",
+        ),
+        pytest.param(
+            type("ServerPersistence", (), {"server_mode": True})(),
+            id="server-without-contract",
+        ),
+    ],
+)
+def test_persistent_thinking_preflight_refuses_before_provider_contact(
+    persistence: object | None,
+) -> None:
+    provider_calls: list[str] = []
+
+    def send() -> None:
+        require_thinking_persistence_support(
+            persistence,
+            persistent=True,
+            may_emit_thinking=True,
+        )
+        provider_calls.append("contacted")
+
+    with pytest.raises(
+        ConsoleThinkingCompatibilityError,
+        match="cannot preserve model thinking version 1",
+    ):
+        send()
+    assert provider_calls == []
+
+
+@pytest.mark.parametrize(
+    ("persistent", "may_emit_thinking", "persistence"),
+    [
+        (False, True, None),
+        (True, False, object()),
+        (
+            True,
+            True,
+            type(
+                "RoundTripV1",
+                (),
+                {"thinking_round_trip_version": lambda self: 1},
+            )(),
+        ),
+    ],
+    ids=["ephemeral", "ignored-disposition", "supported-local-v1"],
+)
+def test_thinking_preflight_keeps_unaffected_paths_reachable(
+    persistent: bool,
+    may_emit_thinking: bool,
+    persistence: object | None,
+) -> None:
+    provider_calls: list[str] = []
+
+    require_thinking_persistence_support(
+        persistence,
+        persistent=persistent,
+        may_emit_thinking=may_emit_thinking,
+    )
+    provider_calls.append("contacted")
+
+    assert provider_calls == ["contacted"]

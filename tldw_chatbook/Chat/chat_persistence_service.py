@@ -103,6 +103,11 @@ class ChatPersistenceService:
         self.console_library_policy_repository = ConsoleLibraryPolicyRepository(db)
         self.console_dispatch_repository = ConsoleDispatchRepository(db)
 
+    @staticmethod
+    def thinking_round_trip_version() -> int:
+        """Return the thinking envelope version this local adapter round-trips."""
+        return 1
+
     @property
     def canonical_citation_writes_ready(self) -> bool:
         """Return whether this service can persist canonical local citations.
