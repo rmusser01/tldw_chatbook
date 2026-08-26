@@ -1,6 +1,6 @@
 # Watchlists Read Aggregate Feed Selection Design
 
-Status: Approved interactively and by specification review
+Status: Approved interactively; final feasibility revisions awaiting written-spec review
 
 Date: 2026-08-25
 
@@ -33,6 +33,22 @@ On current `origin/dev`:
   not be populated while Read is active.
 - ADR-042 already requires pending scope loads to commit navigation highlight, scope, rows, and
   Reader clearing atomically.
+- Current Feed Items pagination is still offset-based and does not yet implement ADR-042's item-id
+  high-water mark, effective-date/item-id keyset, or seen-id guard.
+
+## Delivery sequence and prerequisite
+
+This design is the second of two sequential, atomic PRs:
+
+1. **Stable Feed Items snapshot foundation.** Implement ADR-042's pending/committed Reader scope,
+   effective-date/item-id keyset pagination, initial item-id high-water mark, seen-id guard, and
+   latest-generation-wins publication for the existing scopes. This PR changes no aggregate tree
+   structure.
+2. **Aggregate feed selection.** Implement this specification on top of that committed snapshot
+   contract.
+
+The aggregate feature must not reproduce a partial offset-based version of the foundation. Backlog
+tasks are created in this order, and the aggregate task depends on the completed foundation task.
 
 ## User experience
 
@@ -66,6 +82,13 @@ against the authoritative tree snapshot and updates the active management surfac
 launch a hidden Feed Items load. That commit invalidates cached Feed Items selection and rows. On a
 later return to Read, the screen loads a fresh item snapshot for the already-committed Navigation
 scope and never mounts rows or a Reader article retained from a different scope.
+
+That management-tab behavior applies only while the local backend is active. On a server-backed
+management tab, aggregate branches remain visible and expandable, but their feed children are
+disabled with the tooltip `Individual feed selection is available in Read or the Local backend.`
+Any committed local contextual scope is parked unchanged: it does not scope server rows, is not
+rendered with active-selection styling over the server surface, and resumes when Read/local mode
+returns. The server management heading remains explicitly unscoped.
 
 ### Row interaction
 
@@ -148,8 +171,11 @@ Each refresh obtains complete bulk results for:
 
 - all source rows;
 - unassigned source rows;
-- per-source total/unread counts;
-- existing watchlists and watchlist counts.
+- per-source total/unread counts.
+
+Existing watchlist rows and watchlist counts retain their current loading contract, including the
+existing `list_watchlists()` page size. Raising or removing that separate 100-watchlist limit is not
+required to make aggregate source branches complete and is out of scope here.
 
 All Unread children are the all-source rows whose bulk unread count is positive. The selected or
 pending All Unread source may be presentation-pinned at zero as described below.
@@ -195,7 +221,7 @@ the replacement snapshot commits.
 The same gesture off Read has a section-appropriate commit boundary:
 
 ```text
-feed gesture on a management sub-screen
+feed gesture on a local-backed management sub-screen
   → validate the child against the committed tree snapshot
   → atomically commit Navigation scope + active management projections
   → invalidate cached Feed Items rows and Reader selection
@@ -210,6 +236,9 @@ later entry into Read
 An item-load failure on later Read entry does not undo a Navigation scope that already committed
 successfully on another sub-screen. It leaves that scope active and shows an honest scoped failure
 state with Retry; no older item list or article is relabelled as the new scope.
+
+On a server-backed management sub-screen no aggregate-child gesture is emitted, so there is no
+server-side variant of this commit flow and no local/server source-id comparison.
 
 ## All Unread semantics
 
@@ -292,6 +321,8 @@ intentional exception already driven by contextual tree scope.
 - **Read/unread write fails:** preserve status, badge, branch membership, and Reader selection.
 - **Source disappears or changes membership:** apply the reconciliation rules above after the
   authoritative snapshot commits.
+- **Server management backend is active:** keep aggregate branches expandable, disable aggregate
+  feed children, park local scope without active styling, and leave server rows explicitly unscoped.
 
 ## Verification
 
@@ -316,6 +347,8 @@ Automated coverage must prove:
 11. Count refreshes and rail rebuilds preserve focus, expansion, scope, and Reader position.
 12. Aggregate branches remain visible on every Watchlists sub-screen while Read-only predicates do
     not alter unrelated management data.
+13. Server-backed management tabs disable aggregate children, never compare local and server source
+    ids, leave server rows unscoped, and restore the parked local scope on return to Read/local.
 
 Run only the affected Watchlists tests plus modified-file Ruff and `git diff --check`, in accordance
 with the workstream's established testing constraint.
@@ -324,6 +357,7 @@ with the workstream's established testing constraint.
 
 In scope:
 
+- consumption of the completed stable Feed Items snapshot foundation;
 - contextual aggregate feed children;
 - typed aggregate expansion state;
 - authoritative bulk tree snapshots;
@@ -333,6 +367,7 @@ In scope:
 
 Out of scope:
 
+- reimplementing the stable snapshot foundation inside the aggregate PR;
 - per-feed children beneath Today or Starred;
 - tree virtualization or pagination without profiling evidence;
 - persistence of tree-branch expansion across app restarts;
