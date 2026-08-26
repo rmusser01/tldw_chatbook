@@ -77,6 +77,8 @@ from ...Subscriptions.feed_server import (
     is_loopback_bind,
 )
 from ...Subscriptions.html_text import strip_control_characters
+from ...Subscriptions.item_dates import effective_date
+from ...Subscriptions.watchlist_item_page import WatchlistItemPage
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
@@ -174,6 +176,10 @@ from ..Watchlists_Modules.region_layout import (
     resolve_effective_layout,
 )
 from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
+from ..Watchlists_Modules.reader_item_snapshot import (
+    ReaderItemQuery,
+    ReaderItemSnapshot,
+)
 from ..Watchlists_Modules.rules_pane import (
     RefreshRulesRequested,
     RuleFormVisibilityChanged,
@@ -693,15 +699,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # unrelated navigation happened to trigger a reload.
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
+        self._items_snapshot: ReaderItemSnapshot | None = None
         self._items_page_index = 0
         self._items_has_next = False
         self._items_page_loading = False
-        self._items_load_generation = 0
+        self._items_snapshot_count = 0
+        self._items_pending_arrivals = 0
+        self._items_pending_query_key: tuple[Any, ...] | None = None
+        self._items_snapshot_generation = 0
         self._items_page_presentation_lock = asyncio.Lock()
-        self._items_inflight_page_load: tuple[
+        self._items_inflight_replacement: tuple[
             tuple[Any, ...], asyncio.Future[bool]
         ] | None = None
-        self._items_committed_page_key: tuple[Any, ...] | None = None
+        self._items_inflight_continuation: asyncio.Future[bool] | None = None
         self._selected_content_page_key: tuple[Any, ...] | None = None
         self._items_search_results_authoritative = False
         # The undo batch for `action_mark_all_read` (task-2513 Task 10): the
@@ -2494,7 +2504,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def _reset_items_paging_for_context(self, *, loading: bool) -> None:
-        """Invalidate Read paging before a query-context change is loaded."""
+        """Invalidate parked Reader paging without issuing an item query."""
         self._discard_items_view_state()
         timer = getattr(self, "_items_search_reload_timer", None)
         if timer is not None:
@@ -2504,8 +2514,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_has_next = False
         self._items_page_loading = loading
         self._items_search_results_authoritative = False
-        self._items_load_generation += 1
-        self._items_inflight_page_load = None
+        self._items_snapshot_generation += 1
+        self._items_pending_query_key = None
+        self._items_inflight_replacement = None
+        self._items_inflight_continuation = None
         self._push_items_pager_state()
 
     def _enter_server_read_recovery(self) -> None:
@@ -2514,7 +2526,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._reset_items_paging_for_context(loading=False)
         self._items_status_filter = "all"
         self._items_search_query = ""
-        self._items_committed_page_key = None
+        self._items_snapshot = None
+        self._items_snapshot_count = 0
+        self._items_pending_arrivals = 0
         self._selected_content_page_key = None
         self._loaded_items = []
         self._selected_content_item = None
@@ -2537,7 +2551,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     async def _recover_local_read(self) -> None:
         """Commit local navigation only after the normal item load succeeds."""
-        if not await self._load_items():
+        if not await self._replace_items_snapshot(reason="return_to_read"):
             return
         if self.runtime_backend != "local" or self.active_section != "items":
             return
@@ -3184,7 +3198,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._items_view_focus_id = focused_id
                 break
             focused = focused.parent
-        self._items_view_context_key = self._items_page_key(self._items_page_index)
+        snapshot = self._items_snapshot
+        self._items_view_context_key = (
+            snapshot.query.context_key if snapshot is not None else None
+        )
 
     def _discard_items_view_state(self) -> None:
         """Discard one consumed or invalidated Items restoration snapshot."""
@@ -3198,8 +3215,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         if self._items_page_loading:
             return
-        if self._items_view_context_key != self._items_page_key(
-            self._items_page_index
+        snapshot = self._items_snapshot
+        if (
+            snapshot is None
+            or self._items_view_context_key != snapshot.query.context_key
         ):
             self._discard_items_view_state()
             return
@@ -4239,13 +4258,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         read_is_active = (
             self.active_section == "items" and self.runtime_backend == "local"
         )
-        self._reset_items_paging_for_context(loading=read_is_active)
         if read_is_active:
+            self._supersede_items_query_intent()
             # Own group, not the default one: `exclusive=True` in the
             # default group would cancel every in-flight default-group
             # worker (`_create_source`, `_delete_source`, ...) -- the
             # hazard `_request_surface_refresh` documents for its drainer.
-            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+            self.run_worker(
+                self._replace_items_snapshot(
+                    scope=self.tree_scope,
+                    reason="scope",
+                    clear_reader_on_commit=True,
+                ),
+                exclusive=True,
+                group="wc_items",
+            )
         # TASK-2304 AC#2. The Sources table follows the same scope the
         # centre header just took, so the two counts of "how many sources
         # are in view" cannot disagree. An in-place push on the pane's own
@@ -4845,7 +4872,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Own group (task-2513), as in `watch_tree_scope`:
             # `exclusive=True` in the default group would cancel every
             # in-flight default-group worker (`_create_source`, ...).
-            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+            self.run_worker(
+                self._replace_items_snapshot(reason="initial"),
+                exclusive=True,
+                group="wc_items",
+            )
         elif self.active_section == "rules":
             self.run_worker(self._load_rules(), exclusive=True, group="wc_rules")
         elif self.active_section == "runs":
@@ -4910,7 +4941,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 else:
                     self._load_tree_data()
                     self.run_worker(
-                        self._load_items(), exclusive=True, group="wc_items"
+                        self._replace_items_snapshot(reason="return_to_read"),
+                        exclusive=True,
+                        group="wc_items",
                     )
             else:
                 self._enter_server_read_recovery()
@@ -9620,10 +9653,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         stop_audio_playback_if_current(Path(str(file_path)))
 
-    def _items_status_kwargs(self) -> dict[str, Any]:
+    def _items_status_kwargs(
+        self, status_filter: str | None = None
+    ) -> dict[str, Any]:
         """The status predicate the item PAGE should be fetched with.
 
-        Review wave, I2. TASK-2301 made `_load_items` ask for every status,
+        Review wave, I2. TASK-2301 made the Reader query ask for every status,
         which fixed "triaged items are unreachable" and quietly broke a
         different guarantee: the query pages at 50 rows and the pane's filter
         is applied in memory afterwards (`ItemsPane._filtered_items` never
@@ -9648,33 +9683,44 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         longer matches (see `_filtered_items`), and it is what makes the list
         correct in the window between a filter change and its reload landing.
         """
-        if _normalize_items_status_filter(self._items_status_filter) == "unread":
+        effective_filter = (
+            self._items_status_filter
+            if status_filter is None
+            else status_filter
+        )
+        if _normalize_items_status_filter(effective_filter) == "unread":
             return {"status": "new"}
         return {"statuses": list(_READER_ALL_STATUSES)}
 
-    def _items_page_key(self, page_index: int) -> tuple[Any, ...]:
-        """Return the deterministic query context for one Read page."""
-        scope = self.tree_scope
+    def _items_page_key(
+        self,
+        *,
+        scope: TreeScope,
+        status: str,
+        search: str,
+    ) -> tuple[Any, ...]:
+        """Return the page-independent identity of one Reader query."""
         return (
             self.runtime_backend,
             scope.kind,
             scope.watchlist_id,
             scope.source_id,
-            _normalize_items_status_filter(self._items_status_filter),
-            self._items_search_query.strip().casefold(),
-            page_index,
+            _normalize_items_status_filter(status),
+            search.strip().casefold(),
         )
 
-    def _items_scope_query(self) -> dict[str, Any]:
+    def _items_scope_query(
+        self, scope: TreeScope | None = None
+    ) -> dict[str, Any]:
         """The tree scope as `list_items` kwargs.
 
         `all` passes nothing (every source). A `source` scope collapses to its
         single `source_id`; watchlist membership (many-to-many) is resolved by
         the query, not here. This is the wiring the whole phase exists for:
-        before it, `_load_items` fetched the newest 50 items of ANY source
+        before it, the Reader fetched the newest 50 items of ANY source
         regardless of the rail selection.
         """
-        scope = self.tree_scope
+        scope = self.tree_scope if scope is None else scope
         if scope.kind == "starred":
             # TASK-3072 plan task 6: the Starred smart feed. The flag is
             # global (same ADR-018 semantics as the briefing queue), so no
@@ -9731,7 +9777,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         returned every status, so it always had the open item to keep;
         afterwards a reload under `status="new"` came back without it and the
         item the user was reading vanished. Measured: filter New, open the
-        only unread item, any `_load_items()` -> `items == []`.
+        only unread item, any Reader replacement -> `items == []`.
 
         Two fixes were on the table. Dropping the status predicate while an
         item is open was rejected: it un-fixes I2 for the whole time the
@@ -9779,209 +9825,359 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not open_id or any(str(row.get("id")) == open_id for row in page):
             return page
         carried = dict(open_item)
-        created = str(carried.get("created_at") or "")
+        created = effective_date(carried) or datetime.min.replace(tzinfo=timezone.utc)
         for index, row in enumerate(page):
-            if str(row.get("created_at") or "") < created:
+            row_date = effective_date(row) or datetime.min.replace(
+                tzinfo=timezone.utc
+            )
+            if row_date < created:
                 inserted = [*page[:index], carried, *page[index:]]
                 return inserted if max_items is None else inserted[:max_items]
         if max_items is not None and len(page) >= max_items:
             return [*page[:-1], carried]
         return [*page, carried]
 
-    async def _load_items(
+    def _reader_item_query(
         self,
         *,
-        target_page_index: int | None = None,
-        explicit_page_change: bool = False,
+        scope: TreeScope | None = None,
+        status: str | None = None,
+        search: str | None = None,
+    ) -> ReaderItemQuery:
+        """Freeze one candidate Reader query from explicit screen intent."""
+        candidate_scope = self.tree_scope if scope is None else scope
+        candidate_status = (
+            self._items_status_filter if status is None else status
+        )
+        candidate_search = self._items_search_query if search is None else search
+        kwargs = {
+            **self._items_status_kwargs(candidate_status),
+            **self._items_scope_query(candidate_scope),
+        }
+        if candidate_scope.kind == "unread":
+            kwargs.pop("statuses", None)
+        normalized_search = candidate_search.strip()
+        if normalized_search:
+            kwargs["search"] = normalized_search
+        return ReaderItemQuery.freeze(
+            self._items_page_key(
+                scope=candidate_scope,
+                status=candidate_status,
+                search=candidate_search,
+            ),
+            kwargs,
+        )
+
+    def _items_request_is_current(
+        self, generation: int, query_key: tuple[Any, ...]
     ) -> bool:
+        return (
+            generation == self._items_snapshot_generation
+            and query_key == self._items_pending_query_key
+        )
+
+    def _supersede_items_query_intent(self) -> None:
+        """Park old rows while immediately invalidating older query work."""
+        query = self._reader_item_query()
+        self._items_snapshot_generation += 1
+        self._items_pending_query_key = query.context_key
+        self._items_inflight_replacement = None
+        self._items_inflight_continuation = None
+        self._items_page_loading = True
+        self._items_search_results_authoritative = False
+        self._push_items_pager_state()
+
+    async def _publish_items_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        focus_first: bool,
+        is_current: Callable[[], bool],
+        commit: Callable[[], None],
+    ) -> bool:
+        """Mount rows and commit their authority together, with rollback."""
+        notify = getattr(self.app_instance, "notify", None)
+        async with self._items_page_presentation_lock:
+            if not is_current():
+                return False
+            prior_rows = self._loaded_items
+            pane: ArticleListPane | None = None
+            prior_authority = self._items_search_results_authoritative
+            if self._dom_is_live:
+                try:
+                    pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+                    prior_authority = pane.search_results_authoritative
+                    pane.search_results_authoritative = True
+                    await pane.apply_page_items(rows, focus_first=focus_first)
+                except NoMatches:
+                    pane = None
+                except asyncio.CancelledError:
+                    if pane is not None:
+                        pane.search_results_authoritative = prior_authority
+                        await pane.apply_page_items(prior_rows, focus_first=False)
+                    raise
+                except Exception as exc:
+                    if pane is not None:
+                        pane.search_results_authoritative = prior_authority
+                        await pane.apply_page_items(prior_rows, focus_first=False)
+                    logger.debug(
+                        "Failed to present watchlist items (exception_type={}).",
+                        type(exc).__name__,
+                    )
+                    if callable(notify):
+                        notify("Failed to load watchlist items.", severity="error")
+                    return False
+            if not is_current():
+                if pane is not None:
+                    pane.search_results_authoritative = prior_authority
+                    await pane.apply_page_items(prior_rows, focus_first=False)
+                return False
+            commit()
+            return True
+
+    async def _replace_items_snapshot(
+        self,
+        *,
+        scope: TreeScope | None = None,
+        reason: Literal[
+            "initial",
+            "refresh",
+            "filter",
+            "search",
+            "scope",
+            "return_to_read",
+        ],
+        clear_reader_on_commit: bool = False,
+        focus_first: bool = False,
+    ) -> bool:
+        """Load page one off-screen and publish only after rows mount."""
         if self.runtime_backend != "local":
             self._items_page_loading = False
             self._push_items_pager_state()
             return False
-        target = max(
-            0,
-            self._items_page_index
-            if target_page_index is None
-            else target_page_index,
-        )
-        target_key = self._items_page_key(target)
-        inflight = self._items_inflight_page_load
-        # Watchers and direct refreshes can request the same context together.
-        # Explicit navigation must remain free to supersede an older load.
-        if (
-            not explicit_page_change
-            and inflight is not None
-            and inflight[0] == target_key
-        ):
+        query = self._reader_item_query(scope=scope)
+        query_key = query.context_key
+        inflight = self._items_inflight_replacement
+        if inflight is not None and inflight[0] == query_key:
             return await asyncio.shield(inflight[1])
 
         completion = asyncio.get_running_loop().create_future()
-        self._items_inflight_page_load = (target_key, completion)
+        self._items_inflight_replacement = (query_key, completion)
+        self._items_snapshot_generation += 1
+        generation = self._items_snapshot_generation
+        self._items_pending_query_key = query_key
+        self._items_page_loading = True
+        self._items_search_results_authoritative = False
+        self._push_items_pager_state()
         result = False
         try:
-            result = await self._load_items_once(
-                target=target,
-                target_key=target_key,
-                explicit_page_change=explicit_page_change,
+            page = await self._controller.list_reader_items_page(
+                runtime_backend=self.runtime_backend,
+                limit=_ITEMS_PAGE_SIZE,
+                **query.as_kwargs(),
             )
+            if not isinstance(page, WatchlistItemPage):
+                raise TypeError("Reader item service returned an invalid page")
+            if not self._items_request_is_current(generation, query_key):
+                return False
+            candidate = ReaderItemSnapshot.start(query, page)
+            rows = list(candidate.page(0))
+            if reason in {"filter", "search"}:
+                rows = self._with_open_item(rows, max_items=_ITEMS_PAGE_SIZE)
+
+            def commit() -> None:
+                self._items_snapshot = candidate
+                self._loaded_items = rows
+                self._items_page_index = 0
+                self._items_has_next = candidate.has_next(0)
+                self._items_snapshot_count = candidate.snapshot_count
+                self._items_pending_arrivals = candidate.pending_arrivals
+                self._items_search_results_authoritative = True
+                self._items_page_loading = False
+                self._items_pending_query_key = None
+                if clear_reader_on_commit:
+                    self._selected_content_item = None
+                    self._selected_content_page_key = None
+                    try:
+                        content = self.query_one(
+                            "#watchlists-content-pane", ContentPane
+                        )
+                        content.item = None
+                    except NoMatches:
+                        pass
+                self._push_items_pager_state()
+                self._restore_items_view_state()
+
+            result = await self._publish_items_rows(
+                rows,
+                focus_first=focus_first,
+                is_current=lambda: self._items_request_is_current(
+                    generation, query_key
+                ),
+                commit=commit,
+            )
+            if not result and self._items_request_is_current(generation, query_key):
+                self._items_page_loading = False
+                self._push_items_pager_state()
             return result
+        except asyncio.CancelledError:
+            if self._items_request_is_current(generation, query_key):
+                self._items_page_loading = False
+                self._push_items_pager_state()
+            raise
+        except Exception as exc:
+            if self._items_request_is_current(generation, query_key):
+                logger.debug(
+                    "Failed to load watchlist items (exception_type={}).",
+                    type(exc).__name__,
+                )
+                self._items_page_loading = False
+                self._push_items_pager_state()
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify("Failed to load watchlist items.", severity="error")
+            return False
         finally:
             if not completion.done():
                 completion.set_result(result)
-            if self._items_inflight_page_load == (target_key, completion):
-                self._items_inflight_page_load = None
+            if self._items_inflight_replacement == (query_key, completion):
+                self._items_inflight_replacement = None
 
-    async def _load_items_once(
-        self,
-        *,
-        target: int,
-        target_key: tuple[Any, ...],
-        explicit_page_change: bool,
+    async def _present_cached_items_page(
+        self, index: int, *, focus_first: bool = True
     ) -> bool:
-        """Fetch, present, and commit one page load owned by `_load_items`."""
-        notify = getattr(self.app_instance, "notify", None)
-        if (
-            self._items_view_context_key is not None
-            and target_key != self._items_view_context_key
-        ):
-            self._discard_items_view_state()
-        self._items_load_generation += 1
-        generation = self._items_load_generation
-        self._items_page_loading = True
-        self._push_items_pager_state()
-        resolved_target = target
-        resolved_key = target_key
-        try:
-            # TASK-3791 plan task 3: a non-blank search term is part of the
-            # query (the corpus-wide FTS path, falling back to LIKE), not a
-            # client-side-only filter over the newest 50.
-            query = self._items_search_query.strip()
-            items_kwargs = {
-                **self._items_status_kwargs(),
-                **self._items_scope_query(),
-                **({"search": query} if query else {}),
-            }
-            if self.tree_scope.kind == "unread":
-                # TASK-3791 plan task 4: the All Unread node forces the
-                # unread bucket (its scope kwarg above), so the filter's
-                # `statuses` must not ride along -- `get_new_items` raises
-                # on status and statuses together, and widening the list to
-                # the reader statuses would make the node lie besides.
-                items_kwargs.pop("statuses", None)
-            runtime_backend = self.runtime_backend
-            while True:
-                raw_items = await self._controller.list_items(
-                    runtime_backend=runtime_backend,
-                    limit=_ITEMS_PAGE_SIZE + 1,
-                    offset=resolved_target * _ITEMS_PAGE_SIZE,
-                    **items_kwargs,
-                )
-                if not self._items_load_is_current(generation, target_key):
-                    return False
-                if raw_items or resolved_target == 0:
-                    break
-                resolved_target -= 1
-                resolved_key = (*target_key[:-1], resolved_target)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            async with self._items_page_presentation_lock:
-                if not self._items_load_is_current(generation, target_key):
-                    return False
-                logger.debug(
-                    "Failed to load watchlist items (exception_type={}).",
-                    type(exc).__name__,
-                )
-                self._items_page_loading = False
-                self._push_items_pager_state()
-                if callable(notify):
-                    notify("Failed to load watchlist items.", severity="error")
-                return False
-
-        if not self._items_load_is_current(generation, target_key):
+        """Present an already-cached page without a backend request."""
+        snapshot = self._items_snapshot
+        if snapshot is None or index < 0 or index >= snapshot.page_count:
             return False
+        generation = self._items_snapshot_generation
+        rows = list(snapshot.page(index))
 
-        has_next = len(raw_items) > _ITEMS_PAGE_SIZE
-        rows = [dict(item) for item in raw_items[:_ITEMS_PAGE_SIZE]]
-        if self._selected_content_page_key == resolved_key:
-            rows = self._with_open_item(rows, max_items=_ITEMS_PAGE_SIZE)
+        def current() -> bool:
+            return (
+                generation == self._items_snapshot_generation
+                and self._items_snapshot is snapshot
+            )
 
-        async with self._items_page_presentation_lock:
-            if not self._items_load_is_current(generation, target_key):
-                return False
-            prior_rows = self._loaded_items
-            pane: ArticleListPane | None = None
-            prior_pane_authority = False
-            if self._dom_is_live:
-                try:
-                    pane = self.query_one(
-                        "#watchlists-items-pane", ArticleListPane
-                    )
-                except NoMatches:
-                    pass
-
-            def rollback_authority() -> bool:
-                return (
-                    prior_pane_authority
-                    if self._items_load_is_current(generation, target_key)
-                    else self._items_search_results_authoritative
-                )
-
-            try:
-                if pane is not None:
-                    prior_pane_authority = pane.search_results_authoritative
-                    pane.search_results_authoritative = True
-                    await pane.apply_page_items(
-                        rows,
-                        focus_first=explicit_page_change,
-                    )
-            except asyncio.CancelledError:
-                if pane is not None:
-                    pane.search_results_authoritative = rollback_authority()
-                    await pane.apply_page_items(prior_rows, focus_first=False)
-                raise
-            except Exception as exc:
-                if pane is not None:
-                    pane.search_results_authoritative = rollback_authority()
-                    await pane.apply_page_items(prior_rows, focus_first=False)
-                if not self._items_load_is_current(generation, target_key):
-                    return False
-                logger.debug(
-                    "Failed to load watchlist items (exception_type={}).",
-                    type(exc).__name__,
-                )
-                self._items_page_loading = False
-                self._push_items_pager_state()
-                if callable(notify):
-                    notify("Failed to load watchlist items.", severity="error")
-                return False
-
-            if not self._items_load_is_current(generation, target_key):
-                if pane is not None:
-                    pane.search_results_authoritative = rollback_authority()
-                    await pane.apply_page_items(prior_rows, focus_first=False)
-                return False
-
+        def commit() -> None:
             self._loaded_items = rows
-            self._items_page_index = resolved_target
-            self._items_has_next = has_next
-            self._items_committed_page_key = resolved_key
+            self._items_page_index = index
+            self._items_has_next = snapshot.has_next(index)
             self._items_search_results_authoritative = True
             self._items_page_loading = False
             self._push_items_pager_state()
             self._restore_items_view_state()
-            if self._dom_is_live and self.query("#watchlists-read-local-only"):
-                self._request_surface_refresh(self._SURFACE_READER)
-        return True
 
-    def _items_load_is_current(
-        self, generation: int, target_key: tuple[Any, ...]
-    ) -> bool:
-        """Whether a result still belongs to the active Read query context."""
-        return (
-            generation == self._items_load_generation
-            and target_key[:-1] == self._items_page_key(0)[:-1]
+        return await self._publish_items_rows(
+            rows, focus_first=focus_first, is_current=current, commit=commit
         )
+
+    _MAX_DUPLICATE_CONTINUATIONS = 100
+
+    async def _load_next_items_page(self) -> bool:
+        """Present cached forward rows or append one bounded continuation."""
+        snapshot = self._items_snapshot
+        if snapshot is None:
+            return False
+        next_index = self._items_page_index + 1
+        if next_index < snapshot.page_count:
+            return await self._present_cached_items_page(next_index)
+        if not snapshot.has_next(self._items_page_index):
+            return False
+        inflight = self._items_inflight_continuation
+        if inflight is not None:
+            return await asyncio.shield(inflight)
+
+        completion = asyncio.get_running_loop().create_future()
+        self._items_inflight_continuation = completion
+        generation = self._items_snapshot_generation
+        query = snapshot.query
+        candidate = snapshot
+        self._items_page_loading = True
+        self._push_items_pager_state()
+        result = False
+
+        def current() -> bool:
+            return (
+                generation == self._items_snapshot_generation
+                and self._items_snapshot is snapshot
+            )
+
+        try:
+            for _ in range(self._MAX_DUPLICATE_CONTINUATIONS):
+                if not candidate.has_more or candidate.cursor is None:
+                    break
+                page = await self._controller.list_reader_items_page(
+                    runtime_backend=self.runtime_backend,
+                    limit=_ITEMS_PAGE_SIZE,
+                    **query.as_kwargs(),
+                    snapshot_max_item_id=candidate.watermark,
+                    after=candidate.cursor,
+                )
+                if not isinstance(page, WatchlistItemPage):
+                    raise TypeError("Reader item service returned an invalid page")
+                if not current():
+                    return False
+                candidate, appended = candidate.with_continuation(page)
+                if not appended:
+                    if candidate.has_more:
+                        continue
+                    async with self._items_page_presentation_lock:
+                        if not current():
+                            return False
+                        self._items_snapshot = candidate
+                        self._items_has_next = False
+                        self._items_page_loading = False
+                        self._push_items_pager_state()
+                    result = True
+                    return True
+                rows = list(candidate.page(candidate.page_count - 1))
+
+                def commit() -> None:
+                    self._items_snapshot = candidate
+                    self._loaded_items = rows
+                    self._items_page_index = candidate.page_count - 1
+                    self._items_has_next = candidate.has_next(
+                        self._items_page_index
+                    )
+                    self._items_search_results_authoritative = True
+                    self._items_page_loading = False
+                    self._push_items_pager_state()
+                    self._restore_items_view_state()
+
+                result = await self._publish_items_rows(
+                    rows,
+                    focus_first=True,
+                    is_current=current,
+                    commit=commit,
+                )
+                return result
+            if current():
+                self._items_page_loading = False
+                self._push_items_pager_state()
+            return False
+        except asyncio.CancelledError:
+            if current():
+                self._items_page_loading = False
+                self._push_items_pager_state()
+            raise
+        except Exception as exc:
+            if current():
+                logger.debug(
+                    "Failed to load watchlist item page (exception_type={}).",
+                    type(exc).__name__,
+                )
+                self._items_page_loading = False
+                self._push_items_pager_state()
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify("Failed to load watchlist items.", severity="error")
+            return False
+        finally:
+            if not completion.done():
+                completion.set_result(result)
+            if self._items_inflight_continuation is completion:
+                self._items_inflight_continuation = None
 
     @on(ItemSelected)
     async def handle_item_selected(self, event: ItemSelected) -> None:
@@ -9989,7 +10185,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self.runtime_backend != "local":
             return
         async with self._items_page_presentation_lock:
-            selection_page_key = self._items_committed_page_key
+            snapshot = self._items_snapshot
+            selection_page_key = (
+                snapshot.query.context_key if snapshot is not None else None
+            )
         # TASK-15464: fetch the DETAIL body BEFORE any of the selection
         # writes below, not after. `ContentPane.item` is a `recompose=True`
         # reactive, so merging `content` into `event.item` first means one
@@ -10587,12 +10786,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_status_filter = incoming
         self._items_search_query = event.search_query
         if status_changed:
-            self._reset_items_paging_for_context(loading=True)
+            self._supersede_items_query_intent()
             # Own group, as in `watch_tree_scope`: an exclusive reload in
             # the default group cancels unrelated in-flight workers.
-            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+            self.run_worker(
+                self._replace_items_snapshot(reason="filter"),
+                exclusive=True,
+                group="wc_items",
+            )
         elif query_changed:
-            self._reset_items_paging_for_context(loading=True)
+            self._supersede_items_query_intent()
             # TASK-3791 plan task 3: a search edit re-fetches too, now that
             # the term is part of the query (`_load_items` weaves it in) --
             # debounced, because this message fires on every keystroke and a
@@ -10612,16 +10815,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_search_reload_timer = self.set_timer(
             self._ITEMS_SEARCH_DEBOUNCE_SECONDS,
             lambda: self.run_worker(
-                self._load_items(), exclusive=True, group="wc_items"
+                self._replace_items_snapshot(reason="search"),
+                exclusive=True,
+                group="wc_items",
             ),
         )
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
         event.stop()
+        self._supersede_items_query_intent()
         # Own group, as in `watch_tree_scope`: an exclusive reload in the
         # default group cancels unrelated in-flight workers.
-        self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+        self.run_worker(
+            self._replace_items_snapshot(reason="refresh"),
+            exclusive=True,
+            group="wc_items",
+        )
 
     @on(PreviousItemsPageRequested)
     def handle_previous_items_page_requested(
@@ -10631,10 +10841,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self._items_page_loading or self._items_page_index == 0:
             return
         self.run_worker(
-            self._load_items(
-                target_page_index=self._items_page_index - 1,
-                explicit_page_change=True,
-            ),
+            self._present_cached_items_page(self._items_page_index - 1),
             exclusive=True,
             group="wc_items",
         )
@@ -10647,10 +10854,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self._items_page_loading or not self._items_has_next:
             return
         self.run_worker(
-            self._load_items(
-                target_page_index=self._items_page_index + 1,
-                explicit_page_change=True,
-            ),
+            self._load_next_items_page(),
             exclusive=True,
             group="wc_items",
         )
@@ -11026,6 +11230,50 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 else InspectorPane._QUEUE_BRIEFING_LABEL
             )
 
+    def _patch_committed_items_after_mutation(
+        self, item_id: Any, **changes: Any
+    ) -> None:
+        """Patch one item across every committed Reader projection in place."""
+        visited: set[int] = set()
+        snapshot = self._items_snapshot
+        candidates: list[dict[str, Any]] = []
+        if snapshot is not None:
+            candidates.extend(row for page in snapshot.pages for row in page)
+        candidates.extend(self._loaded_items)
+        for entity in (self._selected_content_item, self.selected_entity):
+            if isinstance(entity, dict):
+                candidates.append(entity)
+        row_key: Any = None
+        for item in candidates:
+            identity = id(item)
+            if identity in visited or not self._item_identity_matches(
+                item, item_id
+            ):
+                continue
+            visited.add(identity)
+            item.update(changes)
+            if row_key is None:
+                row_key = item.get("id")
+        if "status" in changes and row_key is not None:
+            self._repaint_item_status_cell(row_key, str(changes["status"]))
+        if "is_flagged" in changes and row_key is not None:
+            try:
+                pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+                pane.update_item_starred_cell(row_key, bool(changes["is_flagged"]))
+            except NoMatches:
+                pass
+            try:
+                star = self.query_one("#content-star-button", Button)
+                star.label = "★ Starred" if changes["is_flagged"] else "☆ Star"
+            except NoMatches:
+                pass
+
+    @staticmethod
+    def _item_identity_matches(item: dict[str, Any], item_id: Any) -> bool:
+        """Return whether a normalized or raw item identity matches a row."""
+        target = str(item_id)
+        return target in {str(item.get("id")), str(item.get("item_id"))}
+
     async def _update_item_status(
         self,
         item_id: Any,
@@ -11093,26 +11341,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         try:
             await self._update_item_status_off_loop(item_id=item_id, status=status)
-            if patch_item is not None:
-                patch_item["status"] = status
-                # Whole-branch review (Important): the in-place patch is
-                # invisible -- rows are built once in `ItemsPane.compose()`
-                # and this path deliberately never recomposes, so the Status
-                # column read "new" for every item the user had opened until
-                # they left the tab. Repaint the one cell instead.
-                self._repaint_item_status_cell(patch_item.get("id"), status)
-            else:
-                # TASK-2301 AC#3. The deliberate actions (Ingest, Ignore, the
-                # unread toggle) carry no `patch_item`, so their only visible
-                # result used to arrive whenever the `_load_items` reload
-                # below happened to land -- and before this task that reload
-                # DELETED the row, because the list could only ever hold
-                # `new` items. "The row disappeared" is not feedback; it is
-                # the shape of data loss. Repaint the row's Status cell the
-                # moment the write succeeds, on the same single-cell path the
-                # mark-read-on-open flow already uses, so the user sees the
-                # state they just asked for on the row they acted on.
-                self._repaint_item_status_cell(item_id, status)
+            patch_id = patch_item.get("id") if patch_item is not None else item_id
+            self._patch_committed_items_after_mutation(patch_id, status=status)
             if notify_toast:
                 label = "unread" if status == "new" else status
                 # `markup=False`: the body is app-authored today, but toasts
@@ -11126,10 +11356,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             logger.opt(exception=True).warning(f"Failed to mark item {status}.")
             if notify_toast and callable(notify):
                 notify(f"Failed to mark item {status}.", severity="error")
+            return
         if refresh:
-            # Own group, as in `watch_tree_scope`: an exclusive reload in
-            # the default group cancels unrelated in-flight workers.
-            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
             self._refresh_overview_data()
             # TASK-2304 AC#1. Every status this path writes moves the item
             # into or out of the `new` bucket the rail counts, so the rail is
@@ -11697,23 +11925,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Could not update the star.", severity="error")
             return
-        item["is_flagged"] = target
-        try:
-            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
-        except NoMatches:
-            pane = None
-        if pane is not None:
-            pane.update_item_starred_cell(item_id, target)
-        # The reader's Star button flips HERE, on the success path only --
-        # never optimistically in the pane (PR #1430 review): after a failed
-        # write there is no patch and no flip, so the label can never show
-        # the opposite of `item["is_flagged"]` until the next open.
-        try:
-            star_button = self.query_one("#content-star-button", Button)
-        except NoMatches:
-            star_button = None
-        if star_button is not None:
-            star_button.label = "★ Starred" if target else "☆ Star"
+        self._patch_committed_items_after_mutation(item_id, is_flagged=target)
         self._request_tree_counts_refresh()
 
     def action_open_in_browser(self) -> None:
@@ -11933,10 +12145,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 notify("Nothing unread in this scope.")
             return
         self._last_mark_all_read_batch = [int(i) for i in ids]
-        id_set = set(self._last_mark_all_read_batch)
-        for item in self._loaded_items:
-            if item.get("item_id") in id_set:
-                item["status"] = "reviewed"
+        for item_id in self._last_mark_all_read_batch:
+            self._patch_committed_items_after_mutation(
+                item_id, status="reviewed"
+            )
         self._repaint_visible_status_cells()
         self._request_tree_counts_refresh()
         if callable(notify):
@@ -11976,10 +12188,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 notify("Undo failed — press u to retry.", severity="error")
             return
         self._last_mark_all_read_batch = []
-        id_set = {int(i) for i in batch}
-        for item in self._loaded_items:
-            if item.get("item_id") in id_set and item.get("status") == "reviewed":
-                item["status"] = "new"
+        for item_id in batch:
+            snapshot = self._items_snapshot
+            if snapshot is None or not any(
+                self._item_identity_matches(item, item_id)
+                and item.get("status") == "reviewed"
+                for page in snapshot.pages
+                for item in page
+            ):
+                continue
+            self._patch_committed_items_after_mutation(item_id, status="new")
         self._repaint_visible_status_cells()
         self._request_tree_counts_refresh()
         if callable(notify):
