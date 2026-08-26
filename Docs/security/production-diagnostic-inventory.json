@@ -1846,8 +1846,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "769552c703844018c3aa",
+      "call_count": 5,
+      "diagnostic_digest": "f450151dc969ffd3b19d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Subscriptions/fts_backfill.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3736,8 +3736,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 350,
-      "diagnostic_digest": "a425ecab6ea6dbf0cba8",
+      "call_count": 355,
+      "diagnostic_digest": "e87128a113e9ac3ef45e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3976,6 +3976,6 @@
     "owner_files": 538,
     "persistent_sink_files": 8,
     "task_492_calls": 1241,
-    "task_494_calls": 7347
+    "task_494_calls": 7354
   }
 }
