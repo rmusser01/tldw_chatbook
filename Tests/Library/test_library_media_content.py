@@ -476,6 +476,25 @@ def test_match_lines_agree_with_the_shared_matcher() -> None:
         assert actual == expected
 
 
+def _match_line_activity(
+    raw_widget: VirtualizedRawContent, line_count: int = 4
+) -> dict[int, bool]:
+    """Map every SOURCE line the Raw view currently paints reversed to active-or-not.
+
+    Shared by the active-styling tests below: walks ``render_line`` (the
+    same method Textual's compositor calls) and records, per line carrying
+    the match style, whether it also carries ``bold`` (the active match) or
+    not (a plain match).
+    """
+    found: dict[int, bool] = {}
+    for row in range(line_count):
+        strip = raw_widget.render_line(row)
+        for segment in strip._segments:
+            if segment.style is not None and segment.style.reverse:
+                found[row] = bool(segment.style.bold)
+    return found
+
+
 @pytest.mark.asyncio
 async def test_sync_search_marks_only_the_active_match_line() -> None:
     """``sync_search`` feeds ``set_match_lines`` so exactly one line paints active.
@@ -498,29 +517,135 @@ async def test_sync_search_marks_only_the_active_match_line() -> None:
     )
     app = BodyHarness(body)
 
-    def _active_by_line(raw_widget: VirtualizedRawContent) -> dict[int, bool]:
-        """Map every SOURCE line carrying the match style to active-or-not."""
-        found: dict[int, bool] = {}
-        for row in range(4):
-            strip = raw_widget.render_line(row)
-            for segment in strip._segments:
-                if segment.style is not None and segment.style.reverse:
-                    found[row] = bool(segment.style.bold)
-        return found
-
     async with app.run_test(size=(60, 12)):
         raw_widget = body.raw_view
         assert raw_widget is not None
 
         body.sync_search("needle", 0)
-        assert _active_by_line(raw_widget) == {0: True, 2: False, 3: False}
+        assert _match_line_activity(raw_widget) == {0: True, 2: False, 3: False}
 
         body.sync_search("needle", 1)
-        assert _active_by_line(raw_widget) == {0: False, 2: True, 3: False}
+        assert _match_line_activity(raw_widget) == {0: False, 2: True, 3: False}
 
         # Wrapping past the end (3 matches, index 3) lands back on the first.
         body.sync_search("needle", 3)
-        assert _active_by_line(raw_widget) == {0: True, 2: False, 3: False}
+        assert _match_line_activity(raw_widget) == {0: True, 2: False, 3: False}
+
+
+@pytest.mark.asyncio
+async def test_construction_seeds_the_active_match_before_any_sync_search() -> None:
+    """FIX 2: a body mounted with an already-active query paints active on first frame.
+
+    Before this fix, ``_build_raw_widget`` never called ``set_match_lines``,
+    so a freshly (re)mounted Raw view with a live query painted every match
+    PLAIN -- never bold -- until the NEXT ``sync_search`` call. That is
+    visible after any recompose that carries a live query forward (a
+    traversal, or the Rendered<->Raw toggle): the active match would flash
+    unstyled for one frame. This mounts a body with a non-empty query and
+    non-zero match index already set and asserts the active line is
+    correctly bold on the very first paint, with ``sync_search`` never
+    called.
+    """
+    body = LibraryMediaContentBody(
+        content="needle one\nplain\nneedle two\nneedle three",
+        is_markdown=False,
+        mode="raw",
+        query="needle",
+        match_index=1,
+        id="seeded-body",
+    )
+    app = BodyHarness(body)
+
+    async with app.run_test(size=(60, 12)):
+        raw_widget = body.raw_view
+        assert raw_widget is not None
+        # Matches are lines (0, 2, 3); match_index=1 is the second match: line 2.
+        assert _match_line_activity(raw_widget) == {0: False, 2: True, 3: False}
+
+
+@pytest.mark.asyncio
+async def test_sync_search_memoizes_match_lines_per_content_and_query(
+    monkeypatch,
+) -> None:
+    """FIX 1: repeated Prev/Next clicks must not re-scan the document.
+
+    task-22500 originally called ``build_raw_content_match_lines``
+    unconditionally from ``sync_search``, reopening the exact per-click
+    O(document) cost task-22209 shipped to close (a Prev/Next click passes
+    the SAME query as the previous call). This pins the memo: six calls
+    against the SAME (content, query) cost exactly ONE scan; a newly
+    submitted query costs exactly one fresh scan (and repeating THAT query
+    costs no more); and a new document (a fresh body instance -- content is
+    fixed per instance, so a document swap is always a new instance) costs
+    one fresh scan too, even reusing a query string already seen elsewhere.
+    A memo that never invalidates would be worse than no memo, so the
+    "exactly one fresh call" assertions matter as much as the "no
+    re-scan" ones.
+    """
+    import tldw_chatbook.Widgets.Library.library_media_content as module
+
+    calls: list[str] = []
+    original = module.build_raw_content_match_lines
+
+    def counting(content: str, query: str) -> tuple[int, ...]:
+        calls.append(query)
+        return original(content, query)
+
+    monkeypatch.setattr(module, "build_raw_content_match_lines", counting)
+
+    body = LibraryMediaContentBody(
+        content="needle one\nplain\nneedle two\nneedle three",
+        is_markdown=False,
+        mode="raw",
+        query="",
+        match_index=0,
+        id="memo-body",
+    )
+    app = BodyHarness(body)
+
+    async with app.run_test(size=(60, 12)):
+        assert body.raw_view is not None
+        assert calls == [], (
+            "constructing/mounting with a BLANK query scanned the document"
+        )
+
+        # Six Prev/Next-style calls against the SAME (content, query) --
+        # only the FIRST should cost a scan.
+        for match_index in (0, 1, 2, 0, 1, 2):
+            body.sync_search("needle", match_index)
+        assert calls == ["needle"], f"same-query navigation re-scanned: {calls}"
+
+        # A newly submitted query costs exactly one fresh scan...
+        body.sync_search("plain", 0)
+        assert calls == ["needle", "plain"]
+        # ...and repeating that SAME new query costs no more.
+        body.sync_search("plain", 0)
+        body.sync_search("plain", 0)
+        assert calls == ["needle", "plain"], "repeating the same query re-scanned"
+
+    # A new document -- a fresh body instance, since `content` is fixed per
+    # instance and never mutated after `__init__` -- costs one fresh scan,
+    # even reusing the SAME query string as above ("plain").
+    second_body = LibraryMediaContentBody(
+        content="plain one\nneedle plain\nplain two",
+        is_markdown=False,
+        mode="raw",
+        query="",
+        match_index=0,
+        id="memo-body-2",
+    )
+    second_app = BodyHarness(second_body)
+
+    async with second_app.run_test(size=(60, 12)):
+        assert second_body.raw_view is not None
+        second_body.sync_search("plain", 0)
+        assert calls == ["needle", "plain", "plain"], (
+            "a new document reused the previous document's memo"
+        )
+        second_body.sync_search("plain", 0)
+        assert calls == ["needle", "plain", "plain"], (
+            "the new document's memo re-scanned on repeat"
+        )
 
 
 @pytest.mark.asyncio

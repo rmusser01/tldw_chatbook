@@ -69,6 +69,20 @@ class LibraryMediaContentBody(Container):
         self._mount_lock = asyncio.Lock()
         self._query = query
         self._match_index = match_index
+        # task-22500 FIX 1: the match-LINE memo for the CURRENTLY displayed
+        # (content, query) pair, plus the pair it was built from. Mirrors
+        # task-22209's memo shape exactly -- keyed on the content OBJECT
+        # (``is``) and the stripped query: strings are immutable, so an
+        # identity hit can never be stale, and a miss only costs the scan it
+        # would have paid anyway. ``self.content`` is assigned once per
+        # widget instance (a content change recomposes the viewer and builds
+        # a new body), so the identity check holds for the whole navigable
+        # lifetime of one document -- without this, every Prev/Next click
+        # (same document, same query) re-scanned the document, reopening the
+        # exact per-click cost class task-22209 shipped to close.
+        self._match_lines_source: str | None = None
+        self._match_lines_query: str | None = None
+        self._match_lines: tuple[int, ...] = ()
 
     @property
     def raw_view(self) -> VirtualizedRawContent | None:
@@ -140,11 +154,13 @@ class LibraryMediaContentBody(Container):
         task-22500: the whole-document highlight ``Text`` this used to
         rebuild is gone -- ``VirtualizedRawContent`` restyles each row it
         paints from ``query``/``match_index`` directly, so there is nothing
-        document-sized left to build or cache here. The match-line list is
-        still derived (one O(document) pass, same as before) because the
-        Raw view needs it to know WHICH occurrence is the active one --
-        ``set_match_lines`` is called first so the active/plain distinction
-        is correct on the very next repaint ``sync_search`` triggers.
+        document-sized left to build or cache here. The match-LINE list the
+        Raw view needs (to know WHICH occurrence is the active one) is
+        memoized by ``_matched_lines`` (FIX 1): a Prev/Next click passes the
+        SAME query as the previous call, so it reuses the cached list
+        instead of re-scanning the document -- ``set_match_lines`` is called
+        first so the active/plain distinction is correct on the very next
+        repaint ``sync_search`` triggers.
 
         Args:
             query: Case-insensitive search text to highlight.
@@ -156,10 +172,43 @@ class LibraryMediaContentBody(Container):
         self._query = query
         self._match_index = match_index
         if self._raw_widget is not None:
-            self._raw_widget.set_match_lines(
-                build_raw_content_match_lines(self.content, query)
-            )
+            self._raw_widget.set_match_lines(self._matched_lines(query))
             self._raw_widget.sync_search(query, match_index)
+
+    def _matched_lines(self, query: str) -> tuple[int, ...]:
+        """Return the memoized match-line list for ``query`` against ``self.content``.
+
+        task-22500 FIX 1: mirrors task-22209's memo shape -- keyed on the
+        content OBJECT (``is``) and the stripped query, since strings are
+        immutable so an identity hit can never be stale. Since ``self.content``
+        is assigned once per widget instance, the identity half of the key
+        only ever misses on the FIRST call for this instance; the query half
+        is what actually changes across calls -- never on a Prev/Next click
+        (same query), always on a newly submitted query. A blank query
+        short-circuits without even calling the scanner, since there is
+        nothing to find and nothing worth memoizing.
+
+        Args:
+            query: Case-insensitive search text (not yet stripped).
+
+        Returns:
+            Ascending source-line indexes matching ``query``; empty when the
+            stripped query is blank.
+        """
+        normalized_query = query.strip()
+        if not normalized_query:
+            self._match_lines_source = self.content
+            self._match_lines_query = ""
+            self._match_lines = ()
+            return self._match_lines
+        if (
+            self._match_lines_source is not self.content
+            or self._match_lines_query != normalized_query
+        ):
+            self._match_lines_source = self.content
+            self._match_lines_query = normalized_query
+            self._match_lines = build_raw_content_match_lines(self.content, query)
+        return self._match_lines
 
     async def _ensure_mode_mounted(self, mode: str) -> None:
         """Mount the requested view only when it has not been constructed."""
@@ -185,16 +234,25 @@ class LibraryMediaContentBody(Container):
     def _build_raw_widget(self) -> VirtualizedRawContent:
         """Construct the virtualized Raw content view for the current state.
 
+        task-22500 FIX 2: also seeds ``set_match_lines`` from the memoized
+        match list for the body's current query. Without this, a body that
+        (re)mounts with an already-active query -- e.g. a recompose during a
+        live search, or the Rendered<->Raw toggle -- painted every match
+        PLAIN (never bold) until the next ``sync_search`` call, because
+        nothing had populated the Raw view's ``_match_lines`` yet.
+
         Returns:
             A ``VirtualizedRawContent`` seeded with the body's current
-            content, search query, and active match index.
+            content, search query, active match index, and match-line list.
         """
-        return VirtualizedRawContent(
+        widget = VirtualizedRawContent(
             content=self.content,
             query=self._query,
             match_index=self._match_index,
             id="library-media-viewer-content-text",
         )
+        widget.set_match_lines(self._matched_lines(self._query))
+        return widget
 
     def _build_markdown_widget(self) -> Markdown:
         return Markdown(
