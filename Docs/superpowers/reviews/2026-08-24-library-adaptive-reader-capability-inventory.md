@@ -158,6 +158,13 @@ Notes was subsequently verified on implementation commit
 `8b45fcebff59e71a0c18bb9b057e692bf23a556c`, rebased onto `origin/dev` at `1b21f5339`.
 The Notes-specific final review found no remaining actionable issue.
 
+Prompts was subsequently verified on implementation commit
+`d0de6d060`, rebased onto `origin/dev` at `5278449c1`. The Prompt-specific
+independent final review found no remaining Critical or Important issue. Fresh post-rebase gates
+passed 15 focused retained-reader tests, 340 complete Prompt-canvas tests, and 1,126 broader
+Prompt state/controller/widget/service tests; the isolated production-CSS matrix also completed
+successfully.
+
 | Obligation group | Result | Evidence |
 | --- | --- | --- |
 | Shared shell boundary, permanent Work pane, independent Library/Items grips, requested-versus-effective geometry, comfort expansion, focus evacuation, and preference compatibility | Verified | `Tests/UI/test_library_media_reader_shell.py`; `Tests/Library/test_library_media_reader_state.py`; `Tests/Library/test_library_adaptive_reader_state.py`; `Tests/test_config_library_defaults.py`; live `conversations-160x50-{expanded,library-collapsed,both-collapsed,focus-footer}.svg` and the complete 160x50 / 120x35 / 100x30 / 80x24 matrix for both destinations |
@@ -169,11 +176,20 @@ The Notes-specific final review found no remaining actionable issue.
 | Notes retained list/work topology, independent Items collapse, comfort expansion, compact allocation, focus evacuation, and zero data/preference work on resize | Added and verified | `Tests/UI/test_library_notes_reader.py`; `Tests/Library/test_library_adaptive_reader_state.py`; `Tests/Library/test_library_notes_session.py` (including the no-parallel-authority architecture regression); `Tests/UI/test_library_shell.py -k library_note` (133 passed); live walkthroughs at 170x48 and 90x30 |
 | Notes list/tree identity, Edit/Preview/Info, current-draft preview, selected-versus-loaded fencing, conflict/retry, single delete/Undo, and labelled read-only bulk preview | Preserved and verified | `Tests/UI/test_library_notes_reader.py`; `Tests/UI/test_library_multiselect_notes.py`; `Tests/UI/test_library_shell.py -k library_note`; final reviewer verification of bulk Back/Save/Escape gates |
 | Notes Create/templates, import, lasting sync/recovery, exact placement identity, dirty navigation veto, and separate File Notes source | Preserved and verified | `Tests/UI/test_library_notes_files_sync_journey.py` (29 passed, one unchanged baseline case deselected); `Tests/UI/test_library_notes_folder_navigator.py`; branch-versus-`dev` comparison with no branch-only failures |
+| Prompts retained Items/Work topology, independent Library/Items collapse, comfort expansion, compact allocation, focus evacuation, and resize purity | Added and verified | `Tests/UI/test_library_prompts_reader.py`; `Tests/Library/test_library_prompts_reader_state.py`; complete live 160x50 / 120x35 / 100x30 / 80x24 matrix in `evidence/task-22033/` |
+| Prompt browse, exact paging/scope, collections, cross-page bulk authority, read-only bulk preview, import, and retry while Items remains mounted | Preserved and verified | `Tests/UI/test_library_prompts_canvas.py` (340 passed); `Tests/UI/test_library_prompt_collections.py`; `Tests/UI/test_library_prompt_browse_controller.py`; live `prompts-{bulk-readonly-preview,import-work-pane,browse-error,browse-retry}.svg` |
+| One lossless Basic/Advanced/Info draft, hidden-field preservation, validation ownership/focus, selected-versus-loaded detail fencing, history, conflicts, lifecycle, delete/Undo, and retry | Added and verified | `Tests/Library/test_library_prompts_reader_state.py`; `Tests/UI/test_library_prompts_reader.py`; `Tests/Prompt_Management/test_prompt_preservation.py`; 1,126-test broader gate; live `prompts-{preservation-history,validation-focus,detail-failure,detail-retry}.svg` |
+| Local Prompt services, capabilities, databases, controllers, and persistence ownership | Unchanged and verified | `Tests/Library/test_library_prompts_seam.py`; `Tests/Prompt_Management/`; architecture guard rejects parallel reader persistence authority; independent final review found no Critical or Important issue |
 
 The production-shaped evidence bundle and exact commands are documented in
 [`evidence/task-22031/README.md`](evidence/task-22031/README.md). It contains 105 artifacts,
 including compositor SVGs, plain-text frames, structured state, and the executable isolated rig.
 The real config and profile fingerprints were unchanged before and after the run.
+
+The Prompt evidence bundle is documented in
+[`evidence/task-22033/README.md`](evidence/task-22033/README.md). It contains the complete
+responsive matrix plus preservation, validation, bulk, import, browse-recovery, and
+detail-recovery captures with structured facts and a reproducible isolated driver.
 
 ## Scope guardrails for the after pass
 

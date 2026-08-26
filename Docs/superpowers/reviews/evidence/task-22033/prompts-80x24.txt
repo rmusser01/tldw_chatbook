@@ -21,4 +21,4 @@
 │ ───────────────────  │
 │  Create        ▾     │            Use in Console
 └──────────────────────┘            More actions
-  / focus search | F6 next pane | esc back to list | F1 · Ctrl+P · Ctrl+Q
+  / focus search | F6 next pane | esc focus rail | F1 · Ctrl+P · Ctrl+Q

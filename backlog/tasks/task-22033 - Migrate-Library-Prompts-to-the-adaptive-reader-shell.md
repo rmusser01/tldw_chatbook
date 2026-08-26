@@ -1,11 +1,11 @@
 ---
 id: TASK-22033
 title: Migrate Library Prompts to the adaptive reader shell
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-24 23:26'
-updated_date: '2026-08-26 03:06'
+updated_date: '2026-08-26 06:59'
 labels:
   - library
   - ui
@@ -25,13 +25,13 @@ Move Prompts into the shared Library adaptive reader structure while preserving 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Prompts list remains mounted beside a permanent work pane with independent list collapse and destination-specific geometry
-- [ ] #2 Basic is the default mode and Basic Advanced and Info operate on one lossless item-owned draft
-- [ ] #3 Saving from Basic preserves every Advanced-only field and validation can focus the owning mode
-- [ ] #4 Create import history collections provenance lifecycle and destructive actions remain reachable without unmounting the list
-- [ ] #5 Selection loading draft navigation stale workers conflicts deletion and retry follow the approved identity and recovery contracts
-- [ ] #6 Existing Prompt capability and backend ownership remain unchanged
-- [ ] #7 Automated browse editor hidden-field history geometry focus and capability tests pass with a representative live TUI walkthrough
+- [x] #1 The Prompts list remains mounted beside a permanent work pane with independent list collapse and destination-specific geometry
+- [x] #2 Basic is the default mode and Basic Advanced and Info operate on one lossless item-owned draft
+- [x] #3 Saving from Basic preserves every Advanced-only field and validation can focus the owning mode
+- [x] #4 Create import history collections provenance lifecycle and destructive actions remain reachable without unmounting the list
+- [x] #5 Selection loading draft navigation stale workers conflicts deletion and retry follow the approved identity and recovery contracts
+- [x] #6 Existing Prompt capability and backend ownership remain unchanged
+- [x] #7 Automated browse editor hidden-field history geometry focus and capability tests pass with a representative live TUI walkthrough
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,3 +46,9 @@ ADR required: yes
 ADR path: backlog/decisions/086-library-adaptive-reader-shell.md
 Reason: consumes the accepted Library structural boundary without changing Prompt authority.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Migrated Library Prompts into the shared adaptive reader with retained Items and Work panes, independent collapse geometry, and Basic as the default projection. Added one screen-owned lossless Prompt draft shared by Basic, Advanced, and Info; explicit validation ownership; selected-versus-loaded detail fencing; truthful read-only recovery; retained browse, bulk, import, history, collection, conflict, lifecycle, and delete/Undo authority without adding a parallel persistence path. Hardened editor-origin import and browse/detail retry behavior after independent review. Verified after rebasing onto origin/dev with 15 focused retained-reader tests, 340 Prompt canvas tests, 1,126 broader Prompt state/controller/widget/service tests, Ruff, compileall, diff checks, and the complete isolated production-CSS live matrix. Full-repository collection remains independently blocked on the existing unregistered filterwarnings marker baseline in Tests/Agents/test_mcp_tool_provider.py. ADR required: yes. ADR path: backlog/decisions/086-library-adaptive-reader-shell.md. Reason: directly implements the accepted long-lived Library adaptive-reader boundary; no new ADR was required.
+<!-- SECTION:NOTES:END -->

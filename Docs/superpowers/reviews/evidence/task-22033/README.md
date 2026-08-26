@@ -1,9 +1,10 @@
 # TASK-22033 live verification evidence
 
 The production-CSS Textual harness completed successfully against the real
-Library screen and isolated Prompt databases on 2026-08-25. The driver imported
-the package from the `library-prompts-reader` worktree and used the scratch
-profile rooted at `/private/tmp/task22033-live-final.nakRS9`.
+Library screen and isolated Prompt databases on 2026-08-25, including a fresh
+post-rebase run. The driver imported the package from the
+`library-prompts-reader` worktree and used the final scratch profile rooted at
+`/private/tmp/task22033-live-rebased-20260825`.
 
 ## Verified journeys
 
