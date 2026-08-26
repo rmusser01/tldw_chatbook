@@ -176,6 +176,9 @@ Resolution follows these rules:
 5. Auto-collapse the list only when the active work mode still cannot remain usable.
 6. An explicit open gives the requested pane temporary priority. If all roles cannot fit, the
    other optional pane becomes effectively collapsed while requested preferences remain intact.
+   Destination-owned automatic priority follows the same branch: the default Notes Navigator
+   keeps Items open and permits Work compression at narrow widths, while Notes editor/work-owned
+   states release that priority so the normal collapse order protects editing space.
 7. Manual grip toggles persist requested visibility. Custom widths persist only through an explicit
    Settings save; the grips remain collapse/expand controls and are not drag handles.
 8. Automatic collapse, adaptive list expansion, window resize, and effective priority do not

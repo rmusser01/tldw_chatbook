@@ -52,6 +52,11 @@ requested width.
 custom mode off, exact 24–48 cells while alongside content with custom mode on, fill while rail-only,
 and hidden under existing collapse/canvas-only contracts. Wide recovery restores the applicable
 bounded or custom declaration. Adaptive shells continue to own exact effective cell geometry.
+Ordinary destinations remain co-present at 64 columns and above. Below 64, where the existing
+24-cell rail and 40-cell canvas minimums cannot fit, a route-general emergency stage shows either
+the rail or canvas at full workbench width. Activation moves rail to canvas, Back returns canvas to
+the selected rail row, and recovery to 64 or wider restores guarded focus/scroll state without
+persisting effective geometry.
 
 `LibraryScreen` remains the orchestration owner under the existing compose-once and scoped canvas
 replacement contracts. Concrete destination list and work widgets remain destination-owned and

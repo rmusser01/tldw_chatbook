@@ -31,7 +31,10 @@ to that default.
   enabled, the explicit width overrides the bounded default in every destination.
 - Preserve adaptive-reader collapse order, priority behavior, hysteresis,
   five-cell grips, and requested-versus-effective preference semantics.
-- Preserve ordinary compact rail-only/canvas-only takeovers and manual collapse.
+- Preserve ordinary co-present layouts at 64 columns and above, including the
+  current 100- and 80-column behavior, while adding one emergency single-stage
+  layout below 64 columns where the existing 24+40 minimums cannot fit.
+- Preserve existing Notes-specific compact takeovers and manual collapse.
 - Preserve search, disclosure, scrolling, focus, row fitting, and selection.
 
 ## Non-Goals
@@ -40,6 +43,8 @@ to that default.
 - Adding drag handles, new persistence keys, or resize-time preference writes.
 - Redesigning Library information architecture, labels, counts, or destination
   list/work-pane sizing.
+- Extending the emergency single-stage threshold above the minimum 64 columns
+  required to contain the ordinary 24-cell rail and 40-cell canvas.
 - Forcing a hidden rail or a rail-only compact takeover into the 24–34
   alongside-content rail range.
 - Claiming native iTerm2 or Windows Terminal acceptance from Textual Pilot tests.
@@ -76,8 +81,11 @@ The two existing geometry mechanisms remain intact:
    `max-width: 34`. Alongside content with custom widths on, it applies the exact
    saved width with matching minimum and maximum. In a rail-only takeover it
    clears the ceiling and fills the workbench. In a canvas-only or manually
-   collapsed state it hides the rail under the existing contract. Returning wide
-   restores the correct bounded or custom declarations.
+   collapsed state it hides the rail under the existing contract. In the
+   emergency ordinary layout below 64 columns, the currently active stage fills
+   the workbench: activating a rail destination opens the canvas-only stage and
+   Back returns to the rail-only stage. Returning to 64 columns or wider restores
+   the correct co-present bounded or custom declarations.
 2. **Adaptive reader layouts** continue to apply exact cell widths through the
    pure resolver and `LibraryAdaptiveReaderShell.sync_layout()`. When custom
    widths are disabled, the resolver uses the shared bounded projection instead
@@ -92,10 +100,11 @@ continues to own presentation and overflow rather than width.
 owner, loads one normalized shared `[library.reader]` snapshot and decides whether
 an ordinary rail is alongside-content, rail-only, or hidden. It passes the
 snapshot to every `LibraryRail` and invokes one reversible rail-owned style
-transition when the compact stage, manual collapse, route, settings generation,
-or shell width changes. `LibraryRail` applies the declarations; it does not read
-configuration. Adaptive shells continue to replace those declarations with the
-exact effective width after the screen's pure resolver has run.
+transition when the compact stage, emergency threshold, manual collapse, route,
+settings generation, or shell width changes. `LibraryRail` applies the
+declarations; it does not read configuration. Adaptive shells continue to
+replace those declarations with the exact effective width after the screen's
+pure resolver has run.
 
 Within the adaptive resolver, one `requested_library_width` is computed per
 positive shell width: the saved value when custom mode is on, otherwise the
@@ -136,13 +145,23 @@ width applies only to Media or to the work reader.
 | Adaptive rail auto-collapsed | Rail hidden; five-cell Library grip remains |
 | Adaptive explicit-open escape at extreme width | Resolver may compress below 24 to prevent overflow |
 | Ordinary manual collapse | Existing collapsed handle contract remains authoritative |
-| Ordinary compact rail-only takeover | Rail fills the available workbench width; 34 is not a cap |
-| Ordinary compact canvas-only takeover | Rail is hidden; canvas fills the workbench |
+| Existing Notes-specific rail-only takeover | Rail fills the available workbench width; 34 is not a cap |
+| Existing Notes-specific canvas-only takeover | Rail is hidden; canvas fills the workbench |
+| Any ordinary route below 64 columns | Emergency rail-only or canvas-only stage fills the workbench |
 
 “Alongside content” means the rail and at least one canvas/list/work region are
 simultaneously displayed. Rail-only, canvas-only, manually collapsed, adaptive
 auto-collapsed, and compressed-priority states are mutually exclusive structural
 exceptions rather than expanded alongside-content rails.
+
+The `<64` emergency policy is route-general but deliberately narrower than the
+existing `<120` Notes compact presentation. Entry preserves the stage containing
+current focus when possible; otherwise an active destination enters its canvas
+stage and an unactivated/landing route enters its rail stage. Rail activation
+moves focus into the canvas's normal entry target. Back returns to the selected
+rail row. Crossing back to 64 or wider restores the captured co-present focus and
+scroll tuple under the existing generation guards. Emergency transitions do not
+change selection, requested pane state, or width preferences.
 
 When a rail is alongside content at the same settled width and no
 custom override is active, destination switching must produce the same rendered
@@ -187,37 +206,54 @@ not only declared style values.
    rendered width with custom widths disabled.
 3. Use the production-styled outer-width matrix below. The grid content width
    `W` is asserted before applying the formula, so a future border/padding change
-   fails honestly instead of silently changing the oracle.
+   fails honestly instead of silently changing the oracle. At `<120`, the
+   compact class removes the grid border and padding, so `W` equals terminal
+   width.
 
-   | Terminal | Expected production `W` | Ordinary default | Adaptive default state |
+   | Terminal | Expected production `W` | Neutral ordinary route | Neutral/work-owned adaptive state |
    | ---: | ---: | --- | --- |
    | 235 | 231 | alongside, 34 | Library 34, Items open, Work open |
    | 170 | 166 | alongside, 31 | Library 31, Items open, Work open |
    | 120 | 116 | alongside, 24 | Library collapsed; Items and Work open |
-   | 100 | 96 | rail-only fills `W`, then canvas-only hides rail after activation | Library collapsed; Conversations/Media Items open; Notes Items collapsed; Work open |
-   | 80 | 76 | rail-only fills `W`, then canvas-only hides rail after activation | Library and Items collapsed; Work open |
-   | 60 | 56 | rail-only fills `W`, then canvas-only hides rail after activation | Library and Items collapsed; Work uses compositor escape if needed |
+   | 100 | 100 | alongside, 24 | Library collapsed; Items and Work open |
+   | 80 | 80 | alongside, 24 | Library and Items collapsed; Work open |
+   | 60 | 60 | emergency rail-only or canvas-only fills `W` | Library and Items collapsed; Work uses compositor escape if needed |
 
    Each row asserts containment, non-intersection, and footer bounds. If the
    production box model intentionally changes, the design record and matrix must
    be updated rather than weakening the assertion.
-4. At 170 columns, switch through Media, Chats, Notes, Prompts, Skills,
+4. Adaptive tests state their route/view/focus precondition instead of assuming
+   neutral priority:
+   - the default Notes Navigator keeps Items priority at 120/100/80/60, rendering
+     Items at 56/42/32/32 cells respectively while Work receives the remainder;
+   - Notes editor/work-owned layout keeps Items open at 120 and 100, then
+     collapses Items at 80 and 60;
+   - explicit Library reopen keeps Library at the projected 24 cells and hides
+     Items when all panes cannot fit, with sub-24 compression covered below the
+     escape floor; and
+   - explicit Items reopen keeps Items open at its protected/comfort result and
+     hides Library when all panes cannot fit.
+
+   Each branch is asserted after settled `sync_layout`, including focus transfer
+   to the appropriate grip when a previously focused pane becomes hidden.
+5. At 170 columns, switch through Media, Chats, Notes, Prompts, Skills,
    Collections, Search/RAG, Import, Export, Study handoffs, and the landing
    canvas. Assert a 31-cell co-present rail on every ordinary route and the same
    pre-collapse rail width after each adaptive reader's settled `sync_layout`,
    allowing at most one cell only if Textual's native allocation proves it.
-5. Verify custom values 24, 34, 35, and 48 across ordinary and adaptive
+6. Verify custom values 24, 34, 35, and 48 across ordinary and adaptive
    destinations, plus invalid-value normalization. A saved value above 34 must
    remain intact and must restore after responsive collapse.
-6. Verify initial mount, route switch, scoped recompose, and
+7. Verify initial mount, route switch, scoped recompose, and
    wide-to-compact-to-wide recovery without stale geometry, width-preference
    writes, focus loss, or hysteresis pinning from the zero-width sentinel. Cover
-   rail-only → wide restoration separately for bounded and custom declarations.
-7. Preserve row-label fitting, search, section disclosure, grip/handle access,
+   emergency rail-only/canvas-only → wide restoration separately for bounded and
+   custom declarations, including selected-row and focus/scroll restoration.
+8. Preserve row-label fitting, search, section disclosure, grip/handle access,
    global focus cycling, and adaptive collapse-order tests.
-8. Run Library unit/integration suites, generated-CSS integrity when applicable,
+9. Run Library unit/integration suites, generated-CSS integrity when applicable,
    Ruff, compilation, and diff-hygiene gates.
-9. Perform isolated PTY UAT at representative wide, standard, and compact
+10. Perform isolated PTY UAT at representative wide, standard, and compact
    terminal sizes. Report native terminal-emulator-specific acceptance only
    when it was actually run.
 
