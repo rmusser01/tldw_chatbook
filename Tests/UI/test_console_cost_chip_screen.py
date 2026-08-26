@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -43,6 +42,7 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCacheState
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -72,11 +72,16 @@ def _configure_anthropic_ready_console(app, model: str = "claude-sonnet-4-6") ->
     """Configure a send-ready Console on a priced Anthropic model.
 
     Mirrors ``test_console_native_chat_flow._configure_native_ready_console``
-    for llama.cpp: sets both ``chat_defaults`` (the new session's provider/
-    model at mount) and ``api_settings`` (so
-    ``build_console_settings_readiness`` sees a configured key and doesn't
-    gate the send behind the first-run setup modal).
+    for llama.cpp. Persist the selection and fake key because the shared test
+    app has a disk-shaped config that the readiness path deliberately reloads;
+    keep the in-memory values aligned for the new session mounted by the test.
     """
+    assert save_settings_to_cli_config(
+        {
+            "chat_defaults": {"provider": "anthropic", "model": model},
+            "api_settings.anthropic": {"api_key": "test-anthropic-key"},
+        }
+    )
     app.app_config["chat_defaults"] = {"provider": "anthropic", "model": model}
     app.app_config["api_settings"] = {
         "anthropic": {"api_key": "test-anthropic-key"}
