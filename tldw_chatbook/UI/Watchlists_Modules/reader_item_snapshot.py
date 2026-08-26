@@ -30,6 +30,9 @@ class ReaderItemQuery:
 
         Returns:
             An immutable query value.
+
+        Raises:
+            TypeError: If context or arguments contain unsupported mutable values.
         """
         def scalar(value: Any) -> Any:
             if type(value) not in (str, int, bool) and value is not None:
@@ -145,7 +148,13 @@ class ReaderItemSnapshot:
             except ValueError:
                 pass
         value = value.strip() if isinstance(value, str) else value
-        return value if isinstance(value, Hashable) else None
+        if not isinstance(value, Hashable):
+            return None
+        try:
+            hash(value)
+        except TypeError:
+            return None
+        return value
 
     @classmethod
     def _unique_items(

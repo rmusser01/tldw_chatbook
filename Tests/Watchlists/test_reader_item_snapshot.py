@@ -102,6 +102,16 @@ def test_unhashable_identity_is_skipped():
     assert snapshot.seen_ids == frozenset({"ok"})
 
 
+def test_composite_identity_that_raises_hash_is_skipped():
+    class BadHash:
+        def __hash__(self):
+            raise TypeError("not hashable")
+
+    query = ReaderItemQuery.freeze(("local",), {})
+    snapshot = ReaderItemSnapshot.start(query, page([{"id": BadHash()}, {"id": "ok"}]))
+    assert snapshot.seen_ids == frozenset({"ok"})
+
+
 def test_identity_falls_back_from_empty_item_id_and_preserves_string_ids():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
     snapshot = ReaderItemSnapshot.start(query, page([{"item_id": "", "id": "external-a"}, {"id": "external-b"}]))
