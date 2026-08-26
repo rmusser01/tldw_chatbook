@@ -196,12 +196,13 @@ class ThinkingEnvelopeRead:
 
     envelope: ThinkingEnvelope | None = field(default=None, repr=False)
     opaque_json: str | None = field(default=None, repr=False)
+    generation_blocked: bool = field(default=False, repr=False)
     warning: str | None = None
 
     @property
     def generation_actions_enabled(self) -> bool:
         """Whether actions that could replace durable thinking remain safe."""
-        return self.opaque_json is None
+        return self.opaque_json is None and not self.generation_blocked
 
 
 def _strict_json_loads(value: str) -> object:
@@ -331,10 +332,16 @@ def read_thinking_blocks_json(value: object) -> ThinkingEnvelopeRead:
             and type(decoded.get("version")) is int
             and decoded["version"] != THINKING_ENVELOPE_VERSION
         ):
+            if len(raw.encode("utf-8")) > MAX_THINKING_ENVELOPE_BYTES:
+                return ThinkingEnvelopeRead(
+                    generation_blocked=True,
+                    warning=_MALFORMED_WARNING.format(rule="envelope size"),
+                )
             canonical = _CANONICAL_ENCODER.encode(decoded)
             if len(canonical.encode("utf-8")) > MAX_THINKING_ENVELOPE_BYTES:
                 return ThinkingEnvelopeRead(
-                    warning=_MALFORMED_WARNING.format(rule="envelope size")
+                    generation_blocked=True,
+                    warning=_MALFORMED_WARNING.format(rule="envelope size"),
                 )
             return ThinkingEnvelopeRead(opaque_json=raw, warning=_UNSUPPORTED_WARNING)
         return ThinkingEnvelopeRead(envelope=_parse_value(raw))

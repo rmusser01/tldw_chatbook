@@ -218,7 +218,19 @@ def test_oversized_unknown_durable_version_is_not_retained_opaquely() -> None:
     assert result.opaque_json is None
     assert result.warning is not None
     assert "envelope size" in result.warning
-    assert result.generation_actions_enabled
+    assert not result.generation_actions_enabled
+
+
+def test_raw_oversized_unknown_version_is_not_retained_and_blocks_actions() -> None:
+    raw = '{"version":2,"blocks":[]}' + (" " * MAX_THINKING_ENVELOPE_BYTES)
+
+    result = read_thinking_blocks_json(raw)
+
+    assert result.envelope is None
+    assert result.opaque_json is None
+    assert result.warning is not None
+    assert "envelope size" in result.warning
+    assert not result.generation_actions_enabled
 
 
 def test_malformed_supported_durable_data_is_discarded_without_content() -> None:
