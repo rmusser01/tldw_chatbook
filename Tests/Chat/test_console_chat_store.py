@@ -6044,7 +6044,18 @@ def test_partial_projection_failure_retains_real_durable_ancestor_for_repair(
         conversation_id=conversation_id,
         user_name_override=None,
         character_system_template="Speak with {{user}}.",
-        character_name_snapshot=None,
+        character_name_snapshot="Alraune",
+    )
+    from tldw_chatbook.Chat.console_roleplay_metadata import (
+        parse_console_roleplay_context,
+    )
+
+    durable_context = parse_console_roleplay_context(
+        db.get_conversation_by_id(conversation_id)["metadata"]
+    )
+    assert durable_context == ConsoleRoleplayContext(
+        character_system_template="Speak with {{user}}.",
+        character_name_snapshot="Alraune",
     )
     metadata = MessageMetadata(
         template_kind="character_greeting",
