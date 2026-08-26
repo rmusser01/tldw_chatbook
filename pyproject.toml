@@ -565,8 +565,17 @@ addopts = "--ignore=STests --import-mode=importlib --durations=25 --durations-mi
 asyncio_mode = "auto"
 # Default timeout for all tests (in seconds)
 timeout = 300
-# Timeout method: thread (default) or signal
-timeout_method = "thread"
+# Timeout method: DELIBERATELY UNSET (TASK-22062). pytest-timeout picks
+# `signal` where SIGALRM exists (Linux, macOS) and falls back to `thread` on
+# Windows. The previous explicit `thread` was set on the belief -- recorded in
+# the comment it replaced -- that thread was the library default. It is not.
+#
+# It matters because `thread` cannot interrupt a blocked thread: when the
+# timeout fires it destroys the pytest process, so no JUnit is written, no test
+# is named as failing, and under xdist the worker dies and takes its queued
+# tests with it as setup errors. Measured on one real hang in
+# `test_console_local_citation_boundary`: with `thread` no JUnit file was
+# produced at all; with `signal` the same hang reported as exactly one failure.
 markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",

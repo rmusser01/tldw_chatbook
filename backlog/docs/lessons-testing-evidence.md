@@ -8611,6 +8611,40 @@ changed; **the latency it implicitly depended on did.**
    only thing that caught it was 506 unrelated navigation tests, and it cost
    5 minutes to run.
 
+## A mutation can escape every integration gate whose geometry structurally cannot reach the mutated leg (TASK-22203, 2026-08-25)
+
+The TASK-22203 fix scoped the workspace action-row flip so a Tree cursor
+boundary crossing no longer fans out into the rail-wide allocation pipeline.
+It has two halves: the direct `request_allocation_reconcile()` call was
+removed, and `_ContextBoundedSection`'s demand-change escalation was taught
+to skip a scoped pass. Mutation-testing the second half — deleting the
+scoped skip outright — left BOTH mounted-console boundary gates green: in
+every mounted geometry (the real console at 160×44, the rail harness at
+60×30, even a widened 90-col rail), the workspaces tray sits at its 12-row
+`max_height` cap with `overflow_y: hidden`, so the action-row flip changes
+`desired_content_lines` by exactly zero and the escalation leg the mutant
+deleted never runs. A debug snapshot proved it: `fixed=12` before and after
+the flip in every configuration tried. The dev test that seemed to pin a
+`hidden_demand + 1` delta for the same flip was actually measuring a
+coincident tree-expansion delta the flip's reconcile recorded late.
+
+The follow-on trap: the first replacement gate mutated a real child's
+`styles.height` to create a demand delta — and the scoped pass STILL
+escalated, because the style change resized widgets in the same frame and
+their `on_resize` handlers issued plain requests that legitimately demoted
+the scoped pass (the demotion rule working as designed, masking the skip
+under test). The gate that finally killed the mutant stubs the measurement
+seam (`section._measure_content_lines = lambda v: value`) so the demand
+delta arrives with no DOM churn at all.
+
+Two rules. **After a mutation survives, prove which branch the gate's
+geometry actually executes before writing a stronger assertion** — a
+surviving mutant is evidence about the gate's reach, not only its strength.
+And **when the guarded leg is unreachable in production-shaped geometry,
+gate the mechanism directly at a stubbed seam** and say so in the test's
+docstring; an integration test that cannot reach the leg is the wrong tool
+no matter how production-faithful it looks.
+
 ## Interleaved A/B pairs carry a positional bias — run the A/A control and the reversed order before believing the delta (TASK-22213, 2026-08-25)
 
 Ten interleaved boot-to-`_ui_ready` pairs (base first, branch second, the
