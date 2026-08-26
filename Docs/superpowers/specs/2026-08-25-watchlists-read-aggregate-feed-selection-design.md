@@ -58,6 +58,12 @@ becomes relevant when Read is active.
 
 Today and Starred remain leaf Smart Feeds in this task.
 
+Selecting an aggregate child on a management sub-screen commits the contextual Navigation scope
+against the authoritative tree snapshot and updates the active management surface; it does not
+launch a hidden Feed Items load. That commit invalidates cached Feed Items selection and rows. On a
+later return to Read, the screen loads a fresh item snapshot for the already-committed Navigation
+scope and never mounts rows or a Reader article retained from a different scope.
+
 ### Row interaction
 
 Each expandable parent remains a two-target row:
@@ -183,6 +189,25 @@ Search text is preserved across a successful scope change and re-run against the
 scope. Pagination, row selection, previous results, and the previous Reader item reset only when
 the replacement snapshot commits.
 
+The same gesture off Read has a section-appropriate commit boundary:
+
+```text
+feed gesture on a management sub-screen
+  → validate the child against the committed tree snapshot
+  → atomically commit Navigation scope + active management projections
+  → invalidate cached Feed Items rows and Reader selection
+  → do not perform a hidden item query
+
+later entry into Read
+  → keep the committed Navigation scope
+  → show a loading state rather than mismatched cached rows
+  → load and publish that scope's Feed Items snapshot, or show scoped Retry
+```
+
+An item-load failure on later Read entry does not undo a Navigation scope that already committed
+successfully on another sub-screen. It leaves that scope active and shows an honest scoped failure
+state with Retry; no older item list or article is relabelled as the new scope.
+
 ## All Unread semantics
 
 All Unread contains only feeds whose unread count is positive, except for a bounded display pin.
@@ -199,7 +224,8 @@ One shared `effective_unread_scope` decision drives:
 
 While the override is active, the status control displays **Unread**, is disabled, and explains in
 its tooltip that All Unread always shows unread items. The prior manual filter is parked unchanged
-and restored only after a different scope successfully commits. A failed pending navigation changes
+and restored only after a scope without the All Unread override successfully commits. Moving
+between All Unread children retains the same forced filter. A failed pending navigation changes
 neither the control nor the parked value.
 
 Opening an unread item keeps the existing behavior: the item is marked read only after the write
@@ -210,11 +236,12 @@ If that write reduces the selected feed's unread count to zero, its All Unread c
 without a badge while the source scope is selected or pending. The display pin ends when:
 
 - another scope commits;
-- the All Unread branch is collapsed and later reopened;
 - the app session ends; or
 - Mark unread restores a positive count, making the pin unnecessary.
 
 The pin changes presentation only. The query remains unread-only and never widens to all statuses.
+It survives collapsing and reopening All Unread so a caret gesture never changes Reader scope or
+reopens the branch with an invisible committed child.
 
 ## Reconciliation and refresh
 
@@ -224,6 +251,8 @@ position, and Reader position.
 Context invalidation follows explicit rules:
 
 - a deleted selected source falls back to its nearest existing parent;
+- a source removed from its selected watchlist context falls back to that watchlist after the
+  membership write succeeds;
 - a selected Unassigned child that becomes assigned falls back to Unassigned;
 - an All Unread child reaching zero uses the bounded display pin instead of producing an invisible
   committed node;
@@ -246,7 +275,8 @@ intentional exception already driven by contextual tree scope.
   created watchlists.
 - Feed names are escaped at the rendering boundary.
 - Aggregate names use consistent title case: All Sources, Unassigned, All Unread.
-- The empty Reader copy remains exactly `Select a feed to display it here.`
+- This focused extension deliberately supersedes the parent design's `Select a feed item to display
+  it here.` copy. The user-approved empty Reader copy is exactly `Select a feed to display it here.`
 - No new keybinding is added; existing global and Read bindings remain unshadowed.
 
 ## Failure handling
@@ -315,4 +345,3 @@ ADR path: `backlog/decisions/042-watchlists-reader-first-ia.md`
 Reason: ADR-042 already decides the reader-first Navigation hierarchy, normalized contextual scope,
 atomic scope commits, and Watchlists-local ownership. This design is a direct, focused extension of
 that accepted decision.
-
