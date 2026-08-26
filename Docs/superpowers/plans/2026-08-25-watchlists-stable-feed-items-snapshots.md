@@ -931,7 +931,7 @@ git commit -m "feat(watchlists): hold arrivals behind reader refresh"
 - Modify: `backlog/tasks/task-22450 - Stabilize-Watchlists-Feed-Items-snapshots-and-atomic-scope-commits.md`
 - Modify: `Docs/superpowers/plans/2026-08-25-watchlists-stable-feed-items-snapshots.md`
 
-- [ ] **Step 1: Run the complete changed-functionality test selection**
+- [x] **Step 1: Run the complete changed-functionality test selection**
 
 Run:
 
@@ -956,7 +956,7 @@ Run:
 
 Expected: all selected changed-functionality tests pass. Record exact counts and warnings in this plan and TASK-22450. Do not broaden to the full suite.
 
-- [ ] **Step 2: Run modified-file Ruff**
+- [x] **Step 2: Run modified-file Ruff**
 
 Run:
 
@@ -986,7 +986,7 @@ Run:
 
 Expected: Ruff exits 0. If a touched legacy file has a pre-existing finding, run the identical command against the recorded base commit and document exact baseline parity; do not bulk-format or clean unrelated code.
 
-- [ ] **Step 3: Run diff hygiene and scope checks**
+- [x] **Step 3: Run diff hygiene and scope checks**
 
 Run:
 
@@ -999,7 +999,7 @@ git diff --name-only origin/dev...HEAD
 
 Expected: no whitespace errors; only TASK-22450 implementation/test/docs files and the already-approved TASK-22451/spec bookkeeping are present.
 
-- [ ] **Step 4: Perform a requirements-oriented self-review**
+- [x] **Step 4: Perform a requirements-oriented self-review**
 
 Inspect the final diff and explicitly verify:
 
@@ -1014,11 +1014,11 @@ Inspect the final diff and explicitly verify:
 - refresh failure cannot dismiss the committed arrival notice;
 - no aggregate feed-child code from TASK-22451 leaked into this PR.
 
-- [ ] **Step 5: Update TASK-22450 and lessons only if evidence warrants it**
+- [x] **Step 5: Update TASK-22450 and lessons only if evidence warrants it**
 
 Check all six acceptance criteria, add concise implementation notes with modified files, decisions, exact test/Ruff/diff evidence, and the existing ADR-042 link. Run `backlog task edit 22450 -s Done`, then re-open it with `backlog task 22450 --plain` and restore any plan/provenance text the CLI rewrites. Add a `lessons-*.md` entry only if implementation uncovers a new reusable incident; do not invent one.
 
-- [ ] **Step 6: Commit closeout metadata**
+- [x] **Step 6: Commit closeout metadata**
 
 ```bash
 git add \
@@ -1027,6 +1027,15 @@ git add \
 git commit -m "docs(watchlists): close stable reader snapshot task"
 ```
 
-- [ ] **Step 7: Invoke `superpowers:verification-before-completion`**
+- [x] **Step 7: Invoke `superpowers:verification-before-completion`**
 
 Re-run the final evidence required by that skill before claiming the branch is ready. Do not merge or open a PR until the focused tests, modified-file Ruff, and diff checks are freshly green.
+
+#### Task 7 evidence
+
+- Exact changed-functionality pytest selection: exit 0; **276 passed, 161 deselected, 2 warnings in 140.06s**. The two pytest-summary warnings were Requests' dependency-version mismatch and pydub's Python 3.13 `audioop` deprecation. The run also emitted environment cleanup warnings after the pytest summary for unrelated protected temporary test directories; they did not change the exit code or counted result.
+- Exact modified-file Ruff selection: exit 0; `All checks passed!`.
+- Diff hygiene before closeout edits: `git diff --check` exit 0 and `git status --short` empty. `origin/dev...HEAD` contained 25 files (5,596 insertions, 1,169 deletions before these final documentation edits): TASK-22450 production/tests/docs plus only the previously approved TASK-22451 design spec and task record.
+- Self-review: the Reader query region contains no `OFFSET` (`rg` exit 1); `_READER_ITEM_ORDER_BY` is `effective_date DESC, id DESC`, while agent queries remain `effective_date DESC, id ASC`; continuations pass `candidate.watermark`, reject watermark mismatch, and filter `seen_ids`; pending Read scope commits through one batched row-publication callback and failures/supersessions keep the committed view; management scope uses `_commit_management_tree_scope()` and `_invalidate_parked_reader()` without hidden item I/O; arrival counts reuse `_reader_matching_parts()` with `id > snapshot_max_item_id`; failed refresh tests retain the arrival notice; and no TASK-22451 aggregate-child implementation appears outside its approved spec/task bookkeeping.
+- Backlog closeout: `backlog task edit 22450 -s Done` exited 0. `backlog task 22450 --plain` resolved the exact TASK-22450 path, reported `Done`, and preserved the TASK-22301-to-TASK-22450 renumbering provenance and the seven-step implementation plan. All six acceptance criteria and the detailed notes were then recorded in the task file.
+- Lessons: the transient rail-swap test synchronization issue was corrected in its existing regression test; it did not warrant a new repository lesson, so no `lessons-*.md` file was changed.
