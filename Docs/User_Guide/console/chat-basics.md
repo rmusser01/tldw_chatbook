@@ -66,10 +66,10 @@ you do not need to restart the app.
 - **Role accents** (the default) gives user and assistant or character rows
   distinct, restrained backgrounds and speaker-label accents.
 - **Immersive RP** keeps those role cues and gives assistant or character
-  Markdown a roleplay-forward reading grammar: quoted dialogue, italicized
-  actions or inner monologue, strong emphasis, and narration each have a
-  distinct treatment. Markdown structure and the original message text remain
-  unchanged.
+  Markdown a roleplay-forward reading grammar: double-quoted dialogue,
+  single-quoted inner thoughts, italicized `*actions*`, `**strong emphasis**`,
+  and narration each have a distinct treatment. Speech and thought quotes stay
+  visible; Markdown structure and the original message text remain unchanged.
 
 The colors adapt to light and dark themes. Speaker names remain visible, so
 role identity does not depend on color alone, and selected, failed, system,

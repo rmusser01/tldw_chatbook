@@ -4911,9 +4911,10 @@ Button.console-message-speech-action:focus {
     color: $ds-chat-assistant-accent-light;
 }
 
-/* TASK-1990.1: flavor assistant / character prose without rewriting Markdown.
-   Quoted speech, emphasis-as-action, and strong emphasis are Content component
-   spans; labels and Markdown structure continue to carry meaning without color. */
+/* TASK-1990.1/TASK-22454: flavor assistant / character prose without rewriting
+   Markdown. Quoted speech, quoted inner thought, emphasis-as-action, and strong
+   emphasis are Content component spans; visible delimiters, text styles, labels,
+   and Markdown structure continue to carry meaning without color. */
 .-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
 .-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
     color: $ds-chat-rp-speech-dark;
@@ -4922,6 +4923,18 @@ Button.console-message-speech-action:focus {
 .-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
 .-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
     color: $ds-chat-rp-speech-light;
+}
+
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-thought,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-thought {
+    color: $ds-chat-rp-thought-dark;
+    text-style: italic;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-thought,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-thought {
+    color: $ds-chat-rp-thought-light;
+    text-style: italic;
 }
 
 .-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-action,
@@ -4965,6 +4978,7 @@ Button.console-message-speech-action:focus {
 }
 
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-thought,
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
     color: $ds-text-primary;
@@ -4990,6 +5004,7 @@ Button.console-message-speech-action:focus {
 }
 
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-thought,
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
     color: $ds-focus-fg;

@@ -148,6 +148,38 @@ def test_roleplay_markdown_annotates_flavor_without_rewriting_source():
     assert ("Listen.", ".console-rp-strong") in flavor_spans
 
 
+def test_roleplay_markdown_annotates_single_quoted_thought_with_contraction():
+    """Removing thought projection leaves the complete phrase unstyled."""
+    source = "Narration. 'I don't know.'"
+    markdown = ConsoleRoleplayMarkdown(source, open_links=False)
+    content = markdown._build_from_source(source)[0]._content
+
+    thought_spans = [
+        (content.plain[span.start : span.end], span.style)
+        for span in content.spans
+        if span.style == ".console-rp-thought"
+    ]
+    assert content.plain == source
+    assert thought_spans == [("'I don't know.'", ".console-rp-thought")]
+
+
+def test_roleplay_markdown_thought_boundaries_and_protected_content():
+    source = (
+        "Don't panic. ‘I don’t know.’ `\u0027code thought\u0027` "
+        "[\u0027linked thought\u0027](https://example.com) \u0027unfinished"
+    )
+    markdown = ConsoleRoleplayMarkdown(source, open_links=False)
+    content = markdown._build_from_source(source)[0]._content
+
+    thought_spans = [
+        content.plain[span.start : span.end]
+        for span in content.spans
+        if span.style == ".console-rp-thought"
+    ]
+    assert markdown._initial_markdown == source
+    assert thought_spans == ["‘I don’t know.’"]
+
+
 def test_roleplay_markdown_leaves_unclosed_flavor_literal():
     source = 'Narration. "unfinished speech and *unfinished action'
     markdown = ConsoleRoleplayMarkdown(source, open_links=False)
@@ -183,7 +215,8 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
         transcript.set_messages(
             [
                 _assistant(
-                    'Narration. "Spoken words." Then *paces slowly* and **Listen.**',
+                    "Narration. \"Spoken words.\" Then 'I don't know.' "
+                    "*paces slowly* and **Listen.**",
                     status="complete",
                 )
             ]
@@ -193,7 +226,8 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
 
         row = transcript.query_one("#console-message-a1", ConsoleMarkdownMessage)
         markdown = row.query_one(ConsoleRoleplayMarkdown)
-        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        turn = transcript.query_one("#console-assistant-turn-a1")
+        header = turn.query_one(".console-markdown-header", ConsoleMessageHeader)
         label = header.query_one(".console-transcript-speaker-label", Static)
         assert label.renderable.plain == "Alraune"
 
@@ -202,6 +236,7 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
             for role, text in {
                 "narration": "Narration.",
                 "speech": '"Spoken words."',
+                "thought": "'I don't know.'",
                 "action": "paces slowly",
                 "strong": "Listen.",
             }.items()
@@ -215,6 +250,7 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
                 component: blocks[0].get_component_rich_style(component)
                 for component in (
                     "console-rp-speech",
+                    "console-rp-thought",
                     "console-rp-action",
                     "console-rp-strong",
                 )
@@ -223,6 +259,7 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
             else {},
             styles,
         )
+        assert styles["thought"].italic is True
         for role, style in styles.items():
             assert style.color is not None and style.bgcolor is not None
             ratio = _contrast(style.color, style.bgcolor)
@@ -234,7 +271,12 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
         await pilot.pause()
         selected_styles = {
             _painted_style_of_text(app, markdown.region, text).color
-            for text in ('"Spoken words."', "paces slowly", "Listen.")
+            for text in (
+                '"Spoken words."',
+                "'I don't know.'",
+                "paces slowly",
+                "Listen.",
+            )
         }
         assert len(selected_styles) == 1
 
@@ -242,7 +284,8 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
         transcript.set_messages(
             [
                 _assistant(
-                    'Narration. "Spoken words." Then *paces slowly* and **Listen.**',
+                    "Narration. \"Spoken words.\" Then 'I don't know.' "
+                    "*paces slowly* and **Listen.**",
                     status="failed",
                 )
             ]
@@ -252,7 +295,12 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
         failed_markdown = transcript.query_one(ConsoleRoleplayMarkdown)
         failed_styles = {
             _painted_style_of_text(app, failed_markdown.region, text).color
-            for text in ('"Spoken words."', "paces slowly", "Listen.")
+            for text in (
+                '"Spoken words."',
+                "'I don't know.'",
+                "paces slowly",
+                "Listen.",
+            )
         }
         assert len(failed_styles) == 1
 
@@ -284,7 +332,8 @@ async def test_assistant_rows_render_markdown_and_other_roles_stay_plain():
         )
         row = transcript.query_one("#console-message-a1")
         assert isinstance(row, ConsoleMarkdownMessage)
-        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        turn = transcript.query_one("#console-assistant-turn-a1")
+        header = turn.query_one(".console-markdown-header", ConsoleMessageHeader)
         label = header.query_one(".console-transcript-speaker-label", Static)
         assert "Generating…" in label.renderable.plain
         # Empty message: footer hidden.
@@ -384,7 +433,8 @@ async def test_streaming_appends_without_reparse(monkeypatch):
         await pilot.pause()
         assert len(append_calls) == 1
         assert not update_calls
-        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        turn = transcript.query_one("#console-assistant-turn-a1")
+        header = turn.query_one(".console-markdown-header", ConsoleMessageHeader)
         label = header.query_one(".console-transcript-speaker-label", Static)
         assert "[streaming]" not in label.renderable.plain
 
@@ -428,6 +478,50 @@ async def test_streaming_append_activates_flavor_when_marker_closes(monkeypatch)
         assert any(
             block._content.plain[span.start : span.end] == "paces slowly"
             and span.style == ".console-rp-action"
+            for block in markdown.query(".console-roleplay-markdown-block")
+            for span in block._content.spans
+        )
+
+
+@pytest.mark.asyncio
+async def test_streaming_append_activates_thought_only_when_quote_closes(monkeypatch):
+    app = MarkdownHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([_assistant("Narration. 'I don't know")])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        row = transcript.query_one("#console-message-a1", ConsoleMarkdownMessage)
+        markdown = row.query_one(ConsoleRoleplayMarkdown)
+        assert not any(
+            span.style == ".console-rp-thought"
+            for block in markdown.query(".console-roleplay-markdown-block")
+            for span in block._content.spans
+        )
+
+        append_calls, update_calls = [], []
+        original_append, original_update = markdown.append, markdown.update
+        monkeypatch.setattr(
+            markdown,
+            "append",
+            lambda text: append_calls.append(text) or original_append(text),
+        )
+        monkeypatch.setattr(
+            markdown,
+            "update",
+            lambda text: update_calls.append(text) or original_update(text),
+        )
+
+        transcript.set_messages([_assistant("Narration. 'I don't know.'")])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        assert append_calls == [".'"]
+        assert update_calls == []
+        assert any(
+            block._content.plain[span.start : span.end] == "'I don't know.'"
+            and span.style == ".console-rp-thought"
             for block in markdown.query(".console-roleplay-markdown-block")
             for span in block._content.spans
         )
@@ -527,7 +621,8 @@ async def test_roleplay_markdown_row_uses_literal_named_label_and_updates_in_pla
         row = transcript.query_one("#console-message-a-roleplay")
         assert isinstance(row, ConsoleMarkdownMessage)
         markdown = row.query_one(ConsoleRoleplayMarkdown)
-        label = row.query_one(".console-transcript-speaker-label")
+        turn = transcript.query_one("#console-assistant-turn-a-roleplay")
+        label = turn.query_one(".console-transcript-speaker-label")
         assert label.renderable.plain == "Alraune [bold red]"
         assert "console-transcript-roleplay-character-label" in label.classes
         assert "console-transcript-message-roleplay-character" in row.classes
