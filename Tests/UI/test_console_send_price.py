@@ -417,6 +417,23 @@ def test_console_send_price_controller_historical_media_stays_out_of_token_rows(
     assert all("media" not in str(row).lower() for row in calls[-1][0])
 
 
+def test_console_send_price_controller_validates_draft_before_token_estimation():
+    controller, _store, _session, _state, calls = _controller_fixture()
+
+    result = controller.presentation_for_draft("<script>alert(1)</script>")
+
+    assert result == ConsoleNextSendPrice("Next request: cost unavailable")
+    assert calls == []
+
+
+def test_console_send_price_controller_estimates_the_sanitized_send_draft():
+    controller, _store, _session, _state, calls = _controller_fixture()
+
+    controller.presentation_for_draft("hello\x00world")
+
+    assert calls[-1][0][-1] == {"role": "user", "content": "helloworld"}
+
+
 def test_console_send_price_controller_counter_failure_keeps_detailed_unavailable_copy():
     controller, store, _session, state, _calls = _controller_fixture()
     controller = ConsoleSendPriceController(

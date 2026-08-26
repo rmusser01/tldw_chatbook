@@ -24,6 +24,7 @@ from tldw_chatbook.LLM_Calls.pricing_catalog import (
     PricingCatalog,
     get_pricing_catalog,
 )
+from tldw_chatbook.Utils.input_validation import validate_console_draft
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +58,14 @@ class ConsoleSendPriceController:
         self._token_cache = TokenEstimateCache(max_entries=1)
 
     def presentation_for_draft(self, draft_text: str) -> ConsoleNextSendPrice | None:
-        """Return a best-effort next-request estimate for the current draft."""
+        """Return a best-effort next-request estimate for the current draft.
+
+        Args:
+            draft_text: Current composer text before send validation.
+
+        Returns:
+            The price preview, or ``None`` when there is nothing to send.
+        """
         try:
             settings = self._settings_accessor()
             provider = settings.provider
@@ -66,7 +74,18 @@ class ConsoleSendPriceController:
 
             store = self._chat_store_accessor()
             session_id = store.active_session_id if store is not None else None
-            has_draft = bool(str(draft_text or "").strip())
+            raw_has_draft = bool(str(draft_text or "").strip())
+            validated_draft, validation_error = validate_console_draft(
+                draft_text,
+                allow_empty=True,
+            )
+            if validation_error is not None:
+                return (
+                    ConsoleNextSendPrice("Next request: cost unavailable")
+                    if raw_has_draft
+                    else None
+                )
+            has_draft = bool(validated_draft.strip())
             if store is None or session_id is None:
                 return (
                     ConsoleNextSendPrice("Next request: cost unavailable")
@@ -88,7 +107,7 @@ class ConsoleSendPriceController:
 
             row_pairs = list(projection.rows)
             if has_draft:
-                row_pairs.append(("user", draft_text))
+                row_pairs.append(("user", validated_draft))
             staged_text = console_prompted_evidence_text(
                 self._pending_launch_accessor()
             )
@@ -129,7 +148,14 @@ class ConsoleSendPriceController:
             return ConsoleNextSendPrice("Next request: cost unavailable")
 
     def tooltip_for_draft(self, draft_text: str) -> str | None:
-        """Return only the rendered tooltip for widget consumption."""
+        """Return only the rendered tooltip for widget consumption.
+
+        Args:
+            draft_text: Current composer text before send validation.
+
+        Returns:
+            The rendered tooltip, or ``None`` when there is nothing to send.
+        """
         presentation = self.presentation_for_draft(draft_text)
         return presentation.tooltip if presentation is not None else None
 
@@ -184,7 +210,20 @@ def build_next_send_price(
     attachment_count: int = 0,
     historical_media_count: int = 0,
 ) -> ConsoleNextSendPrice:
-    """Build an honest, text-only estimate for the next Console request."""
+    """Build an honest, text-only estimate for the next Console request.
+
+    Args:
+        input_tokens: Estimated provider input-token count, if available.
+        max_reply_tokens: Configured reply-token ceiling, if available.
+        pricing: Matching model price rates, if configured.
+        provider: Selected provider name for provenance.
+        model: Selected model name for provenance.
+        attachment_count: Number of pending media attachments.
+        historical_media_count: Number of admitted historical media items.
+
+    Returns:
+        A rendered price preview with cost, token, media, and provenance detail.
+    """
     has_media = attachment_count > 0 or historical_media_count > 0
     input_label = "Input text" if has_media else "Input"
     reply_label = "Reply text" if has_media else "Reply"

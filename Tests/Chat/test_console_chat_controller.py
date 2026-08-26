@@ -2893,6 +2893,54 @@ def test_provider_messages_for_next_send_estimate_uses_lightweight_projection_wi
     )
 
 
+def test_provider_messages_for_next_send_estimate_uses_owning_session_selection(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        controller_module,
+        "is_vision_capable",
+        lambda provider, model: (provider, model)
+        == ("openai", "session-vision-model"),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "max_history_images",
+        lambda provider, model: (
+            1
+            if (provider, model)
+            == ("openai", "session-vision-model")
+            else 0
+        ),
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="session-vision-model",
+            system_prompt="session system",
+        ),
+        ephemeral=True,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        provider="anthropic",
+        model="global-text-model",
+        system_prompt="global system",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="image question",
+        attachments=(MessageAttachment(b"image", "image/png", "image.png", 0),),
+    )
+
+    result = controller.provider_messages_for_next_send_estimate(session.id)
+
+    assert result.rows[0] == ("system", "session system")
+    assert result.historical_media_count == 1
+
+
 def test_provider_message_payloads_serializes_only_after_lightweight_projection(
     monkeypatch,
 ):

@@ -5270,7 +5270,17 @@ class ConsoleChatStore:
     def read_only_messages_for_session(
         self, session_id: str
     ) -> list[ConsoleChatMessage]:
-        """Return detached current transcript snapshots without store writes."""
+        """Return current transcript snapshots without mutating the store.
+
+        Args:
+            session_id: Session whose transcript should be projected.
+
+        Returns:
+            Detached snapshots including the latest buffered streaming text.
+
+        Raises:
+            KeyError: If ``session_id`` does not identify a stored session.
+        """
         self._session_or_raise(session_id)
         snapshots: list[ConsoleChatMessage] = []
         for message in self._messages_by_session[session_id]:

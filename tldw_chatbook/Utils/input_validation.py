@@ -12,6 +12,7 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 PROVIDER_API_KEY_MAX_LENGTH = 4096
+CONSOLE_DRAFT_MAX_LENGTH = 100_000
 
 
 def validate_email(email: str) -> bool:
@@ -494,6 +495,38 @@ def sanitize_string(text: str, max_length: int = 1000) -> str:
     )
 
     return sanitized
+
+
+def validate_console_draft(
+    draft: object, *, allow_empty: bool = False
+) -> tuple[str, str | None]:
+    """Validate and sanitize a Console message draft before use.
+
+    Args:
+        draft: Candidate draft value to normalize as text.
+        allow_empty: Whether a blank draft is valid.
+
+    Returns:
+        A pair containing the sanitized draft and an optional user-facing
+        validation error. The draft is empty when validation fails.
+    """
+    raw_draft = str(draft or "")
+    if not raw_draft.strip():
+        if allow_empty:
+            return "", None
+        return "", "Type a message before sending."
+    if not validate_text_input(
+        raw_draft,
+        max_length=CONSOLE_DRAFT_MAX_LENGTH,
+        allow_html=False,
+    ):
+        return "", "Message blocked: remove unsafe markup or shorten your message."
+    clean_draft = sanitize_string(raw_draft, max_length=CONSOLE_DRAFT_MAX_LENGTH)
+    if not clean_draft.strip():
+        if allow_empty:
+            return "", None
+        return "", "Type a message before sending."
+    return clean_draft, None
 
 
 def validate_json_size(json_str: str, max_size: int = 1024 * 1024) -> bool:

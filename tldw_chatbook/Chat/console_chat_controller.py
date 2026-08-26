@@ -279,7 +279,7 @@ from tldw_chatbook.runtime_policy.bootstrap import (
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
-from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.Utils.input_validation import validate_console_draft
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
     describe_stream_failure,
 )
@@ -865,7 +865,6 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
 }
 
 
-MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
 PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
     "Recover the interrupted tool run before sending a new message: "
@@ -12417,23 +12416,7 @@ class ConsoleChatController:
     def _validated_draft(
         draft: str, *, allow_empty: bool = False
     ) -> tuple[str, str | None]:
-        raw_draft = str(draft or "")
-        if not raw_draft.strip():
-            if allow_empty:
-                return "", None
-            return "", "Type a message before sending."
-        if not validate_text_input(
-            raw_draft,
-            max_length=MAX_CONSOLE_DRAFT_LENGTH,
-            allow_html=False,
-        ):
-            return "", "Message blocked: remove unsafe markup or shorten your message."
-        clean_draft = sanitize_string(raw_draft, max_length=MAX_CONSOLE_DRAFT_LENGTH)
-        if not clean_draft.strip():
-            if allow_empty:
-                return "", None
-            return "", "Type a message before sending."
-        return clean_draft, None
+        return validate_console_draft(draft, allow_empty=allow_empty)
 
     @staticmethod
     def _blocked_visible_copy(copy: str) -> str:
@@ -16406,7 +16389,9 @@ class ConsoleChatController:
         *,
         greeting: str = "",
         session_id: str | None = None,
-        turn_context: ConsoleTurnExecutionContext | None = None,
+        turn_context: (
+            ConsoleTurnConfigurationSnapshot | ConsoleTurnExecutionContext | None
+        ) = None,
     ) -> list[dict[str, str]]:
         """Return a single-item system message list when a system prompt is set.
 
@@ -16579,16 +16564,29 @@ class ConsoleChatController:
     def provider_messages_for_next_send_estimate(
         self, session_id: str
     ) -> ConsoleNextSendHistoryProjection:
-        """Project canonical next-send history without mutating or serializing it."""
+        """Project canonical next-send history without mutation or serialization.
+
+        Args:
+            session_id: Session whose next-send provider history to project.
+
+        Returns:
+            Detached role/text rows and the admitted historical-media count.
+
+        Raises:
+            KeyError: If ``session_id`` does not identify a stored session.
+        """
+        configuration = self.resolve_turn_configuration_snapshot(session_id)
         collected = self.store.read_only_messages_for_session(session_id)
         system_rows = self._leading_system_message(
             greeting=self._seeded_greeting_text(session_id, collected),
             session_id=session_id,
+            turn_context=configuration,
         )
         history_rows = self._lightweight_provider_message_rows(
             collected,
             skip_failed=True,
             session_id=session_id,
+            turn_context=configuration,
         )
         return ConsoleNextSendHistoryProjection(
             rows=tuple(
@@ -16714,7 +16712,9 @@ class ConsoleChatController:
         skip_failed: bool,
         use_variant_content: bool = False,
         session_id: str | None = None,
-        turn_context: ConsoleTurnExecutionContext | None = None,
+        turn_context: (
+            ConsoleTurnConfigurationSnapshot | ConsoleTurnExecutionContext | None
+        ) = None,
     ) -> list[_LightweightProviderHistoryRow]:
         """Apply provider-history admission without serializing media bytes."""
         selection = (

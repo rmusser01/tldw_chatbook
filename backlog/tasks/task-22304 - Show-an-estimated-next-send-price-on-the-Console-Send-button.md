@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-26 04:42'
-updated_date: '2026-08-26 14:41'
+updated_date: '2026-08-26 15:07'
 labels: []
 dependencies:
   - TASK-22303
@@ -45,4 +45,6 @@ Reason: The feature adds a cross-module detached store snapshot and shared pre-s
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the live Send | $ and Queue | $ affordance with blocker-first native hover guidance, text-token and maximum-reply pricing details, honest unavailable/media fallbacks, and synchronous refresh from the canonical Console state. ADR-088 defines the detached lightweight history projection used by the pure cached estimator; accumulated-spend behavior is unchanged. Verification: 232 focused tests passed, mounted 80x24 and 160x40 visual/tooltip cases passed, Ruff lint passed, all new and task-owned files passed Ruff format, git diff checks passed, and the one-time Impeccable detector returned no findings. The existing chat_screen.py size ratchet remains red at 20,071 lines versus its 17,727-line budget; the feature adds only the composer callback binding there. Ruff format reports the same eight pre-existing drifted files at the pre-task base and this branch. Added a testing-evidence lesson for Textual layout settlement and explicitly enabling tooltips in run_test.
+
+PR review follow-up: aligned price projection with the owning session's frozen provider/model/system-prompt capabilities, reused the exact Console draft validation and sanitization boundary before token estimation, and completed Google-style public API contracts requested by Qodo. Added regression coverage for session-specific vision/media admission, unsafe-markup refusal, and sanitized token-estimator input. Verification: 237 focused Console, pricing, queue, settings, history-projection, and send-validation tests passed; Ruff lint, git diff checks, and the backlog task-ID guard passed.
 <!-- SECTION:NOTES:END -->
