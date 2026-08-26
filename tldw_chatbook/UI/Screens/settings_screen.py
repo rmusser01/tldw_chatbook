@@ -1437,7 +1437,7 @@ def _build_field_search_index() -> None:
                 ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
                 (
                     "settings-appearance-library-media-library-open",
-                    "Shared Library pane",
+                    "Shared Library rail",
                 ),
                 (
                     "settings-appearance-library-media-custom-widths",
@@ -15686,7 +15686,7 @@ class SettingsScreen(BaseAppScreen):
                     )
                 yield Static("Shared Library rail", classes="destination-section")
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Library pane", classes="settings-input-label")
+                    yield Static("Library rail", classes="settings-input-label")
                     yield Button(
                         self._appearance_media_layout_label(
                             "library_reader_library_open"

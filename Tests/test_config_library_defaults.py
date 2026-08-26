@@ -3,6 +3,7 @@
 import tomllib
 
 import tldw_chatbook.config as config_module
+from tldw_chatbook.Library.library_rail_width import LIBRARY_REFERENCE_WIDTH
 from tldw_chatbook.UI.Screens.settings_appearance_defaults import (
     load_appearance_defaults,
 )
@@ -18,14 +19,14 @@ def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
     assert settings["library"]["reader"] == {
         "library_open": True,
         "custom_widths_enabled": False,
-        "library_width": 31,
+        "library_width": LIBRARY_REFERENCE_WIDTH,
     }
     assert settings["library"]["media_reader"] == {
         "items_open": True,
         "items_width": 40,
         "library_open": True,
         "custom_widths_enabled": False,
-        "library_width": 31,
+        "library_width": LIBRARY_REFERENCE_WIDTH,
     }
     for section in (
         "conversations_reader",
@@ -43,7 +44,10 @@ def test_shipped_template_keeps_shared_reader_empty_and_legacy_reference_at_31()
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
 
     assert template["library"]["reader"] == {}
-    assert template["library"]["media_reader"]["library_width"] == 31
+    assert (
+        template["library"]["media_reader"]["library_width"]
+        == LIBRARY_REFERENCE_WIDTH
+    )
 
 
 def test_fresh_profile_uses_template_reference_without_materializing_shared_reader(
@@ -56,8 +60,14 @@ def test_fresh_profile_uses_template_reference_without_materializing_shared_read
     written = tomllib.loads(config_path.read_text(encoding="utf-8"))
 
     assert written["library"]["reader"] == {}
-    assert written["library"]["media_reader"]["library_width"] == 31
-    assert settings["library"]["reader"]["library_width"] == 31
+    assert (
+        written["library"]["media_reader"]["library_width"]
+        == LIBRARY_REFERENCE_WIDTH
+    )
+    assert (
+        settings["library"]["reader"]["library_width"]
+        == LIBRARY_REFERENCE_WIDTH
+    )
 
 
 def test_library_reader_environment_overrides_toml_for_settings(tmp_path, monkeypatch):
@@ -408,5 +418,5 @@ items_width = true
     assert config_module.load_settings(force_reload=True)["library"]["reader"] == {
         "library_open": True,
         "custom_widths_enabled": False,
-        "library_width": 31,
+        "library_width": LIBRARY_REFERENCE_WIDTH,
     }

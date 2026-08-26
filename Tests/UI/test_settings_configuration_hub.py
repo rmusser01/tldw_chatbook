@@ -1518,6 +1518,15 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
         assert "library.reader" in guide_text
         assert "library.<destination>_reader" in guide_text
         visible = _visible_text(screen)
+        assert "Library rail" in visible
+        assert "Library pane" not in visible
+        search_labels = dict(
+            settings_screen_module.FIELD_SEARCH_INDEX[SettingsCategoryId.APPEARANCE]
+        )
+        assert (
+            search_labels["settings-appearance-library-media-library-open"]
+            == "Shared Library rail"
+        )
         assert "Automatic: 3:13, bounded to 24–34 cells." in visible
         assert "Custom: preferred 24–48 cells" in visible
         assert "keep 40 content cells" in visible
@@ -1593,13 +1602,41 @@ async def test_settings_keeps_dormant_library_width_through_resize_mode_and_gene
             return True
 
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         selector = "#settings-appearance-library-media-library-width"
 
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert field.disabled
+
+        toggle = screen.query_one(
+            "#settings-appearance-library-media-custom-widths", Button
+        )
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(toggle, animate=False)
+        await pilot.pause()
+        assert detail.region.contains_region(toggle.region), (
+            detail.region,
+            toggle.region,
+        )
+        click_offset = (toggle.region.width // 2, 0)
+        assert await pilot.click(toggle, offset=click_offset)
+        await pilot.pause()
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert not field.disabled
+
+        await pilot.pause(0.1)
+        toggle = screen.query_one(
+            "#settings-appearance-library-media-custom-widths", Button
+        )
+        click_offset = (toggle.region.width // 2, 0)
+        assert await pilot.click(toggle, offset=click_offset)
+        await pilot.pause()
         field = screen.query_one(selector, Input)
         assert field.value == "48"
         assert field.disabled
