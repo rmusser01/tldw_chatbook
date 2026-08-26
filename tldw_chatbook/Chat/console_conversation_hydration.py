@@ -359,8 +359,8 @@ async def hydrate_console_session(
     workspace resolution, the title fallback, the whole-tree node build,
     the durable active-leaf pointer, the runtime-backend/assistant/character
     field discipline, the `restore_persisted_session` call and the roleplay
-    overlay. The screen's own work (marker overlay, character name, scope
-    warm, repaint) stays in the screen.
+    overlay, including saved character-name identity. The screen's own work
+    (marker overlay, scope warm, repaint) stays in the screen.
 
     Args:
         app: The app object; read for ``chachanotes_db`` only.
@@ -448,6 +448,7 @@ async def hydrate_console_session(
     )
     if settings is not None:
         settings = replace(settings, character_label=character_name or "")
+    prior_active_session_id = store.active_session_id
     session = store.restore_persisted_session(
         title=title,
         workspace_id=workspace_id,
@@ -463,10 +464,18 @@ async def hydrate_console_session(
         character_name=character_name,
         activate=False,
     )
-    await store.hydrate_session_library_policy(session.id)
-    await store.reconcile_pending_workspace_projection(session.id)
-    session.user_display_name_override = roleplay_context.user_name_override
-    session.character_system_template = roleplay_context.character_system_template
-    if activate:
-        store.switch_session(session.id)
+    try:
+        await store.hydrate_session_library_policy(session.id)
+        await store.reconcile_pending_workspace_projection(session.id)
+        session.user_display_name_override = roleplay_context.user_name_override
+        session.character_system_template = roleplay_context.character_system_template
+        if activate:
+            store.switch_session(session.id)
+    except BaseException:
+        store.rollback_restored_session(
+            session.id,
+            expected_session=session,
+            prior_active_session_id=prior_active_session_id,
+        )
+        raise
     return session

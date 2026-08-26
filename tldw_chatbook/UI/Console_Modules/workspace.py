@@ -90,6 +90,10 @@ if TYPE_CHECKING:
 logger = logger.bind(module="ChatScreen")
 
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY = (
+    "Couldn't resume this saved conversation: it was deleted or couldn't be read.\n"
+    "Your previous Console chat is still active."
+)
 
 
 def persist_console_workspace_tree_expansion_preferences(
@@ -3392,7 +3396,7 @@ class ConsoleWorkspaceController:
         *,
         row_key: str = "",
         target_workspace_id: str | None = None,
-    ) -> None:
+    ) -> bool | None:
         """Open one saved conversation for both the flat browser and Tree."""
 
         conversation_id = str(conversation_id or "").strip()
@@ -3415,7 +3419,7 @@ class ConsoleWorkspaceController:
                     "This conversation row is no longer available.",
                     severity="warning",
                 )
-                return
+                return False
             self._set_conversation_row_loading_fn(row_conversation_id, True)
             try:
                 resumed = await self._resume_console_workspace_conversation(
@@ -3434,27 +3438,50 @@ class ConsoleWorkspaceController:
             finally:
                 self._set_conversation_row_loading_fn(row_conversation_id, False)
             if resumed:
-                await self._refresh_console_conversation_browser_after_selection()
-                return
+                return True
             if resumed is None:
-                return
+                return None
             self._mark_conversation_row_broken_fn(row_conversation_id)
             self.app_instance.notify(
-                "This saved conversation could not be loaded - its record is missing.",
+                CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
                 severity="warning",
+                timeout=15,
             )
-            return
+            return False
         controller = self._ensure_chat_controller_fn()
-        if controller.store.active_session_id != session_id:
-            if browser_row is None:
-                self._set_active_workspace_for_console_session(session_id)
-            controller.switch_session(session_id)
-            sync_result = self._sync_native_console_chat_ui_fn()
-            if inspect.isawaitable(sync_result):
-                await sync_result
-            self._sync_temporary_chip_fn()
-        self._focus_composer_if_needed_fn(force=True)
-        await self._refresh_console_conversation_browser_after_selection()
+        store = controller.store
+        prior_active_session_id = store.active_session_id
+        try:
+            if prior_active_session_id != session_id:
+                self._capture_console_draft_switch_snapshot()
+                if browser_row is None:
+                    self._set_active_workspace_for_console_session(session_id)
+                controller.switch_session(session_id)
+                sync_result = self._sync_native_console_chat_ui_fn()
+                if inspect.isawaitable(sync_result):
+                    await sync_result
+                self._sync_temporary_chip_fn()
+            self._focus_composer_if_needed_fn(force=True)
+            await self._refresh_console_conversation_browser_after_selection()
+        except asyncio.CancelledError:
+            await self._restore_console_session_after_failed_open(
+                store, prior_active_session_id
+            )
+            raise
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to present an already-open Console saved conversation"
+            )
+            await self._restore_console_session_after_failed_open(
+                store, prior_active_session_id
+            )
+            self.app_instance.notify(
+                CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
+                severity="error",
+                timeout=15,
+            )
+            return None
+        return True
 
     # -- Workspace RAG-scope picker ------------------------------------------
 
@@ -3859,10 +3886,46 @@ class ConsoleWorkspaceController:
             if any(session.id == session_id for session in store.sessions()):
                 return session_id
             return None
+        active_session = next(
+            (
+                session
+                for session in store.sessions()
+                if session.id == store.active_session_id
+            ),
+            None,
+        )
+        if (
+            active_session is not None
+            and str(active_session.persisted_conversation_id or "") == target
+        ):
+            return active_session.id
         for session in store.sessions():
             if str(session.persisted_conversation_id or "") == target:
                 return session.id
         return None
+
+    async def _restore_console_session_after_failed_open(
+        self,
+        store: Any,
+        prior_active_session_id: str | None,
+    ) -> None:
+        """Best-effort repaint of the exact session active before an open."""
+        if not any(
+            session.id == prior_active_session_id for session in store.sessions()
+        ):
+            return
+        try:
+            store.switch_session(prior_active_session_id)
+            self._set_active_workspace_for_console_session(prior_active_session_id)
+            self._sync_console_chat_core_state()
+            sync_result = self._sync_native_console_chat_ui_fn()
+            if inspect.isawaitable(sync_result):
+                await sync_result
+            self._sync_temporary_chip_fn()
+        except BaseException:
+            logger.opt(exception=True).warning(
+                "Failed to repaint the prior Console session after saved-chat open"
+            )
 
     async def _resume_console_workspace_conversation(
         self,
@@ -3882,6 +3945,8 @@ class ConsoleWorkspaceController:
         target = str(conversation_id or "").strip()
         if not target:
             return None
+        store = self._ensure_console_chat_store()
+        prior_active_session_id = store.active_session_id
         # TASK-339: keystrokes typed while the conversation tree loads
         # belong to the resumed session — snapshot the composer now.
         self._capture_console_draft_switch_snapshot()
@@ -3889,8 +3954,8 @@ class ConsoleWorkspaceController:
         # `Chat/console_conversation_hydration.py` -- the launch wake has to
         # hydrate a conversation with no screen in existence, and one policy
         # beats two. Everything BELOW the hydration call is this screen's own
-        # work (marker overlay, character identity, scope warm, repaint,
-        # focus) and stays here; so do both failure toasts, because the UX
+        # work (marker overlay, scope warm, repaint, focus) and stays here;
+        # so do both failure toasts, because the UX
         # for each failure is a view concern.
         try:
             tree = await load_console_conversation_tree(self.app_instance, target)
@@ -3919,68 +3984,70 @@ class ConsoleWorkspaceController:
         conversation = tree.get("conversation")
         if not isinstance(conversation, dict):
             conversation = {}
-        store = self._ensure_console_chat_store()
-        session = await hydrate_console_session(
-            app=self.app_instance,
-            store=store,
-            conversation_id=target,
-            tree=tree,
-            settings=self._console_session_settings_for_resume(conversation),
-            target_scope_type=target_scope_type,
-            target_workspace_id=target_workspace_id,
-        )
-        # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
-        # them onto the restored active-path VIEW (markers are never tree nodes;
-        # the next tree mutation's recompute rebuilds the view from live nodes
-        # and drops them, matching how live markers are ephemeral in Phase A).
-        store.apply_resume_marker_overlay(
-            session.id,
-            self._inject_resume_agent_markers(
-                store.messages_for_session(session.id), target
-            ),
-        )
-        self._set_active_workspace_for_console_session(session.id)
-        # task-9/task-13: warm the EFFECTIVE (conversation ∩ workspace)
-        # scope cache for this session now (off-loop) so the Inspector row
-        # reflects reality immediately on resume, rather than defaulting to
-        # "everything" until the user opens Edit or saves a change (the
-        # picker's other two read triggers).
+        session = None
         try:
+            session = await hydrate_console_session(
+                app=self.app_instance,
+                store=store,
+                conversation_id=target,
+                tree=tree,
+                settings=self._console_session_settings_for_resume(conversation),
+                target_scope_type=target_scope_type,
+                target_workspace_id=target_workspace_id,
+                activate=False,
+            )
+            # Re-derive display-only agent TOOL markers from AgentRunsDB and
+            # overlay them onto the restored active-path view.
+            store.apply_resume_marker_overlay(
+                session.id,
+                self._inject_resume_agent_markers(
+                    store.messages_for_session(session.id), target
+                ),
+            )
+            # Warm the effective conversation/workspace scope before the final
+            # activation commit so any failure leaves the prior session active.
             await self._resolve_console_effective_scope_state(session)
+            store.switch_session(session.id)
+            self._set_active_workspace_for_console_session(session.id)
+            self._sync_console_retrieval_scope_row()
+            self._console_agent_drilldown_run_id = None
+            self._note_console_follow_intent()
+            self._sync_console_chat_core_state()
+            await self._sync_native_console_chat_ui()
+            await self._refresh_console_conversation_browser_after_selection()
+            if callable(self._wake_retry_poke_fn):
+                self._wake_retry_poke_fn()
+            self._focus_console_composer_if_needed(force=True)
+        except asyncio.CancelledError:
+            if session is not None:
+                store.rollback_restored_session(
+                    session.id,
+                    expected_session=session,
+                    prior_active_session_id=prior_active_session_id,
+                )
+            await self._restore_console_session_after_failed_open(
+                store, prior_active_session_id
+            )
+            raise
         except Exception:
             logger.opt(exception=True).warning(
-                "Failed to resolve retrieval scope for conversation {}", target
+                "Unable to present Console saved conversation {}", target
             )
-        # task-10 review finding 2: warming the cache above is not enough
-        # by itself -- neither `_sync_native_console_chat_ui()` below nor
-        # its own `_sync_console_control_bar()` call ever touches the
-        # retrieval-scope row or `ConsoleStatusChips.sync_scope_chip`
-        # (`sync_scope_chip` is deliberately its own method, kept off the
-        # general control-bar sync tick -- see its docstring). Without this
-        # explicit call the MOUNTED row/chip stayed on whatever state they
-        # last rendered until the user opened Edit/Narrow or saved a
-        # change, even though the cache above already had the right
-        # answer. This is the same helper (and the same one-state,
-        # two-renderers push) the scope-picker save path already uses.
-        self._sync_console_retrieval_scope_row()
-        # Finding C: resuming a saved conversation switches the active
-        # conversation just as much as a tab switch does -- clear any
-        # sub-agent drill-in immediately rather than rely solely on the
-        # rail render path's defensive re-check on the next sync.
-        self._console_agent_drilldown_run_id = None
-        self._note_console_follow_intent()
-        self._sync_console_chat_core_state()
-        await self._sync_native_console_chat_ui()
-        # task-15864 AC#2: opening a conversation creates the session a
-        # mount-claimed (or otherwise staged) wake has been waiting for --
-        # session-open IS a retry trigger. Before this, a restart-staged
-        # wake sat pending until an unrelated composer keystroke (live
-        # scenario 5). The poke only schedules `_attempt_all`; every
-        # delivery gate (kill switch, send gate, user-wins-ties) still
-        # applies unchanged.
-        if callable(self._wake_retry_poke_fn):
-            self._wake_retry_poke_fn()
-        self._focus_console_composer_if_needed(force=True)
+            if session is not None:
+                store.rollback_restored_session(
+                    session.id,
+                    expected_session=session,
+                    prior_active_session_id=prior_active_session_id,
+                )
+            await self._restore_console_session_after_failed_open(
+                store, prior_active_session_id
+            )
+            self.app_instance.notify(
+                CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
+                severity="error",
+                timeout=15,
+            )
+            return None
         return True
 
     # -- Workspace context state / grouped conversation rows -----------------

@@ -298,6 +298,104 @@ async def test_production_hydration_never_activates_placeholder_authority(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_boundary",
+    ("hydrate_session_library_policy", "reconcile_pending_workspace_projection"),
+)
+async def test_hydration_rollback_is_atomic_across_policy_boundaries(
+    failure_boundary,
+    monkeypatch,
+):
+    store = _build_test_app().console_runtime.ensure_chat_store()
+    prior_settings = default_console_session_settings({})
+    prior = store.create_session(title="Prior", settings=prior_settings)
+    store.set_session_draft(prior.id, "draft stays exact")
+
+    async def fail_after_restore(_session_id):
+        raise RuntimeError(f"failed {failure_boundary}")
+
+    monkeypatch.setattr(store, failure_boundary, fail_after_restore)
+    app = type(
+        "HydrationApp",
+        (),
+        {
+            "chachanotes_db": type(
+                "HydrationDB",
+                (),
+                {"get_conversation_active_leaf": lambda _self, _target: None},
+            )()
+        },
+    )()
+    tree = {
+        "conversation": {"id": "rollback-target", "title": "Rollback target"},
+        "root_threads": [],
+    }
+
+    with pytest.raises(RuntimeError, match=f"failed {failure_boundary}"):
+        await hydrate_console_session(
+            app=app,
+            store=store,
+            conversation_id="rollback-target",
+            tree=tree,
+            settings=prior_settings,
+        )
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_boundary",
+    ("hydrate_session_library_policy", "reconcile_pending_workspace_projection"),
+)
+async def test_hydration_cancellation_rolls_back_then_propagates(
+    failure_boundary,
+    monkeypatch,
+):
+    store = _build_test_app().console_runtime.ensure_chat_store()
+    prior_settings = default_console_session_settings({})
+    prior = store.create_session(title="Prior", settings=prior_settings)
+    store.set_session_draft(prior.id, "draft stays exact")
+
+    async def cancel_after_restore(_session_id):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(store, failure_boundary, cancel_after_restore)
+    app = type(
+        "HydrationApp",
+        (),
+        {
+            "chachanotes_db": type(
+                "HydrationDB",
+                (),
+                {"get_conversation_active_leaf": lambda _self, _target: None},
+            )()
+        },
+    )()
+    tree = {
+        "conversation": {"id": "cancel-target", "title": "Cancel target"},
+        "root_threads": [],
+    }
+
+    with pytest.raises(asyncio.CancelledError):
+        await hydrate_console_session(
+            app=app,
+            store=store,
+            conversation_id="cancel-target",
+            tree=tree,
+            settings=prior_settings,
+        )
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+
+
+@pytest.mark.asyncio
 async def test_hydration_restores_v2_local_character_snapshot_for_future_projections(
     tmp_path,
 ):

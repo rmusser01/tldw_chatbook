@@ -1590,20 +1590,27 @@ class ConsoleChatStore:
             expected_settings=expected_settings,
         ):
             return False
-        self._messages_by_session.pop(session_id, None)
-        self._tool_markers_by_session.pop(session_id, None)
-        self._nodes_by_session.pop(session_id, None)
-        self._children_by_parent.pop(session_id, None)
-        self._active_leaf_by_session.pop(session_id, None)
-        self._context_summary_by_session.pop(session_id, None)
-        self._roleplay_system_projection_candidates.pop(session_id, None)
-        self._conversation_context_epochs.pop(session_id, None)
-        self._speech_preference_epochs.pop(session_id, None)
-        self._payload_revisions.pop(session_id, None)
-        self._pending_workspace_projections.pop(session_id, None)
-        if self.library_policy_coordinator is not None:
-            self.library_policy_coordinator.unregister_holder(session_id)
-        self._sessions.pop(session_id, None)
+        self._purge_session_runtime_state(session_id)
+        if self.active_session_id == session_id:
+            self._activate_session(
+                prior_active_session_id
+                if prior_active_session_id in self._sessions
+                else None
+            )
+        return True
+
+    def rollback_restored_session(
+        self,
+        session_id: str,
+        *,
+        expected_session: ConsoleChatSession,
+        prior_active_session_id: str | None,
+    ) -> bool:
+        """Remove only the exact runtime session created by a failed restore."""
+
+        if self._sessions.get(session_id) is not expected_session:
+            return False
+        self._purge_session_runtime_state(session_id)
         if self.active_session_id == session_id:
             self._activate_session(
                 prior_active_session_id
@@ -2828,6 +2835,24 @@ class ConsoleChatStore:
         session_ids = list(self._sessions.keys())
         closed_index = session_ids.index(session_id)
 
+        self._purge_session_runtime_state(session_id)
+
+        if self.active_session_id != session_id:
+            return self._sessions.get(self.active_session_id or "")
+
+        remaining_sessions = list(self._sessions.values())
+        if not remaining_sessions:
+            self._activate_session(None)
+            return None
+
+        next_index = min(closed_index, len(remaining_sessions) - 1)
+        next_session = remaining_sessions[next_index]
+        self._activate_session(next_session.id)
+        return next_session
+
+    def _purge_session_runtime_state(self, session_id: str) -> None:
+        """Delete one session's exact process-local ownership without DB writes."""
+
         # Purge EVERY message the session owns, not just the active-path view:
         # off-path tree nodes and dropped display-only TOOL markers both live in
         # ``_message_session_index`` (a superset of ``_nodes_by_session`` for the
@@ -2851,15 +2876,35 @@ class ConsoleChatStore:
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
             self._exchange_blob_cache.pop(message_id, None)
+            self._abandoned_exchange_run_tags.pop(message_id, None)
             self._character_emote_captures.pop(message_id, None)
+            self._trajectory_timing.pop(message_id, None)
+            self._trajectory_written_ids.discard(message_id)
+            self._pending_trajectory_tool_rows.pop(message_id, None)
+            self._pending_trajectory_event_rows.pop(message_id, None)
+
+        unanchored = self._pending_trajectory_tool_rows.get("__unanchored__")
+        if unanchored is not None:
+            retained = [
+                entry
+                for entry in unanchored
+                if entry.get("session_id") != session_id
+            ]
+            if retained:
+                self._pending_trajectory_tool_rows["__unanchored__"] = retained
+            else:
+                self._pending_trajectory_tool_rows.pop("__unanchored__", None)
 
         self._messages_by_session.pop(session_id, None)
+        self._drop_newest_change_review_memo(session_id)
         self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
         self._active_leaf_by_session.pop(session_id, None)
         self._context_summary_by_session.pop(session_id, None)
+        self._deferred_project_instruction_state_session_ids.discard(session_id)
         self._roleplay_system_projection_candidates.pop(session_id, None)
+        self._payload_revisions.pop(session_id, None)
         self._conversation_context_epochs.pop(session_id, None)
         self._speech_preference_epochs.pop(session_id, None)
         self._character_emote_feed_by_session.pop(session_id, None)
@@ -2868,6 +2913,7 @@ class ConsoleChatStore:
         self._dispatch_recovery_message_baselines.pop(session_id, None)
         self._dispatch_recovery_queue_hydration_pending.discard(session_id)
         self._pending_workspace_projections.pop(session_id, None)
+        self._session_turn_ids.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
         self._sessions.pop(session_id, None)
@@ -2888,19 +2934,6 @@ class ConsoleChatStore:
             self._preparations_by_session.pop(session_id, None)
             if preparation is not None:
                 self._preparations_by_id.pop(preparation.preparation_id, None)
-
-        if self.active_session_id != session_id:
-            return self._sessions.get(self.active_session_id or "")
-
-        remaining_sessions = list(self._sessions.values())
-        if not remaining_sessions:
-            self._activate_session(None)
-            return None
-
-        next_index = min(closed_index, len(remaining_sessions) - 1)
-        next_session = remaining_sessions[next_index]
-        self._activate_session(next_session.id)
-        return next_session
 
     def sessions(self) -> list[ConsoleChatSession]:
         """Return native Console sessions in creation order."""

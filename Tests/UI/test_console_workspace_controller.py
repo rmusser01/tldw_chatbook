@@ -32,6 +32,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_RUN_MARKER_GLYPHS,
     ConsoleRunMarker,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -3158,6 +3160,230 @@ async def test_resume_workspace_conversation_missing_record_returns_false():
         await pilot.pause()
 
         assert resumed is False
+
+
+RESUME_FAILURE_COPY = (
+    "Couldn't resume this saved conversation: it was deleted or couldn't be read.\n"
+    "Your previous Console chat is still active."
+)
+
+
+def _atomic_resume_controller(
+    *,
+    failure_boundary: str | None = None,
+    failure: BaseException | None = None,
+):
+    class DurableObserver:
+        def __init__(self) -> None:
+            self.mutations: list[tuple[str, str]] = []
+
+        def delete_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("delete", conversation_id))
+
+        def update_conversation(self, conversation_id: str) -> None:
+            self.mutations.append(("update", conversation_id))
+
+    durable = DurableObserver()
+    store = ConsoleChatStore(persistence=durable)
+    prior_settings = ConsoleSessionSettings(provider="openai", model="prior")
+    prior = store.create_session(title="Prior", settings=prior_settings)
+    store.set_session_draft(prior.id, "draft stays exact")
+    notifications: list[tuple[str, str, dict]] = []
+    app = SimpleNamespace(
+        chachanotes_db=SimpleNamespace(
+            get_conversation_active_leaf=lambda _target: None,
+        ),
+        chat_conversation_scope_service=SimpleNamespace(
+            get_conversation_tree=lambda conversation_id, **_kwargs: (
+                _conversation_tree_payload(conversation_id)
+            )
+        ),
+        notify=lambda message, severity="information", **kwargs: notifications.append(
+            (message, severity, kwargs)
+        ),
+    )
+    sync_calls = 0
+
+    def inject_markers(messages, _conversation_id):
+        if failure_boundary == "marker":
+            raise failure  # type: ignore[misc]
+        return messages
+
+    async def resolve_scope(_session):
+        if failure_boundary == "scope":
+            raise failure  # type: ignore[misc]
+
+    async def sync_ui():
+        nonlocal sync_calls
+        sync_calls += 1
+        if failure_boundary == "ui" and sync_calls == 1:
+            raise failure  # type: ignore[misc]
+
+    chat_controller = SimpleNamespace(
+        store=store,
+        switch_session=store.switch_session,
+        activity_for=lambda _session_id: SimpleNamespace(queued_count=0),
+    )
+    controller = _workspace_controller(
+        app_instance=app,
+        chat_store_accessor=lambda: store,
+        current_chat_store_accessor=lambda: store,
+        native_session_rows_accessor=lambda state: state,
+        current_chat_controller_accessor=lambda: chat_controller,
+        ensure_chat_controller=lambda: chat_controller,
+        session_settings_for_resume_accessor=lambda _conversation: prior_settings,
+        inject_resume_agent_markers_accessor=inject_markers,
+        resolve_effective_scope_state=resolve_scope,
+        sync_native_console_chat_ui=sync_ui,
+    )
+    return controller, store, prior, prior_settings, durable, notifications
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_boundary", ("marker", "scope", "ui"))
+async def test_open_saved_conversation_atomic_rollback_on_presentation_failure(
+    failure_boundary,
+):
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller(
+            failure_boundary=failure_boundary,
+            failure=RuntimeError(f"failed {failure_boundary}"),
+        )
+    )
+
+    result = await controller.open_console_workspace_conversation("resume-target")
+
+    assert result is None
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+    assert durable.mutations == []
+    assert notifications == [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_boundary", ("marker", "scope", "ui"))
+async def test_open_saved_conversation_cancellation_rolls_back_and_propagates(
+    failure_boundary,
+):
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller(
+            failure_boundary=failure_boundary,
+            failure=asyncio.CancelledError(),
+        )
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await controller.open_console_workspace_conversation("resume-target")
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+    assert durable.mutations == []
+    assert notifications == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "propagates"),
+    ((RuntimeError("sync failed"), False), (asyncio.CancelledError(), True)),
+    ids=("ordinary", "cancellation"),
+)
+async def test_open_already_live_session_sync_failure_is_atomic(
+    failure,
+    propagates,
+):
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller()
+    )
+    target_settings = ConsoleSessionSettings(provider="openai", model="target")
+    target = store.create_session(title="Already live", settings=target_settings)
+    target.persisted_conversation_id = "resume-target"
+    store.set_session_draft(target.id, "target draft")
+    store.switch_session(prior.id)
+    sync_calls = 0
+
+    async def fail_once_then_sync():
+        nonlocal sync_calls
+        sync_calls += 1
+        if sync_calls == 1:
+            raise failure
+
+    controller._sync_native_console_chat_ui_fn = fail_once_then_sync
+
+    if propagates:
+        with pytest.raises(asyncio.CancelledError):
+            await controller.open_console_workspace_conversation("resume-target")
+    else:
+        result = await controller.open_console_workspace_conversation("resume-target")
+        assert result is None
+
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior, target]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+    assert target.settings is target_settings
+    assert target.draft == "target draft"
+    assert durable.mutations == []
+    assert notifications == (
+        []
+        if propagates
+        else [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
+    )
+
+
+def test_resume_match_prefers_active_then_creation_order():
+    store = ConsoleChatStore()
+    first = store.create_session(title="First match")
+    first.persisted_conversation_id = "shared-conversation"
+    second = store.create_session(title="Second match")
+    second.persisted_conversation_id = "shared-conversation"
+    other = store.create_session(title="Other")
+    controller = _workspace_controller(
+        chat_store_accessor=lambda: store,
+        current_chat_store_accessor=lambda: store,
+    )
+
+    assert (
+        controller._console_session_id_for_workspace_conversation(
+            "shared-conversation"
+        )
+        == first.id
+    )
+
+    store.switch_session(second.id)
+    assert (
+        controller._console_session_id_for_workspace_conversation(
+            "shared-conversation"
+        )
+        == second.id
+    )
+    assert other in store.sessions()
+
+
+@pytest.mark.asyncio
+async def test_resume_missing_returns_false_with_id_only_copy():
+    controller, store, prior, prior_settings, durable, notifications = (
+        _atomic_resume_controller()
+    )
+    controller.app_instance.chat_conversation_scope_service = SimpleNamespace(
+        get_conversation_tree=lambda *_args, **_kwargs: {}
+    )
+    broken: list[str] = []
+    controller._mark_conversation_row_broken_fn = broken.append
+
+    result = await controller.open_console_workspace_conversation("missing-target")
+
+    assert result is False
+    assert store.active_session_id == prior.id
+    assert store.sessions() == [prior]
+    assert prior.settings is prior_settings
+    assert prior.draft == "draft stays exact"
+    assert durable.mutations == []
+    assert broken == ["missing-target"]
+    assert notifications == [(RESUME_FAILURE_COPY, "warning", {"timeout": 15})]
 
 
 @pytest.mark.asyncio
