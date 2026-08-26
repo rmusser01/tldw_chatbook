@@ -400,6 +400,66 @@ async def test_the_tab_strip_is_mounted_on_the_read_and_sources_tabs():
 
 
 @pytest.mark.asyncio
+async def test_read_snapshot_count_and_arrivals_fit_the_feed_items_pane():
+    """Task 6 chrome stays readable in the production 180x50 workbench."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
+        screen = host.screen_stack[-1]
+        screen._items_snapshot_count = 50
+        screen._items_pending_arrivals = 3
+        screen._push_items_pager_state()
+        await pilot.pause(0.1)
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        toolbar = pane.query_one("#items-toolbar")
+        search_row = pane.query_one("#items-toolbar-search")
+        actions_row = pane.query_one("#items-toolbar-actions")
+        search = pane.query_one("#items-search-input", Input)
+        pill = pane.query_one("#items-new-items-pill", Static)
+        count = pane.query_one("#items-snapshot-count", Static)
+
+        def assert_contains(parent, child) -> None:
+            assert child.region.x >= parent.region.x
+            assert child.region.y >= parent.region.y
+            assert child.region.right <= parent.region.right
+            assert child.region.bottom <= parent.region.bottom
+
+        def composited_text(widget) -> str:
+            strips = widget.screen._compositor.render_strips()
+            region = widget.region
+            return "\n".join(
+                "".join(segment.text for segment in strips[y])[
+                    region.x : region.right
+                ]
+                for y in range(region.y, region.bottom)
+            )
+
+        visible_children = [child for child in pane.children if child.display]
+        for child in visible_children:
+            assert_contains(pane, child)
+        for upper, lower in zip(visible_children, visible_children[1:]):
+            assert upper.region.bottom <= lower.region.y
+
+        toolbar_rows = [search_row, actions_row]
+        for row in toolbar_rows:
+            assert_contains(toolbar, row)
+        assert search_row.region.bottom <= actions_row.region.y
+        for row in toolbar_rows:
+            row_children = [child for child in row.children if child.display]
+            for child in row_children:
+                assert_contains(row, child)
+            for left, right in zip(row_children, row_children[1:]):
+                assert left.region.right <= right.region.x
+
+        assert search.region.width >= 8
+        assert composited_text(count).strip() == "50 items in snapshot"
+        assert composited_text(pill).strip() == "3 new items"
+
+
+@pytest.mark.asyncio
 async def test_the_list_pane_is_gone_on_every_tab():
     """The FEEDS region's `#watchlists-list-pane` died with the region -- no
     tab may mount it (the geometry tests pinned to `.watchlists-region-feeds`

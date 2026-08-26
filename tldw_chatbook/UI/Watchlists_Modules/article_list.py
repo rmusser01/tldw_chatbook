@@ -371,51 +371,62 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         exactly that on every workbench rebuild) paints filtered on its
         first frame rather than flashing the unfiltered page.
         """
-        with Horizontal(id="items-toolbar", classes="destination-filter-strip"):
-            yield Button(
-                "Refresh",
-                id="items-refresh-button",
-                variant="primary",
-                tooltip="Reload the items list.",
-            )
-            yield Input(
-                placeholder="Search items...",
-                id="items-search-input",
-                value=self.search_query,
-                # TASK-3071 introduced this because a recompose re-focused a
-                # freshly built input and Textual's default would select-all,
-                # so the next keystroke REPLACED the query. task-15460 removed
-                # that teardown entirely, but the property stays on its own
-                # merits: clicking back into a half-typed search must put the
-                # caret where you clicked, not arm the whole term for deletion.
-                select_on_focus=False,
-                compact=True,
-            )
-            yield PruneSafeSelect(
-                self._FILTER_OPTIONS,
-                value=self.status_filter,
-                id="items-status-select",
-                allow_blank=False,
-                compact=True,
-            )
-            # TASK-3791 plan task 5: the "N new items" pill. A Static, not a
-            # Button: the strip's buttons are VERBS and this is a notice you
-            # can act on (click reloads through the same message the Refresh
-            # button posts). Hidden whenever there is nothing to say; the
-            # screen owns the count (`show_new_items_pill`), this pane never
-            # computes one itself.
-            pill = Static(
-                self.new_items_note,
-                id="items-new-items-pill",
-                classes="watchlists-new-items-pill",
-            )
-            pill.display = bool(self.new_items_note)
-            yield pill
-            count_noun = "item" if self.snapshot_count == 1 else "items"
-            yield Static(
-                f"{self.snapshot_count} {count_noun} in snapshot",
-                id="items-snapshot-count",
-            )
+        toolbar = Vertical(id="items-toolbar")
+        toolbar.styles.height = 2
+        toolbar.styles.min_height = 2
+        with toolbar:
+            with Horizontal(
+                id="items-toolbar-search", classes="destination-filter-strip"
+            ):
+                yield Input(
+                    placeholder="Search items...",
+                    id="items-search-input",
+                    value=self.search_query,
+                    # TASK-3071 introduced this because a recompose re-focused a
+                    # freshly built input and Textual's default would select-all,
+                    # so the next keystroke REPLACED the query. task-15460 removed
+                    # that teardown entirely, but the property stays on its own
+                    # merits: clicking back into a half-typed search must put the
+                    # caret where you clicked, not arm the whole term for deletion.
+                    select_on_focus=False,
+                    compact=True,
+                )
+            with Horizontal(
+                id="items-toolbar-actions", classes="destination-filter-strip"
+            ):
+                yield Button(
+                    "Refresh",
+                    id="items-refresh-button",
+                    variant="primary",
+                    compact=True,
+                    tooltip="Reload the items list.",
+                )
+                yield PruneSafeSelect(
+                    self._FILTER_OPTIONS,
+                    value=self.status_filter,
+                    id="items-status-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+        # TASK-3791 plan task 5: the "N new items" pill. A Static, not a
+        # Button: the toolbar's controls are VERBS and this is a notice you
+        # can act on (click reloads through the same message the Refresh
+        # button posts). The frozen total supports the whole Feed Items pane,
+        # not one toolbar action, so both facts sit below the controls and
+        # leave the bounded Reader column's search usable.
+        pill = Static(
+            self.new_items_note,
+            id="items-new-items-pill",
+            classes="watchlists-new-items-pill",
+        )
+        pill.display = bool(self.new_items_note)
+        yield pill
+        count_noun = "item" if self.snapshot_count == 1 else "items"
+        yield Static(
+            f"{self.snapshot_count} {count_noun} in snapshot",
+            id="items-snapshot-count",
+            classes="watchlists-hint-line",
+        )
 
         rows = self._build_rows()
         # Both the empty state and the list are always mounted, their
