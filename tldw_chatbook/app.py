@@ -2769,6 +2769,12 @@ class LibraryIngestQueueMixin:
         from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
         from tldw_chatbook.Library.library_ingest_jobs import plan_restore
 
+        # Bound before the `try` so the failure path can tell "never opened"
+        # from "opened, then a later step failed" -- the second case owns a
+        # live SQLite connection (the store opens one in its constructor, via
+        # `_initialize_schema`) that nothing else will ever close, because the
+        # registry is left store-less.
+        store = None
         try:
             # `LibraryIngestJobsDB` opens with `check_same_thread=False`, so
             # the connection this thread creates stays usable from the UI
@@ -2793,6 +2799,13 @@ class LibraryIngestQueueMixin:
             logger.opt(exception=True).warning(
                 "Failed to restore persisted ingest job history; starting empty."
             )
+            if store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Ingest job store close after failed restore failed."
+                    )
             return
 
         try:

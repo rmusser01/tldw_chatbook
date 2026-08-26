@@ -1,3 +1,7 @@
+import sqlite3
+
+import tldw_chatbook.DB.Library_Ingest_Jobs_DB as jobs_db_module
+import tldw_chatbook.app as app_module
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
@@ -130,3 +134,61 @@ def test_merge_restored_keeps_a_job_submitted_during_the_restore_window(tmp_path
     # No future allocation can collide with a restored id either.
     assert live.submit(source_path="/next.pdf").job_id == "ingest-job-3"
     store2.close()
+
+
+# --------------------------------------------------------------------------
+# the app-side seam: `_apply_ingest_job_restore` / `_restore_ingest_jobs_off_thread`
+# --------------------------------------------------------------------------
+
+
+class _RestoreHost(app_module.LibraryIngestQueueMixin):
+    """The mixin's restore seam without booting a Textual app.
+
+    ``LibraryIngestQueueMixin`` is only ever mixed into an ``App``
+    (``TldwCli`` in production, ``_LibraryIngestCanvasHarness`` in
+    ``Tests/UI/test_library_shell.py``); the two restore methods exercised
+    here touch nothing from that base but ``call_from_thread``.
+    """
+
+    def __init__(self, registry: LibraryIngestJobRegistry) -> None:
+        self.library_ingest_jobs = registry
+        self._ingest_shutdown = False
+        self._library_ingest_jobs_store = None
+
+    def call_from_thread(self, callback, *args):
+        return callback(*args)
+
+
+def test_a_failed_restore_closes_the_store_it_opened(tmp_path, monkeypatch):
+    """A failure after the store opened must not leak its SQLite connection.
+
+    ``LibraryIngestJobsDB`` opens its connection in the constructor, and the
+    failure path leaves the registry store-less, so nothing else can ever
+    close it.
+    """
+    closed: list[str] = []
+
+    class _ExplodingStore:
+        def __init__(self, path, *args, **kwargs):
+            self.path = path
+
+        def all_jobs(self):
+            raise sqlite3.DatabaseError("file is not a database")
+
+        def close(self):
+            closed.append("closed")
+
+    monkeypatch.setattr(jobs_db_module, "LibraryIngestJobsDB", _ExplodingStore)
+    monkeypatch.setattr(
+        app_module,
+        "get_library_ingest_jobs_db_path",
+        lambda: tmp_path / "jobs.db",
+    )
+
+    registry = LibraryIngestJobRegistry()
+    host = _RestoreHost(registry)
+    host._restore_ingest_jobs_off_thread()  # never raises
+
+    assert closed == ["closed"]
+    assert list(registry.jobs()) == []
+    assert host._library_ingest_jobs_store is None
