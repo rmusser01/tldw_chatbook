@@ -21,7 +21,8 @@ def _format_input_line(
     if tokens is None:
         return f"{label}: token estimate unavailable"
 
-    line = f"{label}: ~{tokens:,} tokens"
+    token_label = "token" if tokens == 1 else "tokens"
+    line = f"{label}: ~{tokens:,} {token_label}"
     if pricing is not None:
         cost = round(tokens * pricing.input_per_mtok / 1_000_000, 6)
         line += f" · ~${format_cost_amount(cost)}"
@@ -34,7 +35,8 @@ def _format_reply_line(
     if tokens is None:
         return f"{label}: limit not configured"
 
-    line = f"{label}: up to {tokens:,} tokens"
+    token_label = "token" if tokens == 1 else "tokens"
+    line = f"{label}: up to {tokens:,} {token_label}"
     if pricing is not None:
         cost = round(tokens * pricing.output_per_mtok / 1_000_000, 6)
         line += f" · ~${format_cost_amount(cost)}"
@@ -42,7 +44,9 @@ def _format_reply_line(
 
 
 def _format_provenance(provider: str, model: str, pricing: ModelPricing | None) -> str:
-    identifiers = [identifier for identifier in (provider, model) if identifier.strip()]
+    identifiers = [
+        identifier.strip() for identifier in (provider, model) if identifier.strip()
+    ]
     pricing_label = (
         f"rates as of {pricing.as_of}"
         if pricing is not None
@@ -77,7 +81,7 @@ def build_next_send_price(
         reply_cost = round(max_reply_tokens * pricing.output_per_mtok / 1_000_000, 6)
         total_line = f"Next request: up to ~${format_cost_amount(round(input_cost + reply_cost, 6))}"
     else:
-        total_line = "Next request: total unavailable"
+        total_line = "Next request: cost unavailable"
 
     lines = [
         total_line,
