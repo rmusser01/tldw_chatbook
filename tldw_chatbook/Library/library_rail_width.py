@@ -10,7 +10,7 @@ LIBRARY_MIN_WIDTH = 24
 LIBRARY_DEFAULT_MAX_WIDTH = 34
 LIBRARY_CUSTOM_MAX_WIDTH = 48
 LIBRARY_CANVAS_MIN_WIDTH = 40
-LIBRARY_EMERGENCY_WIDTH = 64
+LIBRARY_EMERGENCY_WIDTH = LIBRARY_MIN_WIDTH + LIBRARY_CANVAS_MIN_WIDTH
 
 
 class OrdinaryRailPresentation(Enum):
@@ -37,14 +37,34 @@ def _require_positive_content_width(content_width: int) -> None:
 
 
 def project_default_library_width(content_width: int) -> int:
-    """Project the bounded 3:13 default rail width from available content."""
+    """Project the bounded 3:13 default rail width from available content.
+
+    Args:
+        content_width: Positive available Library shell width in terminal cells.
+
+    Returns:
+        The 3:13 projection clamped to the default 24–34 cell range.
+
+    Raises:
+        ValueError: If ``content_width`` is not a positive integer, including bool.
+    """
     _require_positive_content_width(content_width)
     fractional_width = (3 * content_width + 8) // 16
     return min(max(fractional_width, LIBRARY_MIN_WIDTH), LIBRARY_DEFAULT_MAX_WIDTH)
 
 
 def ordinary_emergency_required(content_width: int) -> bool:
-    """Return whether ordinary Library content must use an emergency takeover."""
+    """Return whether ordinary Library content must use an emergency takeover.
+
+    Args:
+        content_width: Positive available Library shell width in terminal cells.
+
+    Returns:
+        Whether the width is below the rail-and-canvas minimum of 64 cells.
+
+    Raises:
+        ValueError: If ``content_width`` is not a positive integer, including bool.
+    """
     _require_positive_content_width(content_width)
     return content_width < LIBRARY_EMERGENCY_WIDTH
 
@@ -67,7 +87,19 @@ def resolve_ordinary_rail_contract(
 ) -> OrdinaryRailStyleContract:
     """Resolve pure inline style declarations for the ordinary Library rail.
 
-    ``None`` values clear the corresponding future Textual inline style rule.
+    Args:
+        content_width: Positive available Library shell width in terminal cells.
+        presentation: Effective alongside, rail-only, or hidden presentation.
+        custom_widths_enabled: Exact boolean controlling saved-width use.
+        saved_width: Normalized persisted width from 24 through 48 inclusive.
+
+    Returns:
+        Immutable declarations; ``None`` clears a future Textual inline style rule.
+
+    Raises:
+        TypeError: If presentation, the custom flag, or saved width has an invalid
+            type; bool is not accepted as a saved width.
+        ValueError: If a width is invalid or alongside cannot fit safely.
     """
     _require_positive_content_width(content_width)
     if not isinstance(presentation, OrdinaryRailPresentation):

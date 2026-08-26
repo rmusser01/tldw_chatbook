@@ -28,6 +28,7 @@ def test_width_policy_constants_express_the_approved_bounds() -> None:
         LIBRARY_CANVAS_MIN_WIDTH,
         LIBRARY_EMERGENCY_WIDTH,
     ) == (31, 24, 34, 48, 40, 64)
+    assert LIBRARY_EMERGENCY_WIDTH == LIBRARY_MIN_WIDTH + LIBRARY_CANVAS_MIN_WIDTH
 
 
 @pytest.mark.parametrize(
@@ -127,9 +128,20 @@ def test_contract_rejects_non_boolean_custom_width_flags(
         )
 
 
-@pytest.mark.parametrize("saved_width", [True, 23, 49, "31", None])
-def test_contract_requires_a_normalized_custom_saved_width(saved_width: object) -> None:
-    with pytest.raises((TypeError, ValueError), match="saved_width"):
+@pytest.mark.parametrize("saved_width", [True, "31", None])
+def test_contract_rejects_non_integer_saved_width(saved_width: object) -> None:
+    with pytest.raises(TypeError, match="saved_width"):
+        resolve_ordinary_rail_contract(
+            64,
+            OrdinaryRailPresentation.ALONGSIDE,
+            True,
+            saved_width,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("saved_width", [23, 49])
+def test_contract_rejects_out_of_range_saved_width(saved_width: int) -> None:
+    with pytest.raises(ValueError, match="saved_width"):
         resolve_ordinary_rail_contract(
             64,
             OrdinaryRailPresentation.ALONGSIDE,
