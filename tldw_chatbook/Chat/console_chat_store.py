@@ -8180,15 +8180,18 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
             try:
-                if (
-                    citation_write is not None
-                    and message.persisted_message_id is not None
-                ):
-                    # TASK-22302: the checkpoint wrote this row with empty
-                    # content, and `create_message`'s existing-row branch is an
-                    # idempotent-RETRY path that verifies rather than updates.
-                    # Flush the final body first so the row matches; the
-                    # citation write below then keys to it.
+                if message.persisted_message_id is not None:
+                    # TASK-22302: the dispatch checkpoint already wrote this row
+                    # with EMPTY content, so the final body must be flushed with
+                    # an UPDATE -- `create_message`'s existing-row handling lives
+                    # inside its `prepared_citation is not None` branch and
+                    # verifies rather than updates, so it cannot carry the body.
+                    #
+                    # This matters most on the FAIL-CLOSED path: `finalize()`
+                    # returns None when the builder cannot seal, leaving no
+                    # `citation_write` at all. Guarding this flush on one would
+                    # leave the durable row empty while the in-memory message
+                    # reads complete -- the answer lost, silently.
                     self._persist_existing_message(
                         message, preserve_provider_continuation=True
                     )

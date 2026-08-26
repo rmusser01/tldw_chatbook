@@ -1309,6 +1309,74 @@ def test_terminal_selected_answer_citations_survive_restart(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_real_durable_fail_closed_finalizer_persists_the_body_once(
+    real_citation_stack_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-22302 review: a finalizer that fails closed must not lose the answer.
+
+    `finalize()` returns None when the builder cannot seal -- a real, logged
+    outcome ("attempt_or_seal_failure"), and the supported way to fall back to
+    an ordinary message. On a DURABLE turn that combination is delicate, because
+    the dispatch checkpoint has already written the assistant row with EMPTY
+    content:
+
+    * the final body must still be flushed, or the durable row keeps '' while
+      the in-memory message reads complete; and
+    * the flush must be an UPDATE, because `create_message`'s existing-row
+      handling lives inside its `prepared_citation is not None` branch -- with
+      no citation it falls through to `add_message` and inserts against an id
+      that already exists.
+
+    So: one row, carrying the body, and no citation rows.
+    """
+    stack = real_citation_stack_factory("real-fail-closed")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+
+    def unsealable(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("seal-sentinel")
+
+    monkeypatch.setattr(CitationTraceBuilder, "seal", unsealable, raising=False)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    log_stream, handler_id = _capture_logs()
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        logger.remove(handler_id)
+
+    assistant = _real_assistant(stack.store)
+    assert result.accepted is True
+    assert assistant.content == _BODY_SENTINEL
+
+    persisted = stack.db.get_message_by_id(assistant.id)
+    assert persisted is not None
+    assert persisted["content"] == _BODY_SENTINEL, (
+        "the durable row kept the checkpoint's empty content -- the answer was "
+        f"lost on the fail-closed path: {persisted['content']!r}"
+    )
+
+    duplicates = stack.db.get_connection().execute(
+        "SELECT count(*) FROM messages WHERE id = ?", (assistant.id,)
+    ).fetchone()[0]
+    assert duplicates == 1, f"the terminal write duplicated the row ({duplicates})"
+
+    # Fail CLOSED: an ordinary message, with no citation provenance at all.
+    assert _citation_row_counts(stack.db)["rag_citation_traces"] == 0
+
+    # ...and the terminal write must COMPLETE, not be abandoned. Without the
+    # citation guard this path calls `create_message` against an id that already
+    # exists, which raises `ConflictError: Unique constraint violation` -- and
+    # `mark_message_complete` swallows it into this one log line. The body still
+    # looks right (the UPDATE above already landed), so nothing else here would
+    # notice.
+    assert "terminal_citation_persistence_abandoned" not in log_stream.getvalue(), (
+        "the terminal write was abandoned -- an exception was swallowed on the "
+        "fail-closed path"
+    )
+
+
+@pytest.mark.asyncio
 async def test_real_rollback_deterministic_unavailable_falls_back_without_trace_rows(
     real_citation_stack_factory,
 ) -> None:
