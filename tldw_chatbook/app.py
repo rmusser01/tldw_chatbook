@@ -14317,8 +14317,9 @@ class TldwCli(
             name="tldw-initial-screen-preimport",
             daemon=True,
         )
+        if not self._start_preimport_thread(thread):
+            return
         self._initial_screen_preimport_thread = thread
-        thread.start()
 
     def _schedule_screen_preimport(self) -> None:
         """Start the background screen-module pre-importer, at most once."""
@@ -14333,8 +14334,41 @@ class TldwCli(
             name="tldw-screen-preimport",
             daemon=True,
         )
+        if not self._start_preimport_thread(thread):
+            return
         self._screen_preimport_thread = thread
-        thread.start()
+
+    def _start_preimport_thread(self, thread: threading.Thread) -> bool:
+        """Start a pre-import thread; report whether it is running.
+
+        Args:
+            thread: The unstarted daemon thread to run.
+
+        Returns:
+            ``True`` when the thread started. ``False`` when the interpreter
+            refused to spawn it -- thread exhaustion, or a start during
+            interpreter shutdown -- in which case the caller must NOT record a
+            handle.
+
+        Both callers run from the splash-path timer/deferred-startup callback,
+        not a request/response path, so a ``RuntimeError`` out of ``start()``
+        would surface as an unhandled exception in a Textual timer task during
+        boot. Losing a speculative warm-up is the correct outcome there: every
+        module this would have pre-imported is still imported normally on
+        first navigation. Recording the handle only after a successful start
+        also keeps the once-guard honest -- a failed attempt leaves ``None``,
+        so a later call can try again.
+        """
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            self.loguru_logger.debug(
+                "Screen pre-import thread could not start (name={}, error_type={})",
+                thread.name,
+                type(exc).__name__,
+            )
+            return False
+        return True
 
     def _schedule_tts_initialization(self) -> None:
         if self._tts_handler is not None:
