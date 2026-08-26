@@ -4502,6 +4502,18 @@ class ConsoleChatStore:
                 )
         self._sessions.clear()
         self._messages_by_session.clear()
+        # Retention, not correctness: the memo holds a strong reference to the
+        # PRE-restore view list, so clearing `_messages_by_session` does not
+        # release it. Correctness was always safe (the memo pins that list, so
+        # a rebuilt view can never reuse its identity), but nothing evicts the
+        # slot until some later `newest_change_review_run_id` call overwrites
+        # it -- and that call never comes when the changed-files guard is off
+        # or the screen stops querying, leaving a replaced session's entire
+        # transcript (every `ConsoleChatMessage`, image bytes included) alive
+        # for the rest of the store's life. Same reasoning as
+        # `_drop_newest_change_review_memo`; unconditional here because
+        # restore_state replaces every session, not one.
+        self._newest_change_review_memo = None
         self._message_session_index.clear()
         self._pending_persistence_message_ids.clear()
         self._terminal_citation_finalizers.clear()
@@ -5345,8 +5357,11 @@ class ConsoleChatStore:
         (and therefore every ``ConsoleChatMessage`` in it) for an unbounded
         time when the closed session was the active one and nothing queries
         again. Dropping a memo can only cost a recompute, so that is hygiene,
-        not an invalidation protocol; ``restore_state`` needs no such hook
-        because the next query re-derives against a new list anyway.
+        not an invalidation protocol. ``restore_state`` clears the slot for
+        the same RETENTION reason (Qodo review, 2026-08-26): its correctness
+        never needed a hook -- the next query re-derives against a new list --
+        but until that query happens the slot keeps the whole REPLACED
+        transcript alive, and after a state replacement it may never happen.
 
         Args:
             session_id: Native Console session id.

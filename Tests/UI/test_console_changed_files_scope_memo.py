@@ -28,6 +28,8 @@ would drown the counter this probe exists to read.
 
 from __future__ import annotations
 
+import gc
+import weakref
 from types import SimpleNamespace
 
 import pytest
@@ -594,6 +596,55 @@ def test_restore_state_is_not_served_the_pre_restore_answer():
     )
 
     assert store.newest_change_review_run_id("restored-1") is None
+
+
+def test_restore_state_releases_the_replaced_transcript():
+    """The memo must not keep the PRE-restore view alive after a replacement.
+
+    Correctness never needed a hook here (the memo pins the old list, so a
+    rebuilt view cannot reuse its identity and the signature always misses),
+    which is why the slot was left alone. Retention is the live problem: the
+    slot holds a strong reference to the replaced session's whole view list,
+    and the "a later query evicts it" argument fails exactly when no later
+    query comes -- changed-files guard off, or the screen simply stops
+    asking. Then a whole replaced transcript, `image_data` bytes included,
+    stays reachable for the life of the store.
+
+    Observed rather than asserted white-box: a `weakref` to a message the
+    pre-restore view held, which is only collectable once nothing pins that
+    list. Deliberately a USER message, not the TOOL marker --
+    `_tool_markers_by_session` is NOT cleared by `restore_state` (TASK-21311)
+    and would keep a marker alive on its own account, hiding the subject.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+
+    store = ConsoleChatStore()
+    session = store.create_session(session_id="pinned-1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="ask")
+    # Arm the memo. The answer is `None` (no marker) -- the common case, and
+    # the one the memo exists to make free -- but the slot is filled either
+    # way, so it is pinning the view list from here on.
+    assert store.newest_change_review_run_id(session.id) is None
+    view = store._messages_by_session[session.id]
+    assert len(view) == 1
+    replaced_message = weakref.ref(view[0])
+    del view
+
+    store.restore_state(
+        sessions=[ConsoleChatSession(id="pinned-2", title="Replacement")],
+        messages_by_session={},
+        active_session_id="pinned-2",
+    )
+    gc.collect()
+
+    assert store._newest_change_review_memo is None, (
+        "restore_state left the memo pinning the replaced session's view"
+    )
+    assert replaced_message() is None, (
+        "a message from the replaced state is still reachable after restore"
+    )
+    # The replacement still answers correctly from a cold slot.
+    assert store.newest_change_review_run_id("pinned-2") is None
 
 
 def test_screen_scope_tolerates_a_store_without_the_active_session():
