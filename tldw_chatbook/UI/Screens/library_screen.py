@@ -105,7 +105,7 @@ from ...Utils.adaptive_reader_state import (
     normalize_adaptive_reader_preferences,
     resolve_adaptive_reader_layout,
 )
-from ...Library.library_rail_width import (
+from ...Utils.library_rail_width import (
     LIBRARY_EMERGENCY_WIDTH,
     OrdinaryRailPresentation,
     ordinary_emergency_required,
@@ -3393,9 +3393,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_progress_inflight_write: (
             tuple[str, int | str, tuple[int, int]] | None
         ) = None
-        self._library_media_progress_persisted_offsets: dict[
-            str, tuple[int, int]
-        ] = {}
+        self._library_media_progress_persisted_offsets: dict[str, tuple[int, int]] = {}
         self._library_media_progress_write_worker: Worker | None = None
         # Task 21665: decoded local originals are ephemeral screen-session
         # state. The production renderer is imported only after the capability
@@ -35878,8 +35876,7 @@ class LibraryScreen(BaseAppScreen):
         if inflight is not None and inflight[0] == canonical_id:
             return inflight[2] == offset
         return (
-            self._library_media_progress_persisted_offsets.get(canonical_id)
-            == offset
+            self._library_media_progress_persisted_offsets.get(canonical_id) == offset
         )
 
     def _queue_library_media_progress_write(
@@ -35926,9 +35923,7 @@ class LibraryScreen(BaseAppScreen):
             finally:
                 self._library_media_progress_inflight_write = None
             if persisted:
-                self._library_media_progress_persisted_offsets[canonical_id] = (
-                    offset
-                )
+                self._library_media_progress_persisted_offsets[canonical_id] = offset
 
     async def _write_library_media_loaded_progress(
         self, backing_id: int | str | None, offset: tuple[int, int]

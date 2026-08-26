@@ -78,7 +78,7 @@ from tldw_chatbook.Library.library_rail_state import (
     LibraryLifecycle,
     LibraryRailPreferences,
 )
-from tldw_chatbook.Library.library_rail_width import OrdinaryRailStyleContract
+from tldw_chatbook.Utils.library_rail_width import OrdinaryRailStyleContract
 from tldw_chatbook.Library.library_collections_state import (
     LibraryCollectionDeleteReceipt,
 )

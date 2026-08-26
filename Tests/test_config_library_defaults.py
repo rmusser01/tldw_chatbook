@@ -3,7 +3,7 @@
 import tomllib
 
 import tldw_chatbook.config as config_module
-from tldw_chatbook.Library.library_rail_width import LIBRARY_REFERENCE_WIDTH
+from tldw_chatbook.Utils.library_rail_width import LIBRARY_REFERENCE_WIDTH
 from tldw_chatbook.UI.Screens.settings_appearance_defaults import (
     load_appearance_defaults,
 )

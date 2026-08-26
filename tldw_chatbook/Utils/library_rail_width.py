@@ -1,4 +1,9 @@
-"""Pure bounded-fractional width policy for the Library rail."""
+"""Pure bounded-fractional width policy for the Library rail.
+
+This config-safe leaf intentionally lives in ``Utils`` beside adaptive reader
+state so importing application configuration does not initialize the Library
+feature package.
+"""
 
 from __future__ import annotations
 

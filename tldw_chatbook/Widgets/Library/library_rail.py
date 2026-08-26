@@ -19,7 +19,7 @@ from tldw_chatbook.Library.library_rail_state import (
     LibraryLifecycle,
     LibraryRailPreferences,
 )
-from tldw_chatbook.Library.library_rail_width import OrdinaryRailStyleContract
+from tldw_chatbook.Utils.library_rail_width import OrdinaryRailStyleContract
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_MEDIA,

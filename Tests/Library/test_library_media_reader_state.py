@@ -28,7 +28,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     settle_failure,
     settle_success,
 )
-from tldw_chatbook.Library.library_rail_width import (
+from tldw_chatbook.Utils.library_rail_width import (
     LIBRARY_REFERENCE_WIDTH,
     project_default_library_width,
 )

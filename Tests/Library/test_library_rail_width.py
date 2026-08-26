@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.Library.library_rail_width import (
+from tldw_chatbook.Utils.library_rail_width import (
     LIBRARY_CANVAS_MIN_WIDTH,
     LIBRARY_CUSTOM_MAX_WIDTH,
     LIBRARY_DEFAULT_MAX_WIDTH,

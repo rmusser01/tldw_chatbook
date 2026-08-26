@@ -20,7 +20,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     normalize_media_reader_preferences,
     resolve_media_reader_layout,
 )
-from tldw_chatbook.Library.library_rail_width import project_default_library_width
+from tldw_chatbook.Utils.library_rail_width import project_default_library_width
 
 
 MEDIA_PROFILE = AdaptiveReaderLayoutProfile()

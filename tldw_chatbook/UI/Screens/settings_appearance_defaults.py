@@ -18,7 +18,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_TARGET_WIDTH,
     normalize_adaptive_reader_preferences,
 )
-from tldw_chatbook.Library.library_rail_width import (
+from tldw_chatbook.Utils.library_rail_width import (
     LIBRARY_CUSTOM_MAX_WIDTH,
     LIBRARY_MIN_WIDTH,
     LIBRARY_REFERENCE_WIDTH,
