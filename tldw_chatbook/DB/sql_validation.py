@@ -69,6 +69,7 @@ VALID_TABLES = {
         "conversation_world_books",
         "conversations",
         "console_auxiliary_attempts",
+        "console_conversation_capture_policy",
         "console_conversation_context_policy",
         "console_conversation_library_policy",
         "console_conversation_memories",
