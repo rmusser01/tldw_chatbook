@@ -8901,3 +8901,55 @@ of all `"*"` — pays `match()` per node and caches nothing. When the filter
 admits every widget, `walk_children(Widget)` is the same list in the same
 order for a thirtieth of the price, and an equivalence assertion against the
 `query("*")` result is what makes swapping it safe.
+
+## A queued-then-killed CI run renders as `fail`, and a conflicting PR gets no runs at all (2026-08-26)
+
+Landing 29 tasks across 12 PRs in one day, two CI states cost real time before they were
+understood, and both look identical to "my change is broken" from the outside.
+
+**`gh pr checks` printed `fail` for runs that were never executed.** The required
+`Derived artifacts reproduce from their sources` job showed `fail` with a 1h14m duration;
+`gh run view <id> --json conclusion` said **`cancelled`** with zero steps completed — the run
+sat in the queue behind another session's jobs until the concurrency group killed it. Reading
+the check column alone would have sent someone hunting a content bug that did not exist. The
+fix is a fresh push (`git commit --amend --no-edit && git push --force-with-lease`), which
+creates a new run; `gh run rerun` loses the concurrency group and often does nothing.
+
+**A PR with a merge conflict gets NO runs created at all.** PR #2081 sat with an empty check
+list for over an hour and one apparent "no runs" diagnosis; `gh pr view --json
+mergeStateStatus` said `DIRTY`. GitHub builds the merge ref before scheduling, so a conflict
+means nothing is ever queued. **"No runs" is a conflict signal, not an outage signal** — check
+`mergeStateStatus` before re-triggering anything. On this repo the conflict is almost always
+`Docs/security/production-diagnostic-inventory.json` or an append-only `lessons-*.md`, both of
+which churn several times a day.
+
+**What to do.** Before diagnosing any red or missing gate: (1) `gh pr view --json
+mergeStateStatus` — `DIRTY` means rebase, not retry; (2) `gh run view <id> --json
+conclusion,jobs` — `cancelled` with no completed steps means contention, so re-push; only a
+genuine `failure` is yours. A merge-on-green watcher that encodes exactly this
+(pass → merge, cancelled → re-push, failure → stop) landed all 12 PRs without further
+intervention. Auto-merge is disabled on this repository, so the watcher is not optional.
+
+## The batch-PR assembly recipe, and the two ways it silently loses content (2026-08-26)
+
+Six batch PRs (the #2070 precedent) carried 21 of the 29 burn-down tasks through a saturated
+gate queue. The recipe that worked, unchanged, six times: merge each verified branch into a
+fresh branch off dev; resolve `production-diagnostic-inventory.json` by taking **dev's** copy
+and regenerating **once** at the end (after reading the rows); resolve append-only
+`lessons-*.md` by taking dev's copy and re-appending only the batch's own entries.
+
+Two failure modes bit, both silent:
+
+1. **Extracting a lesson entry with a `+`-diff of the branch tip re-appends foreign content.**
+   If the branch had itself merged dev, the extraction pulls dev's entries too — a batch ended
+   up with another task's lesson duplicated twice. The check that catches it is a diff of the
+   assembled file against `origin/dev` filtered to `^\+## ` headers: it must list exactly the
+   batch's own entries and nothing else.
+2. **`grep` here is aliased to ugrep**, whose regex dialect rejects `^+++` and `\b`. The
+   extraction pipeline returned **zero lines with exit 0**, and the append silently wrote
+   nothing. Use `command grep`, and assert the extraction's line count before using it.
+
+Also: `for f in $CONF` does not word-split in zsh (a conflicted-file loop saw one glued token
+and reported everything as unhandled) — iterate with `while read`. And a rebase-conflict loop
+that exits on error leaves a **detached HEAD**; `git push` then reports "Everything
+up-to-date" while pushing nothing. Check `git symbolic-ref -q HEAD` before trusting any push.
