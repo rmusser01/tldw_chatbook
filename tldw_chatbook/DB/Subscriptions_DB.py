@@ -2859,6 +2859,9 @@ class SubscriptionsDB(BaseDB):
         if snapshot_max_item_id < after.item_id:
             raise ValueError("snapshot watermark must not be below cursor item id")
 
+    def _after_reader_page_high_water(self) -> None:
+        """Test synchronization seam immediately after the first-page high-water."""
+
     def get_reader_items_page(
         self,
         *,
@@ -2907,6 +2910,15 @@ class SubscriptionsDB(BaseDB):
         from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
 
         with self.transaction() as conn:
+            # `transaction()` preserves nested write ownership but does not
+            # itself issue a BEGIN for read-only statements.  A first Reader
+            # page has three related SELECTs (high-water, count, rows), so
+            # start a deferred SQLite read transaction when no caller-owned
+            # transaction is active. It takes no write lock and pins one WAL
+            # snapshot on the first read. An outer transaction owns its own
+            # boundary, so never begin a nested transaction inside it.
+            if not conn.in_transaction:
+                conn.execute("BEGIN DEFERRED")
             search_join, predicates, params = self._reader_matching_parts(
                 conn,
                 subscription_id=subscription_id,
@@ -2926,11 +2938,13 @@ class SubscriptionsDB(BaseDB):
                     SELECT COALESCE(MAX(i.id), 0)
                     FROM subscription_items i
                     {search_join}
+                    JOIN subscriptions s ON i.subscription_id = s.id
                     {self._reader_where_clause(predicates)}
                     """,
                     tuple(params),
                 ).fetchone()
                 snapshot_max_item_id = int(high_water_row[0])
+                self._after_reader_page_high_water()
             assert snapshot_max_item_id is not None
             bounded_predicates = [*predicates, "i.id <= ?"]
             bounded_params = [*params, snapshot_max_item_id]
@@ -2941,6 +2955,7 @@ class SubscriptionsDB(BaseDB):
                     SELECT COUNT(*)
                     FROM subscription_items i
                     {search_join}
+                    JOIN subscriptions s ON i.subscription_id = s.id
                     {self._reader_where_clause(bounded_predicates)}
                     """,
                     tuple(bounded_params),
@@ -3037,6 +3052,7 @@ class SubscriptionsDB(BaseDB):
                 SELECT COUNT(*)
                 FROM subscription_items i
                 {search_join}
+                JOIN subscriptions s ON i.subscription_id = s.id
                 {self._reader_where_clause([*predicates, 'i.id > ?'])}
                 """,
                 tuple([*params, snapshot_max_item_id]),

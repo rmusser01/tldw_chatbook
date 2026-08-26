@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import sqlite3
+import threading
 
 import pytest
 
@@ -134,6 +136,60 @@ def test_reader_first_page_captures_matching_watermark_count_lookahead_and_never
     assert all("OFFSET" not in statement.upper() for statement in statements)
 
 
+def test_reader_first_page_metadata_and_rows_share_one_wal_read_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A concurrent delete after the high-water cannot split one page."""
+    path = tmp_path / "reader-snapshot.db"
+    high_water_seen = threading.Event()
+    writer_done = threading.Event()
+    writer_errors: list[Exception] = []
+    worker: threading.Thread | None = None
+
+    class CoordinatedReaderDB(SubscriptionsDB):
+        def _after_reader_page_high_water(self) -> None:
+            high_water_seen.set()
+            assert writer_done.wait(1), "writer did not finish its coordinated delete"
+
+    reader = CoordinatedReaderDB(path)
+    try:
+        source_id = _source(reader, "atomic")
+        oldest = _item(reader, source_id, "oldest", published="2026-01-01T00:00:00Z")
+        newest = _item(reader, source_id, "newest", published="2026-01-02T00:00:00Z")
+
+        def writer() -> None:
+            connection: sqlite3.Connection | None = None
+            try:
+                assert high_water_seen.wait(1), "reader never captured a high-water"
+                # Autocommit makes completion of this one-statement delete
+                # unambiguous without waiting for a context-manager commit.
+                connection = sqlite3.connect(path, timeout=1, isolation_level=None)
+                connection.execute("DELETE FROM subscription_items WHERE id = ?", (newest,))
+            except Exception as error:  # surfaced below on the test thread
+                writer_errors.append(error)
+            finally:
+                if connection is not None:
+                    connection.close()
+                writer_done.set()
+
+        worker = threading.Thread(target=writer)
+        worker.start()
+        page = reader.get_reader_items_page(limit=10)
+        worker.join(1)
+
+        assert not worker.is_alive()
+        assert writer_errors == []
+        assert high_water_seen.is_set()
+        assert page.snapshot_max_item_id == newest
+        assert page.snapshot_count == 2
+        assert [row["id"] for row in page.items] == [newest, oldest]
+    finally:
+        high_water_seen.set()
+        if worker is not None:
+            worker.join(1)
+        reader.close()
+
+
 def test_reader_snapshot_excludes_later_inserts_and_survives_deleted_mounted_row(
     db: SubscriptionsDB,
 ) -> None:
@@ -163,26 +219,121 @@ def test_reader_intersects_every_existing_query_dimension(db: SubscriptionsDB) -
     in_scope = _source(db, "in-scope")
     other = _source(db, "other")
     watchlist_id = _watchlist(db, "scope")
+    other_watchlist_id = _watchlist(db, "other-scope")
     _link(db, watchlist_id, in_scope)
+    _link(db, other_watchlist_id, other)
     wanted = _item(
         db, in_scope, "wanted", title="needle", status="new", run_id=7,
         flagged=True, published="2026-08-15T12:00:00Z",
     )
     _item(db, in_scope, "wrong-status", title="needle", status="ignored", run_id=7, flagged=True, published="2026-08-15T12:00:00Z")
     _item(db, in_scope, "wrong-run", title="needle", status="new", run_id=8, flagged=True, published="2026-08-15T12:00:00Z")
-    _item(db, other, "wrong-source", title="needle", status="new", run_id=7, flagged=True, published="2026-08-15T12:00:00Z")
+    _item(db, in_scope, "wrong-flag", title="needle", status="new", run_id=7, flagged=False, published="2026-08-15T12:00:00Z")
+    _item(db, in_scope, "wrong-search", title="other", status="new", run_id=7, flagged=True, published="2026-08-15T12:00:00Z")
+    _item(db, in_scope, "wrong-since", title="needle", status="new", run_id=7, flagged=True, published="2026-08-14T12:00:00Z")
+    _item(db, other, "wrong-watchlist", title="needle", status="new", run_id=7, flagged=True, published="2026-08-15T12:00:00Z")
 
     page = _page(
-        db, subscription_id=in_scope, status=None, statuses=["new", "reviewed"],
-        run_id=7, watchlist_id=watchlist_id, is_flagged=True, search="needle",
+        db, status=None, statuses=["new", "reviewed"], run_id=7,
+        watchlist_id=watchlist_id, is_flagged=True, search="needle",
         since="2026-08-15T00:00:00Z",
     )
 
     assert [row["id"] for row in page.items] == [wanted]
-    unassigned = _page(db, unassigned_only=True)
-    assert [row["id"] for row in unassigned.items] == [
-        row["id"] for row in _page(db, subscription_id=other).items
-    ]
+
+
+@pytest.mark.parametrize(
+    "dimension",
+    [
+        "subscription_id",
+        "status",
+        "statuses",
+        "run_id",
+        "watchlist_id",
+        "unassigned_only",
+        "is_flagged",
+        "search",
+        "since",
+    ],
+)
+def test_reader_every_query_dimension_is_independently_load_bearing(
+    db: SubscriptionsDB, dimension: str
+) -> None:
+    wanted_source = _source(db, f"wanted-{dimension}")
+    decoy_source = _source(db, f"decoy-{dimension}")
+    wanted_watchlist = _watchlist(db, f"wanted-list-{dimension}")
+    decoy_watchlist = _watchlist(db, f"decoy-list-{dimension}")
+    wanted_kwargs: dict[str, object] = {
+        "status": "new",
+        "run_id": 7,
+        "is_flagged": True,
+        "search": "needle",
+        "since": "2026-08-15T00:00:00Z",
+    }
+    wanted_item_kwargs = {
+        "title": "needle",
+        "status": "new",
+        "run_id": 7,
+        "flagged": True,
+        "published": "2026-08-15T12:00:00Z",
+    }
+    decoy_item_kwargs = dict(wanted_item_kwargs)
+    wanted_id = _item(db, wanted_source, "wanted", **wanted_item_kwargs)
+    decoy_source_id = wanted_source
+    if dimension == "subscription_id":
+        wanted_kwargs = {"subscription_id": wanted_source}
+        decoy_source_id = decoy_source
+    elif dimension == "status":
+        wanted_kwargs = {"status": "new"}
+        decoy_item_kwargs["status"] = "reviewed"
+    elif dimension == "statuses":
+        wanted_kwargs = {"status": None, "statuses": ["new", "reviewed"]}
+        decoy_item_kwargs["status"] = "ignored"
+    elif dimension == "run_id":
+        wanted_kwargs = {"run_id": 7}
+        decoy_item_kwargs["run_id"] = 8
+    elif dimension == "watchlist_id":
+        _link(db, wanted_watchlist, wanted_source)
+        _link(db, decoy_watchlist, decoy_source)
+        wanted_kwargs = {"watchlist_id": wanted_watchlist}
+        decoy_source_id = decoy_source
+    elif dimension == "unassigned_only":
+        _link(db, decoy_watchlist, decoy_source)
+        wanted_kwargs = {"unassigned_only": True}
+        decoy_source_id = decoy_source
+    elif dimension == "is_flagged":
+        wanted_kwargs = {"is_flagged": True}
+        decoy_item_kwargs["flagged"] = False
+    elif dimension == "search":
+        wanted_kwargs = {"search": "needle"}
+        decoy_item_kwargs["title"] = "other"
+    elif dimension == "since":
+        wanted_kwargs = {"since": "2026-08-15T00:00:00Z"}
+        decoy_item_kwargs["published"] = "2026-08-14T12:00:00Z"
+
+    decoy_id = _item(db, decoy_source_id, "decoy", **decoy_item_kwargs)
+
+    assert [row["id"] for row in _page(db, **wanted_kwargs).items] == [wanted_id]
+    assert set(row["id"] for row in _page(db).items) == {wanted_id, decoy_id}
+
+
+def test_reader_metadata_and_arrivals_exclude_historical_orphan_items(
+    db: SubscriptionsDB,
+) -> None:
+    visible_source = _source(db, "visible")
+    orphan_source = _source(db, "orphan")
+    visible_id = _item(db, visible_source, "visible")
+    orphan_id = _item(db, orphan_source, "orphan")
+    with sqlite3.connect(db.db_path) as legacy_conn:
+        legacy_conn.execute("DELETE FROM subscriptions WHERE id = ?", (orphan_source,))
+
+    page = _page(db)
+
+    assert orphan_id > visible_id
+    assert page.snapshot_max_item_id == visible_id
+    assert page.snapshot_count == 1
+    assert [row["id"] for row in page.items] == [visible_id]
+    assert db.count_reader_item_arrivals(snapshot_max_item_id=visible_id) == 0
 
 
 def test_reader_validates_inputs_and_empty_first_page_is_safe(db: SubscriptionsDB) -> None:
