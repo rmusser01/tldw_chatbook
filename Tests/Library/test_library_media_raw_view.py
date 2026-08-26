@@ -4,6 +4,8 @@ Renders through :class:`WrapIndex` -- render cost must not scale with
 document size, and virtual height must track the wrap index exactly.
 """
 
+import time
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -43,6 +45,55 @@ async def test_renders_only_visible_rows_regardless_of_document_size():
             counts[label] = widget.RENDER_LINE_CALLS["n"]
     assert counts["small"] <= 60
     assert counts["large"] <= 60, f"large document rendered {counts['large']} rows"
+
+
+@pytest.mark.asyncio
+async def test_render_line_self_time_does_not_scale_with_document_size():
+    """Coverage gap closed (task-22500 task 9): the call-count guard above
+    cannot see a regression that keeps the call count flat but reintroduces
+    O(document) work INSIDE each call -- a reviewer measured 0.26 ms cached
+    vs 364 ms if a call rebuilt the index from scratch, a ~1400x difference
+    invisible to a count-only assertion. This asserts on render_line's own
+    per-call wall time instead.
+
+    Measured DIRECTLY: ``render_line`` is called and timed with
+    ``time.perf_counter()`` outside of ``pilot.pause()`` entirely --
+    ``pilot.pause()`` costs ~30 ms/call from event-loop scheduling alone,
+    which would swamp the sub-millisecond cost this test needs to see. The
+    only use of the pilot here is to reach a real first paint so the wrap
+    index exists.
+    """
+    app = _Harness(DOC)
+    async with app.run_test(size=(100, 40)) as pilot:
+        widget = app.query_one("#raw", VirtualizedRawContent)
+        await pilot.pause()
+        assert widget.wrap_index is not None
+        # Warm the segment cache exactly like a real repaint would (the
+        # first touch of a line populates WrapIndex._segment_cache); an
+        # unwarmed first call is not what "one more repaint" costs.
+        visible_rows = range(min(40, widget.wrap_index.virtual_height))
+        for y in visible_rows:
+            widget.render_line(y)
+
+        t0 = time.perf_counter()
+        repeats = 25
+        for _ in range(repeats):
+            for y in visible_rows:
+                widget.render_line(y)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        calls = repeats * len(visible_rows)
+        per_call_ms = elapsed_ms / calls
+
+        # A real (cached) call costs a fraction of a millisecond; rebuilding
+        # any O(document) structure inside the call costs tens to hundreds
+        # of ms per call on this 2000-line fixture. 2 ms/call is generous
+        # headroom over real cost while still being far below what any
+        # document-sized rebuild inside the call would cost.
+        assert per_call_ms < 2.0, (
+            f"render_line averaged {per_call_ms:.3f} ms/call over {calls} calls "
+            f"({elapsed_ms:.1f} ms total) -- self-time must stay a small "
+            "constant, not scale with document size"
+        )
 
 
 @pytest.mark.asyncio
