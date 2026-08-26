@@ -287,3 +287,69 @@ async def test_first_rows_match_the_static_they_replace(content):
         widget = app.query_one("#raw", VirtualizedRawContent)
         new_rows = [widget.render_line(y).text.rstrip() for y in range(4)]
     assert new_rows == old_rows
+
+
+async def _drag_and_get_selected_text(app_cls, content, down, up, widget_id, widget_type):
+    """Perform a real mouse drag and read back the resulting selection.
+
+    Shared by the Static-vs-VirtualizedRawContent tab comparison tests below
+    so both widgets undergo the exact same down/move/up sequence.
+    """
+    app = app_cls(content)
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        widget = app.query_one(widget_id, widget_type)
+        await pilot.mouse_down(widget, offset=down)
+        await pilot._post_mouse_events([MouseMove], widget=widget, offset=up)
+        await pilot.mouse_up(widget, offset=up)
+        await pilot.pause()
+        return app.screen.get_selected_text()
+
+
+@pytest.mark.asyncio
+async def test_full_line_drag_over_tabs_matches_static():
+    """A drag spanning the whole (tab-bearing) line must copy literal tabs,
+    identically to Static -- not the spaces the wrap/paint path uses
+    internally to match Static's rendered columns."""
+    content = "tabbed\tcolumns\there"
+    static_selected = await _drag_and_get_selected_text(
+        _StaticHarness, content, (0, 0), (30, 0), "#old", Static
+    )
+    raw_selected = await _drag_and_get_selected_text(
+        _Harness, content, (0, 0), (30, 0), "#raw", VirtualizedRawContent
+    )
+    assert raw_selected == static_selected
+    assert "\t" in raw_selected
+
+
+@pytest.mark.asyncio
+async def test_partial_drag_across_a_tab_matches_static():
+    """A drag that starts and ends mid-line, straddling a tab, must produce
+    byte-identical text to Static -- including Static's own quirk where a
+    release landing on the tab's second expanded display cell already reads
+    one raw character past the tab (the drag lands at column 7, inside the
+    tab's 2-column expanded span that starts at column 6)."""
+    content = "tabbed\tcolumns\there"
+    static_selected = await _drag_and_get_selected_text(
+        _StaticHarness, content, (0, 0), (7, 0), "#old", Static
+    )
+    raw_selected = await _drag_and_get_selected_text(
+        _Harness, content, (0, 0), (7, 0), "#raw", VirtualizedRawContent
+    )
+    assert raw_selected == static_selected
+    assert raw_selected == "tabbed\tc"
+
+
+@pytest.mark.asyncio
+async def test_partial_drag_starting_and_ending_mid_line_across_a_tab_matches_static():
+    """Same acid test as above, but with BOTH endpoints mid-line (neither at
+    column 0 nor past the end), which is the more common real-world drag."""
+    content = "tabbed\tcolumns\there"
+    static_selected = await _drag_and_get_selected_text(
+        _StaticHarness, content, (3, 0), (10, 0), "#old", Static
+    )
+    raw_selected = await _drag_and_get_selected_text(
+        _Harness, content, (3, 0), (10, 0), "#raw", VirtualizedRawContent
+    )
+    assert raw_selected == static_selected
+    assert "\t" in raw_selected

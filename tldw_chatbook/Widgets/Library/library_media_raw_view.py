@@ -65,9 +65,16 @@ class VirtualizedRawContent(ScrollView):
                 :class:`~textual.scroll_view.ScrollView`.
         """
         super().__init__(**kwargs)
-        self.source_lines = (
-            (content or EMPTY_CONTENT_MESSAGE).expandtabs(TAB_SIZE).split("\n")
-        )
+        # Two parallel line lists, index-aligned (expandtabs never adds or
+        # removes a "\n", so line counts match): `source_lines` (expanded)
+        # drives wrapping and painting, matching what Content/Static wraps
+        # and paints against; `_raw_lines` (literal tabs intact) is what
+        # get_selection maps copies back to, matching what Static's own
+        # get_selection actually returns (Widget.get_selection reads
+        # Content.plain, which expand_tabs never mutates -- expansion is a
+        # transient copy made inside render_strips).
+        self._raw_lines = (content or EMPTY_CONTENT_MESSAGE).split("\n")
+        self.source_lines = [line.expandtabs(TAB_SIZE) for line in self._raw_lines]
         self.wrap_index: WrapIndex | None = None
         self._indexed_width: int | None = None
         self._query = query.strip()
@@ -214,6 +221,24 @@ class VirtualizedRawContent(ScrollView):
         newline the document does not contain; a selection spanning two
         source lines must contain exactly one newline between them.
 
+        The returned text is read from ``_raw_lines`` (literal tabs, never
+        expanded), not from the wrap index's expanded segments, so a copy of
+        a tab-delimited document round-trips its tabs -- matching what
+        ``Static``'s own ``get_selection`` returns (it reads
+        ``Content.plain``, which ``expand_tabs`` never mutates in place).
+        The row/column math still walks the EXPANDED segments, because that
+        is the coordinate space ``render_line``'s embedded offsets and
+        wrap points use; each column is then reinterpreted as an offset into
+        the matching raw line. That reuse is deliberate, not an
+        approximation: Static does the exact same thing (the compositor's
+        embedded per-cell offset is an expanded-column count, and
+        ``Selection.extract`` indexes the raw string with it unchanged), so
+        replicating it -- rather than building a "smarter" corrected
+        mapping -- is what makes a partial selection landing inside an
+        expanded tab run byte-identical to Static, including the case where
+        release lands on the tab's second expanded cell and the selection
+        reads one raw character past the tab.
+
         Args:
             selection: The selection to extract. Either endpoint may be
                 ``None``, meaning "start of document" / "end of document"
@@ -244,15 +269,21 @@ class VirtualizedRawContent(ScrollView):
             line_index, segment_index = self.wrap_index.row_to_line(row)
             segments = self.wrap_index.segments(line_index)
             piece = segments[segment_index] if segment_index < len(segments) else ""
-            if row == first_row and row == last_row:
-                piece = piece[start_col:end_col]
-            elif row == first_row:
-                piece = piece[start_col:]
-            elif row == last_row:
-                piece = piece[:end_col]
+            # Offset of this wrapped segment's start within the full
+            # EXPANDED line -- the same cumulative column count Static's
+            # own per-cell offsets carry across a wrap boundary.
+            segment_start = sum(len(s) for s in segments[:segment_index])
+            row_end = segment_start + len(piece)
+            abs_start = segment_start + start_col if row == first_row else segment_start
+            if row == last_row:
+                abs_end = segment_start + end_col if end_col is not None else row_end
+            else:
+                abs_end = row_end
+            raw_line = self._raw_lines[line_index]
+            raw_piece = raw_line[abs_start:abs_end]
             if previous_line is not None and line_index != previous_line:
                 collected.append("\n")
-            collected.append(piece)
+            collected.append(raw_piece)
             previous_line = line_index
         return "".join(collected), "\n"
 
