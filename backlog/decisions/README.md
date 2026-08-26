@@ -78,6 +78,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-083](083-console-edge-rails-and-workspace-tree-ownership.md) | Accepted | Make Console rails application-edge owners, use per-section Context ceilings with ordinary outer scrolling, and partition named-workspace conversations into a native Tree. |
 | [ADR-084](084-mcp-profile-driven-rag-search-contract.md) | Accepted | Keep MCP RAG search media-only while default requests follow the active profile through the shared runtime with truthful score and reranking provenance. |
 | [ADR-086](086-library-adaptive-reader-shell.md) | Accepted | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
+| [ADR-087](087-console-read-only-next-send-estimate-projection.md) | Accepted | Give Console next-send presentation a detached, non-persisting active-path snapshot and canonical text-only provider-history projection with honest media caveats. |
 
 ## Historical Decision Material
 

@@ -36,7 +36,7 @@ Give users an at-a-glance indication that a composed Console message has an esti
 3. After written-spec approval, produce a TDD implementation plan before changing production code.
 4. Implement and verify the pure estimate model, Console integration, dynamic button presentation, tooltip copy, and focused regressions.
 
-ADR required: no
-ADR path: N/A
-Reason: The feature derives ephemeral presentation state from existing session settings, pricing catalog data, and composer/context inputs; it adds no storage, schema, ownership, service-contract, security, or long-lived application-structure decision.
+ADR required: yes
+ADR path: backlog/decisions/087-console-read-only-next-send-estimate-projection.md
+Reason: The feature adds a cross-module, read-only store/controller projection so per-keystroke pricing can observe buffered history without invoking the incumbent materializing-and-persisting getter.
 <!-- SECTION:PLAN:END -->

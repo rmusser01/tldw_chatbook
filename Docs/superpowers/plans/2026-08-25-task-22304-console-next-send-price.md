@@ -18,7 +18,7 @@
 - Keep all estimate construction and mutable memo state out of `UI/Screens/chat_screen.py`; do not raise the existing screen-size ratchet budget.
 - Preserve the existing blocker/setup/wake/recovery tooltip precedence and unsuffixed blocked labels.
 - Use the uncached input rate and configured maximum reply tokens. Do not assign token or dollar values to pending binary/media attachments.
-- ADR required: no. ADR path: N/A. Reason: this is ephemeral UI derivation through existing ownership, pricing, and session boundaries.
+- ADR required: yes. ADR path: `backlog/decisions/087-console-read-only-next-send-estimate-projection.md`. Reason: the feature adds a cross-module read-only snapshot/projection contract so per-keystroke presentation never invokes the incumbent materializing-and-persisting getter.
 
 ## Task 1: Lock the pure price and tooltip contract
 
@@ -108,13 +108,16 @@
 - Modify: `Tests/UI/test_console_send_price.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/send_price.py`
 - Modify: `tldw_chatbook/Chat/console_chat_controller.py`
+- Modify: `tldw_chatbook/Chat/console_chat_store.py`
 - Modify: `Tests/Chat/test_console_chat_controller.py`
-- Reference: `tldw_chatbook/Chat/console_chat_store.py`
+- Modify: `Tests/Chat/test_console_chat_store.py`
 - Reference: `tldw_chatbook/Chat/console_cost_tracker.py`
 - Reference: `tldw_chatbook/Chat/console_display_state.py`
 - Reference: `tldw_chatbook/Chat/console_session_settings.py`
 
-- [ ] Add a focused `ConsoleChatController` test for a named read-only `provider_messages_for_next_send_estimate(session_id)` seam. Assert it returns the same value as `_provider_messages_for_session(session_id)` and does not mutate the store. This exposes the existing canonical synchronous projection without coupling wiring to a private method.
+- [ ] Add `test_read_only_messages_for_session_projects_stream_buffer_without_mutation` in `Tests/Chat/test_console_chat_store.py`. Build a streaming assistant with buffered-but-unmaterialized chunks and a persistence spy, capture live message content, materialization counters, payload/speech revisions, and persistence calls, then assert `read_only_messages_for_session(session_id)` returns detached current text while every captured store value and call count remains unchanged.
+
+- [ ] Add `test_provider_messages_for_next_send_estimate_matches_dispatch_projection_without_store_writes` in `Tests/Chat/test_console_chat_controller.py`. Use pathological history (transcript-only system, seeded leading greeting, failed row, empty speech placeholder, disallowed assistant state, normal user/assistant, and buffered live assistant) and assert the named method returns the exact canonical filtered projection without changing store/persistence state.
 
 - [ ] Add send-price controller tests using tiny fake settings/store/launch accessors, the injectable canonical provider-history accessor, and injectable catalog/counter callables. Capture the exact counter input and prove that it starts with the accessor's already-filtered provider rows, then contains the nonblank live draft and `console_prompted_evidence_text(launch)` exactly once and in request order.
 
@@ -146,13 +149,17 @@
 
 - [ ] Add degradation tests: missing store/session produces an unavailable tooltip rather than raising. A token-counter exception must call the pure builder with `input_tokens=None`, retaining `Input: token estimate unavailable`, the reply line, and provenance. Catalog or broader accessor/controller failures may return the short `ConsoleNextSendPrice("Next request: cost unavailable")` fallback and must never affect send readiness.
 
-- [ ] Run the controller selection and named history-seam test and verify RED because both APIs are absent:
+- [ ] Run the controller selection and named read-only snapshot/history-seam tests and verify RED because the APIs are absent:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_controller.py -q --tb=short -p no:warnings -k "controller or cache or context or unavailable or provider_messages_for_next_send_estimate"
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_store.py::test_read_only_messages_for_session_projects_stream_buffer_without_mutation Tests/Chat/test_console_chat_controller.py::test_provider_messages_for_next_send_estimate_matches_dispatch_projection_without_store_writes -q --tb=short -p no:warnings -k "controller or cache or context or unavailable or read_only_messages or provider_messages"
   ```
 
-- [ ] Add the read-only `ConsoleChatController.provider_messages_for_next_send_estimate(session_id)` method as the named seam over the existing canonical synchronous projection, then implement `ConsoleSendPriceController` in the no-DOM module with named keyword-only callables and an owned `TokenEstimateCache`:
+- [ ] Implement `ConsoleChatStore.read_only_messages_for_session(session_id)`. Validate the session, make detached snapshots from the active-path view, and, for each copied streaming row with buffered chunks newer than the materialized count, set only the copy's content to `"".join(buffer)`. Do not call `_fold_stream_buffer_without_persistence`, `_materialize_stream_buffer`, persistence, or any revision bump.
+
+- [ ] Extract the body that folds the leading system/greeting row and calls `_provider_message_payloads` into one private `ConsoleChatController` helper accepting already-snapshotted messages. Keep `_provider_messages_for_session` on its existing materializing store path for dispatch, and add `provider_messages_for_next_send_estimate(session_id)` on the new read-only store path. Both methods must call the shared helper so filtering cannot drift.
+
+- [ ] Implement `ConsoleSendPriceController` in the no-DOM module with named keyword-only callables and an owned `TokenEstimateCache`:
 
   ```python
   class ConsoleSendPriceController:
@@ -185,14 +192,14 @@
 
   Copy role/content from the canonical projected history without reimplementing its turn filters. For string content, copy it verbatim. For sequence content, join only mapping parts with `type == "text"` and string `text`, while counting every other part as historical media; omit a projected row only when it has no text at all. Tolerate a closed/missing active session and use a cache key containing the active session id. Verify every hit with `token_estimate_signature(rows, model, provider_config_key(provider))`; attachment and historical-media counts stay outside this signature because they do not change text tokenization, but are read on every presentation build. Catch token-counter errors around only the memoized compute, set `input_tokens=None`, and continue through the pure builder.
 
-- [ ] Pin the shared projection boundary with pathological fixtures in the controller/integration tests: the injected canonical history must contain the folded seeded-greeting system row but omit transcript-only system rows, failed rows, empty speech placeholders, leading assistant rows, and assistant states disallowed from provider history. This prevents the estimator from drifting by adding its own raw-store filtering.
+- [ ] Pin the shared projection boundary with the pathological Chat-controller fixture above: the canonical history must contain the folded seeded-greeting system row but omit transcript-only system rows, failed rows, empty speech placeholders, leading assistant rows, and assistant states disallowed from provider history. The send-price test should treat the injected canonical projection as authoritative rather than recreating those filters.
 
-- [ ] Run `test_console_send_price.py` plus the focused canonical-projection test and verify GREEN, then run Ruff checks for the four changed files.
+- [ ] Run `test_console_send_price.py` plus both focused read-only projection tests and verify GREEN, then run Ruff checks for the six changed files.
 
 - [ ] Commit the controller:
 
   ```bash
-  git add tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/Chat/console_chat_controller.py Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_controller.py
+  git add tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
   git commit -m "feat(console): estimate the pending request context"
   ```
 
@@ -328,7 +335,7 @@
 - [ ] Run the complete focused baseline plus the new tests from a clean invocation:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_cost_chip_screen.py Tests/UI/test_console_prompt_queue.py Tests/Chat/test_console_session_settings.py Tests/LLM_Calls/test_pricing_catalog.py -q --tb=short -p no:warnings
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_cost_chip_screen.py Tests/UI/test_console_prompt_queue.py Tests/Chat/test_console_session_settings.py Tests/LLM_Calls/test_pricing_catalog.py Tests/Chat/test_console_chat_store.py::test_read_only_messages_for_session_projects_stream_buffer_without_mutation Tests/Chat/test_console_chat_controller.py::test_provider_messages_for_next_send_estimate_matches_dispatch_projection_without_store_writes -q --tb=short -p no:warnings
   ```
 
 - [ ] Run the architecture ratchet without changing its budget:
@@ -342,8 +349,8 @@
 - [ ] Run final static and patch checks:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check tldw_chatbook/UI/Console_Modules/send_price.py tldw_chatbook/UI/Console_Modules/wiring.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py Tests/UI/test_console_send_price.py Tests/UI/test_console_send_disabled_state.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py
   git diff --check
   git status --short
   ```
@@ -352,7 +359,7 @@
 
 - [ ] Request independent code review using `superpowers:requesting-code-review`; fix any verified blocking findings and rerun the affected checks.
 
-- [ ] Complete Backlog hygiene: check all six acceptance criteria, replace the preliminary plan with a concise final plan if needed, add Implementation Notes with files/trade-offs/test evidence and the ADR-no decision, and set TASK-22304 to Done only after every Definition-of-Done item is genuinely satisfied. Add a lesson only if this implementation produced a repeatable incident worth preserving.
+- [ ] Complete Backlog hygiene: check all six acceptance criteria, replace the preliminary plan with a concise final plan if needed, add Implementation Notes with files/trade-offs/test evidence and the ADR-087 decision, and set TASK-22304 to Done only after every Definition-of-Done item is genuinely satisfied. Add a lesson only if this implementation produced a repeatable incident worth preserving.
 
 - [ ] Commit task completion documentation:
 
