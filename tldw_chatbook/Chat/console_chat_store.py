@@ -1097,6 +1097,16 @@ class ConsoleChatStore:
         # compare-and-set under one lock; the immutable values are safe to
         # return directly.
         self._preparation_lock = threading.RLock()
+        # Generation terminal commits can run on the controller event-loop
+        # thread while late agent settlement runs in ``to_thread``.  Resolve
+        # one reentrant lock per message owner under the short registry lock;
+        # the registry lock is released before an owner lock is acquired, so
+        # unrelated owners never block one another and nested projection paths
+        # can safely reacquire their own owner lock.  Terminal recovery takes
+        # locks in owner -> preparation order; callers must not enter a terminal
+        # generation mutation while holding ``_preparation_lock``.
+        self._generation_owner_locks_guard = threading.Lock()
+        self._generation_owner_locks: dict[str, threading.RLock] = {}
         self._preparations_by_session: dict[str, ConsoleTurnPreparation] = {}
         self._preparations_by_id: dict[str, ConsoleTurnPreparation] = {}
         self._durable_identity_by_preparation: dict[
@@ -8716,8 +8726,21 @@ class ConsoleChatStore:
             self._persist_metadata_only(message)
         return self._snapshot(message)
 
+    def _generation_owner_lock(self, message_id: str) -> threading.RLock:
+        """Return the process-local reentrant lock for one generation owner."""
+        with self._generation_owner_locks_guard:
+            lock = self._generation_owner_locks.get(message_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._generation_owner_locks[message_id] = lock
+            return lock
+
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message complete and flush final visible content to persistence."""
+        with self._generation_owner_lock(message_id):
+            return self._mark_message_complete(message_id)
+
+    def _mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._finalize_character_emote_capture(message, outcome="complete")
@@ -8857,6 +8880,11 @@ class ConsoleChatStore:
             self.clear_terminal_citation_state(message.id)
 
     def mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
+        """Serialize a stopped terminal projection for one generation owner."""
+        with self._generation_owner_lock(message_id):
+            return self._mark_message_stopped(message_id)
+
+    def _mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message stopped and flush final visible content to persistence.
 
         If this message was mid variant-stream (regenerate), any partial
@@ -8909,6 +8937,11 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
+        """Serialize a failed terminal projection for one generation owner."""
+        with self._generation_owner_lock(message_id):
+            return self._mark_message_failed(message_id)
+
+    def _mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message failed and flush final visible content to persistence.
 
         If this message was mid variant-stream (regenerate), any partial
@@ -9350,6 +9383,12 @@ class ConsoleChatStore:
         self, message_id: str, envelope: ThinkingEnvelope | None
     ) -> ConsoleChatMessage:
         """Replace canonical thinking at the generation-owner seam."""
+        with self._generation_owner_lock(message_id):
+            return self._replace_message_thinking(message_id, envelope)
+
+    def _replace_message_thinking(
+        self, message_id: str, envelope: ThinkingEnvelope | None
+    ) -> ConsoleChatMessage:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can own thinking.")
@@ -9379,6 +9418,12 @@ class ConsoleChatStore:
         Ordinary in-flight settlement stays process-local for the controller's
         existing terminal projection.
         """
+        with self._generation_owner_lock(message_id):
+            return self._settle_message_thinking(message_id, envelope)
+
+    def _settle_message_thinking(
+        self, message_id: str, envelope: ThinkingEnvelope
+    ) -> ConsoleChatMessage:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can own thinking.")
@@ -10774,6 +10819,10 @@ class ConsoleChatStore:
 
     def persist_selected_generation(self, message_id: str) -> bool:
         """Atomically project the complete selected assistant generation."""
+        with self._generation_owner_lock(message_id):
+            return self._persist_selected_generation(message_id)
+
+    def _persist_selected_generation(self, message_id: str) -> bool:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages own generation projections.")

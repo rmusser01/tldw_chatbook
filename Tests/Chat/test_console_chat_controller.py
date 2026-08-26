@@ -7107,3 +7107,253 @@ async def test_direct_stop_after_typed_yield_persists_stopped_thinking(
         assert reloaded.thinking.blocks[0].status == "stopped"
     finally:
         db.close_connection()
+
+
+class _CountingGenerationPersistence:
+    """Count generation projections and optionally pause the next writer."""
+
+    def __init__(self, delegate: ChatPersistenceService) -> None:
+        self._delegate = delegate
+        self.db = delegate.db
+        self._count_lock = threading.Lock()
+        self.projection_attempts = 0
+        self.projection_commits = 0
+        self._block_next = False
+        self.writer_entered = threading.Event()
+        self.writer_release = threading.Event()
+
+    def arm_next_writer(self) -> None:
+        self._block_next = True
+        self.writer_entered.clear()
+        self.writer_release.clear()
+
+    def replace_assistant_generation_projection(self, **kwargs):
+        with self._count_lock:
+            self.projection_attempts += 1
+            should_block = self._block_next
+            self._block_next = False
+        if should_block:
+            self.writer_entered.set()
+            assert self.writer_release.wait(timeout=3)
+        version = self._delegate.replace_assistant_generation_projection(**kwargs)
+        with self._count_lock:
+            self.projection_commits += 1
+        return version
+
+    def __getattr__(self, name: str):
+        return getattr(self._delegate, name)
+
+
+def _durable_streaming_generation(
+    tmp_path,
+    *,
+    name: str,
+) -> tuple[
+    CharactersRAGDB,
+    ConsoleChatStore,
+    object,
+    ConsoleChatMessage,
+    object,
+    int,
+]:
+    db = CharactersRAGDB(tmp_path / f"{name}.sqlite", name)
+    persistence = ChatPersistenceService(db)
+    store = ConsoleChatStore(persistence=persistence)
+    session = _arm_session(store)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+        persist=True,
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="paired answer",
+        persist=True,
+    )
+    checkpoint = _controller_history_checkpoint("LOCKED-PRIVATE-CANARY")
+    owned = store._message_or_raise(assistant.id)
+    owned.provider_continuation = checkpoint
+    assert store.persist_selected_generation(assistant.id) is True
+    initial_row = db.get_message_by_id(assistant.persisted_message_id)
+    assert initial_row is not None
+    owned.status = "streaming"
+    owned.assistant_generation_state = "streaming"
+    return db, store, session, assistant, checkpoint, int(initial_row["version"])
+
+
+def _terminal_thinking(assistant_id: str, status: str):
+    capture = ThinkingCapture(assistant_owner_id=assistant_id)
+    capture.observe(
+        ProviderThinkingDelta(
+            text="late serialized evidence",
+            provider="llama_cpp",
+            model="reasoner",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        )
+    )
+    return capture.settle(status).envelope
+
+
+@pytest.mark.parametrize("terminal_status", ["stopped", "failed"])
+def test_late_settlement_decision_serializes_with_terminal_commit(
+    tmp_path,
+    terminal_status,
+) -> None:
+    """A nonterminal decision cannot race past a stopped/failed projection."""
+    db, store, session, assistant, checkpoint, initial_version = (
+        _durable_streaming_generation(
+            tmp_path,
+            name=f"decision-{terminal_status}",
+        )
+    )
+    persistence = _CountingGenerationPersistence(store.persistence)
+    store.persistence = persistence
+    envelope = _terminal_thinking(assistant.id, terminal_status)
+    decision_passed = threading.Event()
+    settlement_release = threading.Event()
+    original_replace = store.replace_message_thinking
+
+    def pause_after_nonterminal_decision(message_id, thinking):
+        decision_passed.set()
+        assert settlement_release.wait(timeout=3)
+        return original_replace(message_id, thinking)
+
+    store.replace_message_thinking = pause_after_nonterminal_decision
+    errors: list[BaseException] = []
+
+    def settle_from_bridge() -> None:
+        try:
+            store.settle_message_thinking(assistant.id, envelope)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def settle_from_controller() -> None:
+        try:
+            if terminal_status == "stopped":
+                store.mark_message_stopped(assistant.id)
+            else:
+                store.mark_message_failed(assistant.id)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    bridge_thread = threading.Thread(target=settle_from_bridge, daemon=True)
+    controller_thread = threading.Thread(target=settle_from_controller, daemon=True)
+    try:
+        bridge_thread.start()
+        assert decision_passed.wait(timeout=3)
+        assert persistence.projection_attempts == 0
+        controller_thread.start()
+        controller_thread.join(timeout=0.25)
+        terminal_committed_early = not controller_thread.is_alive()
+        settlement_release.set()
+        bridge_thread.join(timeout=3)
+        controller_thread.join(timeout=3)
+
+        assert terminal_committed_early is False
+        assert not bridge_thread.is_alive()
+        assert not controller_thread.is_alive()
+        assert errors == []
+        assert persistence.projection_attempts == 1
+        assert persistence.projection_commits == 1
+
+        settled = store.get_message(assistant.id)
+        store.settle_message_thinking(assistant.id, settled.thinking)
+        assert persistence.projection_attempts == 1
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        assert row is not None
+        assert row["version"] == initial_version + 1
+        assert row["assistant_generation_state"] == terminal_status
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        rows = db.get_messages_for_conversation(
+            session.persisted_conversation_id, limit=100
+        )
+        assert sum(row["role"] == "assistant" for row in rows) == 1
+        assert reloaded.content == "paired answer"
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late serialized evidence"
+        assert reloaded.thinking.blocks[0].status == terminal_status
+    finally:
+        settlement_release.set()
+        bridge_thread.join(timeout=1)
+        controller_thread.join(timeout=1)
+        db.close_connection()
+
+
+def test_late_settlement_waits_for_terminal_writer_without_conflict(tmp_path) -> None:
+    """A bridge writer cannot compete with an in-flight terminal projection."""
+    db, store, session, assistant, checkpoint, initial_version = (
+        _durable_streaming_generation(tmp_path, name="writer-race")
+    )
+    persistence = _CountingGenerationPersistence(store.persistence)
+    store.persistence = persistence
+    envelope = _terminal_thinking(assistant.id, "stopped")
+    errors: list[BaseException] = []
+    persistence.arm_next_writer()
+
+    def stop_from_controller() -> None:
+        try:
+            store.mark_message_stopped(assistant.id)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def settle_from_bridge() -> None:
+        try:
+            store.settle_message_thinking(assistant.id, envelope)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    controller_thread = threading.Thread(target=stop_from_controller, daemon=True)
+    bridge_thread = threading.Thread(target=settle_from_bridge, daemon=True)
+    try:
+        controller_thread.start()
+        assert persistence.writer_entered.wait(timeout=3)
+        bridge_thread.start()
+        bridge_thread.join(timeout=0.25)
+        bridge_completed_early = not bridge_thread.is_alive()
+        persistence.writer_release.set()
+        controller_thread.join(timeout=3)
+        bridge_thread.join(timeout=3)
+
+        assert bridge_completed_early is False
+        assert not controller_thread.is_alive()
+        assert not bridge_thread.is_alive()
+        assert errors == []
+        assert persistence.projection_attempts == 2
+        assert persistence.projection_commits == 2
+
+        settled = store.get_message(assistant.id)
+        store.settle_message_thinking(assistant.id, settled.thinking)
+        assert persistence.projection_attempts == 2
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        assert row is not None
+        assert row["version"] == initial_version + 2
+        assert row["assistant_generation_state"] == "stopped"
+
+        reloaded = _reload_console_message(
+            db,
+            conversation_id=session.persisted_conversation_id,
+            active_leaf_persisted_id=assistant.persisted_message_id,
+        )
+        rows = db.get_messages_for_conversation(
+            session.persisted_conversation_id, limit=100
+        )
+        assert sum(row["role"] == "assistant" for row in rows) == 1
+        assert reloaded.content == "paired answer"
+        assert reloaded.provider_continuation == checkpoint
+        assert reloaded.thinking is not None
+        assert reloaded.thinking.blocks[0].text == "late serialized evidence"
+        assert reloaded.thinking.blocks[0].status == "stopped"
+    finally:
+        persistence.writer_release.set()
+        controller_thread.join(timeout=1)
+        bridge_thread.join(timeout=1)
+        db.close_connection()
