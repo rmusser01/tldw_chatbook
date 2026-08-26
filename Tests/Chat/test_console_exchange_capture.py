@@ -6,11 +6,17 @@ from hypothesis import given, strategies as st
 
 from tldw_chatbook.Chat.console_exchange_capture import (
     CAPTURE_REQUEST_ALLOWLIST,
+    CaptureDetail,
+    CaptureBudget,
+    CapturePolicyResolution,
+    CapturePolicySource,
     EXCHANGE_BLOB_MAX_BYTES,
     ExchangeCapture,
     build_request_capture,
+    build_response_capture,
     capture_from_blob,
     capture_to_blob,
+    resolve_capture_policy,
     stub_binary_strings,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
@@ -32,6 +38,66 @@ def _kwargs():
         "temp": 0.7,
         "tools": [{"type": "function", "function": {"name": "get_time"}}],
     }
+
+
+def test_capture_policy_precedence_and_invalid_values_fail_safe():
+    resolved = resolve_capture_policy(
+        enabled=True,
+        next_send="full",
+        conversation="safe",
+        global_default="full",
+    )
+    assert resolved == CapturePolicyResolution(
+        enabled=True,
+        detail=CaptureDetail.FULL,
+        source=CapturePolicySource.NEXT_SEND,
+        invalid_sources=(),
+    )
+    invalid = resolve_capture_policy(enabled=True, global_default="future-value")
+    assert invalid.detail is CaptureDetail.SAFE
+    assert invalid.source is CapturePolicySource.APPLICATION
+    assert invalid.invalid_sources == ("global",)
+
+
+def test_capture_off_wins_without_forgetting_dormant_detail():
+    resolved = resolve_capture_policy(enabled=False, conversation="full")
+    assert resolved.enabled is False
+    assert resolved.detail is CaptureDetail.FULL
+    assert resolved.source is CapturePolicySource.CONVERSATION
+
+
+def test_safe_omits_but_full_retains_tagged_project_instruction_body():
+    kwargs = {"messages_payload": [_project_instruction_row("AGENTS BODY")]}
+    safe, safe_omitted = build_request_capture(kwargs, capture_detail=CaptureDetail.SAFE)
+    full, full_omitted = build_request_capture(kwargs, capture_detail=CaptureDetail.FULL)
+    assert "AGENTS BODY" not in json.dumps(safe)
+    assert "messages_payload[0].content" in safe_omitted
+    assert full["messages_payload"][0]["content"] == "AGENTS BODY"
+    assert "messages_payload[0].content" not in full_omitted
+
+
+def test_endpoint_identity_drops_credentials_query_and_fragment():
+    request, _ = build_request_capture(
+        {"api_base_url": "https://user:pass@example.test/v1?q=secret#fragment"},
+        capture_detail=CaptureDetail.FULL,
+    )
+    assert request["api_base_url"] == "https://example.test/v1"
+
+
+def test_request_and_response_share_one_bounded_budget():
+    budget = CaptureBudget(limit_bytes=256)
+    request, _ = build_request_capture(
+        {"messages_payload": [{"role": "user", "content": "x" * 220}]},
+        capture_detail=CaptureDetail.FULL,
+        budget=budget,
+    )
+    response = build_response_capture(
+        content="y" * 220,
+        tool_calls=[{"function": {"arguments": "QUJD" * 2000}}],
+        budget=budget,
+    )
+    assert request["truncation_inventory"] or response["truncation_inventory"]
+    assert budget.used_bytes <= budget.limit_bytes
 
 
 def test_api_key_never_in_capture_and_named_in_omitted():

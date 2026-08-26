@@ -15,6 +15,12 @@ from Tests.ChaChaNotesDB.historical_bootstrap import (
 )
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureDetail,
+    ExchangeCapture,
+    capture_from_storage,
+    capture_to_blob,
+)
 
 # Matches CharactersRAGDB._SCHEMA_NAME, per the sibling migration tests
 # (e.g. Tests/DB/test_chachanotes_message_usage_migration.py).
@@ -59,6 +65,25 @@ def test_append_and_read_round_trip(db):
     stored = db.get_message_exchanges(mid)
     assert [(r["run_tag"], r["seq"], r["capture_blob"]) for r in stored] == [
         ("r1", 0, b"blob0"), ("r1", 1, b"blob1")]
+
+
+def test_full_capture_column_matches_blob_provenance(db):
+    mid = _seed_message(db)
+    capture = ExchangeCapture(
+        run_tag="full", seq=0, created_at="t", provider="p", model="m", endpoint=None,
+        request={}, response={}, status="complete", usage_json=None, omitted_keys=(),
+        capture_detail=CaptureDetail.FULL,
+    )
+    db.append_message_exchanges_local(mid, [{
+        "run_tag": capture.run_tag, "seq": capture.seq, "status": capture.status,
+        "abandoned": False, "capture_detail": capture.capture_detail.value,
+        "capture_blob": capture_to_blob(capture), "created_at": capture.created_at,
+    }])
+    stored = db.get_message_exchanges(mid)[0]
+    assert stored["capture_detail"] == "full"
+    assert capture_from_storage(
+        stored["capture_blob"], stored["capture_detail"]
+    ).capture_detail is CaptureDetail.FULL
 
 
 def test_upsert_idempotent_and_updates_in_place(db):

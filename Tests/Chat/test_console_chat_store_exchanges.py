@@ -25,7 +25,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeCapture
 
 
 def _cap(run_tag="r1", seq=0, status="complete"):
@@ -189,6 +189,15 @@ def test_terminal_mark_flushes_exchanges(store_with_fake_persistence):
     # drive the message terminal via the store's real terminal-mark API
     store.mark_message_complete(mid)
     assert persistence.appended_exchange_rows  # fake recorded the flush
+
+
+def test_flush_derives_capture_detail_from_the_immutable_capture(store_with_fake_persistence):
+    store, mid, persistence = store_with_fake_persistence
+    capture = _cap()
+    object.__setattr__(capture, "capture_detail", CaptureDetail.FULL)
+    store.attach_message_exchanges(mid, [capture])
+    store.mark_message_complete(mid)
+    assert persistence.appended_exchange_rows[0]["capture_detail"] == "full"
 
 
 def test_attach_after_terminal_flushes_immediately(store_with_fake_persistence):

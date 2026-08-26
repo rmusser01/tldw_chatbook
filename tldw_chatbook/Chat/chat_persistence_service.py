@@ -1079,7 +1079,8 @@ class ChatPersistenceService:
         Args:
             message_id: UUID of the owning message row.
             rows: Exchange rows to upsert; see
-                :meth:`CharactersRAGDB.append_message_exchanges_local`.
+                :meth:`CharactersRAGDB.append_message_exchanges_local`, including
+                local-only capture provenance.
 
         Returns:
             True if the rows were written; False if the write failed.

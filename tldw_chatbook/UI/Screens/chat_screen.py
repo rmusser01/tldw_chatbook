@@ -149,7 +149,7 @@ from ...Chat.console_cost_tracker import (
     fingerprint_break_reason,
     token_estimate_signature,
 )
-from ...Chat.console_exchange_capture import ExchangeCapture, capture_from_blob
+from ...Chat.console_exchange_capture import ExchangeCapture, capture_from_storage
 from ...Chat.provider_usage import ProviderUsage
 from ...Chat.trajectory import TrajectorySnapshot, derive_trajectory
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
@@ -1704,7 +1704,10 @@ def _build_console_inspector_exchanges_loader(
                 try:
                     out.append(
                         (
-                            capture_from_blob(db_row["capture_blob"]),
+                            capture_from_storage(
+                                db_row["capture_blob"],
+                                db_row.get("capture_detail", "safe"),
+                            ),
                             bool(db_row.get("abandoned", False)),
                         )
                     )

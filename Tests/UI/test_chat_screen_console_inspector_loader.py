@@ -17,7 +17,12 @@ import pytest
 from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
-from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture, capture_to_blob
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureCorruptError,
+    ExchangeCapture,
+    capture_from_storage,
+    capture_to_blob,
+)
 from tldw_chatbook.UI.Screens.chat_screen import (
     _build_console_inspector_exchanges_loader,
 )
@@ -239,6 +244,22 @@ async def test_a_corrupt_blob_is_skipped_not_fatal_to_the_rest() -> None:
     decoded_capture, abandoned = result[0]
     assert decoded_capture == good_capture
     assert abandoned is False
+
+
+@pytest.mark.asyncio
+async def test_column_blob_provenance_mismatch_is_skipped() -> None:
+    capture = _capture()
+    with pytest.raises(CaptureCorruptError):
+        capture_from_storage(capture_to_blob(capture), "full")
+    db = _FakeExchangesDB(rows=[{
+        "run_tag": "run-1", "seq": 1, "status": "complete", "abandoned": False,
+        "capture_detail": "full", "capture_blob": capture_to_blob(capture),
+        "created_at": "t",
+    }])
+    loader = _build_console_inspector_exchanges_loader(
+        {"n1": _message(exchanges=())}, lambda: db
+    )
+    assert await loader("n1") == []
 
 
 @pytest.mark.asyncio

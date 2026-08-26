@@ -510,7 +510,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 50  # Console Library policy follows live conversations (task-22225).
+    _CURRENT_SCHEMA_VERSION = 51  # Console capture provenance is local-only (task-22507.1).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -6702,6 +6702,37 @@ UPDATE db_schema_version
                 f"Migration from V49 to V50 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v50_to_v51(self, conn: sqlite3.Connection) -> None:
+        """Add local Console capture provenance and per-conversation policy."""
+        self._require_migration_entry_version(conn, 50, "V50→V51")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v50_to_v51_console_full_capture.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V50→V51"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 51 "
+                    "WHERE schema_name = ? AND version = 50",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V50→V51] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 51:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V50→V51] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V50 to V51 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -6900,6 +6931,7 @@ UPDATE db_schema_version
                     47: self._migrate_from_v47_to_v48,
                     48: self._migrate_from_v48_to_v49,
                     49: self._migrate_from_v49_to_v50,
+                    50: self._migrate_from_v50_to_v51,
                 }
 
                 if current_db_version == 0:
@@ -12388,8 +12420,10 @@ UPDATE db_schema_version
         Args:
             message_id: The UUID of the owning message row.
             rows: Each mapping must carry ``run_tag`` (str), ``seq`` (int),
-                ``status`` (str), ``abandoned`` (bool), ``capture_blob``
-                (bytes), and ``created_at`` (str).
+                ``status`` (str), ``abandoned`` (bool), ``capture_detail``
+                (``"safe"`` or ``"full"``), ``capture_blob`` (bytes), and
+                ``created_at`` (str). Legacy callers that omit
+                ``capture_detail`` persist Safe.
 
         Returns:
             The number of rows written (inserted or updated in place).
@@ -12406,11 +12440,12 @@ UPDATE db_schema_version
                         """
                         INSERT INTO message_exchanges
                             (message_id, run_tag, seq, status, abandoned,
-                             capture_blob, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                             capture_detail, capture_blob, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(message_id, run_tag, seq) DO UPDATE SET
                             status = excluded.status,
                             abandoned = excluded.abandoned,
+                            capture_detail = excluded.capture_detail,
                             capture_blob = excluded.capture_blob
                         """,
                         (
@@ -12419,6 +12454,7 @@ UPDATE db_schema_version
                             int(row["seq"]),
                             row["status"],
                             1 if row.get("abandoned") else 0,
+                            row.get("capture_detail", "safe"),
                             bytes(row["capture_blob"]),
                             row["created_at"],
                         ),
@@ -12450,7 +12486,7 @@ UPDATE db_schema_version
         Returns:
             Rows ordered by ``(run_tag, seq)``, each a dict with keys
             ``run_tag``, ``seq``, ``status``, ``abandoned`` (bool),
-            ``capture_blob`` (bytes), and ``created_at``.
+            ``capture_detail``, ``capture_blob`` (bytes), and ``created_at``.
 
         Raises:
             CharactersRAGDBError: For database errors while reading.
@@ -12459,7 +12495,7 @@ UPDATE db_schema_version
             with self.transaction() as cursor:
                 cursor.execute(
                     """
-                    SELECT run_tag, seq, status, abandoned, capture_blob, created_at
+                    SELECT run_tag, seq, status, abandoned, capture_detail, capture_blob, created_at
                       FROM message_exchanges
                      WHERE message_id = ?
                      ORDER BY run_tag, seq
@@ -12472,8 +12508,9 @@ UPDATE db_schema_version
                         "seq": r[1],
                         "status": r[2],
                         "abandoned": bool(r[3]),
-                        "capture_blob": r[4],
-                        "created_at": r[5],
+                        "capture_detail": r[4],
+                        "capture_blob": r[5],
+                        "created_at": r[6],
                     }
                     for r in cursor.fetchall()
                 ]

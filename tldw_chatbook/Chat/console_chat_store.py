@@ -9568,6 +9568,7 @@ class ConsoleChatStore:
                         "seq": c.seq,
                         "status": c.status,
                         "abandoned": c.run_tag in abandoned_tags,
+                        "capture_detail": c.capture_detail.value,
                         "capture_blob": blob,
                         "created_at": c.created_at,
                     }

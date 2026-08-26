@@ -3193,6 +3193,8 @@ sidechat_prompt_template = "Give me more details about: {selection}"  # {selecti
 # Conversation Inspector: capture each provider exchange (request/response)
 # locally per turn. Local-only; never synced. Set false to disable.
 exchange_capture = true
+# Safe is the application default; no UI exposes Full activation.
+exchange_capture_detail = "safe"
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.
