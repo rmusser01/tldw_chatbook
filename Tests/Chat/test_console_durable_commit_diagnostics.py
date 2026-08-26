@@ -14,6 +14,12 @@ is a diagnostic defect, not a user-experience one.
 
 These tests pin both halves: the type IS recorded, and the exception's message
 is NOT (it can carry conversation and workspace identifiers).
+
+Helper classes here are named without a leading underscore, per the repo's
+PascalCase rule (Qodo finding on #2102). Note this differs from the prevailing
+convention in `Tests/` -- 2,448 test classes carry a leading underscore to mark
+them module-private -- so the rule and the corpus disagree; this file follows
+the rule.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 
-class _Gateway:
+class ReadyGateway:
     """Ready provider that streams one chunk."""
 
     async def resolve_for_send(self, selection):
@@ -36,14 +42,14 @@ class _Gateway:
         yield "reply"
 
 
-class _CapturedLines:
+class CapturedLines:
     """Collect loguru records without disturbing the ambient sinks."""
 
     def __init__(self) -> None:
         self.lines: list[str] = []
         self._sink_id: int | None = None
 
-    def __enter__(self) -> "_CapturedLines":
+    def __enter__(self) -> "CapturedLines":
         self._sink_id = loguru_logger.add(
             lambda message: self.lines.append(str(message)),
             level="TRACE",
@@ -67,7 +73,7 @@ class _CapturedLines:
 SECRET_IDENTIFIER = "ws-private-4f2a-identifier"
 
 
-class _ExplodingPersistence:
+class ExplodingPersistence:
     """Persistence whose durable commit fails with an identifying message."""
 
     db = None
@@ -77,10 +83,10 @@ class _ExplodingPersistence:
 
 
 def _controller_with_failing_commit():
-    store = ConsoleChatStore(persistence=_ExplodingPersistence())
+    store = ConsoleChatStore(persistence=ExplodingPersistence())
     controller = ConsoleChatController(
         store=store,
-        provider_gateway=_Gateway(),
+        provider_gateway=ReadyGateway(),
         provider="llama_cpp",
         model="test-model",
         agent_runtime_enabled=False,
@@ -93,7 +99,7 @@ async def test_a_failed_durable_commit_records_the_exception_type() -> None:
     """The refusal is attributable from logs alone, with no product edit."""
     controller, _store = _controller_with_failing_commit()
 
-    with _CapturedLines() as captured:
+    with CapturedLines() as captured:
         result = await controller.submit_draft("capital of Japan?")
 
     assert result.accepted is False
@@ -115,7 +121,7 @@ async def test_the_failure_log_does_not_leak_the_exception_message() -> None:
     """Type only. A commit exception can name a conversation or workspace."""
     controller, _store = _controller_with_failing_commit()
 
-    with _CapturedLines() as captured:
+    with CapturedLines() as captured:
         await controller.submit_draft("capital of Japan?")
 
     leaked = [line for line in captured.lines if SECRET_IDENTIFIER in line]
