@@ -3973,7 +3973,7 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 538,
+    "owner_files": 539,
     "persistent_sink_files": 8,
     "task_492_calls": 1244,
     "task_494_calls": 7369

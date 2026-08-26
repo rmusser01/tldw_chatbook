@@ -27,6 +27,10 @@ EXTRACTION_LINES = 1_978
 EXTRACTION_METHODS = 56
 PROJECTED_LINE_CEILING = 18_076
 PROJECTED_METHOD_CEILING = 577
+# Delivery rebase 794ae11521 added 56 unrelated ChatScreen lines after the
+# reviewed base. This allowance applies only to the still-pre-extraction base;
+# the implemented screen remains held to PROJECTED_LINE_CEILING below.
+REVIEWED_DELIVERY_BASE_LINE_DRIFT = 56
 REALTIME_CONTROLLER_DEPENDENCIES = frozenset(
     {
         "ensure_session_settings",
@@ -624,9 +628,14 @@ def test_origin_dev_realtime_family_and_projection_still_match_review() -> None:
         len(method_nodes) - EXTRACTION_METHODS,
     )
     assert (
-        projected[0] <= PROJECTED_LINE_CEILING
+        projected[0] <= PROJECTED_LINE_CEILING + REVIEWED_DELIVERY_BASE_LINE_DRIFT
         and projected[1] <= PROJECTED_METHOD_CEILING
     ), (
-        "origin/dev projection drifted above the reviewed ceiling: "
-        f"{projected} > {(PROJECTED_LINE_CEILING, PROJECTED_METHOD_CEILING)}"
+        "origin/dev projection drifted beyond the reviewed delivery amendment: "
+        f"{projected} > "
+        f"{(PROJECTED_LINE_CEILING + REVIEWED_DELIVERY_BASE_LINE_DRIFT, PROJECTED_METHOD_CEILING)}"
     )
+    current_source = CHAT_SCREEN_PATH.read_text(encoding="utf-8")
+    current_screen = _class_node(CHAT_SCREEN_PATH, "ChatScreen")
+    assert len(current_source.splitlines()) <= PROJECTED_LINE_CEILING
+    assert len(_direct_method_nodes(current_screen)) <= PROJECTED_METHOD_CEILING

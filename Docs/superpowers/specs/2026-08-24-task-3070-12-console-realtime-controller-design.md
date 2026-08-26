@@ -1,8 +1,8 @@
 # TASK-3070.12 Console Realtime Controller Design
 
-**Status:** approved by the owner 2026-08-24; review amendments and the mandatory
-evidence-only `dev` drift amendment applied 2026-08-25. The ownership design and
-56/0/1 classification are unchanged.
+**Status:** approved by the owner 2026-08-24; review amendments and mandatory
+evidence-only `dev` drift amendments applied 2026-08-25 and 2026-08-26. The
+ownership design, final ratchets, and 56/0/1 classification are unchanged.
 
 **Task:** `TASK-3070.12 - Extract Console realtime orchestration ownership`
 
@@ -42,6 +42,18 @@ The combined TASK-3070.12/.13 conservative projection remains valid at this base
 17,420 lines and 562 direct methods after the frozen removals, below the immutable
 17,727 / 593 ceilings by 307 lines and 31 methods. The implementation must not hide
 the baseline defects and must keep all currently passing behavioral coverage green.
+
+The delivery rebase onto `dev` at `794ae11521` found 56 further unrelated net
+`ChatScreen` lines from boot-import deferral, off-loop avatar prerendering, and the
+next-send price feature. The exact realtime family, 1,997/19 spans, 56/0/1
+classification, and 633-method pre-extraction count are unchanged. Conservative
+pre-extraction arithmetic is therefore 18,132 / 577, but the actual rebased
+extraction is 17,676 / 577: 400 lines below the unchanged 18,076 / 577 final
+ratchet because the complete move removes 2,434 physical lines. The current-base
+gate accepts only this reviewed 56-line pre-extraction drift and independently
+requires the implemented branch to satisfy the unchanged final ratchet. The
+combined TASK-3070.12/.13 projection becomes 17,476 / 562, still 251 lines and 31
+methods below the immutable 17,727 / 593 ceilings.
 
 ## Goals
 
