@@ -8806,30 +8806,3 @@ guards that assert the transaction statements SQLite actually ran
 (`set_trace_callback`), pinned red-first against both failure modes (loud
 "cannot start a transaction within a transaction" and ChaChaNotes' silent
 borrow, which surfaces only as an EMPTY trace).
-
-## Mutation-test the fence you ADDED, not just the code you changed
-
-**TASK-22221, 2026-08-25.** Moving the Console avatar's mosaic render off the
-event loop introduces the classic async-completion race, so the brief called
-for a generation fence and I wrote one: a `generation != self._..._fit_
-generation` check after the `asyncio.to_thread` hop, plus a matching check
-inside the prerender helper. Both read as load-bearing. Both were dead.
-`replace_character_avatar_widget` already re-checks `is_current()` as the
-FIRST statement inside its mount lock, *before* it unmounts anything — so a
-superseded pass could neither paint a stale-size avatar nor blank the live
-one, with or without my additions. Deleting my fences and re-running the two
-race tests: **8 passed, 0 failed**. The tests were real (mutating the
-pre-existing `is_current()` check reds both of them); the new code was not.
-
-**What to do.** When a change introduces a race and you add a fence for it,
-run the mutation on *your own line* before you ship it: delete it, re-run the
-tests that supposedly cover it, and require a red. A surviving mutation means
-one of two things and you must find out which — either the property is already
-owned by machinery you did not read carefully enough (delete your line and
-leave a comment naming the real owner), or your test does not actually
-exercise the race (fix the test). Shipping both the redundant fence and the
-green test is the worst outcome: it reads as defense-in-depth and is really an
-unkillable line plus a test whose meaning nobody has established. Note the
-inspection trap here — I had read `replace_character_avatar_widget` and still
-mis-remembered its guard as running after `remove_children()`; the test-shaped
-question ("does deleting this red anything?") beat re-reading the code.
