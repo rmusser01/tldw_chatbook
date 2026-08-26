@@ -19,7 +19,20 @@ on:
 # so its history stays complete.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # TASK-22250: cancel superseded PUSH runs, never a pull_request run.
+  #
+  # This suite is the slowest in the repo (12 UI shards + 6 core shards, ~35
+  # min each). Cancelling pull_request runs on every push to the branch meant
+  # an actively-worked PR effectively never produced a verdict: measured on
+  # #2078, each push cancelled the previous batch wholesale -- 20 checks killed
+  # at once -- and the cancellation timestamp of each batch matched the
+  # creation timestamp of the next. That is why `Tests` has reported nothing
+  # since 2026-06-26 while short workflows report fine.
+  #
+  # The exception proves it: `derived-artifacts.yml` already scopes
+  # cancellation to `push` only, and it is the one required check that
+  # consistently survives to report. This adopts that same rule.
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
