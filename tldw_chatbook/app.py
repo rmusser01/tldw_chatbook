@@ -2836,13 +2836,22 @@ class LibraryIngestQueueMixin:
         store attach stay here even though the I/O moved. Uses
         ``merge_restored`` rather than ``restore`` so a job submitted in the
         few milliseconds between ``on_mount`` and this callback survives.
+
+        The store is attached BEFORE the merge, not after: a job submitted in
+        that window was submitted while the registry was store-less, so its
+        own ``_persist`` was a no-op, and nothing later re-offers it. With
+        the store attached first, ``merge_restored`` writes those live jobs
+        through -- which also replaces any persisted row that happens to
+        share their id (both sessions allocate from ``ingest-job-1`` upward,
+        so a collision in this window is the likely case, and the stale row
+        would otherwise be restored in the live job's place next launch).
         """
         if getattr(self, "_ingest_shutdown", False):
             store.close()
             return
         self._library_ingest_jobs_store = store
-        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
         self.library_ingest_jobs.attach_store(store)
+        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
 
     def _expand_library_ingest_source(self, source_path: str) -> list[str] | None:
         """Expand a directory source into the files it contains.

@@ -159,6 +159,45 @@ class _RestoreHost(app_module.LibraryIngestQueueMixin):
         return callback(*args)
 
 
+def test_a_job_submitted_during_the_restore_window_reaches_the_store(tmp_path):
+    """The window's live job must survive the NEXT restart, not just this one.
+
+    It was submitted while the registry was store-less, so its own
+    ``_persist`` was a no-op. Nothing else re-offers it, so before the fix it
+    never reached disk -- and because both sessions allocate from
+    ``ingest-job-1`` upward, the persisted row it collided with stayed and
+    was restored in its place on the next launch.
+    """
+    store = LibraryIngestJobsDB(tmp_path / "jobs.db")
+    seeder = LibraryIngestJobRegistry()
+    seeder.attach_store(store)
+    seeder.submit(source_path="/persisted-1.pdf")
+    seeder.submit(source_path="/persisted-2.pdf")
+    store.close()
+
+    store2 = LibraryIngestJobsDB(tmp_path / "jobs.db")
+    plan = plan_restore(
+        store2.all_jobs(), max_persisted=500, now_iso="2026-08-23T00:00:00+00:00"
+    )
+    live = LibraryIngestJobRegistry()
+    raced = live.submit(source_path="/submitted-during-startup.pdf")
+    assert raced.job_id == "ingest-job-1"  # the collision this window creates
+
+    _RestoreHost(live)._apply_ingest_job_restore(store2, plan)
+    store2.close()
+
+    # Restart: the live job is on disk under its own id, and the stale row it
+    # collided with is gone rather than shadowing it.
+    store3 = LibraryIngestJobsDB(tmp_path / "jobs.db")
+    persisted = {row["job_id"]: row["source_path"] for row in store3.all_jobs()}
+    assert persisted["ingest-job-1"] == "/submitted-during-startup.pdf"
+    assert "/persisted-1.pdf" not in persisted.values()
+
+    reg = _restore(store3, now_iso="2026-08-23T00:00:00+00:00")
+    assert "/submitted-during-startup.pdf" in {j.source_path for j in reg.jobs()}
+    store3.close()
+
+
 def test_a_failed_restore_closes_the_store_it_opened(tmp_path, monkeypatch):
     """A failure after the store opened must not leak its SQLite connection.
 
