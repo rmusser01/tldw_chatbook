@@ -12433,6 +12433,7 @@ UPDATE db_schema_version
                 errors while performing the write.
         """
         written = 0
+        write_error: CharactersRAGDBError | None = None
         try:
             with self.transaction() as cursor:
                 for row in rows:
@@ -12465,7 +12466,9 @@ UPDATE db_schema_version
                 message_id=message_id,
                 error_type=type(error).__name__,
             ).error("message_exchange_write_failed")
-            raise CharactersRAGDBError("Message exchange write failed") from error
+            write_error = CharactersRAGDBError("Message exchange write failed")
+        if write_error is not None:
+            raise write_error from None
         return written
 
     def get_message_exchanges(self, message_id: str) -> List[Dict[str, Any]]:

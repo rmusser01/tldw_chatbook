@@ -8,6 +8,7 @@ straight through via the FK -- there is no soft-delete/version bookkeeping
 for these rows.
 """
 import sqlite3
+import traceback
 from contextlib import contextmanager
 
 import pytest
@@ -114,7 +115,27 @@ def test_lowest_exchange_write_error_boundary_is_content_free(db, monkeypatch):
         logger.remove(sink_id)
 
     assert type(raised.value).__name__ == "CharactersRAGDBError"
-    boundary_text = f"{raised.value!s} {raised.value!r} {' '.join(diagnostics)}"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    exception_graph: list[BaseException] = []
+    pending: list[BaseException] = [raised.value]
+    while pending:
+        error = pending.pop()
+        exception_graph.append(error)
+        if error.__cause__ is not None:
+            pending.append(error.__cause__)
+        if error.__context__ is not None:
+            pending.append(error.__context__)
+    rendered_traceback = "".join(
+        traceback.format_exception(raised.type, raised.value, raised.tb)
+    )
+    boundary_text = " ".join(
+        [
+            *(f"{error!s} {error!r}" for error in exception_graph),
+            *diagnostics,
+            rendered_traceback,
+        ]
+    )
     assert message_id in boundary_text
     assert "OperationalError" in boundary_text
     assert "message_exchange_write_failed" in boundary_text
