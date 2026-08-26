@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-24 23:26'
-updated_date: '2026-08-26 19:38'
+updated_date: '2026-08-26 20:44'
 labels:
   - library
   - ui
@@ -55,4 +55,6 @@ Migrated Library Prompts into the shared adaptive reader with retained Items and
 Post-Qodo hardening: removed the unused test-only PromptReaderState module so LibraryScreen remains the sole mutable reader authority; transferred hidden-field preservation and validation-focus coverage to the mounted production reader; fixed Info fallback so only unavailable Basic routes to Advanced; routed invalid outer saves to the owning Advanced block control; and confined config, data, app-data, and all XDG evidence-driver paths through centralized validation. Verified with 17 mounted reader tests, 10 seam/authority tests, focused mode and isolation regressions, Ruff, compileall, diff checks, and a fresh complete isolated live matrix. ADR required: yes. ADR path: backlog/decisions/086-library-adaptive-reader-shell.md. Reason: hardens the existing accepted boundary without adding a new architectural decision.
 
 CI derived-artifact review: inspected the exact persistent-diagnostic statement delta in tldw_chatbook/UI/Screens/library_screen.py (two new constant-message debug calls and one shortened existing info call retaining only the internal Prompt integer ID). Confirmed no new sink topology and no interpolation of user content, secrets, paths, or URLs; regenerated Docs/security/production-diagnostic-inventory.json and verified it reproduces at 538 owners, 1,241 TASK-492 calls, 7,359 TASK-494 calls, and 8 sink files.
+
+Post-rebase verification: rebased onto origin/dev at 3daa56bf4fcba705cd18de8977b2a58c9e1f802d and regenerated the production diagnostic inventory to resolve the generated-artifact conflict from source (538 owners, 1,241 TASK-492 calls, 7,365 TASK-494 calls, 8 sink files). Hardened two order-sensitive mounted-canvas tests to await actual widget/modal/notification settlement instead of fixed pauses. Verified the complete 341-test Prompt canvas file in exact order, with the remaining 314 targeted Prompt tests green in the immediately preceding run; also passed Ruff, compileall, diff checks, and diagnostic inventory reproduction. No new ADR required; this is verification hardening within ADR-086.
 <!-- SECTION:NOTES:END -->

@@ -4490,6 +4490,7 @@ async def test_library_prompt_back_restores_applied_scope_after_failed_request(
             requests.append((scope, focus_identity))
 
         monkeypatch.setattr(screen, "_request_library_prompts_browse", record_request)
+        await _wait_for_selector(screen, pilot, "#library-prompt-back")
         screen.query_one("#library-prompt-back", Button).press()
         for _ in range(100):
             if requests:
@@ -6965,9 +6966,22 @@ async def test_library_prompt_conflict_overwrite_blocks_delete_admission(tmp_pat
 
         try:
             screen.handle_library_prompt_delete(Button.Pressed(Button()))
-            await pilot.pause()
+            await _wait_for_condition(
+                pilot,
+                lambda: isinstance(host.screen, PromptDeleteConfirmationModal),
+                message="Prompt delete confirmation modal never mounted.",
+            )
+            await _wait_for_selector(
+                host.screen,
+                pilot,
+                "#prompt-delete-confirm",
+            )
             host.screen.query_one("#prompt-delete-confirm", Button).press()
-            await pilot.pause(0.2)
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(host._notifications),
+                message="Prompt mutation-in-flight notification never arrived.",
+            )
             admitted_delete_calls = list(delete_calls)
             admitted_mutation = screen._library_prompts_mutation_in_flight
             admitted_view = screen._library_prompts_view
