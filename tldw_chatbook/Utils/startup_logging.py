@@ -26,7 +26,11 @@ VERBOSE_STARTUP_ENV_VAR = "TLDW_VERBOSE_STARTUP"
 
 
 def startup_stderr_is_quiet() -> bool:
-    """Whether pre-TUI terminal logging is capped at WARNING (the default)."""
+    """Whether pre-TUI terminal logging is capped at WARNING (the default).
+
+    Returns:
+        True unless TLDW_VERBOSE_STARTUP is set to a non-empty value.
+    """
     return not os.environ.get(VERBOSE_STARTUP_ENV_VAR, "").strip()
 
 

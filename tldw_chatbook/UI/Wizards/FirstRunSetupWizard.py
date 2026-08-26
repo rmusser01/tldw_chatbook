@@ -8,7 +8,6 @@ this module renders them and owns persistence via one exclusive worker.
 from __future__ import annotations
 
 import asyncio
-
 import hashlib
 import hmac
 import math
@@ -117,6 +116,7 @@ from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationD
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 if TYPE_CHECKING:
+    from textual.geometry import Region
     from tldw_chatbook.Chat.console_provider_support import (
         ConsoleProviderCatalogEntry,
     )
@@ -183,10 +183,12 @@ class SetupRadioSet(RadioSet):
     BINDINGS = [Binding("enter", "request_advance", "Next", show=False)]
 
     def action_next_button(self) -> None:
+        """Move the highlight down and select it (selection follows focus)."""
         super().action_next_button()
         self._select_highlighted()
 
     def action_previous_button(self) -> None:
+        """Move the highlight up and select it (selection follows focus)."""
         super().action_previous_button()
         self._select_highlighted()
 
@@ -600,11 +602,11 @@ class SetupStep(WizardStep):
 
     def refresh(
         self,
-        *regions,
+        *regions: "Region",
         repaint: bool = True,
         layout: bool = False,
         recompose: bool = False,
-    ):
+    ) -> "SetupStep":
         """TASK-21139 (UAT F-1): recompose must never orphan keyboard focus.
 
         A recompose rebuilds this step's children; if ``app.focused`` is one
@@ -6684,8 +6686,23 @@ class AppearanceStep(SetupStep):
         return card_name.replace("_", " ").strip().title()
 
     def _card_buttons(self, names: list[str]):
+        """Radio rows for splash cards, pressing the retained selection.
+
+        Args:
+            names: Raw snake_case card ids in display order.
+
+        Yields:
+            SetupRadioButton rows with the human name as label and the raw
+            id riding as ``_card_name`` (Qodo review: without value= here,
+            show-all rebuilds and draft restoration rendered every card
+            unpressed even when one was selected).
+        """
         for card_name in names:
-            button = SetupRadioButton(self._card_display_name(card_name))
+            button = SetupRadioButton(
+                self._card_display_name(card_name),
+                value=bool(card_name)
+                and card_name == self.selected_splash_card,
+            )
             button._card_name = card_name
             yield button
 
@@ -8283,8 +8300,10 @@ class SetupWizardContainer(WizardContainer):
                     appearance_step._picked_surprise_me = False
                     self._restore_radio_selection(
                         appearance_step.query_one("#setup-splash-choice", RadioSet),
+                        # Qodo review fix: labels are humanized (TASK-21149);
+                        # match on the raw-id rider, mirroring _theme_name.
                         lambda button: (
-                            str(button.label) == splash_card
+                            getattr(button, "_card_name", "") == splash_card
                             if splash_card
                             else str(button.label).startswith("Surprise me")
                         ),

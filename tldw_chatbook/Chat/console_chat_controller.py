@@ -464,6 +464,15 @@ def project_recovery_should_skip_send_interception(
     modal — project instructions simply don't apply to that send. Sessions
     whose EXISTING binding broke (unavailable/retargeted) or where several
     folders need an explicit choice still get the recovery dialog.
+
+    Args:
+        recovery_code: The ProjectInstructionBindingRecovery code raised
+            by the resolver.
+        state: The session's project-instruction control state.
+
+    Returns:
+        True when the send should proceed without project instructions
+        instead of showing the recovery dialog.
     """
     return (
         recovery_code == "no_eligible_binding"

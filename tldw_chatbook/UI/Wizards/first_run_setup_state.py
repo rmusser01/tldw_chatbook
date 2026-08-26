@@ -558,7 +558,15 @@ def classify_discovery_failure(
 
 
 def probe_failure_summary_detail(probe_failure: str) -> str:
-    """The summary row's honest wording for a failed probe."""
+    """The summary row's honest wording for a failed probe.
+
+    Args:
+        probe_failure: One of the PROVIDER_PROBE_* classifications.
+
+    Returns:
+        Human wording for the Provider row's detail, or "" when there is
+        no failure to describe.
+    """
 
     if probe_failure == PROVIDER_PROBE_AUTH:
         return "saved, but the key failed an authentication check"
@@ -596,6 +604,14 @@ def middle_truncate_path(path_text: str, max_chars: int) -> str:
     The summary's config path used to hard-wrap mid-character across two
     lines. Keeps the start (which disambiguates the profile root) and the
     tail (the filename users recognize), joining with a single ellipsis.
+
+    Args:
+        path_text: The path to display.
+        max_chars: Display budget in cells; floored at 8.
+
+    Returns:
+        ``path_text`` unchanged when it fits, else head + "…" + tail at
+        exactly ``max_chars`` characters.
     """
     if max_chars < 8:
         max_chars = 8
