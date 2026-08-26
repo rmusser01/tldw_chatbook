@@ -132,18 +132,38 @@ _OMITTED = object()
 def _citation_builder(
     *,
     weak_referenceable: bool = False,
+    persistence: "_ReadyCitationPersistence | None" = None,
 ) -> tuple[CitationTraceBuilder, str]:
+    """Build a sealed local trace.
+
+    Pass ``persistence`` when the trace must actually PERSIST (TASK-22301). The
+    repository verifies the seal's run authority against the identity stored in
+    its database, so a builder carrying the hand-built identity below is
+    rejected by ``prepare_write`` and the trace is silently dropped. Tests that
+    only inspect the in-memory aggregate can keep the default.
+    """
+
     now = datetime.now(UTC) - timedelta(seconds=2)
     builder_type = _WeakCitationBuilder if weak_referenceable else CitationTraceBuilder
-    builder = builder_type.local(
-        request_id="request-console-terminal",
-        generation_id="generation-console-terminal",
-        identity_context=LocalCitationIdentityContext(
+    identity_context = (
+        persistence.identity_context
+        if persistence is not None
+        else LocalCitationIdentityContext(
             profile_id="profile-console-terminal",
             local_authority_id="authority-console-terminal",
             fingerprint_key_id="fingerprint-console-terminal",
-        ),
-        fingerprint_codec=CitationFingerprintCodec(b"0123456789abcdef0123456789abcdef"),
+        )
+    )
+    fingerprint_codec = (
+        persistence.fingerprint_codec
+        if persistence is not None
+        else CitationFingerprintCodec(b"0123456789abcdef0123456789abcdef")
+    )
+    builder = builder_type.local(
+        request_id="request-console-terminal",
+        generation_id="generation-console-terminal",
+        identity_context=identity_context,
+        fingerprint_codec=fingerprint_codec,
         policy_version="console-terminal-policy-v1",
         policy_capabilities=(
             PolicyCapability.VIEW_SNAPSHOT,
@@ -239,15 +259,22 @@ class _ReadyCitationPersistence:
         assert identity is not None, (
             "harness precondition: the DB must carry a local citation identity"
         )
+        # Exposed so `_citation_builder` can seal with the SAME run authority
+        # the repository will verify. A builder carrying its own hand-built
+        # identity is rejected by `prepare_write` with
+        # `CitationPersistenceUnavailable("run_authority_mismatch")`, and the
+        # trace is silently never written (measured: 0 rows).
+        self.identity_context = identity
+        self.fingerprint_codec = CitationFingerprintCodec(
+            b"task-22301-citation-boundary-key"
+        )
         self._service = ChatPersistenceService(
             self.db,
             citation_repository=CitationTraceRepository(
                 self.db,
                 policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
                 identity_context=identity,
-                fingerprint_codec=CitationFingerprintCodec(
-                    b"task-22301-citation-boundary-key"
-                ),
+                fingerprint_codec=self.fingerprint_codec,
             ),
         )
 
@@ -1061,8 +1088,8 @@ async def test_console_capture_failure_logs_no_sensitive_text_and_sends_without_
 @pytest.mark.asyncio
 async def test_direct_initial_rag_success_seals_exact_materialized_body_once():
     body = "Exact direct answer 🧪\nacross chunk boundaries."
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
     gateway = _RecordingGateway(
         chunks=("Exact direct ", "answer 🧪\n", "across chunk boundaries.")
@@ -1099,8 +1126,8 @@ async def test_direct_initial_rag_success_seals_exact_materialized_body_once():
 
 @pytest.mark.asyncio
 async def test_direct_initial_rag_prefill_seals_exact_prefill_plus_stream_body():
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
     store.set_session_pinned_prefill(store.active_session_id, "Prefill: ")
     gateway = _RecordingGateway(chunks=("streamed ", "answer"))
@@ -1156,8 +1183,8 @@ async def test_direct_marker_answer_persists_sealed_mapped_occurrences(
     expected_evidence: tuple[int | None, ...],
     expected_states: tuple[StructuralValidationState, ...],
 ):
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
 
     async def capture(_draft):
@@ -1177,11 +1204,12 @@ async def test_direct_marker_answer_persists_sealed_mapped_occurrences(
         loguru_logger.remove(sink_id)
 
     assistant = _assistant(store)
-    assistant_calls = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_calls = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     output = "".join(str(message) for message in captured_logs)
     assert assistant.content == body
     assert assistant.persisted_message_id == assistant.id
@@ -1232,8 +1260,8 @@ async def test_direct_marker_answer_persists_sealed_mapped_occurrences(
 )
 @pytest.mark.asyncio
 async def test_direct_markers_in_markdown_literals_still_seal(body: str):
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
 
     async def capture(_draft):
@@ -1271,8 +1299,8 @@ async def test_direct_non_success_does_not_seal_and_clears_terminal_state(
     error: BaseException | None,
     raises: bool,
 ):
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
 
     async def capture(_draft):
@@ -1299,8 +1327,8 @@ async def test_direct_non_success_does_not_seal_and_clears_terminal_state(
 
 @pytest.mark.asyncio
 async def test_direct_user_stop_does_not_seal_and_clears_terminal_state():
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
     stream_parked = asyncio.Event()
 
@@ -1397,8 +1425,8 @@ async def test_invalid_capture_parts_preserve_context_compatibility_without_fina
 @pytest.mark.asyncio
 async def test_finalizer_exception_logs_only_fixed_content_safe_diagnostic(monkeypatch):
     body = "PRIVATE_ANSWER_SENTINEL_TASK_553_14"
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
 
     def fail_attempt(_self, **_kwargs):
@@ -1427,11 +1455,12 @@ async def test_finalizer_exception_logs_only_fixed_content_safe_diagnostic(monke
         loguru_logger.remove(sink_id)
 
     output = "".join(str(message) for message in captured_logs)
-    assistant_calls = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_calls = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert len(assistant_calls) == 1
     assert "citation_write" not in assistant_calls[0]
     assert "attempt_or_seal_failure" in output
@@ -1749,11 +1778,12 @@ async def test_citation_repair_failure_privacy_sentinels_are_confined_to_selecte
         loguru_logger.remove(sink_id)
 
     assistant = _assistant(store)
-    assistant_writes = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_writes = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert result.visible_copy == assistant.content == initial_body
     if len(gateway.calls) == 2:
         assert gateway.calls[1]["messages"] == expected_repair_messages
@@ -1799,11 +1829,12 @@ async def test_citation_repair_direct_valid_initial_completes_once_without_repai
     )
 
     assistant = _assistant(store)
-    assistant_writes = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_writes = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert result.visible_copy == assistant.content == "Supported claim [S1]"
     assert len(gateway.calls) == 1
     assert store.completion_calls == [assistant.id]
@@ -1836,11 +1867,12 @@ async def test_citation_repair_direct_repairs_once_with_exact_request_and_resolu
     )
 
     assistant = _assistant(store)
-    assistant_writes = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_writes = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert len(gateway.calls) == 2
     assert gateway.calls[0]["resolution"] is gateway.resolution
     assert gateway.calls[1]["resolution"] is gateway.resolution
@@ -1994,11 +2026,12 @@ async def test_citation_repair_direct_unavailable_initial_keeps_original_without
     )
 
     assistant = _assistant(store)
-    assistant_writes = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_writes = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert len(gateway.calls) == 1
     assert result.visible_copy == assistant.content == initial_body
     assert store.completion_calls == [assistant.id]
@@ -2048,11 +2081,12 @@ async def test_citation_repair_direct_failure_keeps_original_and_completes_once(
     )
 
     assistant = _assistant(store)
-    assistant_writes = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_writes = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert len(gateway.calls) == 2
     assert result.visible_copy == assistant.content == initial_body
     assert store.completion_calls == [assistant.id]
@@ -2736,11 +2770,12 @@ async def test_citation_repair_user_cancellation_privacy_sentinels(
         loguru_logger.remove(sink_id)
 
     assistant = _assistant(store)
-    assistant_writes = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_writes = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert len(assistant_writes) == 1
     assert assistant_writes[0]["content"] == initial_body
     assert retained_session.contract is None
@@ -3021,11 +3056,12 @@ async def test_citation_repair_cancel_row_persistence_failure_is_fail_soft(
     assert len(cancel_appends) == 1
     assert cancel_appends[0]["kwargs"]["persist"] is True
     assert persistence.cancel_row_attempts == 1
-    assistant_writes = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_writes = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert len(assistant_writes) == 1
     assert assistant_writes[0]["content"] == initial_body
     cancel_attempt = _first((
@@ -3257,8 +3293,8 @@ async def test_citation_repair_close_during_collection_never_resurrects_session_
 
 @pytest.mark.asyncio
 async def test_agent_initial_rag_success_seals_exact_runtime_materialized_body_once():
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
     bridge = _AgentBridge(store, text="agent answer")
 
@@ -3293,8 +3329,8 @@ async def test_agent_initial_rag_success_seals_exact_runtime_materialized_body_o
 
 @pytest.mark.asyncio
 async def test_agent_empty_done_disarms_before_ordinary_fallback():
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
     bridge = _AgentBridge(store, text="", append_text=False)
 
@@ -3311,11 +3347,12 @@ async def test_agent_empty_done_disarms_before_ordinary_fallback():
     await controller.submit_draft("question")
 
     assistant = _assistant(store)
-    assistant_calls = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_calls = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert assistant.content == "No response was generated."
     assert len(assistant_calls) == 1
     assert "citation_write" not in assistant_calls[0]
@@ -3327,8 +3364,8 @@ async def test_agent_empty_done_disarms_before_ordinary_fallback():
 @pytest.mark.parametrize("status", (RUN_CANCELLED, RUN_ERROR))
 @pytest.mark.asyncio
 async def test_agent_non_success_does_not_seal(status: str):
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
     bridge = _AgentBridge(store, status=status, text="agent partial")
 
@@ -3352,8 +3389,8 @@ async def test_agent_non_success_does_not_seal(status: str):
 
 @pytest.mark.asyncio
 async def test_agent_user_stop_does_not_seal():
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
     started = threading.Event()
 
@@ -3392,8 +3429,8 @@ async def test_agent_user_stop_does_not_seal():
 
 @pytest.mark.asyncio
 async def test_agent_replaced_placeholder_does_not_transfer_finalizer():
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
 
     class _ReplacingAgentBridge(_AgentBridge):
@@ -3439,11 +3476,12 @@ async def test_agent_replaced_placeholder_does_not_transfer_finalizer():
     await controller.submit_draft("question")
 
     assistant = _assistant(store)
-    assistant_calls = [
-        call
-        for call in persistence.create_calls
-        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
-    ]
+    # ROWS, not calls (TASK-22301): the durable dispatch checkpoint
+    # writes its rows with raw SQL in `insert_with_messages` and never
+    # reaches `create_message`, so counting calls sees nothing.
+    assistant_calls = persistence.message_rows(
+        sender=ConsoleMessageRole.ASSISTANT.value
+    )
     assert assistant.content == "replacement answer"
     assert len(assistant_calls) == 1
     assert "citation_write" not in assistant_calls[0]
@@ -3454,8 +3492,8 @@ async def test_agent_replaced_placeholder_does_not_transfer_finalizer():
 
 @pytest.mark.asyncio
 async def test_retry_and_regenerate_never_inherit_initial_rag_finalizer():
-    builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
+    builder, prompt_id = _citation_builder(persistence=persistence)
     store = _persisted_store(persistence)
     gateway = _RecordingGateway(
         chunks=("initial partial",),
