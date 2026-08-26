@@ -288,6 +288,22 @@ Transcript:
 
 ## Related settings & docs
 
+### Exchange capture privacy
+
+Provider exchanges use **Safe** capture by default. The Conversation
+Inspector and live Trace use `c` for scoped future controls; F9 **Console
+Behavior** controls the global On/Off and Safe/Full default. Next-send Full is
+one-shot and expires when consumed. Capture Off preserves dormant Full choices
+and warns before they resume. Imported Trace stays read-only.
+
+Full can include ordinary semantic text such as Anthropic system/messages/tools,
+injected AGENTS/workspace instructions, RAG, and tool arguments/results. It
+structurally excludes credential fields, but ordinary text may itself contain
+secrets. The 64 MiB capture and 16 MiB blob bounds limit size; compression is
+not encryption. Use the per-call governed export profiles, and remember that a
+logical purge cannot promise removal from SQLite WAL/free pages, snapshots,
+prior exports, or backups. See [Context, RAG, and exchange capture](context-and-rag.md#safe-and-full-exchange-capture).
+
 - `[appearance].console_transcript_style` in config.toml: `neutral`,
   `role_accents` (default), or `immersive_rp` — also editable in
   **Settings > Appearance > Console transcript**.

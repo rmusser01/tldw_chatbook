@@ -5,7 +5,7 @@ import builtins
 from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -56,6 +56,7 @@ from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
 )
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Home.dashboard_state import (
     HomeDashboardInput,
     summarize_home_dashboard,
@@ -92,6 +93,105 @@ PERSISTED_PROVIDER_ALIASES = (
     ("Custom OpenAI", "custom"),
     ("custom-openai-api", "custom"),
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation_result", "expected_status"),
+    [
+        (
+            ConfigMutationResult(False, False, None, True, "identity_changed"),
+            "Failed — settings changed; reload and try again",
+        ),
+        (
+            ConfigMutationResult(False, False, "before_replace"),
+            "Failed — Safe state is active for this session; file save failed",
+        ),
+        (
+            ConfigMutationResult(True, False, "cache_reload"),
+            "Saved and active — settings cache refresh degraded",
+        ),
+    ],
+)
+async def test_console_capture_settings_reports_structured_mutation_outcomes(
+    monkeypatch, mutation_result, expected_status
+):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+        screen.query_one(
+            "#settings-console-exchange-capture-enabled", Checkbox
+        ).value = True
+        screen.query_one(
+            "#settings-console-exchange-capture-detail", Select
+        ).value = CaptureDetail.SAFE.value
+        monkeypatch.setattr(
+            settings_screen_module,
+            "apply_console_capture_settings",
+            lambda **_kwargs: mutation_result,
+        )
+        monkeypatch.setattr(
+            settings_screen_module,
+            "runtime_capture_policy",
+            lambda: SimpleNamespace(
+                enabled=True, detail=CaptureDetail.SAFE, generation=8
+            ),
+        )
+        button = screen.query_one(
+            "#settings-console-exchange-capture-apply", Button
+        )
+        await screen.handle_console_exchange_capture_apply(
+            SimpleNamespace(stop=lambda: None, button=button)
+        )
+
+        assert screen._console_capture_status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_console_capture_settings_full_uses_shared_confirmation(monkeypatch):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+        screen.query_one(
+            "#settings-console-exchange-capture-enabled", Checkbox
+        ).value = True
+        screen.query_one(
+            "#settings-console-exchange-capture-detail", Select
+        ).value = CaptureDetail.FULL.value
+        confirmation = AsyncMock(return_value=True)
+        monkeypatch.setattr(host, "push_screen_wait", confirmation)
+        calls: list[dict[str, object]] = []
+
+        def apply(**kwargs):
+            calls.append(kwargs)
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            settings_screen_module, "apply_console_capture_settings", apply
+        )
+        monkeypatch.setattr(
+            settings_screen_module,
+            "runtime_capture_policy",
+            lambda: SimpleNamespace(
+                enabled=True, detail=CaptureDetail.FULL, generation=8
+            ),
+        )
+        button = screen.query_one(
+            "#settings-console-exchange-capture-apply", Button
+        )
+        await screen.handle_console_exchange_capture_apply(
+            SimpleNamespace(stop=lambda: None, button=button)
+        )
+
+        modal = confirmation.await_args.args[0]
+        assert "ordinary text may still contain secrets" in modal.message
+        assert calls and calls[0]["detail"] is CaptureDetail.FULL
 
 
 def _capture_provider_settings_mutations(monkeypatch):
@@ -787,6 +887,8 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     ].owns_config_sections == (
         "console.rail_layout_scope",
         "console.stack_collapsed_rail_labels",
+        "console.exchange_capture",
+        "console.exchange_capture_detail",
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
         "console.max_parallel_runs",

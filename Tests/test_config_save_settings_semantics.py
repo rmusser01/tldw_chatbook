@@ -1,8 +1,31 @@
 """Boolean contract of config_module.save_settings_to_cli_config."""
 
+import os
+import subprocess
+import sys
+
 from tldw_chatbook import config as config_module
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+
+
+def test_config_import_isolated_from_eager_chat_package(tmp_path):
+    """A fresh config-first process must not cycle through Chat.__init__."""
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "config")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import tldw_chatbook.config; import tldw_chatbook.app",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _patch_result(monkeypatch, result: ConfigMutationResult) -> None:

@@ -15,7 +15,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Callable
-from pathlib import Path
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -42,6 +42,7 @@ from tldw_chatbook.Chat.console_cost_tracker import (
 )
 from tldw_chatbook.Chat.console_exchange_capture import (
     CAPTURE_REQUEST_ALLOWLIST,
+    CaptureDetail,
     ExchangeCapture,
     build_request_capture,
 )
@@ -55,6 +56,9 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
     InspectorTurn,
     _SAMPLING_EXCLUDED_REQUEST_KEYS,
+)
+from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
+    ConsoleExchangeExportDialog,
 )
 
 
@@ -470,6 +474,7 @@ def _capture(
     request: dict | None = None,
     response: dict | None = None,
     omitted_keys: tuple[str, ...] = (),
+    capture_detail: CaptureDetail = CaptureDetail.SAFE,
 ) -> ExchangeCapture:
     return ExchangeCapture(
         run_tag=run_tag,
@@ -483,6 +488,7 @@ def _capture(
         status=status,
         usage_json=usage_json,
         omitted_keys=omitted_keys,
+        capture_detail=capture_detail,
     )
 
 
@@ -1022,12 +1028,8 @@ async def test_sampling_section_key_set_is_pinned_to_the_capture_allowlist() -> 
 
 
 @pytest.mark.asyncio
-async def test_save_button_disabled_and_tooltip_when_ephemeral() -> None:
-    """Finding 3 (task-9 review): pins the per-call Save-to-File gate.
-    This repo has a documented history of gates discovered inert -- an
-    ephemeral inspector's Save button must be disabled AND carry the
-    blocked-reason tooltip; Copy JSON (never writes to disk) stays
-    enabled."""
+async def test_ephemeral_call_uses_only_governed_export_action() -> None:
+    """Per-call disclosure always routes through the shared governor."""
     cap = _capture("r1", 0, "t", "m")
 
     async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
@@ -1051,13 +1053,19 @@ async def test_save_button_disabled_and_tooltip_when_ephemeral() -> None:
         call.collapsed = False
         await _wait_until(pilot, lambda: bool(call.query(Button)))
 
-        save_button = call.query_one("#console-inspector-exchange-save-0-0", Button)
-        assert save_button.disabled is True
-        assert save_button.tooltip is not None
-        assert "temporary chat" in str(save_button.tooltip)
-
-        copy_button = call.query_one("#console-inspector-exchange-copy-0-0", Button)
-        assert copy_button.disabled is False
+        export_button = call.query_one(
+            "#console-inspector-exchange-export-0-0", Button
+        )
+        assert export_button.disabled is False
+        button_ids = {button.id or "" for button in call.query(Button)}
+        assert not any(
+            button_id.startswith("console-inspector-exchange-copy-")
+            for button_id in button_ids
+        )
+        assert not any(
+            button_id.startswith("console-inspector-exchange-save-")
+            for button_id in button_ids
+        )
 
 
 @pytest.mark.asyncio
@@ -1242,14 +1250,11 @@ async def _expand_first_exchange_call(pilot, modal) -> None:
 
 
 @pytest.mark.asyncio
-async def test_exchange_copy_json_omits_project_instruction_body(monkeypatch) -> None:
+async def test_exchange_action_opens_governed_export_with_immutable_capture() -> None:
     cap = _capture_with_project_instruction_row()
 
     async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
         return [(cap, False)]
-
-    fake_copy = SimpleNamespace(copy=Mock())
-    monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
 
     app = InspectorHarness(
         **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
@@ -1260,51 +1265,20 @@ async def test_exchange_copy_json_omits_project_instruction_body(monkeypatch) ->
         modal = app.screen
         await _expand_first_exchange_call(pilot, modal)
 
-        await pilot.click("#console-inspector-exchange-copy-0-0")
+        await pilot.click("#console-inspector-exchange-export-0-0")
         await pilot.pause()
 
-    fake_copy.copy.assert_called_once()
-    exported = fake_copy.copy.call_args.args[0]
-    assert _EXCHANGE_EXPORT_SENTINEL not in exported
-    assert "ordinary message" in exported
-    assert "omitted by capture policy" in exported
+        assert isinstance(app.screen, ConsoleExchangeExportDialog)
+        assert app.screen._capture is cap
 
 
 @pytest.mark.asyncio
-async def test_exchange_save_to_file_omits_project_instruction_body(
-    tmp_path, monkeypatch
-) -> None:
+async def test_exchange_call_title_includes_capture_provenance() -> None:
     cap = _capture_with_project_instruction_row()
+    cap = replace(cap, capture_detail=CaptureDetail.FULL)
 
     async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
         return [(cap, False)]
-
-    import tldw_chatbook.Widgets.Console.console_conversation_inspector as inspector_module
-
-    class FakePath:
-        """See ``test_console_context_modal.py``'s ``FakePath`` -- real
-        ``path_validation.validate_path`` needs ``os.PathLike`` support
-        (``__fspath__``), so a bare stand-in raises ``TypeError`` there and
-        would make this save look "rejected" instead of exercising the
-        happy path this test is pinning."""
-
-        def __init__(self, *parts: str | Path) -> None:
-            self._path = tmp_path.joinpath(*parts)
-
-        @classmethod
-        def home(cls) -> "FakePath":
-            return cls(tmp_path)
-
-        def __truediv__(self, other: str) -> "FakePath":
-            return FakePath(self._path, other)
-
-        def __fspath__(self) -> str:
-            return str(self._path)
-
-        def __getattr__(self, name: str):
-            return getattr(self._path, name)
-
-    monkeypatch.setattr(inspector_module, "Path", FakePath)
 
     app = InspectorHarness(
         **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
@@ -1315,15 +1289,11 @@ async def test_exchange_save_to_file_omits_project_instruction_body(
         modal = app.screen
         await _expand_first_exchange_call(pilot, modal)
 
-        await pilot.click("#console-inspector-exchange-save-0-0")
-        await pilot.pause()
-
-    saved_files = list((tmp_path / "Downloads").glob("chatbook_exchange_*.json"))
-    assert len(saved_files) == 1
-    saved = saved_files[0].read_text(encoding="utf-8")
-    assert _EXCHANGE_EXPORT_SENTINEL not in saved
-    assert "ordinary message" in saved
-    assert "omitted by capture policy" in saved
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        assert "capture: Full" in _rendered_title(call)
 
 
 @pytest.mark.asyncio

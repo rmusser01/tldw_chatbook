@@ -1,6 +1,8 @@
 # tldw_cli/config.py
 # Description: Configuration management for the tldw_cli application.
 #
+from __future__ import annotations
+
 # Imports
 import copy
 from contextlib import ExitStack, contextmanager
@@ -42,7 +44,8 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Utils.adaptive_reader_state import (
     normalize_adaptive_reader_preferences,
 )
@@ -6293,6 +6296,8 @@ def _publish_runtime_capture_policy(
     generation: int,
 ) -> RuntimeCapturePolicy:
     """Publish one validated capture policy without touching general caches."""
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+
     if not isinstance(detail, CaptureDetail):
         raise TypeError("detail must be CaptureDetail")
     policy = RuntimeCapturePolicy(bool(enabled), detail, generation)
@@ -6304,6 +6309,8 @@ def _publish_runtime_capture_policy(
 
 def runtime_capture_policy() -> RuntimeCapturePolicy:
     """Return the shared runtime capture policy, resolving invalid detail Safe."""
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         current = _RUNTIME_CAPTURE_POLICY
     if current is not None:
@@ -6330,6 +6337,8 @@ def apply_console_capture_settings(
     expected_generation: int,
 ) -> ConfigMutationResult:
     """Apply the kill switch/detail with privacy-safe publication ordering."""
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+
     if type(enabled) is not bool or not isinstance(detail, CaptureDetail):
         return ConfigMutationResult(False, False, "before_replace")
 

@@ -107,6 +107,13 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
 )
+from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
+    CapturePolicyBindings,
+    ConsoleCapturePolicyDialog,
+)
+from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
+    ConsoleExchangeExportDialog,
+)
 
 MODAL_ID = "console-inspector-modal"
 CLOSE_BUTTON_ID = "console-inspector-close"
@@ -173,6 +180,7 @@ _EXCHANGE_SECTION_ID_PREFIX = "console-inspector-exchange-section-"
 _EXCHANGE_MESSAGE_ID_PREFIX = "console-inspector-exchange-message-"
 _EXCHANGE_COPY_BUTTON_PREFIX = "console-inspector-exchange-copy-"
 _EXCHANGE_SAVE_BUTTON_PREFIX = "console-inspector-exchange-save-"
+_EXCHANGE_EXPORT_BUTTON_PREFIX = "console-inspector-exchange-export-"
 
 # Section keys, in render order. "toolcalls" (the response's own tool
 # calls) is built separately -- and OMITTED entirely when empty -- rather
@@ -246,6 +254,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         border: tall gray; padding: 1 2;
     }
     #console-inspector-header { height: auto; }
+    #console-inspector-policy-status { height: auto; color: $text-muted; }
     #console-inspector-tabs { height: 1fr; margin-top: 1; }
     #console-inspector-costs-rows { height: 1fr; }
     .console-inspector-cost-row { height: auto; }
@@ -285,6 +294,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     BINDINGS = [
         ("escape", "request_safe_cancel", "Close"),
         ("r", "refresh", "Refresh"),
+        ("c", "capture_policy", "Capture"),
     ]
     SAFE_MODAL_CONTENT = f"#{MODAL_ID}"
 
@@ -355,6 +365,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         target_session_id: str | None = None,
         target_conversation_id: str | None = None,
         capture_revision_provider: Callable[[], int | None] | None = None,
+        capture_policy_bindings: CapturePolicyBindings | None = None,
         initial_tab: str = TAB_COSTS,
     ) -> None:
         """Initialize the inspector.
@@ -453,6 +464,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._target_session_id = target_session_id
         self._target_conversation_id = target_conversation_id
         self._capture_revision_provider = capture_revision_provider
+        self._capture_policy_bindings = capture_policy_bindings
         try:
             self._capture_revision_at_open = (
                 capture_revision_provider()
@@ -529,6 +541,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         with Vertical(id=MODAL_ID):
             yield Static(
                 "Conversation Inspector", id="console-inspector-header", markup=False
+            )
+            yield Static(
+                self._capture_policy_text(),
+                id="console-inspector-policy-status",
+                markup=False,
             )
             with TabbedContent(id="console-inspector-tabs", initial=self._initial_tab):
                 with TabPane("Costs", id=TAB_COSTS):
@@ -635,6 +652,36 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             name="load_snapshot",
         )
         self.call_after_refresh(self._focus_initial_control)
+
+    def _capture_policy_text(self) -> str:
+        bindings = self._capture_policy_bindings
+        if bindings is None:
+            return "Future exchange capture: unavailable"
+        try:
+            snapshot = bindings.read()
+        except Exception:
+            return "Future exchange capture: unavailable"
+        future = (
+            "Off" if not snapshot.enabled else snapshot.effective.detail.value.title()
+        )
+        active = (
+            "No active run is frozen"
+            if snapshot.active_run_detail is None
+            else f"Active run frozen at {snapshot.active_run_detail.value.title()}"
+        )
+        return f"Future exchange capture: {future} · c Change…\n{active}"
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide the contextual capture binding when no live target exists."""
+        if action == "capture_policy":
+            return self._capture_policy_bindings is not None
+        return True
+
+    def action_capture_policy(self) -> None:
+        """Open policy controls for the immutable Inspector target."""
+        if self._capture_policy_bindings is None:
+            return
+        self.app.push_screen(ConsoleCapturePolicyDialog(self._capture_policy_bindings))
 
     def _focus_initial_control(self) -> None:
         """Focus the most relevant available Next Send action (task-18300,
@@ -974,7 +1021,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     def _exchange_call_title(self, capture: ExchangeCapture, abandoned: bool) -> str:
         text = (
             f"call {capture.seq} [{capture.status}] {capture.model} -- "
-            f"{self._call_cost_line(capture)}"
+            f"{self._call_cost_line(capture)} · "
+            f"capture: {capture.capture_detail.value.title()}"
         )
         if abandoned:
             text += " [abandoned regeneration]"
@@ -1293,17 +1341,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if usage is not None:
             contents.mount(Static(self._reported_usage_line(usage), markup=False))
 
-        save_button = Button(
-            "Save to File",
-            id=f"{_EXCHANGE_SAVE_BUTTON_PREFIX}{call_key}",
-            disabled=self._save_blocked_reason is not None,
-        )
-        if self._save_blocked_reason is not None:
-            save_button.tooltip = self._save_blocked_reason
         contents.mount(
             Horizontal(
-                Button("Copy JSON", id=f"{_EXCHANGE_COPY_BUTTON_PREFIX}{call_key}"),
-                save_button,
+                Button(
+                    "Export…",
+                    id=f"{_EXCHANGE_EXPORT_BUTTON_PREFIX}{call_key}",
+                ),
                 classes="console-inspector-exchange-call-actions",
             )
         )
@@ -1424,6 +1467,33 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             event.stop()
             call_key = button_id[len(_EXCHANGE_SAVE_BUTTON_PREFIX) :]
             self._save_exchange_capture(call_key)
+        elif button_id.startswith(_EXCHANGE_EXPORT_BUTTON_PREFIX):
+            event.stop()
+            call_key = button_id[len(_EXCHANGE_EXPORT_BUTTON_PREFIX) :]
+            self._open_exchange_export(call_key)
+
+    def _open_exchange_export(self, call_key: str) -> bool:
+        """Open the governor for the exact loaded call and capture revision."""
+        if not self._capture_revision_is_current():
+            return False
+        capture = self._exchange_capture_by_call_key.get(call_key)
+        if capture is None:
+            return False
+        expected = self._capture_revision_at_open
+        provider = self._capture_revision_provider
+        if expected is None or provider is None:
+            expected = 0
+
+            def provider() -> int:
+                return 0
+        self.app.push_screen(
+            ConsoleExchangeExportDialog(
+                capture,
+                expected_capture_revision=expected,
+                capture_revision_provider=provider,
+            )
+        )
+        return True
 
     def _copy_exchange_capture(self, call_key: str) -> bool:
         """Verbatim idiom from the retired standalone context modal's own

@@ -11913,6 +11913,84 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
+/* Governed Console exchange capture surfaces (ADR-089). */
+#console-inspector-policy-status {
+    height: auto;
+    color: $text-muted;
+}
+
+ConsoleCapturePolicyDialog,
+ConsoleExchangeExportDialog {
+    align: center middle;
+}
+
+#capture-policy-dialog,
+#exchange-export-dialog {
+    width: 76;
+    max-width: 96%;
+    height: 22;
+    max-height: 96%;
+    border: tall $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#capture-policy-title,
+#exchange-export-title {
+    height: 1;
+    text-style: bold;
+}
+
+#capture-policy-body,
+#exchange-export-body {
+    height: 1fr;
+    scrollbar-gutter: stable;
+}
+
+#capture-policy-scopes,
+#capture-policy-details,
+#exchange-export-profiles,
+#exchange-export-destinations {
+    height: auto;
+}
+
+#capture-policy-effective,
+#capture-policy-reason,
+#capture-policy-count,
+#capture-policy-status,
+#exchange-export-profile-copy,
+#exchange-export-full-reason,
+#exchange-export-status {
+    height: auto;
+}
+
+#capture-policy-reason,
+#exchange-export-full-reason {
+    color: $warning;
+}
+
+#capture-policy-actions,
+#exchange-export-actions {
+    height: 3;
+    min-height: 3;
+    align-horizontal: right;
+}
+
+#capture-policy-actions Button,
+#exchange-export-actions Button {
+    min-width: 10;
+    margin-left: 1;
+}
+
+#capture-policy-status.-error,
+#exchange-export-status.-error {
+    color: $error;
+}
+
+#exchange-export-path {
+    height: 3;
+}
+
 /* ===== MODULE: components/_workbench.tcss ===== */
 /* ========================================
  * COMPONENTS: Workbench

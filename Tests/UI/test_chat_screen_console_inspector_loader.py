@@ -20,6 +20,8 @@ import pytest
 from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_controller import CapturePolicyMutationStatus
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureCorruptError,
     ExchangeCapture,
@@ -319,7 +321,13 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
         capture_quiescent=lambda _session_id: quiescent.value,
     )
     capture_revision = Mock(return_value=11)
-    controller = SimpleNamespace(store=store, capture_revision=capture_revision)
+    policy_snapshot = SimpleNamespace(session_id=session.id)
+    controller = SimpleNamespace(
+        store=store,
+        capture_revision=capture_revision,
+        capture_policy_snapshot=Mock(return_value=policy_snapshot),
+        apply_global_capture_settings=Mock(),
+    )
     pushed = Mock()
     screen = SimpleNamespace(
         _build_console_inspector_cost_data=lambda: (
@@ -351,6 +359,13 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
     quiescent.value = True
     assert inspector._capture_revision_provider() is None
     capture_revision.assert_called_with("session-at-open")
+
+    result = inspector._capture_policy_bindings.apply_global(
+        True, CaptureDetail.FULL, 2, 3
+    )
+    assert result.status is CapturePolicyMutationStatus.TARGET_MISSING
+    assert result.snapshot is policy_snapshot
+    controller.apply_global_capture_settings.assert_not_called()
 
 
 async def _empty_loader(_native_message_id: str):
