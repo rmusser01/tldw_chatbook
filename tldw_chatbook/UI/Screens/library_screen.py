@@ -1931,9 +1931,6 @@ class LibraryScreen(BaseAppScreen):
 
     BINDINGS = [
         Binding(
-            "f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True
-        ),
-        Binding(
             "shift+f6",
             "focus_previous_workbench_pane",
             "Previous pane",

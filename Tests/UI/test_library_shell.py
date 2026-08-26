@@ -1031,6 +1031,15 @@ class LibraryProductionCSSHarness(LibraryHarness):
     CSS_PATH = TldwCli.CSS_PATH
 
 
+class LibraryGlobalKeyProductionCSSHarness(LibraryProductionCSSHarness):
+    """Exercise TldwCli's real global F6 binding and delegation seam."""
+
+    BINDINGS = tuple(binding for binding in TldwCli.BINDINGS if binding.key == "f6")
+
+    async def action_focus_next_workbench_pane(self) -> None:
+        await TldwCli.action_focus_next_workbench_pane(self)
+
+
 class _AsyncLibraryEvidenceGate:
     """One independently released source-evidence call."""
 
@@ -4778,7 +4787,7 @@ async def test_library_emergency_import_keyboard_reaches_and_activates_return() 
     """Import's pinned return is reachable by pane cycle and reverse Tab."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryProductionCSSHarness(app)
+    host = LibraryGlobalKeyProductionCSSHarness(app)
     async with host.run_test(size=(60, 48)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
@@ -4824,6 +4833,14 @@ async def test_library_emergency_import_keyboard_reaches_and_activates_return() 
             lambda: rail.display and not canvas.display,
             message="Pinned return did not activate from Enter",
         )
+
+
+def test_library_keeps_f6_owned_by_the_app_global_binding() -> None:
+    """Library delegates F6 without shadowing the app-reserved shortcut."""
+    assert all(
+        (binding.key if hasattr(binding, "key") else binding[0]) != "f6"
+        for binding in LibraryScreen.BINDINGS
+    )
 
 
 @pytest.mark.asyncio
