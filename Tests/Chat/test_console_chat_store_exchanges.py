@@ -437,15 +437,21 @@ def test_persist_exchanges_only_survives_a_serialization_failure(
 def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
     """FINDING 4: real coverage for ``ChatPersistenceService.
     append_message_exchanges`` -- a raising DB must not escape the wrapper,
-    the call must report ``False``, and the warning log must carry only
-    ``message_id``/``error`` (never row contents or capture bytes)."""
+    the call must report ``False``, and the warning log must carry only a
+    stable category, ``message_id``, and exception type (never semantic
+    exception text, row contents, or capture bytes)."""
     from loguru import logger as loguru_logger
 
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 
+    canary = "CANARY_SEMANTIC_REQUEST_RESPONSE_MUST_NOT_REACH_LOGS"
+    failure = RuntimeError(
+        f"{canary}: request=private-prompt response=private-completion"
+    )
+
     class _RaisingDb:
         def append_message_exchanges_local(self, message_id, rows):
-            raise RuntimeError("disk full")
+            raise failure
 
     service = ChatPersistenceService(_RaisingDb())
     rows = [{
@@ -453,11 +459,10 @@ def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
         "capture_blob": b"SECRET-CAPTURE-BYTES", "created_at": "t",
     }]
 
-    diagnostics: list[str] = []
+    events: list[dict] = []
     sink_id = loguru_logger.add(
-        diagnostics.append,
+        lambda message: events.append(message.record.copy()),
         level="WARNING",
-        format="{extra[message_id]} {extra[error]} {message}",
     )
     try:
         result = service.append_message_exchanges(message_id="msg-1", rows=rows)
@@ -465,10 +470,14 @@ def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
         loguru_logger.remove(sink_id)
 
     assert result is False
-    assert any(
-        "exchange_append_failed" in d and "msg-1" in d for d in diagnostics
-    ), diagnostics
-    assert not any("SECRET-CAPTURE-BYTES" in d for d in diagnostics), diagnostics
+    event = next(e for e in events if e["message"] == "exchange_append_failed")
+    assert event["extra"]["message_id"] == "msg-1"
+    assert event["extra"]["error_type"] == "RuntimeError"
+    assert "error" not in event["extra"]
+    serialized_event = repr(event)
+    assert canary not in serialized_event
+    assert repr(failure) not in serialized_event
+    assert "SECRET-CAPTURE-BYTES" not in serialized_event
 
 
 # --- Blob-compression memoization (Qodo PR #1883 finding 4) ----------------
