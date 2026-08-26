@@ -141,7 +141,13 @@ def _sql_texts(path: Path) -> list[str]:
 
 
 def declared_indexes() -> dict[str, set[str]]:
-    """Map index name -> the source files that declare it."""
+    """Find every index the schema sources under ``DB/`` create.
+
+    Returns:
+        Index name -> the repository-relative source paths whose SQL
+        declares it. A name created by more than one file (a fresh-schema
+        string and a migration step, typically) maps to both.
+    """
     found: dict[str, set[str]] = {}
     sources: list[tuple[Path, list[str]]] = []
     for py in sorted(DB_DIR.rglob("*.py")):
@@ -158,7 +164,22 @@ def declared_indexes() -> dict[str, set[str]]:
 
 
 def read_census() -> dict[str, tuple[str, str]]:
-    """Map index name -> (status, note). Raises SystemExit on a malformed row."""
+    """Parse ``index_plan_pin_census.tsv``.
+
+    Blank lines and ``#`` comments are skipped; the note column is optional.
+
+    Returns:
+        Index name -> ``(status, note)``, where status is one of
+        ``VALID_STATUSES`` and note is ``""`` when the row omits it.
+
+    Raises:
+        SystemExit: With code 1, after printing the offending line, when the
+            census file is missing, a row has fewer than two TAB-separated
+            columns, a row's status is outside ``VALID_STATUSES``, or an
+            index name appears twice. Malformed input is a hard stop rather
+            than a skipped row: a census that silently drops what it cannot
+            parse is a guard that reports success for rows nobody read.
+    """
     if not CENSUS.exists():
         print(f"FAIL: census file missing: {CENSUS.relative_to(REPO_ROOT)}")
         raise SystemExit(1)
@@ -280,6 +301,16 @@ def plan_pinning_files() -> dict[str, set[str]]:
 
 
 def main() -> int:
+    """Check the census against the tree and report every discrepancy.
+
+    Three failure classes are reported together rather than short-circuiting
+    on the first: an index created but absent from the census, a census row
+    naming an index nothing creates any more, and a row recorded
+    ``plan-pinned`` that no test file positively pins.
+
+    Returns:
+        0 when the census covers the tree exactly, 1 otherwise.
+    """
     declared = declared_indexes()
     census = read_census()
     pins = plan_pinning_files()
