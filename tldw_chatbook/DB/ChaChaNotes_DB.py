@@ -510,7 +510,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 49  # `messages_au` scoped to the FTS-relevant columns (task-21128).
+    _CURRENT_SCHEMA_VERSION = 50  # Console Library policy follows live conversations (task-22225).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -6161,7 +6161,22 @@ UPDATE db_schema_version
         cursor: sqlite3.Cursor,
         auto_retrieve_on_send: int,
     ) -> None:
-        """Seed the final policy for every conversation present at v47."""
+        """Seed the final policy for every LIVE conversation present at v47.
+
+        As shipped this selected ``FROM conversations`` unfiltered, so a
+        profile paid one insert per conversation it had ever held and then
+        stored policy for tombstones forever (task-22225). A soft-deleted
+        conversation cannot use the row: ``ConsoleLibraryPolicyRepository``
+        joins ``conversations`` and fail-closes on ``deleted``, both writers
+        refuse a deleted conversation outright, and the durable-turn commit
+        raises before it reads policy. The row was inert and permanent.
+
+        Editing an applied step is safe here for exactly one reason: it can
+        only change the outcome for a database that has not yet reached v48,
+        and ``_migrate_from_v49_to_v50`` removes the rows from a database that
+        already ran the shipped seed, in the same open. Both populations
+        converge on this predicate. See ADR-079's amendment.
+        """
         cursor.execute(
             """
             INSERT INTO console_conversation_library_policy(
@@ -6171,6 +6186,7 @@ UPDATE db_schema_version
             )
             SELECT id, ?, 1
               FROM conversations
+             WHERE deleted = 0
             """,
             (auto_retrieve_on_send,),
         )
@@ -6415,9 +6431,17 @@ UPDATE db_schema_version
     def _migrate_from_v47_to_v48(self, conn: sqlite3.Connection) -> None:
         """Add device-local Console Library policy and dispatch recovery schema.
 
-        Existing conversations, including soft-deleted rows, receive the one
-        sanitized legacy automatic-retrieval value supplied by the config
-        layer and assistant Library access Allowed.
+        Existing LIVE conversations receive the one sanitized legacy
+        automatic-retrieval value supplied by the config layer and assistant
+        Library access Allowed.
+
+        As shipped this also seeded soft-deleted conversations, which cost one
+        insert per tombstone inside the boot transaction and stored policy
+        nothing could read (task-22225). The predicate was corrected here
+        rather than only forward because that edit can affect ONLY a database
+        that has not yet reached v48; ``_migrate_from_v49_to_v50`` removes the
+        rows an already-migrated database is carrying, so the two populations
+        converge within one open instead of diverging permanently.
 
         The seed is OPTIONAL (task-21441). As shipped, this step raised unless
         the constructor was handed a ``ConsoleLibraryMigrationSeed``, with a
@@ -6593,6 +6617,89 @@ UPDATE db_schema_version
             )
             raise SchemaError(
                 f"Migration from V48 to V49 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v49_to_v50(self, conn: sqlite3.Connection) -> None:
+        """Retire Console Library policy rows with no live conversation.
+
+        The v47->v48 seed wrote one policy row per conversation with no
+        ``deleted`` predicate, so a profile stored policy for every
+        conversation it had ever held and paid one insert per tombstone inside
+        the boot version-bump transaction (task-22225). The seed now excludes
+        soft-deleted conversations; this step is the other half, and the
+        reason editing the applied v48 SQL is honest rather than silent: a
+        database that has not reached v48 never writes the rows, a database
+        that already ran the shipped seed has them removed here, and both end
+        the same open in the same state.
+
+        What the removed rows did: nothing an application could observe.
+        ``ConsoleLibraryPolicyRepository`` joins ``conversations`` and
+        fail-closes to Never/Blocked unless ``deleted = 0``; ``insert`` and
+        ``compare_and_swap`` both refuse a missing or deleted conversation;
+        and ``commit_durable_turn`` raises before it reads policy. Missing
+        policy is likewise an ordinary state -- ``add_conversation`` has never
+        written a row, and the coordinator inserts revision one on demand --
+        so removal cannot strand a live conversation.
+
+        DML only: the file adds no table, index, or trigger, so it needs no
+        ``VALID_TABLES`` or index-census entry. It is idempotent, and it runs
+        inside the step's transaction, so a failure anywhere in the chain
+        rewinds the deletes with the version stamp.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                transaction.
+
+        Raises:
+            SchemaError: If the database is not at v49, the file cannot be
+                read/split, or the guarded version bump does not land.
+        """
+        self._require_migration_entry_version(conn, 49, "V49→V50")
+        logger.info(
+            f"Migrating schema from V49 to V50 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v49_to_v50_console_policy_tombstone_cleanup.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V49→V50",
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 50
+                     WHERE schema_name = ?
+                       AND version = 49
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V49→V50] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 50:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V49→V50] Migration version check failed. "
+                    f"Expected 50, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V49→V50] Migration completed successfully for DB: "
+                f"{self.db_path_str}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V49→V50] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V49 to V50 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
@@ -6792,6 +6899,7 @@ UPDATE db_schema_version
                     46: self._migrate_from_v46_to_v47,
                     47: self._migrate_from_v47_to_v48,
                     48: self._migrate_from_v48_to_v49,
+                    49: self._migrate_from_v49_to_v50,
                 }
 
                 if current_db_version == 0:

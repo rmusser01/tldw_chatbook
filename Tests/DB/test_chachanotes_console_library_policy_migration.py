@@ -276,8 +276,11 @@ def test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows(
             "ORDER BY conversation_id"
         )
     ] == [
+        # The template also carries a soft-deleted conversation. It gets no
+        # row: task-22225 narrowed the seed to live conversations, and
+        # `Tests/DB/test_chachanotes_v50_console_policy_tombstone_cleanup.py`
+        # owns that contract plus the cleanup for databases already seeded.
         ("active-conversation", 1, 1),
-        ("deleted-conversation", 1, 1),
     ]
 
     _insert_conversation(connection, "after-migration")
@@ -454,8 +457,9 @@ def test_v47_absent_seed_migrates_with_retrieval_off(
 
     This case used to raise ``SchemaError`` and is the whole reason
     ``CharactersRAGDB`` could not migrate itself (task-21441). The result must
-    be indistinguishable from an explicit ``auto_retrieve_on_send=False``,
-    including for the soft-deleted conversation the template carries.
+    be indistinguishable from an explicit ``auto_retrieve_on_send=False``.
+    The soft-deleted conversation the template carries is seeded by neither
+    arm (task-22225).
     """
     absent = tmp_path / "absent-seed.sqlite"
     explicit = tmp_path / "explicit-false-seed.sqlite"
@@ -480,7 +484,6 @@ def test_v47_absent_seed_migrates_with_retrieval_off(
                 ).fetchall()
             ) == [
                 ("active-conversation", 0, 1),
-                ("deleted-conversation", 0, 1),
             ]
 
 
@@ -716,7 +719,9 @@ def test_two_concurrent_openers_converge_on_one_complete_seed(
     assert len(calls) == 1
     winner = int(calls[0])
     current = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+    # One row, not two: the template's soft-deleted conversation is not seeded
+    # (task-22225). Whichever opener wins the race, both see the same value.
     assert results == [
-        (current, (winner, winner)),
-        (current, (winner, winner)),
+        (current, (winner,)),
+        (current, (winner,)),
     ]
