@@ -1,10 +1,10 @@
 ---
 id: TASK-22507
 title: Resume prior character chats from Roleplay
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-26 15:14'
-updated_date: '2026-08-26 15:31'
+updated_date: '2026-08-26 21:26'
 labels:
   - roleplay
   - console
@@ -27,18 +27,18 @@ Users who discover a saved local character conversation in Roleplay need to cont
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Selecting a recent saved local character conversation opens its read-only preview, hides card-level actions, and Back to card restores them.
-- [ ] #2 The preview exposes Resume chat as the sole primary action in the approved three-row vertical hierarchy, with contained controls and usable transcript space at 80x24 and standard widths.
-- [ ] #3 Preview loading, empty, and failure states are distinct; Resume remains available from a valid row even when preview text cannot load.
-- [ ] #4 Resume passes only the validated local conversation ID to Console and never aliases the bounded transcript handoff or RAG scope.
-- [ ] #5 An already-live matching Console session is activated without duplication and preserves its live draft and settings; the active matching duplicate wins.
-- [ ] #6 A closed conversation is restored through the canonical Console path with its saved tree, active leaf, prompt, roleplay provenance, policies, speech preferences, and pinned prefill within existing safety limits and without a provider call.
-- [ ] #7 Earlier pending Console intents reach their existing terminal or transient-release outcome first, after which Resume becomes the final active-session target and the Console composer receives focus.
-- [ ] #8 Missing, failed, or cancelled resume preserves the prior active Console session and durable conversation and removes only a partial runtime session created by that attempt.
-- [ ] #9 Historical character behavior remains authoritative: version-2 metadata stores the character-name snapshot, version-1 conversations are not guessed or backfilled from the current card, and future versions remain fail-closed.
-- [ ] #10 Send transcript to Console draft remains a separate bounded 6000-character context action, and Open in Library remains unchanged.
-- [ ] #11 Targeted automated tests cover navigation, ordering, live-session reuse, hydration, failure atomicity, metadata compatibility, focus, contrast, and compact layout behavior.
-- [ ] #12 ADR-046 is amended before implementation to record the metadata-version and historical character-name authority decision.
+- [x] #1 Selecting a recent saved local character conversation opens its read-only preview, hides card-level actions, and Back to card restores them.
+- [x] #2 The preview exposes Resume chat as the sole primary action in the approved three-row vertical hierarchy, with contained controls and usable transcript space at 80x24 and standard widths.
+- [x] #3 Preview loading, empty, and failure states are distinct; Resume remains available from a valid row even when preview text cannot load.
+- [x] #4 Resume passes only the validated local conversation ID to Console and never aliases the bounded transcript handoff or RAG scope.
+- [x] #5 An already-live matching Console session is activated without duplication and preserves its live draft and settings; the active matching duplicate wins.
+- [x] #6 A closed conversation is restored through the canonical Console path with its saved tree, active leaf, prompt, roleplay provenance, policies, speech preferences, and pinned prefill within existing safety limits and without a provider call.
+- [x] #7 Earlier pending Console intents reach their existing terminal or transient-release outcome first, after which Resume becomes the final active-session target and the Console composer receives focus.
+- [x] #8 Missing, failed, or cancelled resume preserves the prior active Console session and durable conversation and removes only a partial runtime session created by that attempt.
+- [x] #9 Historical character behavior remains authoritative: version-2 metadata stores the character-name snapshot, version-1 conversations are not guessed or backfilled from the current card, and future versions remain fail-closed.
+- [x] #10 Send transcript to Console draft remains a separate bounded 6000-character context action, and Open in Library remains unchanged.
+- [x] #11 Targeted automated tests cover navigation, ordering, live-session reuse, hydration, failure atomicity, metadata compatibility, focus, contrast, and compact layout behavior.
+- [x] #12 ADR-046 is amended before implementation to record the metadata-version and historical character-name authority decision.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,3 +54,14 @@ Users who discover a saved local character conversation in Roleplay need to cont
 
 Detailed executable plan: Docs/superpowers/plans/2026-08-26-roleplay-resume-prior-character-chat-implementation.md
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Implemented ID-only Roleplay-to-Console resume through the canonical active-first Console opener. Metadata v2 preserves the historical character-name snapshot; v1 does not guess and future versions fail closed.
+- Added exact-object atomic restore/rollback, tri-state outcomes, cancellation propagation, once-only ordered startup ownership, final projection/focus authority, and prior-session repaint on every failed open.
+- Added the read-only Roleplay preview with retained card-action hiding, distinct loading/empty/error states, the explicit three-row action hierarchy, per-target attempt guards, and Back-owned load invalidation. The bounded transcript draft handoff and Library navigation remain separate.
+- Core files span Console metadata/persistence/store/hydration/workspace/startup, Roleplay preview/controller/widgets, production CSS, focused Chat/UI tests, and ADR-046.
+- Plan deviations: the joined gate exposed and corrected a historical hermetic-config fixture bug without changing production; whole-branch review added one consolidated regression-fix wave; the builder-owned app CSS bundle was included so source and production output remain synchronized.
+- Verification: the exact nine-file targeted gate passed 1202/1202 with zero failures or skips; CSS build and bundle sync passed; Ruff passed across all 22 changed Python/test files; diff checks passed; final whole-branch re-review found all findings addressed and reported Ready to merge. The full repository suite was not run, per repository instruction.
+<!-- SECTION:NOTES:END -->
