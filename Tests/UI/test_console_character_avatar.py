@@ -1211,11 +1211,11 @@ async def test_decode_completion_live_fences_every_avatar_request_input(
     painted: list[tuple[str, ...] | None] = []
     original_build = screen._build_character_avatar_widget
 
-    def build(spec, *, box=None):
+    def build(spec, *, box=None, **kwargs):
         painted.append(
             tuple(spec["resolution_cache_identity"]) if spec is not None else None
         )
-        return original_build(spec, box=box)
+        return original_build(spec, box=box, **kwargs)
 
     monkeypatch.setattr(screen, "_build_character_avatar_widget", build)
 
@@ -1325,11 +1325,11 @@ async def test_render_awaits_never_resume_a_stale_avatar_paint(
     builds: list[tuple[str, ...] | None] = []
     original_build = screen._build_character_avatar_widget
 
-    def build(spec, *, box=None):
+    def build(spec, *, box=None, **kwargs):
         builds.append(
             tuple(spec["resolution_cache_identity"]) if spec is not None else None
         )
-        return original_build(spec, box=box)
+        return original_build(spec, box=box, **kwargs)
 
     monkeypatch.setattr(screen, "_build_character_avatar_widget", build)
     name = screen.query_one("#console-character-name", Static)
@@ -1967,9 +1967,9 @@ async def test_character_geometry_replacement_is_equality_guarded_and_keeps_focu
     assert original_builder is not None
     calls: list[tuple[int, int] | None] = []
 
-    def counted_builder(box=None):
+    def counted_builder(box=None, **kwargs):
         calls.append(box)
-        return original_builder(box)
+        return original_builder(box, **kwargs)
 
     monkeypatch.setattr(left_rail, "_character_avatar_widget_builder", counted_builder)
     left_rail._character_avatar_box = None
@@ -2016,9 +2016,9 @@ async def test_character_geometry_epoch_consumes_only_one_followup(
     assert original_builder is not None
     builds: list[tuple[int, int] | None] = []
 
-    def counted_builder(box=None):
+    def counted_builder(box=None, **kwargs):
         builds.append(box)
-        return original_builder(box)
+        return original_builder(box, **kwargs)
 
     monkeypatch.setattr(left_rail, "_character_avatar_widget_builder", counted_builder)
     monkeypatch.setattr(
@@ -2142,19 +2142,36 @@ def test_avatar_box_scales_with_rail_width():
     assert wide_lines <= CHARACTER_AVATAR_MAX_LINES
 
 
-def test_mosaic_fallback_contains_rather_than_crops():
+def test_mosaic_fallback_contains_rather_than_crops(monkeypatch):
     """The non-graphics path must show the whole portrait (user choice).
 
     task-1661: the fallback baked with fit="cover", cropping the edges;
     graphics uses a contain fit, so the two paths disagreed on framing.
-    """
-    import inspect
 
+    TASK-22221 moved the renderer itself into ``character_avatar_layout`` so
+    the rail's off-loop prerender and this inline fallback share one code
+    path -- so this asserts the fit the renderer is actually CALLED with,
+    rather than searching one function's source text for a literal.
+    """
+    from tldw_chatbook.Utils import mosaic_render
     from tldw_chatbook.UI.Screens import chat_screen
 
-    src = inspect.getsource(chat_screen._character_avatar_fallback_renderable)
-    assert 'fit="contain"' in src
-    assert 'fit="cover"' not in src
+    calls: list[dict] = []
+    original = mosaic_render.mosaic_from_image
+
+    def recording(image, box_cols, box_lines, **kwargs):
+        calls.append(kwargs)
+        return original(image, box_cols, box_lines, **kwargs)
+
+    monkeypatch.setattr(mosaic_render, "mosaic_from_image", recording)
+    chat_screen._character_avatar_fallback_renderable(
+        PILImage.new("RGB", (64, 32), (10, 20, 30)),
+        box_cols=12,
+        box_lines=6,
+    )
+
+    assert calls, "the fallback must reach the shared mosaic renderer"
+    assert all(call.get("fit") == "contain" for call in calls), calls
 
 
 @pytest.mark.asyncio
