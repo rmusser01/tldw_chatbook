@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: ''
-updated_date: '2026-08-26 21:11'
+updated_date: '2026-08-26 21:42'
 labels:
   - console
   - durable-turns
@@ -61,19 +61,33 @@ durable turn is in flight takes the same path.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Reproduced at store level first: claim a postcommit effect, close the session, release the claim -> RuntimeError('Durable postcommit fingerprint changed.').
+--- ROUND 2 (Qodo review of PR #2123) ---
 
-The bug was worse than filed. That raise comes out of the RELEASE path, which runs inside `except BaseException:`, so it REPLACED the exception that sent us there -- a genuine failure during a turn the user happened to close was reported as a fingerprint message.
+Both findings were real and both were verified empirically before fixing. The
+diagnosis: round 1 fixed the HELPER, not the ORCHESTRATION. Suppressing
+retirement inside one effect only moved the raise to the next
+fingerprint-validated effect, or to the unconditional retire ending the sequence.
 
-Fix rests on a fact already in the code rather than a guess: retire_durable_acceptance leaves a tombstone carrying the SAME fingerprint, so 'retired' is decidable from 'changed'. New `_durable_retired_locked` reads it; retirement raises the distinct `ConsoleDurableAcceptanceRetired`; a real mismatch still raises the generic RuntimeError (pinned by a negative-control test, since narrowing a guard is only safe if it still fires for its original case).
+Retirement is now terminal-benign for the whole orchestration:
+1. the early durable_postcommit_effects_for lookup is guarded -- it sits BEFORE
+   the try block, so guarding only the sequence left it raising (this is what
+   actually fires first);
+2. a sequence-level except arm covering all 8 effects;
+3. retire_durable_acceptance is idempotent for the SAME acceptance (keyed on the
+   tombstone fingerprint, with a negative control proving a different acceptance
+   on a retired id still raises);
+4. new durable_completed_effects_for reads completed names from ledger OR
+   tombstone, so the failure handler's provider_started question survives a
+   close instead of raising inside the handler.
+Both paths share _postcommit_stopped_by_close, which runs the normal cleanup
+tail minus the owner-changed check.
 
-Release-after-retirement is a no-op. Safe rather than merely quiet: retirement has already dropped every in-flight key for the preparation, so there is nothing left to release -- asserted in a test so the no-op cannot silently start leaking claims if that stops holding.
+MUTATION TESTING CAUGHT UNPROVEN CODE A SECOND TIME: after the round-2 fix,
+3 of the changes stayed GREEN under mutation, because every test closed the chat
+BEFORE resume and the early guard short-circuited the rest. Added a mid-sequence
+close (inside effect #1 of 8) plus store-level tests; all 8 mutations now go red.
 
-Controller: the release call can no longer replace the original failure, and retirement during a SUCCESSFUL effect is a non-event (work done, no ledger left to record it in).
-
-MUTATION TESTING CAUGHT A TEST THAT COULD NOT FAIL -- mine. The first 'not masked by the release path' test passed with the controller guard removed, because the store fix already stops abandon from raising there. Split into one honest end-to-end test (which documents what it does NOT cover) and one that forces abandon to raise and does go red without the guard. That also made a '# pragma: no cover' I had written false, so it was removed. All 4 changes are now individually mutation-proven.
-
-Verification: A/B of Tests/Chat against merge-base 65cf855371 -- 0 newly broken, +7 collected, 111 failures both sides. Preflight green; the +2 diagnostics were reviewed before regenerating (internal effect names only, exception TYPE not message, per TASK-22251).
-
-Files: tldw_chatbook/Chat/console_chat_store.py, tldw_chatbook/Chat/console_chat_controller.py, Tests/Chat/test_console_close_during_durable_postcommit.py (new), Docs/security/production-diagnostic-inventory.json
+Round-2 verification: 13 tests; A/B of Tests/Chat vs merge-base 65cf855371 ->
+collected 7682->7695 (+13), failures 111->111, 0 newly broken; preflight green
+(+1 diagnostic, a constant string with no interpolation).
 <!-- SECTION:NOTES:END -->
