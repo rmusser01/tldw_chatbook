@@ -48,6 +48,14 @@ their decoded persisted bytes. A green projection or sanitized primary table pro
 only that owner. When content is intentionally withheld, also verify that recovery
 handles and user/model guidance do not promise a nonexistent full copy.
 
+**Recurred, TASK-18932.1, 2026-08-26.** Clearing thinking from a deleted Chat message
+was insufficient: the trigger-authored `sync_log` upsert and encrypted Sync outbox
+still retained the pre-delete reasoning. The deletion tests became meaningful only
+after they inspected all three durable owners and proved that the sole surviving
+records were a content-free tombstone plus its hash-only conflict proof. For private
+fields, deletion coverage must include queued and historical synchronization
+sidecars, including rollback behavior when their cleanup shares a transaction.
+
 ---
 
 ## An outer SQLite rollback cannot undo a write committed by another database
