@@ -128,6 +128,10 @@ serialization. The override is consumed only after the turn has an admitted owne
 frozen provider resolution. A send rejected for readiness, validation, permissions,
 queue authority, cancellation, or a local command leaves it armed.
 
+Cancellation after admission does consume the override: the admitted run owned and may
+have used the frozen capture policy even if it produced no provider call. Every
+rejection or cancellation before admission leaves it armed.
+
 If a queued human turn is already next, the UI says that the next queued send will
 consume the override. Queue cancellation does not consume it. An autonomous wakeup
 may run first but cannot consume or use the one-shot; it resolves from conversation,
@@ -139,12 +143,22 @@ while a run is active affects only a later admitted run.
 
 ### Mutation failure behavior
 
-- **Escalating to Full:** persist first where persistence is required, then publish the
-  runtime policy. Failure leaves the previous detail active and shows
-  `Failed — previous policy retained` with Retry.
-- **Reducing to Safe or Inherit:** publish a privacy-safe in-memory result immediately.
-  If the durable write fails, the UI shows `Safe for this app session — save failed`
-  and keeps Retry visible. It never claims the reduction will survive restart.
+- Each Apply changes exactly one scope. The dialog displays all three scopes, but it
+  does not batch global config and conversation storage into a false cross-store
+  transaction.
+- Classification uses the **resulting effective detail across the affected scope**, not
+  the selected label. Removing a Safe override to Inherit while the inherited value is
+  Full is an escalation. Disarming a one-shot Safe override over a Full conversation is
+  also an escalation. Global Full is always an escalation because it can affect other
+  conversations even when the inspected conversation has a Safe override.
+- **Any result that enables Full:** show the confirmation required by that scope,
+  persist first where persistence is required, then publish the runtime policy. Failure
+  leaves the previous detail active and shows `Failed — previous policy retained` with
+  Retry.
+- **Any result that remains or becomes Safe:** publish the privacy-safe in-memory
+  result immediately. If the durable write fails, the UI shows
+  `Safe for this app session — save failed` and keeps Retry visible. It never claims
+  the reduction will survive restart.
 - **Global settings:** use the canonical settings writer. The Inspector and F9 Settings
   read/write the same key; neither maintains a shadow copy.
 - **Unknown persisted/config values:** resolve to Safe and surface a content-free
@@ -220,19 +234,29 @@ unclassifiable, and risk leaving sensitive content behind.
 The policy dialog shows `Stored Full captures: N` and `Delete Full captures…` for the
 inspected conversation.
 
-- The action is disabled while that conversation has an admitted active run. Its
-  visible reason explains that the run's frozen policy could create another capture.
+- Purge acquires a conversation-scoped **capture-quiescence lease** through the existing
+  admission/controller serialization. The lease prevents new admissions and exchange
+  flushes until purge finishes.
+- The action is disabled unless every possible writer is quiescent: no admitted primary
+  run, no surviving/unsettled fleet child or retained run signals capable of later
+  attachment, and no exchange flush in flight. Its visible reason names the remaining
+  owner rather than claiming the conversation is idle too early.
 - Confirmation names the conversation, count, irreversibility, unaffected data, and
   the capture policy that will remain active.
-- The database deletes only `message_exchanges.capture_detail = 'full'` rows belonging
-  to messages in that conversation, in one ChaChaNotes transaction.
-- After the durable delete succeeds, the idle session removes matching in-memory
-  captures, serialized-blob cache entries, abandoned-run bookkeeping, and Inspector
-  caches before another flush can occur. This prevents deleted rows from being
-  upserted again.
-- Ephemeral sessions perform the same in-memory removal without a database write.
-- Failure leaves the pre-action state displayed and offers Retry. Partial success is
-  not reported.
+- While holding the lease, the store precomputes replacement message exchange tuples,
+  serialized-blob caches, and abandoned-run bookkeeping without mutating live state.
+- The database then deletes only `message_exchanges.capture_detail = 'full'` rows
+  belonging to messages in that conversation, in one ChaChaNotes transaction.
+- After the SQLite commit, the store swaps the already-built replacement collections
+  by reference and bumps the capture revision before releasing the lease. No decoding,
+  allocation, callback, or other fallible work is permitted between durable commit and
+  those authoritative swaps. A process crash after commit discards the old memory and
+  restarts from the deleted database state.
+- Ephemeral sessions use the same lease and staged swap without a database write.
+- Any failure before commit leaves durable and in-memory owners unchanged and offers
+  Retry. Inspector repaint happens after the authoritative purge; if repaint fails,
+  deletion remains successful and the UI offers Refresh rather than pretending the
+  records were restored.
 - Exports and backups are outside this deletion boundary and are named in the
   confirmation.
 
@@ -263,12 +287,14 @@ persistent text rather than toast or color alone.
 3. Global default: Safe / Full.
 4. Stored Full captures: count and scoped delete action.
 
-Next-send Full needs no secondary confirmation. Conversation Full uses a warning that
-states target and persistence. Global Full uses a stronger confirmation with an
-explicit acknowledgement that it applies to all Console conversations in the current
-app configuration and survives restart. Reductions need no warning. Duplicate actions
-are disabled while Applying. Escape safely cancels, and focus returns to the status
-control.
+The user selects one scope and value per Apply. The UI previews the resulting effective
+detail and whether the change is an escalation. Next-send Full needs no secondary
+confirmation. Any conversation change resulting in Full uses a warning that states
+target and persistence. Global Full uses a stronger confirmation with an explicit
+acknowledgement that it applies to all Console conversations in the current app
+configuration and survives restart. Changes whose resulting detail is Safe need no
+warning. Duplicate actions are disabled while Applying. Escape safely cancels, and
+focus returns to the status control.
 
 At 80x24, policy content scrolls while the status and Cancel/Apply controls remain
 reachable. Disabled reasons are visible text, not tooltip-only. Styling uses semantic
@@ -280,6 +306,11 @@ Current settings never relabel historical calls.
 ## Export profiles
 
 Capture detail describes storage; export profile describes disclosure.
+
+These profiles apply to one selected Exchange call, matching the incumbent per-call
+Copy/Save ownership. Conversation-wide Trace export remains owned by the Trace screen
+and is outside this task. The Next Send tab retains its existing separate preview and
+export behavior.
 
 - **Safe summary:** provider/model/status/usage/provenance and omission/truncation
   inventory, without semantic request/response bodies.
@@ -298,8 +329,10 @@ One profile/destination flow replaces multiplying Copy/Save buttons.
 - Capture remains best-effort and must never fail a model run.
 - Capture builders, gateway bookkeeping, serialization, and flush paths log only
   content-free categories and identifiers already permitted by current policy.
-- Policy escalation and destructive purge are different: policy failure retains a safe
-  prior/effective state; purge failure preserves records and reports no success.
+- Policy escalation and destructive purge are different: a failed Full-enabling change
+  retains the prior policy, while a failed Safe write stays Safe in memory and visibly
+  unsaved. Purge failure before SQLite commit preserves records; post-commit Inspector
+  refresh failure cannot recreate them and is reported as a refresh problem.
 - A stale Inspector revision refreshes the current policy and asks the user to apply
   again. It never overwrites a newer decision.
 - A missing/deleted target disables conversation and one-shot controls; global policy
@@ -313,9 +346,9 @@ Targeted automated coverage must include:
 
 1. Pure precedence matrices for kill switch, one-shot, conversation, global, and Safe
    default; invalid values fail Safe.
-2. Exact one-shot consumption for admitted manual/queued turns, including queue
-   cancellation, readiness rejection, local commands, agent wakeups, and active-run
-   ordering.
+2. Exact one-shot consumption for admitted manual/queued turns, including cancellation
+   before versus after admission, queue cancellation, readiness rejection, local
+   commands, agent wakeups, and active-run ordering.
 3. Frozen detail across direct calls, agent tool loops, retries, and surviving fleet
    calls.
 4. Safe-versus-Full request builders with tagged project instructions, RAG context,
@@ -325,14 +358,15 @@ Targeted automated coverage must include:
    while Safe applies the incumbent project-instruction omission.
 6. Genuine historical migration fixtures plus current-schema and round-trip coverage
    for the queryable detail column and conversation policy table.
-7. Scoped purge count/delete, transaction rollback, idle gate, ephemeral clearing,
+7. Scoped purge count/delete, transaction rollback, quiescence across primary runs,
+   surviving fleet signals and in-flight flushes, ephemeral staged swaps,
    in-memory/cache invalidation, and a mutation test proving a later flush cannot
    reinsert purged rows.
 8. Export profile availability, redaction, confirmation, clipboard/file paths, and the
    guarantee that Safe capture cannot produce omitted Full bodies.
-9. Two-Inspector stale revisions, failed escalation/reduction writes, deleted targets,
-   Capture Off, long names, visible disabled reasons, focus restoration, and keyboard
-   operation.
+9. Two-Inspector stale revisions, Inherit/disarm changes that reveal Full,
+   single-scope Apply, failed escalation/reduction writes, deleted targets, Capture
+   Off, long names, visible disabled reasons, focus restoration, and keyboard operation.
 10. Production-shaped Textual geometry/compositor coverage at 80x24 using
     `ConsolidatedCSSApp`, plus CSS bundle regeneration/integrity checks.
 11. Privacy assertions over every durable owner reached by the real seam: decoded

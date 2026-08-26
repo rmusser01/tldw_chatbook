@@ -64,14 +64,22 @@ accepted ADR-069.
 9. **Separate capture from export.** Stored detail is Safe/Full. Export profiles are
    Safe summary, Redacted diagnostic, and Full trace. Export cannot reconstruct content
    omitted at capture time, and every Full clipboard/file disclosure is confirmed.
-10. **Provide scoped erasure.** An idle conversation may delete only its Full exchange
-    rows. The same operation clears in-memory captures and serialization caches so a
-    later flush cannot recreate them. It does not change capture policy or delete Safe
-    captures, messages, usage, exports, or backups.
-11. **Mutations fail privacy-safe.** Full escalation activates only after required
-    persistence succeeds. Safe reduction takes effect in memory even if its durable
-    write fails and remains visibly unsaved. Unknown values resolve Safe. Purge is
-    transactional and never reports partial success.
+10. **Provide scoped erasure under capture quiescence.** A conversation may delete only
+    its Full exchange rows after the controller holds a lease preventing new admission
+    and flush, with no active primary run, surviving/unsettled fleet writer, retained
+    run signals, or exchange flush. Replacement in-memory/cache collections are staged
+    before the SQLite transaction and swapped by reference immediately after commit,
+    before releasing the lease, so a later flush cannot recreate deleted rows. Purge
+    does not change capture policy or delete Safe captures, messages, usage, exports,
+    or backups.
+11. **Classify mutations by resulting disclosure.** Each Apply changes one scope.
+    Inherit or disarm is an escalation when it reveals an underlying Full policy, and
+    global Full is always an escalation. Any Full-enabling result activates only after
+    required confirmation and persistence succeeds. A result that remains or becomes
+    Safe takes effect in memory even if its durable write fails and remains visibly
+    unsaved. Unknown values resolve Safe. Any purge failure before SQLite commit leaves
+    both durable and in-memory owners unchanged; post-commit UI refresh cannot recreate
+    deleted records.
 12. **Inspector controls target immutable identity.** The policy surface acts on the
     conversation/session captured when opened, carries process-local revisions against
     stale modals, and distinguishes an active run's frozen detail from future policy.
