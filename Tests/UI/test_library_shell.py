@@ -11579,10 +11579,13 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         assert screen.query_one("#library-media-content-search-next") is next_button
         assert screen.focused is next_button
         assert len(markdown_updates) == parse_count_before_navigation
-        assert body.max_scroll_y > 0
-        body.scroll_to(y=10, animate=False, immediate=True)
+        # task-22500: LibraryMediaContentBody is a plain Container now -- the
+        # actual scroller for the current mode is `body.scroller` (the
+        # Rendered VerticalScroll here), not the body itself.
+        assert body.scroller.max_scroll_y > 0
+        body.scroller.scroll_to(y=10, animate=False, immediate=True)
         await pilot.pause()
-        assert body.scroll_y > 0
+        assert body.scroller.scroll_y > 0
 
 
 @pytest.mark.asyncio
