@@ -4774,6 +4774,59 @@ async def test_library_emergency_tab_entry_uses_post_navigation_focus() -> None:
 
 
 @pytest.mark.asyncio
+async def test_library_emergency_import_keyboard_reaches_and_activates_return() -> None:
+    """Import's pinned return is reachable by pane cycle and reverse Tab."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(60, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+        path = await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+        await _wait_for_condition(
+            pilot,
+            lambda: bar.display and canvas.display and not rail.display,
+            message="Import did not enter its canvas-only emergency stage",
+        )
+        assert bar.can_focus and not bar.disabled
+        assert bar in screen.focus_chain, [
+            getattr(widget, "id", None) for widget in screen.focus_chain
+        ]
+
+        path.focus()
+        await pilot.pause()
+        await pilot.press("f6")
+        await pilot.pause()
+        assert bar.has_focus
+
+        path.focus()
+        await pilot.pause()
+        await pilot.press("shift+f6")
+        await pilot.pause()
+        assert bar.has_focus
+
+        path.focus()
+        await pilot.pause()
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert bar.has_focus, (
+            getattr(screen.focused, "id", None),
+            [getattr(widget, "id", None) for widget in screen.focus_chain],
+        )
+
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: rail.display and not canvas.display,
+            message="Pinned return did not activate from Enter",
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_emergency_stalled_tab_does_not_arm_later_focus(
     monkeypatch,
 ) -> None:

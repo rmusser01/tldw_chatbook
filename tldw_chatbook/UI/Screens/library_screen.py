@@ -1930,6 +1930,16 @@ class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
     BINDINGS = [
+        Binding(
+            "f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True
+        ),
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
         ("ctrl+n", "library_notes_new", "New note"),
         ("/", "library_notes_focus_filter", "Find notes"),
@@ -2204,6 +2214,10 @@ class LibraryScreen(BaseAppScreen):
                 "library-rail-explore-all",
                 "library-rail-collapse",
             ),
+        ),
+        WorkbenchPaneTarget(
+            "library-emergency-return",
+            ("library-emergency-return",),
         ),
         WorkbenchPaneTarget(
             "library-canvas",
@@ -7379,7 +7393,30 @@ class LibraryScreen(BaseAppScreen):
             and self._library_emergency_restore_receipt is not None
         )
         if emergency_tab:
-            focused = self.focus_next() if event.key == "tab" else self.focus_previous()
+            if event.key == "tab":
+                focused = self.focus_next()
+            else:
+                owner = self._library_entry_canvas_owner()
+                route_focus_chain = (
+                    [
+                        widget
+                        for widget in self.focus_chain
+                        if widget is not owner and owner in widget.ancestors_with_self
+                    ]
+                    if owner is not None
+                    else []
+                )
+                if route_focus_chain and self.focused is route_focus_chain[0]:
+                    try:
+                        focused = self.query_one(
+                            "#library-emergency-return", LibraryEmergencyReturn
+                        )
+                    except (NoMatches, QueryError):
+                        focused = None
+                    else:
+                        focused.focus()
+                else:
+                    focused = self.focus_previous()
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
@@ -7484,6 +7521,18 @@ class LibraryScreen(BaseAppScreen):
                 else self._WORKBENCH_FOCUS_TARGETS
             ),
             direction=1,
+        )
+
+    def action_focus_previous_workbench_pane(self) -> None:
+        """Shift+F6: move focus to the previous Library workbench pane."""
+        focus_relative_workbench_pane(
+            self,
+            (
+                self._CONVERSATION_WORKBENCH_FOCUS_TARGETS
+                if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+                else self._WORKBENCH_FOCUS_TARGETS
+            ),
+            direction=-1,
         )
 
     def refresh_notes_sync_runtime(self) -> None:
