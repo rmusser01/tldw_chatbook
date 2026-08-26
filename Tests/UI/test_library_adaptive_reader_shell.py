@@ -8,6 +8,7 @@ import pytest
 from textual import on
 from textual.containers import Vertical
 from textual.css.styles import StylesBase
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -334,6 +335,7 @@ async def test_unchanged_layout_skips_every_pane_geometry_assignment(monkeypatch
         pane_styles = (shell.library.styles, shell.items.styles)
         assignments: list[str] = []
         original_setattr = StylesBase.__setattr__
+        original_widget_setattr = Widget.__setattr__
 
         def track_pane_style_assignment(styles, name, value):
             if any(styles is pane_style for pane_style in pane_styles) and name in {
@@ -345,8 +347,70 @@ async def test_unchanged_layout_skips_every_pane_geometry_assignment(monkeypatch
                 assignments.append(name)
             original_setattr(styles, name, value)
 
+        def track_pane_disabled_assignment(widget, name, value):
+            if widget in (shell.library, shell.items) and name == "disabled":
+                assignments.append(name)
+            original_widget_setattr(widget, name, value)
+
         monkeypatch.setattr(StylesBase, "__setattr__", track_pane_style_assignment)
+        monkeypatch.setattr(Widget, "__setattr__", track_pane_disabled_assignment)
         shell.sync_layout(shell.effective_layout)
+
+        assert assignments == []
+
+
+@pytest.mark.asyncio
+async def test_unchanged_cached_layout_repairs_only_stale_physical_declarations(
+    monkeypatch,
+):
+    app = _ProbeApp()
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        layout = shell.effective_layout
+        for pane in (shell.library, shell.items):
+            pane.display = False
+            pane.disabled = True
+            pane.styles.width = 7
+            pane.styles.min_width = 6
+            pane.styles.max_width = 8
+
+        shell.sync_layout(layout)
+
+        for pane, width in (
+            (shell.library, layout.library_width),
+            (shell.items, layout.items_width),
+        ):
+            assert pane.display
+            assert not pane.disabled
+            assert pane.styles.width.value == width
+            assert pane.styles.min_width.value == width
+            assert pane.styles.max_width.value == width
+
+        pane_styles = (shell.library.styles, shell.items.styles)
+        assignments: list[str] = []
+        original_setattr = StylesBase.__setattr__
+        original_widget_setattr = Widget.__setattr__
+
+        def track_pane_style_assignment(styles, name, value):
+            if any(styles is pane_style for pane_style in pane_styles) and name in {
+                "display",
+                "width",
+                "min_width",
+                "max_width",
+            }:
+                assignments.append(name)
+            original_setattr(styles, name, value)
+
+        def track_pane_disabled_assignment(widget, name, value):
+            if widget in (shell.library, shell.items) and name == "disabled":
+                assignments.append(name)
+            original_widget_setattr(widget, name, value)
+
+        monkeypatch.setattr(StylesBase, "__setattr__", track_pane_style_assignment)
+        monkeypatch.setattr(Widget, "__setattr__", track_pane_disabled_assignment)
+        shell.sync_layout(layout)
 
         assert assignments == []
 

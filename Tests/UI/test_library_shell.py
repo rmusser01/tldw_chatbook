@@ -3942,7 +3942,6 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
                 lambda: shell.effective_layout.library_width == saved_width,
                 message=f"{row_id} did not restore its exact saved Library width",
             )
-            assert screen._library_rail_geometry_owner == "adaptive"
             assert shell.effective_layout.library_open
             assert shell.library.display
             assert shell.library.region.width == saved_width
@@ -3996,7 +3995,6 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             message="ordinary custom rail width did not restore",
         )
         assert str(restored.styles.width) == str(saved_width)
-        assert screen._library_rail_geometry_owner == "ordinary"
 
         await pilot.resize_terminal(max(70, saved_width + 39), 48)
         await _wait_for_condition(
@@ -4028,17 +4026,24 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             lambda: restored.region.width == saved_width,
             message="ordinary rail did not restore the exact saved width",
         )
-        initial_contract = screen._library_ordinary_rail_contract_state
+        initial_declarations = (
+            str(restored.styles.width),
+            restored.styles.min_width.value,
+            restored.styles.max_width.value,
+        )
         await screen.recompose()
         await _wait_for_condition(
             pilot,
-            lambda: (
-                screen._library_ordinary_rail_contract_state == initial_contract
-                and screen.query_one("#library-rail").region.width == saved_width
-            ),
+            lambda: screen.query_one("#library-rail").region.width == saved_width,
             message="route recompose did not converge on the settled contract",
         )
-        assert screen.query_one("#library-rail").region.width == saved_width
+        recomposed = screen.query_one("#library-rail", LibraryRail)
+        assert recomposed.region.width == saved_width
+        assert (
+            str(recomposed.styles.width),
+            recomposed.styles.min_width.value,
+            recomposed.styles.max_width.value,
+        ) == initial_declarations
 
 
 @pytest.mark.asyncio
@@ -4227,10 +4232,7 @@ async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() ->
             await pilot.pause()
             await _wait_for_condition(
                 pilot,
-                lambda: (
-                    screen._library_rail_geometry_owner == "ordinary"
-                    and screen.query_one("#library-rail").region.width > 0
-                ),
+                lambda: screen.query_one("#library-rail").region.width > 0,
                 message=f"{row_id} did not settle as an ordinary route",
             )
             rail = screen.query_one("#library-rail", LibraryRail)
@@ -4254,8 +4256,7 @@ async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() ->
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_rail_geometry_owner == "adaptive"
-                    and shell.effective_layout.library_open
+                    shell.effective_layout.library_open
                     and shell.library.region.width > 0
                 ),
                 message=f"{row_id} did not settle under its adaptive owner",

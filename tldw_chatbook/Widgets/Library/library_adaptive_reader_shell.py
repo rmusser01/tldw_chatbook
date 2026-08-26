@@ -146,7 +146,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
         self.effective_layout = layout
         focused = self.app.focused if self.is_mounted else None
         restore_focus: Widget | None = None
-        for pane, grip, open, width, was_open, previous_width in (
+        for pane, grip, open, width, was_open in (
             (
                 self.library,
                 self.library_grip,
@@ -156,11 +156,6 @@ class LibraryAdaptiveReaderShell(Horizontal):
                     previous_layout.library_open
                     if previous_layout is not None
                     else layout.library_open
-                ),
-                (
-                    previous_layout.library_width
-                    if previous_layout is not None
-                    else None
                 ),
             ),
             (
@@ -173,7 +168,6 @@ class LibraryAdaptiveReaderShell(Horizontal):
                     if previous_layout is not None
                     else layout.items_open
                 ),
-                (previous_layout.items_width if previous_layout is not None else None),
             ),
         ):
             if (
@@ -182,12 +176,15 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 and (focused is pane or pane in focused.ancestors)
             ):
                 restore_focus = grip
-            if previous_layout is None or was_open != open:
+            if pane.display != open:
                 pane.display = open
+            if pane.disabled != (not open):
                 pane.disabled = not open
-            if previous_layout is None or previous_width != width:
+            if pane.styles.width is None or pane.styles.width.value != width:
                 pane.styles.width = width
+            if pane.styles.min_width is None or pane.styles.min_width.value != width:
                 pane.styles.min_width = width
+            if pane.styles.max_width is None or pane.styles.max_width.value != width:
                 pane.styles.max_width = width
             if previous_layout is None:
                 pane.styles.height = "100%"

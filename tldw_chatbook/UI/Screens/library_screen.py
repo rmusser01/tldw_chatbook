@@ -107,7 +107,6 @@ from ...Utils.adaptive_reader_state import (
 from ...Library.library_rail_width import (
     LIBRARY_EMERGENCY_WIDTH,
     OrdinaryRailPresentation,
-    OrdinaryRailStyleContract,
     resolve_ordinary_rail_contract,
 )
 from ...Library.library_conversation_reader_state import (
@@ -3292,10 +3291,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_layout_refresh_generation = (
             self._library_reader_layout_refresh_generation
         )
-        self._library_rail_geometry_owner: Literal["ordinary", "adaptive"] | None = None
-        self._library_ordinary_rail_contract_state: (
-            tuple[int, OrdinaryRailStyleContract] | None
-        ) = None
         self._library_media_reader_layout: MediaReaderEffectiveLayout = (
             resolve_media_reader_layout(0, self._library_media_reader_preferences)
         )
@@ -5414,18 +5409,6 @@ class LibraryScreen(BaseAppScreen):
         if matches:
             matches.first().display = False
 
-    def _claim_library_adaptive_rail_width_owner(self) -> None:
-        """Invalidate ordinary declarations when an adaptive shell owns geometry."""
-        if self._library_rail_geometry_owner == "adaptive":
-            return
-        try:
-            rail = self.query_one("#library-rail", LibraryRail)
-        except (NoMatches, QueryError):
-            return
-        rail.invalidate_width_contract_owner()
-        self._library_rail_geometry_owner = "adaptive"
-        self._library_ordinary_rail_contract_state = None
-
     def _sync_library_ordinary_rail_width_contract(self) -> None:
         """Apply the settled ordinary rail contract at the existing UI seams."""
         if self.query(
@@ -5433,7 +5416,6 @@ class LibraryScreen(BaseAppScreen):
             "#library-conversations-reader-shell, "
             "#library-notes-reader-shell"
         ):
-            self._claim_library_adaptive_rail_width_owner()
             return
         try:
             shell = self.query_one("#library-shell-grid", Widget)
@@ -5457,11 +5439,7 @@ class LibraryScreen(BaseAppScreen):
             shared.custom_widths_enabled,
             shared.library_width,
         )
-        if self._library_rail_geometry_owner == "adaptive":
-            rail.invalidate_width_contract_owner()
         rail.apply_ordinary_width_contract(contract)
-        self._library_rail_geometry_owner = "ordinary"
-        self._library_ordinary_rail_contract_state = (width, contract)
 
     def _load_library_reader_preference_snapshot(
         self,
@@ -5519,7 +5497,6 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return
-        self._claim_library_adaptive_rail_width_owner()
         width = shell.region.width
         if width <= 0:
             return
@@ -5553,14 +5530,6 @@ class LibraryScreen(BaseAppScreen):
             priority=priority,
         )
         shell.sync_layout(layout)
-        if (
-            shell.library.display != layout.library_open
-            or shell.items.display != layout.items_open
-            or shell.library.styles.width.value != layout.library_width
-            or shell.items.styles.width.value != layout.items_width
-        ):
-            shell._applied_layout = None
-            shell.sync_layout(layout)
         self._library_notes_reader_layout = layout
 
     def _sync_library_conversation_reader_layout_from_shell(
@@ -5574,7 +5543,6 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return
-        self._claim_library_adaptive_rail_width_owner()
         width = shell.region.width
         if width <= 0:
             return
@@ -5593,14 +5561,6 @@ class LibraryScreen(BaseAppScreen):
             priority=priority,
         )
         shell.sync_layout(layout)
-        if (
-            shell.library.display != layout.library_open
-            or shell.items.display != layout.items_open
-            or shell.library.styles.width.value != layout.library_width
-            or shell.items.styles.width.value != layout.items_width
-        ):
-            shell._applied_layout = None
-            shell.sync_layout(layout)
         self._library_conversation_reader_layout = layout
         self._sync_library_conversation_reader()
 
@@ -5913,7 +5873,6 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return
-        self._claim_library_adaptive_rail_width_owner()
         width = shell.region.width
         if width <= 0:
             return
@@ -5965,14 +5924,6 @@ class LibraryScreen(BaseAppScreen):
                 break
         generation = self._library_notes_focus_intent_generation
         shell.sync_layout(layout)
-        if (
-            shell.library.display != layout.library_open
-            or shell.items.display != layout.items_open
-            or shell.library.styles.width.value != layout.library_width
-            or shell.items.styles.width.value != layout.items_width
-        ):
-            shell._applied_layout = None
-            shell.sync_layout(layout)
         self._library_media_reader_layout = layout
         if hidden_focus_target is not None:
             self._focus_library_media_grip_if_current(
