@@ -260,6 +260,34 @@ async def test_masked_global_full_still_requires_distinct_acknowledgement() -> N
 
 
 @pytest.mark.asyncio
+async def test_turning_off_dormant_global_full_never_opens_enable_acknowledgement() -> None:
+    host = _PolicyHost(
+        _snapshot(
+            conversation_detail=CaptureDetail.SAFE,
+            global_detail=CaptureDetail.FULL,
+        )
+    )
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleCapturePolicyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+        requested: list[object] = []
+
+        async def decline(screen: object) -> bool:
+            requested.append(screen)
+            return False
+
+        app.push_screen_wait = decline
+        result = await dialog.set_capture_enabled(False)
+
+        assert result is not None
+        assert result.status is CapturePolicyMutationStatus.APPLIED
+        assert host.calls == [("global", (False, CaptureDetail.FULL))]
+        assert requested == []
+
+
+@pytest.mark.asyncio
 async def test_scope_change_syncs_detail_radios_and_prospective_preview() -> None:
     host = _PolicyHost(
         _snapshot(

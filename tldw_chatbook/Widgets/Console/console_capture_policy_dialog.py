@@ -331,7 +331,11 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
         if scope is CaptureScope.GLOBAL and detail is None:
             detail = fresh.global_detail
         self.preview = self.preview_for(scope, detail)
-        if scope is CaptureScope.GLOBAL and detail is CaptureDetail.FULL:
+        if (
+            self.global_enabled
+            and scope is CaptureScope.GLOBAL
+            and detail is CaptureDetail.FULL
+        ):
             confirmed = bool(
                 await self.app.push_screen_wait(global_full_capture_confirmation())
             )
