@@ -9041,6 +9041,10 @@ class ConsoleChatStore:
                 "upgrade before retrying it."
             )
         message.content = ""
+        message.thinking = None
+        message.opaque_thinking_json = None
+        message.thinking_warning = None
+        message.thinking_actions_enabled = True
         message.status = "pending"
         if (
             message.metadata is not None

@@ -27,6 +27,8 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
 )
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
@@ -339,6 +341,24 @@ class EmptyStreamingGateway(StreamingGateway):
 class EmptyHeartbeatStreamingGateway(StreamingGateway):
     async def stream_chat(self, resolution, messages, **kwargs):
         yield ""
+
+
+class ThinkingStreamingGateway(StreamingGateway):
+    def __init__(self, *items):
+        self.items = items
+        self.provider_contacts = 0
+
+    async def resolve_for_send(self, selection):
+        resolution = await super().resolve_for_send(selection)
+        resolution.may_emit_thinking = True
+        return resolution
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.provider_contacts += 1
+        for item in self.items:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
 
 def _last_failed_assistant(store, session_id=None):
@@ -6674,3 +6694,133 @@ async def test_unattributed_fleet_tokens_is_zero_for_an_unwatched_session():
     session = store.ensure_session()
     assert controller.unattributed_fleet_tokens(session.id) == 0
     assert controller.unattributed_fleet_tokens("no-such-session") == 0
+
+
+# Thinking capture is exercised at the real direct-provider consumer seam so
+# a regression that sends typed items into ``append_stream_chunk`` fails here.
+@pytest.mark.asyncio
+async def test_direct_stream_pairs_typed_thinking_with_visible_answer() -> None:
+    gateway = ThinkingStreamingGateway(
+        ProviderThinkingDelta(
+            text="private plan",
+            provider="llama_cpp",
+            model="test-model",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        ),
+        "visible answer",
+    )
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("hello")
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert result.accepted is True
+    assert assistant.content == "visible answer"
+    assert assistant.status == "complete"
+    assert assistant.thinking is not None
+    assert len(assistant.thinking.blocks) == 1
+    assert assistant.thinking.blocks[0].text == "private plan"
+    assert assistant.thinking.blocks[0].status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_direct_stream_failure_settles_captured_thinking_as_failed() -> None:
+    gateway = ThinkingStreamingGateway(
+        ProviderProprietaryThinkingEvidence(
+            provider="moonshot",
+            model="kimi",
+            protocol="chat_completions",
+            source_format="reasoning_content",
+        ),
+        RuntimeError("provider exploded"),
+    )
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    await controller.submit_draft("hello")
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.content == ""
+    assert assistant.status == "failed"
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].visibility == "proprietary"
+    assert assistant.thinking.blocks[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_retry_with_only_thinking_evidence_reaches_failed_terminal() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
+    await controller.submit_draft("hello")
+    failed = _last_failed_assistant(store)
+    controller.provider_gateway = ThinkingStreamingGateway(
+        ProviderThinkingDelta(
+            text="retry plan",
+            provider="llama_cpp",
+            model="test-model",
+            protocol="chat_completions",
+            source_format="start_anchored_think",
+        )
+    )
+
+    result = await controller.retry_message(failed.id)
+
+    retried = store.get_message(failed.id)
+    assert result.accepted is True
+    assert retried.status == "failed"
+    assert retried.content == ""
+    assert retried.thinking is not None
+    assert retried.thinking.blocks[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_answer_only_retry_does_not_reuse_prior_failed_thinking() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=ThinkingStreamingGateway(
+            ProviderThinkingDelta(
+                text="failed attempt",
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            ),
+            RuntimeError("provider exploded"),
+        ),
+    )
+    await controller.submit_draft("hello")
+    failed = _last_failed_assistant(store)
+    assert failed.thinking is not None
+    controller.provider_gateway = StreamingGateway()
+
+    result = await controller.retry_message(failed.id)
+
+    retried = store.get_message(failed.id)
+    assert result.accepted is True
+    assert retried.status == "complete"
+    assert retried.content == "hello"
+    assert retried.thinking is None
+
+
+@pytest.mark.asyncio
+async def test_thinking_backend_preflight_runs_before_direct_provider_contact() -> None:
+    gateway = ThinkingStreamingGateway("must not be contacted")
+    store = ConsoleChatStore(persistence=FakePersistence())
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    await controller.submit_draft("hello")
+
+    assert gateway.provider_contacts == 0

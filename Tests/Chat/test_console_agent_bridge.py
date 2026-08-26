@@ -45,7 +45,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleThinkingCompatibilityError,
+)
 from tldw_chatbook.Chat.console_chat_controller import (
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
@@ -67,12 +70,16 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
     ProviderToolCalls,
 )
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
+    RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
     SPAWN_TOOL_NAME,
@@ -6228,6 +6235,239 @@ def test_run_reply_returns_runoutcome_done():
     assert run_id == "run-1"
     assert result.status == RUN_DONE
     assert result.final_text == "done"
+
+
+def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderThinkingDelta(
+                    text="choose a tool",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                _native_calls("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                ProviderThinkingDelta(
+                    text="use the result",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "The answer is 2.",
+            ],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_native_resolution(),
+    )
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.content == "The answer is 2."
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0, 1]
+    assert [block.text for block in assistant.thinking.blocks] == [
+        "choose a tool",
+        "use the result",
+    ]
+    assert [block.status for block in assistant.thinking.blocks] == [
+        "complete",
+        "complete",
+    ]
+
+
+def test_agent_rounds_advance_for_fence_first_tool_calls(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderThinkingDelta(
+                    text="choose a tool",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                _fence("calculator", {"expression": "1 + 1"}),
+            ],
+            [
+                ProviderThinkingDelta(
+                    text="use the result",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "The answer is 2.",
+            ],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.thinking is not None
+    assert [block.round_ordinal for block in assistant.thinking.blocks] == [0, 1]
+    assert [block.text for block in assistant.thinking.blocks] == [
+        "choose a tool",
+        "use the result",
+    ]
+
+
+def test_agent_terminal_proprietary_evidence_never_enters_answer_text(tmp_path) -> None:
+    gateway = _ChunkGateway(
+        [
+            [
+                ProviderProprietaryThinkingEvidence(
+                    provider="moonshot",
+                    model="kimi",
+                    protocol="chat_completions",
+                    source_format="reasoning_content",
+                ),
+                "answer",
+            ]
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_DONE
+    assert assistant.content == "answer"
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].visibility == "proprietary"
+    assert not hasattr(assistant.thinking.blocks[0], "text")
+
+
+def test_agent_answer_without_evidence_leaves_thinking_null(tmp_path) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(tmp_path, [["answer"]])
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assert outcome.status == RUN_DONE
+    assert store.get_message(assistant_id).thinking is None
+
+
+def test_agent_provider_failure_settles_open_thinking_as_failed(tmp_path) -> None:
+    class RaisingGateway(_ChunkGateway):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            yield ProviderThinkingDelta(
+                text="unfinished",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+            raise RuntimeError("provider failed")
+
+    gateway = RaisingGateway([])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_ERROR
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].status == "failed"
+
+
+def test_agent_stop_after_thinking_does_not_pull_the_next_answer_chunk(
+    tmp_path,
+) -> None:
+    bridge, _db, store, session, assistant_id = _bridge(
+        tmp_path,
+        [
+            [
+                ProviderThinkingDelta(
+                    text="unfinished",
+                    provider="llama_cpp",
+                    model="reasoner",
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                ),
+                "must not stream",
+            ]
+        ],
+    )
+    flags = iter([False, True])
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        should_cancel=lambda: next(flags, True),
+    )
+
+    assistant = store.get_message(assistant_id)
+    assert outcome.status == RUN_CANCELLED
+    assert assistant.content == ""
+    assert assistant.thinking is not None
+    assert assistant.thinking.blocks[0].status == "stopped"
+
+
+def test_agent_adapter_preflights_backend_before_provider_contact() -> None:
+    class UnsupportedPersistence:
+        pass
+
+    class ProviderSpy:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.calls += 1
+            yield "answer"
+
+    store = ConsoleChatStore(persistence=UnsupportedPersistence())
+    session = store.create_session(ephemeral=False)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=False,
+    )
+    gateway = ProviderSpy()
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=gateway,
+        resolution=_test_resolution(
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+        ),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        thinking_capture=ThinkingCapture(assistant_owner_id=assistant.id),
+    )
+    try:
+        with pytest.raises(
+            ConsoleThinkingCompatibilityError,
+            match="cannot preserve model thinking version 1",
+        ):
+            adapter.chat_call(messages_payload=[{"role": "user", "content": "hi"}])
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(timeout=2)
+        loop.close()
+
+    assert gateway.calls == 0
 
 
 def test_run_reply_passes_private_continuation_sidecar_to_agent_service():

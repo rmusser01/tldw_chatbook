@@ -41,6 +41,8 @@ from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME,
     MAX_RUN_CONTROL_STEPS,
     MAX_STEERING_CHARS,
+    RUN_CANCELLED,
+    RUN_DONE,
     RunBudget,
     RUNTIME_TOOL_NAMES,
     STEERING_SOURCE_USER,
@@ -131,9 +133,13 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
     ConsoleProviderGateway,
     ConsoleProviderStreamSignals,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
     ProviderToolCalls,
     ProviderTurnMetadata,
 )
+from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationOwnerGroup,
@@ -2205,6 +2211,7 @@ class _StreamingModelAdapter:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        thinking_capture: ThinkingCapture | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -2217,6 +2224,9 @@ class _StreamingModelAdapter:
         self._continuation_sidecar = tuple(continuation_sidecar)
         self._continuation_target = continuation_target
         self._continuation_owner_key = continuation_owner_key
+        self._thinking_capture = thinking_capture or ThinkingCapture(
+            assistant_owner_id=assistant_message_id
+        )
         # PR3a-1 Task 1: per-THREAD lifeline override. A fleet child runs on
         # its own thread and enters `child_lifeline()` there before its run
         # begins, which parks that child's private loop here; every
@@ -2396,11 +2406,37 @@ class _StreamingModelAdapter:
                 stream_kwargs.pop("tools", None)
             if gateway_signals is not None:
                 stream_kwargs["signals"] = gateway_signals
+            owner_session_id = self._store.session_id_for_message(
+                self._assistant_message_id
+            )
+            require_thinking_persistence_support(
+                self._store.persistence,
+                persistent=(
+                    self._store.persistence is not None
+                    and not self._store.session_is_ephemeral(owner_session_id)
+                ),
+                may_emit_thinking=bool(
+                    getattr(self._resolution, "may_emit_thinking", False)
+                ),
+            )
             async for chunk in self._gateway.stream_chat(
                 self._resolution, dispatch_messages, **stream_kwargs
             ):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
+                if isinstance(
+                    chunk,
+                    (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
+                ):
+                    if not is_subagent:
+                        update = self._thinking_capture.observe(chunk)
+                        if update.envelope is not None:
+                            self._store.replace_message_thinking(
+                                self._assistant_message_id, update.envelope
+                            )
+                    if self._should_cancel():
+                        break
+                    continue
                 if isinstance(chunk, ProviderToolCalls):
                     # Plan-B contract: structured deltas never hit the
                     # transcript — captured here, surfaced only through the
@@ -2410,15 +2446,21 @@ class _StreamingModelAdapter:
                         if not isinstance(chunk.metadata, ProviderTurnMetadata):
                             raise ValueError("Provider terminal metadata is malformed.")
                         terminal_metadata = chunk.metadata
+                    if not is_subagent:
+                        self._thinking_capture.observe(chunk)
+                    if self._should_cancel():
+                        break
                     continue
                 visible = gate.feed(chunk)
                 if visible and not is_subagent:
+                    self._thinking_capture.observe_answer(visible)
                     self._store.append_stream_chunk(self._assistant_message_id, visible)
                     any_streamed = True
                 if self._should_cancel():
                     break
             tail = gate.flush_tail()
             if tail and not is_subagent:
+                self._thinking_capture.observe_answer(tail)
                 self._store.append_stream_chunk(self._assistant_message_id, tail)
                 any_streamed = True
 
@@ -2456,6 +2498,9 @@ class _StreamingModelAdapter:
             raise TimeoutError(
                 f"provider turn did not complete within {_CHAT_CALL_TIMEOUT_SECONDS}s"
             ) from None
+        _visible, tool_call = gate.result()
+        if tool_call is not None and not native_calls and not is_subagent:
+            self._thinking_capture.observe_tool()
         if any_streamed and not is_subagent:
             # Finding A: this turn leaked prose to the store before it was
             # known to be a tool call (a well-behaved fence-first tool call
@@ -2466,7 +2511,6 @@ class _StreamingModelAdapter:
             # chunks on the same message. Extended for native tool-calls
             # (Task 5): a native turn that streamed leaked prose before its
             # ProviderToolCalls sentinel arrived must be reset the same way.
-            _visible, tool_call = gate.result()
             if tool_call is not None or native_calls:
                 self._store.reset_stream_content(self._assistant_message_id)
         message: dict = {"content": gate.full_text}
@@ -4112,6 +4156,7 @@ class ConsoleAgentBridge:
         # birth via `adapter.child_lifeline`. This one stays exactly what
         # it always was: the PRIMARY agent's, turn-scoped.
         turn_lifeline = _ModelCallLifeline("console-agent-loop")
+        thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
         adapter = _StreamingModelAdapter(
             store=self._store,
             provider_gateway=self._gateway,
@@ -4127,6 +4172,7 @@ class ConsoleAgentBridge:
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,
             continuation_owner_key=continuation_owner_key,
+            thinking_capture=thinking_capture,
         )
 
         # PR3a-1 Task 6b (audit F1): this turn's own key into
@@ -4776,6 +4822,18 @@ class ConsoleAgentBridge:
                     logger.opt(exception=True).warning(
                         "change_review: could not stamp/disclose diff feedback"
                     )
+        capture_outcome = (
+            "complete"
+            if outcome.status == RUN_DONE
+            else "stopped"
+            if outcome.status == RUN_CANCELLED
+            else "failed"
+        )
+        capture_update = thinking_capture.settle(capture_outcome)
+        if capture_update.envelope is not None:
+            self._store.replace_message_thinking(
+                assistant_message_id, capture_update.envelope
+            )
         for step in outcome.steps:
             logger.info(
                 "agent run step",

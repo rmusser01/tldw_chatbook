@@ -101,6 +101,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleDurableAcceptanceFingerprint,
     ConsoleDurableTurnCommit,
     TerminalCitationFinalizer,
+    require_thinking_persistence_support,
 )
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
@@ -308,6 +309,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
 )
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import (
@@ -15477,6 +15479,17 @@ class ConsoleChatController:
         )
         retry_prepared = False
         emitted_content = False
+        thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
+
+        def project_thinking(update: Any) -> None:
+            if update.envelope is not None:
+                self.store.replace_message_thinking(
+                    assistant_message_id, update.envelope
+                )
+
+        def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
+            project_thinking(thinking_capture.settle(outcome))
+
         if prepare_retry:
             self.store.record_trace_event(
                 owner_id,
@@ -15496,6 +15509,14 @@ class ConsoleChatController:
                 ConsoleTurnPreparationState.DISPATCH_STARTED,
             ):
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
+            require_thinking_persistence_support(
+                self.store.persistence,
+                persistent=(
+                    self.store.persistence is not None
+                    and not self.store.session_is_ephemeral(owner_id)
+                ),
+                may_emit_thinking=bool(getattr(resolution, "may_emit_thinking", False)),
+            )
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
                 dispatch_request,
@@ -15518,6 +15539,7 @@ class ConsoleChatController:
                     self._attach_stream_usage(
                         assistant_message_id, stream_signals, resolution, partial=True
                     )
+                    settle_thinking("stopped")
                     try:
                         stopped = self._mark_stream_stopped(
                             assistant_message_id,
@@ -15529,6 +15551,24 @@ class ConsoleChatController:
                         return self._session_closed_result(session_id=owner_id)
                     self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                     return ConsoleSubmitResult(True, True, stopped.content)
+                if type(chunk) is not str:
+                    if prepare_retry and not retry_prepared:
+                        self.store.prepare_message_retry(assistant_message_id)
+                        retry_prepared = True
+                        if character_emote_snapshot is not None:
+                            self.store.begin_character_emote_capture(
+                                assistant_message_id,
+                                character_emote_snapshot,
+                            )
+                        if prefill:
+                            try:
+                                self.store.append_stream_chunk(
+                                    assistant_message_id, prefill
+                                )
+                            except KeyError:
+                                return self._session_closed_result(session_id=owner_id)
+                    project_thinking(thinking_capture.observe(chunk))
+                    continue
                 if prepare_retry and not retry_prepared:
                     self.store.prepare_message_retry(assistant_message_id)
                     retry_prepared = True
@@ -15544,6 +15584,7 @@ class ConsoleChatController:
                             )
                         except KeyError:
                             return self._session_closed_result(session_id=owner_id)
+                thinking_capture.observe(chunk)
                 try:
                     self.store.append_stream_chunk(assistant_message_id, chunk)
                 except KeyError:
@@ -15564,6 +15605,7 @@ class ConsoleChatController:
                 self._attach_stream_usage(
                     assistant_message_id, stream_signals, resolution, partial=True
                 )
+                settle_thinking("stopped")
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id,
@@ -15605,7 +15647,8 @@ class ConsoleChatController:
                 self._attach_stream_usage(
                     assistant_message_id, stream_signals, resolution, partial=True
                 )
-                if not prepare_retry:
+                settle_thinking("failed")
+                if not prepare_retry or retry_prepared:
                     try:
                         failed = self.store.mark_message_failed(assistant_message_id)
                     except KeyError:
@@ -15639,6 +15682,7 @@ class ConsoleChatController:
             self._attach_stream_usage(
                 assistant_message_id, stream_signals, resolution, partial=False
             )
+            settle_thinking("complete")
             try:
                 if variant_mode:
                     completed = self.store.finalize_variant_stream(assistant_message_id)
@@ -15667,6 +15711,7 @@ class ConsoleChatController:
                 self._attach_stream_usage(
                     assistant_message_id, stream_signals, resolution, partial=True
                 )
+                settle_thinking("stopped")
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id,
@@ -15697,6 +15742,7 @@ class ConsoleChatController:
                 status="failed",
             )
             try:
+                settle_thinking("failed")
                 if not prepare_retry or retry_prepared:
                     self.store.mark_message_failed(assistant_message_id)
                 else:
