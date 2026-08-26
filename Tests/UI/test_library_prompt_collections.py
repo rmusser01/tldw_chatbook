@@ -2114,7 +2114,14 @@ async def test_library_screen_collection_manager_selects_exact_browse_scope(tmp_
 
 @pytest.mark.asyncio
 async def test_real_library_screen_collection_manager_crosses_sqlite_page_100(tmp_path):
-    _db, service = _real_prompt_scope_service(tmp_path)
+    db, service = _real_prompt_scope_service(tmp_path)
+    db.add_prompt(
+        name="Collection paging prompt",
+        author="A",
+        details="Keeps the populated-list collection control mounted.",
+        system_prompt="System",
+        user_prompt="User",
+    )
     created = []
     for index in range(1, 108):
         created.append(
@@ -2299,10 +2306,27 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             ),
             message="renamed collection never became the active filter",
         )
-        await _wait_for_selector(screen, pilot, "#library-prompts-collection")
-        assert (
-            str(screen.query_one("#library-prompts-collection", Button).label)
-            == f"collection: {renamed_name}"
+        await _wait_for_selector(
+            screen, pilot, "#library-prompts-empty-collection-label"
+        )
+        assert len(screen.query("#library-prompts-collection")) == 0
+        assert renamed_name in str(
+            screen.query_one(
+                "#library-prompts-empty-collection-label", Static
+            ).renderable
+        )
+
+        screen.query_one("#library-prompts-empty-all-prompts", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_browse_controller.scope.collection_id is None
+                and screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.scope.collection_id
+                is None
+                and len(screen.query("#library-prompts-collection")) == 1
+            ),
+            message="empty collection recovery did not restore All prompts",
         )
 
         screen.query_one("#library-prompts-collection", Button).press()
@@ -2326,14 +2350,11 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             lambda: _active_library_screen(host) is screen,
             message="filtered manager did not close",
         )
-        assert (
-            screen._library_prompt_browse_controller.scope.collection_id
-            == collection_id
-        )
+        assert screen._library_prompt_browse_controller.scope.collection_id is None
         await _wait_for_selector(screen, pilot, "#library-prompts-collection")
         assert (
             str(screen.query_one("#library-prompts-collection", Button).label)
-            == f"collection: {renamed_name}"
+            == "collection: All prompts"
         )
 
         screen.query_one("#library-prompts-collection", Button).press()
