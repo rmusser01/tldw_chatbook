@@ -22,7 +22,6 @@ from .rag_service import MetadataAllowlist
 from .config import RAGConfig
 from .data_models import IndexingResult
 from .vector_store import SearchResult, SearchResultWithCitations
-from ..reranker import create_reranker_from_config
 from ..parallel_processor import (
     create_embedding_processor,
     create_chunking_processor,
@@ -47,6 +46,7 @@ if TYPE_CHECKING:
         ProfileType,
         ConfigProfileManager,
     )
+    from ..reranker import BaseReranker, RerankingConfig
 
 
 def _config_profiles():
@@ -54,6 +54,34 @@ def _config_profiles():
     from .. import config_profiles
 
     return config_profiles
+
+
+def create_reranker_from_config(config: "RerankingConfig") -> "BaseReranker":
+    """Build a reranker, importing ``..reranker`` at first use.
+
+    The second edge of the same cycle ``_config_profiles()`` above defers, and
+    it fails in the opposite direction: ``reranker`` imports
+    ``.simplified.vector_store``, which executes ``simplified/__init__``, which
+    executes THIS module -- so a ``reranker``-FIRST import order reached the
+    old module-level ``from ..reranker import create_reranker_from_config``
+    while ``reranker`` was still partially initialized and raised ImportError.
+
+    Deliberately a same-named module-level wrapper rather than the
+    module-accessor shape used for ``config_profiles``: this name is a
+    monkeypatch seam. ``Tests/RAG_Search/test_reranker_construction.py``
+    replaces ``enhanced_rag_service_v2.create_reranker_from_config`` eight
+    times to drive construction-failure paths, and the two call sites below
+    resolve it as a module global, so patching keeps working unchanged.
+
+    Args:
+        config: The reranking configuration to construct from.
+
+    Returns:
+        The reranker instance ``reranker.create_reranker_from_config`` builds.
+    """
+    from ..reranker import create_reranker_from_config as _create
+
+    return _create(config)
 
 
 def _tag_first_result(
