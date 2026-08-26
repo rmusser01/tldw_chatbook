@@ -512,7 +512,7 @@ def _persisted_store(
     # reverted: two tests here CLOSE the session mid-collection, which retires
     # the durable preparation, so the in-flight effect release then raises
     # "Durable postcommit fingerprint changed." (production behaviour, filed as
-    # TASK-22303). Converting this module to durable sessions is part of
+    # TASK-22587). Converting this module to durable sessions is part of
     # TASK-22301's assertion rewrite, not a drive-by change.
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="llama_cpp"),

@@ -1,5 +1,5 @@
 ---
-id: task-22303
+id: task-22587
 title: Closing a session during a durable postcommit raises
 status: To Do
 labels:
@@ -49,3 +49,12 @@ closing a chat; a *changed* one is a bug. Those two currently share a raise.
 
 Related: TASK-22301 (converting that module's assertions to row queries needs
 durable sessions, so this blocks it).
+
+
+## Renumbering provenance
+
+Filed as task-22303; renumbered to task-22587 under the 2026-08-21 owner rule
+(TASK-19601) after a same-id collision with
+`task-22303 - Restore-priced-Console-cost-chip-harness-readiness`, which
+arrived first and keeps the id. No dependencies or doc references pointed at the
+old number.
