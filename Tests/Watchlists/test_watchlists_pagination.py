@@ -367,6 +367,69 @@ async def test_refresh_requests_a_new_first_page_and_preserves_reader():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["failure", "cancel", "success"])
+async def test_refresh_preserves_search_authority_until_transactional_outcome(
+    outcome,
+):
+    controller = AsyncMock()
+    controller.list_reader_items_page.return_value = _page(
+        [4], high_water=4, snapshot_count=1
+    )
+
+    async with _open_screen(controller) as (screen, pilot):
+        screen._items_search_query = "server-only-match"
+        assert await screen._replace_items_snapshot(reason="search") is True
+        prior_snapshot = screen._items_snapshot
+        prior_rows = screen._loaded_items
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert pane.search_results_authoritative is True
+        assert [row["item_id"] for row in pane._filtered_items()] == [4]
+        entered = asyncio.Event()
+        pending: asyncio.Future[WatchlistItemPage] = (
+            asyncio.get_running_loop().create_future()
+        )
+
+        async def refresh_page(**_kwargs):
+            entered.set()
+            return await pending
+
+        controller.list_reader_items_page.side_effect = refresh_page
+        screen._supersede_items_query_intent()
+        task = asyncio.create_task(
+            screen._replace_items_snapshot(reason="refresh")
+        )
+        await _wait_until(pilot, entered.is_set)
+
+        assert screen._items_snapshot is prior_snapshot
+        assert screen._loaded_items is prior_rows
+        assert screen._items_search_results_authoritative is True
+        assert pane.search_results_authoritative is True
+        assert [row["item_id"] for row in pane._filtered_items()] == [4]
+
+        if outcome == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        elif outcome == "failure":
+            pending.set_exception(RuntimeError("offline"))
+            assert await task is False
+        else:
+            pending.set_result(_page([9], high_water=9, snapshot_count=1))
+            assert await task is True
+
+        if outcome == "success":
+            assert screen._items_snapshot is not prior_snapshot
+            assert [row["item_id"] for row in screen._loaded_items] == [9]
+        else:
+            assert screen._items_snapshot is prior_snapshot
+            assert screen._loaded_items is prior_rows
+        assert screen._items_search_results_authoritative is True
+        assert pane.search_results_authoritative is True
+        expected_id = 9 if outcome == "success" else 4
+        assert [row["item_id"] for row in pane._filtered_items()] == [expected_id]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status_filter", "search", "reason"),
     [("unread", "", "filter"), ("all", "needle", "search")],
@@ -417,6 +480,44 @@ async def test_query_replacement_keeps_old_rows_and_reader_until_commit(
             search.casefold(),
         )
         assert open_item in screen._loaded_items, "filter/search pins the open article"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["filter", "search"])
+async def test_query_pin_is_cached_and_deduplicated_across_page_replay(reason):
+    controller = AsyncMock()
+    controller.list_reader_items_page.side_effect = [
+        _page([4], high_water=4, snapshot_count=1),
+        _page([3], high_water=4, snapshot_count=2, has_more=True),
+        _page([4, 2], high_water=4),
+    ]
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._replace_items_snapshot(reason="initial") is True
+        open_item = screen._loaded_items[0]
+        screen._selected_content_item = open_item
+        if reason == "filter":
+            screen._items_status_filter = "unread"
+        else:
+            screen._items_search_query = "needle"
+
+        assert await screen._replace_items_snapshot(reason=reason) is True
+        assert [row["item_id"] for row in screen._items_snapshot.page(0)] == [4, 3]
+        assert 4 in screen._items_snapshot.seen_ids
+        assert await screen._load_next_items_page() is True
+        assert [row["item_id"] for row in screen._loaded_items] == [2]
+        assert sum(
+            row["item_id"] == 4
+            for page in screen._items_snapshot.pages
+            for row in page
+        ) == 1
+
+        controller.list_reader_items_page.reset_mock()
+        assert await screen._present_cached_items_page(0) is True
+        assert [row["item_id"] for row in screen._loaded_items] == [4, 3]
+        assert await screen._load_next_items_page() is True
+        assert [row["item_id"] for row in screen._loaded_items] == [2]
+        assert controller.list_reader_items_page.await_count == 0
 
 
 @pytest.mark.asyncio

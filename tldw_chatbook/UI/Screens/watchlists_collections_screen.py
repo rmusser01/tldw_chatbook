@@ -9884,7 +9884,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_inflight_replacement = None
         self._items_inflight_continuation = None
         self._items_page_loading = True
-        self._items_search_results_authoritative = False
         self._push_items_pager_state()
 
     async def _publish_items_rows(
@@ -9967,7 +9966,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         generation = self._items_snapshot_generation
         self._items_pending_query_key = query_key
         self._items_page_loading = True
-        self._items_search_results_authoritative = False
         self._push_items_pager_state()
         result = False
         try:
@@ -9980,10 +9978,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 raise TypeError("Reader item service returned an invalid page")
             if not self._items_request_is_current(generation, query_key):
                 return False
+            first_page_rows = list(page.items)
+            if reason in {"filter", "search"}:
+                first_page_rows = self._with_open_item(
+                    first_page_rows, max_items=_ITEMS_PAGE_SIZE
+                )
+                page = WatchlistItemPage(
+                    items=tuple(first_page_rows),
+                    has_more=page.has_more,
+                    snapshot_max_item_id=page.snapshot_max_item_id,
+                    snapshot_count=page.snapshot_count,
+                    next_cursor=page.next_cursor,
+                )
             candidate = ReaderItemSnapshot.start(query, page)
             rows = list(candidate.page(0))
-            if reason in {"filter", "search"}:
-                rows = self._with_open_item(rows, max_items=_ITEMS_PAGE_SIZE)
 
             def commit() -> None:
                 self._items_snapshot = candidate
