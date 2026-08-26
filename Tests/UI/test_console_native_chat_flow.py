@@ -3158,7 +3158,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         # run, must not be silently eaten, and must not break Stop.
         assert send_button.disabled is False
         assert not send_button.has_class("console-send-blocked")
-        assert send_button.label.plain == "Queue"
+        assert send_button.label.plain == "Queue | $"
         controller = console._ensure_console_chat_controller()
         session_id = controller.store.active_session_id
         assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0

@@ -13643,6 +13643,9 @@ class ChatScreen(BaseAppScreen):
                 collapsed=self._console_composer_collapsed,
                 collapse_large_pastes=self._console_collapse_large_pastes_enabled(),
                 paste_collapse_threshold=self._console_paste_collapse_threshold(),
+                send_price_tooltip_provider=(
+                    lambda draft: self._send_price.tooltip_for_draft(draft)
+                ),
             )
             # TASK-1364: the composer shares the screen's prompt-history
             # store with the controller (which records accepted sends) so

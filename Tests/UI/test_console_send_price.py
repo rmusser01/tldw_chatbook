@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -9,12 +10,28 @@ from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
+from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI.test_console_cost_chip_screen import (
+    _AnthropicWaitingGateway,
+    _configure_anthropic_ready_console,
+)
+from Tests.UI.test_destination_shells import (
+    _build_test_app,
+    _wait_for_selector,
+    _wait_for_visible_text,
+)
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
     EvidenceReference,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleNextSendHistoryProjection
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleNextSendHistoryProjection,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -459,8 +476,8 @@ def test_console_send_price_controller_missing_store_and_broader_failures_degrad
     closed = ConsoleSendPriceController(
         settings_accessor=lambda: settings,
         chat_store_accessor=lambda: closed_store,
-        provider_history_accessor=lambda _session_id: (
-            (_ for _ in ()).throw(AssertionError("closed session was projected"))
+        provider_history_accessor=lambda _session_id: (_ for _ in ()).throw(
+            AssertionError("closed session was projected")
         ),
         pending_launch_accessor=lambda: None,
         pricing_catalog_accessor=lambda: _Catalog(),
@@ -472,6 +489,145 @@ def test_console_send_price_controller_missing_store_and_broader_failures_degrad
     assert closed.presentation_for_draft("draft") == expected
     assert broken.presentation_for_draft("draft") == expected
     assert catalog_broken.presentation_for_draft("draft") == expected
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_refreshes_send_price_without_changing_cost_chip():
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = console.query_one("#console-send-message", Button)
+        cost_chip = console.query_one("#console-cost-chip")
+        cost_before = (
+            cost_chip.display,
+            str(cost_chip.render()),
+            console._last_console_cost_state,
+        )
+
+        composer.load_draft("hello")
+
+        assert send_button.label.plain == "Send | $"
+        tooltip = str(send_button.tooltip)
+        assert "Next request:" in tooltip
+        assert "Input:" in tooltip
+        assert "Reply:" in tooltip
+        assert "anthropic" in tooltip
+        assert "claude-sonnet-4-6" in tooltip
+        assert "rates as of" in tooltip
+        assert (
+            cost_chip.display,
+            str(cost_chip.render()),
+            console._last_console_cost_state,
+        ) == cost_before
+
+        composer.load_draft("hello with a substantially longer live draft")
+        draft_tooltip = str(send_button.tooltip)
+        assert draft_tooltip != tooltip
+
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        settings = store.session_settings(session_id)
+        assert settings is not None
+        store.replace_session_settings(
+            session_id,
+            replace(
+                settings,
+                provider="Anthropic",
+                model="claude-opus-4-1",
+            ),
+        )
+        composer._sync_current_action_state()
+        provider_tooltip = str(send_button.tooltip)
+        assert provider_tooltip != draft_tooltip
+        assert "Anthropic" in provider_tooltip
+        assert "claude-opus-4-1" in provider_tooltip
+
+        updated_settings = replace(
+            settings,
+            system_prompt="A newly selected mounted-test system prompt.",
+            max_tokens=321,
+        )
+        store.replace_session_settings(session_id, updated_settings)
+        composer._sync_current_action_state()
+        settings_tooltip = str(send_button.tooltip)
+        assert settings_tooltip != provider_tooltip
+        assert "Reply: up to 321 tokens" in str(send_button.tooltip)
+
+        second_session = store.create_session(
+            settings=updated_settings,
+            ephemeral=True,
+        )
+        store.append_message(
+            second_session.id,
+            role=ConsoleMessageRole.USER,
+            content="Canonical history that belongs only to the new active session.",
+        )
+        composer._sync_current_action_state()
+        history_tooltip = str(send_button.tooltip)
+        assert store.active_session_id == second_session.id
+        assert history_tooltip != settings_tooltip
+
+        console._pending_console_launch_context = _staged_launch(
+            "New staged evidence visible only in this estimate."
+        )
+        composer._sync_current_action_state()
+        staged_tooltip = str(send_button.tooltip)
+        assert staged_tooltip != history_tooltip
+
+        composer.clear_draft()
+        attachment = PendingAttachment(
+            file_path="/tmp/a.png",
+            display_name="a.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"image",
+            mime_type="image/png",
+            original_size=5,
+            processed_size=5,
+        )
+        assert store.add_pending_attachment(second_session.id, attachment) is True
+        composer.set_pending_attachment_label(attachment.label)
+        composer._sync_current_action_state()
+
+        assert send_button.label.plain == "Send | $"
+        attachment_tooltip = str(send_button.tooltip)
+        assert "Next request: cost unavailable" in attachment_tooltip
+        assert "Attachments: 1" in attachment_tooltip
+        assert "media cost not estimated" in attachment_tooltip
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_prices_a_sendable_follow_up_as_queue():
+    gateway = _AnthropicWaitingGateway()
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = console.query_one("#console-send-message", Button)
+        composer.load_draft("first request")
+        send_button.press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=10.0)
+        await _wait_for_visible_text(console, pilot, "partial")
+        await console._sync_native_console_chat_ui()
+
+        composer.load_draft("queued follow-up")
+
+        assert send_button.label.plain == "Queue | $"
+        assert "Next request:" in str(send_button.tooltip)
+
+        gateway.release.set()
 
 
 @pytest.mark.parametrize(

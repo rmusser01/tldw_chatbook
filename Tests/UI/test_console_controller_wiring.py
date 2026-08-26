@@ -52,6 +52,7 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
 )
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+from tldw_chatbook.UI.Console_Modules.send_price import ConsoleSendPriceController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
 from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
@@ -85,6 +86,7 @@ _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
     ("_prompts", ConsolePromptsController),
     ("_agent", ConsoleAgentController),
     ("_prompt_queue", ConsolePromptQueueUIController),
+    ("_send_price", ConsoleSendPriceController),
 ]
 
 #: Every controller takes `chat_store_accessor=lambda: self._ensure_console_
@@ -115,7 +117,7 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         )
 
 
-def test_all_fourteen_controllers_are_constructed_with_the_right_classes() -> None:
+def test_all_fifteen_controllers_are_constructed_with_the_right_classes() -> None:
     screen = _unmounted_console()
     names = [attr for attr, _ in _ALL_CONTROLLER_SLOTS]
     observed = [key for key in vars(screen) if key in set(names)]
@@ -127,6 +129,35 @@ def test_all_fourteen_controllers_are_constructed_with_the_right_classes() -> No
             f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
         )
     assert observed == names, f"controller build order changed: {observed}"
+
+
+def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> None:
+    screen = _unmounted_console()
+    controller = getattr(screen, "_send_price", None)
+    assert isinstance(controller, ConsoleSendPriceController), (
+        "_send_price was never wired"
+    )
+
+    settings = object()
+    store = object()
+    launch = object()
+    projection = object()
+    screen._session._ensure_active_console_session_settings = lambda: settings
+    screen._console_chat_store = store
+    screen._pending_console_launch_context = launch
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        provider_messages_for_next_send_estimate=(
+            lambda session_id: (projection, session_id)
+        )
+    )
+
+    assert controller._settings_accessor() is settings
+    assert controller._chat_store_accessor() is store
+    assert controller._pending_launch_accessor() is launch
+    assert controller._provider_history_accessor("session-1") == (
+        projection,
+        "session-1",
+    )
 
 
 def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:

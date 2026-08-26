@@ -115,7 +115,8 @@ async def test_typing_enables_send_and_clears_reason_immediately():
         composer.insert_text("h")
         assert send_button.disabled is False
         assert reason.styles.display == "none"
-        assert send_button.tooltip == "Send the active Console session draft."
+        assert send_button.label.plain == "Send | $"
+        assert str(send_button.tooltip).startswith("Next request:")
 
         # Deleting back to empty restores both, again synchronously.
         composer.delete_left()
@@ -163,7 +164,8 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked():
 
         assert send_button.disabled is False
         assert reason.styles.display == "none"
-        assert send_button.tooltip == "Send the active Console session draft."
+        assert send_button.label.plain == "Send | $"
+        assert str(send_button.tooltip).startswith("Next request:")
 
 
 @pytest.mark.asyncio
