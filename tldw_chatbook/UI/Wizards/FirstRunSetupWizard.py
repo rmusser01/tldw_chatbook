@@ -220,10 +220,12 @@ class SetupRadioSet(RadioSet):
 
 class SetupWizardProgress(WizardProgress):
 
-    #: TASK-21148 (UAT F-2/F-3): the stacked number+title layout must hold
-    #: even in stylesheet-less hosts (bare test harnesses) — an unstyled
-    #: Vertical expands to fill and shoves the wizard chrome off-screen.
-    DEFAULT_CSS = """
+    #: TASK-21148 (UAT F-2/F-3): the stacked number+title layout. Declared
+    #: as BUNDLED_CSS so build_css.py lifts it into the widget-defaults
+    #: tier of the app bundle — a class-level DEFAULT_CSS would register
+    #: another stylesheet source against Textual's 64-entry parse cache
+    #: (see Tests/UI/test_widget_css_consolidation.py for the rule).
+    BUNDLED_CSS = """
     SetupWizardProgress .setup-progress-item {
         height: auto;
     }

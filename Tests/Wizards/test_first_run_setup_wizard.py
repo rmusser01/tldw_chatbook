@@ -1314,7 +1314,11 @@ async def test_next_button_click_drives_quick_track_to_summary():
     of that suppression would fail it.
     """
     wizard = _make_wizard()
-    app = _HostApp(wizard)
+    # _StyledHostApp: this test drives real screen coordinates via
+    # pilot.click, which needs the app stylesheet loaded — the wizard
+    # tracker's layout rides the bundle as BUNDLED_CSS (class-level
+    # DEFAULT_CSS is barred by the parse-cache rule).
+    app = _StyledHostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
@@ -10233,7 +10237,11 @@ async def test_summary_destination_button_advances_without_an_event():
     wiring, not click hit-regions.
     """
     wizard = _make_wizard()
-    app = _HostApp(wizard)
+    # _StyledHostApp: this test drives real screen coordinates via
+    # pilot.click, which needs the app stylesheet loaded — the wizard
+    # tracker's layout rides the bundle as BUNDLED_CSS (class-level
+    # DEFAULT_CSS is barred by the parse-cache rule).
+    app = _StyledHostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
@@ -11626,9 +11634,14 @@ async def test_key_hints_footer_and_test_button_probe():
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProviderStep
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 
-    # Footer: rendered by the real wizard screen.
+    # Footer: rendered by the real wizard screen. _StyledHostApp (not the
+    # bare _HostApp): this test asserts real geometry — that the nav button
+    # is actually painted — which only holds with the app stylesheet
+    # loaded. The tracker's stacked layout rides the bundle as BUNDLED_CSS
+    # (class-level DEFAULT_CSS is barred by the parse-cache rule; see
+    # Tests/UI/test_widget_css_consolidation.py).
     wizard = _make_wizard()
-    app = _HostApp(wizard)
+    app = _StyledHostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         hints = wizard.query_one("#setup-key-hints", Static)
