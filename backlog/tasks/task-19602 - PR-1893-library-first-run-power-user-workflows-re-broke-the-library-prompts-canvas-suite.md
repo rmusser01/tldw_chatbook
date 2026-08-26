@@ -3,10 +3,11 @@ id: TASK-19602
 title: >-
   PR #1893 (library first-run/power-user workflows) re-broke the
   library-prompts-canvas suite
-status: In Progress
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-21'
-updated_date: '2026-08-21'
+updated_date: '2026-08-26 00:41'
 labels:
   - ci
   - library
@@ -50,11 +51,28 @@ clean-worktree reproduction is deterministic.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `test_library_prompts_canvas.py` is green on a clean dev checkout (full file, single run).
-- [ ] #2 The `app_config` AttributeError is resolved at the correct seam (production guard or harness provision — not a blind `getattr` swallow).
-- [ ] #3 The workspace-registry readiness path either does not gate the prompts canvas in a host without a registry, or the harness readies it; the decision is recorded in the PR.
-- [ ] #4 The TASK-18611 trio stays green (no regression of PR #1849's fix).
+- [x] #1 `test_library_prompts_canvas.py` is green on a clean dev checkout (full file, single run).
+- [x] #2 The `app_config` AttributeError is resolved at the correct seam (production guard or harness provision — not a blind `getattr` swallow).
+- [x] #3 The workspace-registry readiness path either does not gate the prompts canvas in a host without a registry, or the harness readies it; the decision is recorded in the PR.
+- [x] #4 The TASK-18611 trio stays green (no regression of PR #1849's fix).
+- [x] #5 Prompt Recipe block-order tests reflect the accepted outcome-first essential/optional ordering.
+- [x] #6 Collection-manager tests exercise the manager from populated or explicit empty-collection recovery states without contradicting the distilled empty-state contract.
+- [x] #7 Prompt re-entry tests reflect the explicit Library landing/Continue receipt contract and still prove exact one-request scope restoration.
+- [x] #8 Production-CSS pager geometry tests run in a deterministic single-Library-screen harness and remain green at both required terminal sizes.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce the focused Library Prompt baseline on latest dev and classify every failure as product defect, stale contract, or harness race.
+2. Align stale Recipe, collection, Continue-landing, and production-CSS harness expectations with their accepted contracts; keep production behavior unchanged.
+3. Run the focused failures, the complete affected test files, and static checks; document exact evidence.
+4. Self-review the diff and update the task acceptance criteria and implementation notes.
+
+ADR required: no
+ADR path: N/A
+Reason: This is a test-baseline repair implementing already accepted UI and persistence contracts; it introduces no architectural decision.
+<!-- SECTION:PLAN:END -->
 
 ## Notes
 
@@ -244,3 +262,12 @@ applied_scope_once -- dispatch/refetch counting; plus the known
 cross-suite order flakes (combined three-file runs surface them; CI
 shards files separately). File under TASK-18610's remainder or a new
 task.
+
+## Implementation Notes (2026-08-25 baseline closeout)
+
+- Aligned the Recipe test with the accepted outcome-first ordering: essential user blocks precede optional Success criteria.
+- Kept collection-manager coverage honest under the distilled empty-state contract by seeding the paging case and exercising the empty-collection “All prompts” recovery path before reopening the manager. The recovery wait now observes the applied browse scope, removing a requested/applied race.
+- Reframed saved Prompt re-entry around the explicit Library landing/Continue receipt contract: non-resumable create state stays on the landing page, while an authoritative applied Prompt scope continues and refetches exactly once.
+- Moved Prompt pager/focus integrations from the full `TldwCli` startup lifecycle to the single-Library production-CSS harness. This preserves the exact stylesheet and compositor assertions without allowing unrelated default-route/Console mounts to replace the screen under test.
+- Verification: the nine formerly failing parametrized cases pass together; the original eight-file baseline reached 682/683 with only the subsequently removed full-app routing race; the complete `test_library_prompts_canvas.py` file then passed 338/338; the four changed pager/focus cases passed 4/4; Ruff and `git diff --check` passed.
+- ADR check: no ADR required. The changes enforce existing Recipe, empty-state, Continue, and harness contracts and introduce no architecture or product behavior.
