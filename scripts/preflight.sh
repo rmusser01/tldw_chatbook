@@ -107,6 +107,8 @@ run_check "backlog task ids" \
   "$PYTHON" scripts/check_backlog_task_ids.py
 run_check "chachanotes table allowlist" \
   "$PYTHON" scripts/check_schema_table_allowlist.py
+run_check "index plan pins" \
+  "$PYTHON" scripts/check_index_plan_pins.py
 
 echo
 if [ ${#failed[@]} -eq 0 ]; then
