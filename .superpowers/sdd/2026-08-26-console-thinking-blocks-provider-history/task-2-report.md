@@ -73,11 +73,10 @@ git diff --check 4e5a04c2d2
 ```
 
 Original static result: Ruff lint and diff checks passed. No whole-file Ruff
-format result is attributed to the original closeout: a later base replay showed
-that the production gateway was format-clean at `4e5a04c2d2`, while
-`Tests/Chat/test_console_provider_gateway.py` was already non-green at that same
-base. The Task 2 production edits subsequently introduced format drift, corrected
-in Review Fix Round 2 below without churning the test module's unrelated baseline.
+format result is attributed to the original closeout. The authoritative
+`git show 4e5a04c2d2:<path> | ruff format --check --stdin-filename <path> -`
+replay exits 1 for both the production gateway and its large gateway test, proving
+that both files were already whole-file non-green at the Task 2 base.
 
 ## Changed Files
 
@@ -157,11 +156,11 @@ Splitter/capability regressions remained 692 passed and 51 deselected with the
 same warning in 25.45s.
 
 Fix static result: Ruff lint and `git diff --check` passed for the two changed
-files. At the `5bb018c7e3` fix base, the production file was non-green because the
-Task 2 changes had introduced format drift even though the `4e5a04c2d2` production
-base was clean. The test module's whole-file format baseline was already non-green
-at `4e5a04c2d2`. Production formatting is corrected in Review Fix Round 2; the
-unrelated test baseline remains intentionally unchanged.
+files. Both the production gateway and its gateway test were already whole-file
+formatter-non-green at `4e5a04c2d2`; no formatting drift is attributed to Task 2.
+Review Fix Round 2 mechanically formatted the production gateway, which now passes
+its current Ruff format check. The large gateway test retains its pre-existing
+whole-file formatter baseline; new additions are locally formatted and lint-clean.
 
 ## Review Fix Round 2/5
 
