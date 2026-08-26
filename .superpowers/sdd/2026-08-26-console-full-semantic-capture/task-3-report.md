@@ -41,3 +41,12 @@ The original Task 3 RED/GREEN evidence remains in commit `16cfc0991a`. This revi
 - ADR-089 remains governing; no new ADR or lesson entry was needed.
 
 Task `TASK-22507.3` remains **In Progress** for independent review. Acceptance criteria remain intentionally unchecked.
+
+## Controller closure
+
+- Final scoped re-review: all findings addressed, with no new Critical or
+  Important breakage; the semantic-canary wrapper regression independently
+  passed.
+- The Backlog acceptance criteria are checked and `TASK-22507.3` is **Done**.
+- Final implementation range: `16cfc0991a..2f2be5d7ad` plus the
+  Backlog/report closeout commit.
