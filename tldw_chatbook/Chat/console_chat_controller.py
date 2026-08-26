@@ -2126,6 +2126,11 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        # Exact workspace authority captured for each live provider dispatch.
+        # Undo/commit probes run on worker threads, so snapshot reads and the
+        # stream-lifecycle writes share this lock.
+        self._active_workspace_roots_lock = threading.Lock()
+        self._active_workspace_roots_by_session: dict[str, tuple[str, ...]] = {}
         # Volatile-only Task-13 owner fence. It starts before submit's first
         # await and ends only after the submit finalizer; Task 14 will add
         # durable recovery/checkpoint semantics.
@@ -2513,6 +2518,36 @@ class ConsoleChatController:
             map, including entries for sessions the store has since closed.
         """
         return dict(self._run_states)
+
+    def run_active_for_workspace(self, root: str) -> bool:
+        """Whether any live session is executing against the given root.
+
+        The roots come from each dispatch's immutable execution context, not
+        from the currently viewed session or mutable workspace selection.
+
+        Args:
+            root: Workspace root about to be mutated.
+
+        Returns:
+            True when a non-terminal run captured the same canonical root.
+        """
+
+        def _canonical(value: str) -> str:
+            try:
+                return os.path.normcase(str(Path(value).expanduser().resolve()))
+            except OSError:
+                return os.path.normcase(
+                    os.path.abspath(os.path.expanduser(str(value)))
+                )
+
+        target = _canonical(root)
+        with self._active_workspace_roots_lock:
+            captured = tuple(self._active_workspace_roots_by_session.items())
+        return any(
+            not self.run_state_for(session_id).is_send_allowed
+            and any(_canonical(candidate) == target for candidate in roots)
+            for session_id, roots in captured
+        )
 
     def activity_for(self, session_id: str) -> ConsoleControllerActivity:
         """Return the single queue-aware activity projection for ``session_id``."""
@@ -13932,6 +13967,10 @@ class ConsoleChatController:
             assistant_message_id,
         )
         active_task = asyncio.current_task()
+        with self._active_workspace_roots_lock:
+            self._active_workspace_roots_by_session[owner_id] = (
+                turn_context.workspace_roots
+            )
         self._active_assistant_message_ids[owner_id] = assistant_message_id
         self._active_stream_tasks[owner_id] = active_task
         self._stop_requested = False
@@ -14007,6 +14046,8 @@ class ConsoleChatController:
             ):
                 self._active_stream_tasks.pop(owner_id, None)
                 self._active_assistant_message_ids.pop(owner_id, None)
+                with self._active_workspace_roots_lock:
+                    self._active_workspace_roots_by_session.pop(owner_id, None)
                 self._stop_requested = False
                 if (
                     self._active_citation_repair_sessions.get(owner_id)

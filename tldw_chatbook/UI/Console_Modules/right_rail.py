@@ -72,8 +72,6 @@ from ...Chat.console_display_state import (
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Chat.console_live_work import PENDING_LAUNCH_CARD_ID
 from ...Widgets.Console import (
-    ConsoleChangedFilesSection,
-    ConsoleChangedFilesState,
     ConsoleBoundedSection,
     InspectorOwnershipPolicy,
     ConsoleProjectInstructionStatusRow,
@@ -225,7 +223,6 @@ class ConsoleInspectorRail(Vertical):
         staged_context_state: ConsoleStagedContextState,
         retrieval_scope_state: ConsoleRetrievalScopeState,
         inspector_state: ConsoleInspectorState,
-        changed_files_state: ConsoleChangedFilesState,
         project_instruction_state: ConsoleProjectInstructionState,
         settings_summary_state: ConsoleSettingsSummaryState,
         live_work_card_builder: Callable[[], Widget],
@@ -244,12 +241,6 @@ class ConsoleInspectorRail(Vertical):
                 from -- computed once by the screen, shared verbatim.
             inspector_state: Run inspector rows/state
                 (``ChatScreen._build_console_inspector_state``).
-            changed_files_state: Cross-turn "Changed files" section display
-                state (``ChatScreen._build_console_changed_files_state``,
-                TASK-18060 Task 5, review-rail spec §2) -- reads only the
-                screen's cached summary, never the DB/git. Mounted between
-                the Scope row and the run inspector; renders nothing when
-                empty (config OFF or no changed-file history).
             project_instruction_state: Content-free project-instruction status
                 rendered above Sources.
             settings_summary_state: Console session settings summary
@@ -288,7 +279,6 @@ class ConsoleInspectorRail(Vertical):
         self._staged_context_state = staged_context_state
         self._retrieval_scope_state = retrieval_scope_state
         self._inspector_state = inspector_state
-        self._changed_files_state = changed_files_state
         self._project_instruction_state = project_instruction_state
         self._settings_summary_state = settings_summary_state
         self._live_work_card_builder = live_work_card_builder
@@ -1140,29 +1130,6 @@ class ConsoleInspectorRail(Vertical):
             retrieval_scope_row.styles.min_width = 0
             retrieval_scope_row.styles.height = "auto"
             yield frame_console_region(retrieval_scope_row, variant="quiet")
-
-            # TASK-18060 Task 5 (review-rail spec §2): cross-turn
-            # "Changed files" section -- a sibling of the Scope row above,
-            # between it and the run inspector below. Renders purely from
-            # precomputed state (never a DB/git read on compose/recompose);
-            # the widget itself suppresses its own display when the state
-            # is empty (config OFF or no changed-file history), so nothing
-            # here needs to conditionally skip mounting it.
-            changed_files_section = ConsoleChangedFilesSection(
-                self._changed_files_state,
-                id="console-changed-files-section",
-                on_reconcile=self.request_outer_reconcile,
-            )
-            # Same margin/padding rhythm as the Sources tray and Scope row
-            # above (`.console-inspector-context-section`) -- the widget's
-            # own fixed `console-changed-files-section` class is untouched,
-            # this is additive, matching how `frame_console_region` below
-            # also adds a class rather than replacing the widget's own.
-            # Width/min-width live in `_agentic_terminal.tcss`'s
-            # `#console-changed-files-section` rule (TASK-19192), matching
-            # the sibling id-rule convention -- not inline here.
-            changed_files_section.add_class("console-inspector-context-section")
-            yield frame_console_region(changed_files_section, variant="quiet")
 
             with Vertical(id="console-run-inspector"):
                 yield ConsoleRunInspector(

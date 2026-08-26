@@ -470,13 +470,14 @@ async def test_snapshot_only_affordances_present_as_unavailable(
 async def test_active_run_refuses_before_any_modal_or_status_read(
     monkeypatch, tmp_path
 ):
-    """Spec §5 step 1: the run-active refusal is a notify — never a modal."""
+    """Spec §5 step 1: a background root-active run refuses before the modal."""
     _patch_git_actions(monkeypatch, True)
     repo = _init_repo(tmp_path / "repo")
     (repo / "a.txt").write_text("changed\n")
     provider, _db, _service = _make_provider(
-        tmp_path, "conv-active", run_active=lambda: True
+        tmp_path, "conv-active", run_active=lambda: False
     )
+    provider.run_active_for_root = lambda root: str(repo) == root
     app = _Harness(provider, workspace_roots=[str(repo)])
     async with app.run_test(size=(160, 48)) as pilot:
         screen = await _enter_current_mode(pilot, app)

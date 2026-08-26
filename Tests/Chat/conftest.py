@@ -12,7 +12,9 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+from Tests.console_provider_doubles import provider_resolution
+from Tests.console_provider_doubles import persisted_console_store
 
 
 class StreamingGateway:
@@ -22,17 +24,13 @@ class StreamingGateway:
     running a send/stream."""
 
     async def resolve_for_send(self, selection):
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": True,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "visible_copy": "",
-            },
-        )()
+        return provider_resolution(
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            base_url="http://127.0.0.1:9099",
+            visible_copy="",
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):
@@ -41,7 +39,7 @@ class StreamingGateway:
 
 @pytest.fixture
 def controller_with_two_sessions():
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     # `store.new_session` does not exist (verified by grep) -- the real
     # session-creation surface is `store.ensure_session`/`store.create_session`

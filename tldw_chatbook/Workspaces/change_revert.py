@@ -23,6 +23,7 @@ spec demands:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -62,9 +63,13 @@ class RevertPreflight:
         edited_since: Paths whose CURRENT disk state differs from the
             turn's E snapshot — the user (or a later turn) changed them
             after this turn, and reverting will overwrite that work.
+        disk_state: Stable content fingerprints for every path the revert
+            may overwrite. A caller can compare a fresh preflight with the
+            confirmation-time snapshot and refuse a stale confirmation.
     """
 
     edited_since: list[str] = field(default_factory=list)
+    disk_state: dict[str, str] = field(default_factory=dict)
 
 
 def _unsafe_reason(path: str) -> str | None:
@@ -113,11 +118,10 @@ def preflight_revert(
     end = str(row["end_sha"])
     changed = {
         c.path: c
-        for c in repo.changed_files(
-            str(row["baseline_sha"]), str(row["end_sha"])
-        )
+        for c in repo.changed_files(str(row["baseline_sha"]), str(row["end_sha"]))
     }
     edited: list[str] = []
+    disk_state: dict[str, str] = {}
 
     def _check(path: str) -> None:
         if path in edited:
@@ -126,9 +130,15 @@ def preflight_revert(
             at_end = repo.file_bytes(end, path)
             target = root / path
             on_disk = target.read_bytes() if target.is_file() else None
+            disk_state[path] = (
+                "missing"
+                if on_disk is None
+                else f"sha256:{sha256(on_disk).hexdigest()}"
+            )
             if at_end != on_disk:
                 edited.append(path)
         except (OSError, ChangeTrackingError):
+            disk_state[path] = "unreadable"
             edited.append(path)
 
     for path in paths:
@@ -138,7 +148,7 @@ def preflight_revert(
         change = changed.get(path)
         if change is not None and change.status == "R" and change.old_path:
             _check(change.old_path)
-    return RevertPreflight(edited_since=edited)
+    return RevertPreflight(edited_since=edited, disk_state=disk_state)
 
 
 def revert_paths(

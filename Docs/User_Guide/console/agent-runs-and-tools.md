@@ -302,44 +302,30 @@ by design it covers the same run's full set of tracked changes — turn and
 post-turn windows alike — the same union the `v` Review screen shows for
 that run. It supports notes and Review exactly like a turn's own card.
 
-#### The rail's Changed-files section
+#### Reviewing or undoing a turn's changed files
 
-Turn file cards only show one turn at a time. To see everything a
-conversation has changed, look for the **Changed files** section in the
-Inspector (right rail) — a quiet-framed section sitting between the
-retrieval Scope row and the run inspector. It lists the conversation's
-changed files across **every** turn, one row per file, latest state only:
-status glyph, cell-elided path, that file's `+A −D`, and a `✎ N` badge
-when the file carries notes.
+Each completed agent turn keeps its own **Edited N files** card in the
+transcript. The card is the quickest place to inspect what that turn did:
+expand individual files (or all files), read their diffs, leave notes, or
+choose **Review** for the full Change Review screen. The historical card
+stays in the transcript after an undo so the user can still audit what the
+agent changed.
 
-The header names the honesty rule directly — `Changed files (N) · latest
-turn deltas +A −D` — because the per-row and header counts are each
-file's **newest** covering turn's own deltas, never a cumulative total
-across the conversation. The list caps at 12 rows; past that, a
-`+N more — open Review` tail line names the rest instead of growing the
-rail without bound. If retention pruned a turn's snapshot history, a dim
-`history pruned for N turns` line appears below the list rather than
-hiding the gap. A conversation that hasn't touched a file yet renders no
-header and no empty box at all.
+Choose **Undo All** to restore every file changed by that turn. The button
+stays disabled until the exact snapshot rows have loaded, then opens the
+same confirmation used by Change Review. If a file was edited after the
+turn, the confirmation names it and warns that the undo will overwrite
+that later work. Cancel leaves the workspace unchanged and makes Undo All
+available again; a complete undo labels the card **Undone** while keeping
+its rows and **Review** action.
 
-The section is never computed on the rail's regular sync tick — the same
-cached-summary discipline the dictionary/world-book rail sections already
-use. An off-thread worker recomputes only when the conversation switches
-or a new turn's marker message appears (an in-memory check, no DB read),
-and it re-derives incrementally, so only turns it hasn't already read
-cost a fresh git call. Saving or deleting a note anywhere — the card or
-the Review screen below — also forces one refresh so a stale `✎ N` badge
-never lingers.
-
-Set **`[console] changed_files_section`** in `config.toml` to `false` to
-turn the section off (default `true`): it's a pure presentation switch —
-off renders nothing and skips the recompute worker entirely.
-
-**Click a row** (or press Enter on it) to open the Review screen already
-focused on that exact file: its newest covering turn is selected and that
-file's diff loads immediately, pinned to the specific snapshot the row's
-counts came from — so two windows of the same run that happen to touch
-the same path never open to the wrong one.
+Undo All refuses while an agent run is active or when change tracking is
+incomplete. A turn can also contain multiple tracking windows for the same
+workspace (for example, overlapping parent/sub-agent activity). The compact
+card cannot establish a safe ordering for that case, so it refuses the
+inline undo and opens **Review** instead. Ordinary turns spanning different
+workspace roots are supported; warnings include the workspace name so
+same-named files remain distinguishable.
 
 #### Leaving feedback on a diff line or the whole file
 
@@ -1429,11 +1415,6 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   review](#change-review--reviewing-a-turns-file-changes) above, or the
   original plain-text marker row (default `true`, card on). No Settings UI
   switch.
-- **`[console] changed_files_section`** in `config.toml` — whether the
-  Inspector rail's cross-turn [Changed-files
-  section](#the-rails-changed-files-section) renders at all (default
-  `true`, on). A pure presentation switch: `false` renders nothing and
-  skips its off-thread recompute worker entirely. No Settings UI switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
@@ -1673,32 +1654,10 @@ rail on the next sync; and closing the session cancelled its live child
 immediately. The rest of this page's content is unchanged from the prior
 stamps.*
 
-*The "Change review" section extended @ `4eb073f31` on
-`feat/console-review-rail` (based on dev @ `f00acbd8b`) — 2026-08-20
-(TASK-18060: the Inspector rail's cross-turn Changed-files section, its
-click-through into the Review screen, and the Review screen's
-diff-line/whole-file commenting. Every claim above checked against the
-shipped code — `Widgets/Console/console_changed_files_section.py`,
-`UI/Console_Modules/right_rail.py`'s mount point between the retrieval
-Scope row and the run inspector, `UI/Screens/chat_screen.py`'s
-cached-summary/guard machinery and `_open_change_review` opener, the
-`ChangeReviewDiffPane`/cursor/key-reclaim/comment-save/notes-strip code in
-`UI/Screens/change_review_screen.py`, and the kind-aware
-`render_diff_feedback_block`/`format_diff_feedback_disclosure` in
-`Chat/console_display_state.py` — then confirmed by the targeted sweep:
-`Tests/Chat/test_change_notes_db.py`,
-`Tests/Chat/test_console_conversation_files.py`,
-`Tests/Chat/test_console_diff_hunks.py`,
-`Tests/Chat/test_console_diff_feedback_delivery.py`,
-`Tests/UI/test_change_review_screen.py`,
-`Tests/UI/test_console_changed_files_section.py`,
-`Tests/UI/test_console_changed_files_wiring.py`,
-`Tests/UI/test_console_turn_file_card_notes.py`,
-`Tests/UI/test_console_turn_file_card.py`,
-`Tests/UI/test_console_turn_file_card_factory.py`, and
-`Tests/Chat/test_console_agent_bridge.py`, 414 passed — again a docs-only
-pass against shipped code and the whole-suite test run, not an
-interactive live-tmux walkthrough.)*
+*The Review screen's diff-line/whole-file commenting was added in
+TASK-18060 on 2026-08-20. That task also introduced a cross-turn Changed
+files list in the Inspector; TASK-22305 retired that duplicate surface and
+kept file inspection, notes, Review, and direct Undo All on each turn card.*
 
 *"Git actions in change review" added @ `3e3497555`, re-verified @
 `d0f385b80` after the arc's final fix wave, on

@@ -12,6 +12,7 @@ the marker header alone -- the card must never break the transcript.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Callable
 
 from loguru import logger
@@ -143,6 +144,7 @@ class ConsoleTurnFileCard(Vertical):
         text-style: bold;
     }
     ConsoleTurnFileCard .console-turn-file-toggle-all-btn,
+    ConsoleTurnFileCard .console-turn-file-undo-all-btn,
     ConsoleTurnFileCard .console-turn-file-review-btn {
         min-width: 3;
     }
@@ -211,20 +213,12 @@ class ConsoleTurnFileCard(Vertical):
             self.run_id = run_id
             super().__init__()
 
-    class NotesChanged(Message):
-        """A note was saved or deleted successfully on this card's run.
+    class UndoAllRequested(Message):
+        """Request a guarded whole-turn revert from the owning Console screen."""
 
-        TASK-18060 Task 5 (review-rail spec §2's note-change invalidation):
-        the card mutates notes directly through its own provider (no prior
-        screen hook existed for either `_save_note` or `_delete_note`) --
-        the rail's `_console_changed_files_summary` cache has no other
-        signal that a note count changed, since its own guard tuple only
-        moves on a NEW run. The screen resets that guard on this message,
-        forcing one recompute so the rail's `✎ N` badges stay accurate.
-        """
-
-        def __init__(self, run_id: str) -> None:
+        def __init__(self, run_id: str, card: "ConsoleTurnFileCard") -> None:
             self.run_id = run_id
+            self.card = card
             super().__init__()
 
     def __init__(
@@ -270,6 +264,9 @@ class ConsoleTurnFileCard(Vertical):
         #: identity -- populated from ``notes_for_run`` on load and kept in
         #: sync as notes are added/deleted through this card instance.
         self._notes_by_key: dict[tuple[str, str], list[dict]] = {}
+        self._undo_available = False
+        self._undo_in_flight = False
+        self._undo_complete = False
 
     @property
     def marker_text(self) -> str:
@@ -296,17 +293,14 @@ class ConsoleTurnFileCard(Vertical):
 
     def on_click(self, event: Click) -> None:
         """Clicking the card selects its transcript row (parity with the
-        plain marker's ``ConsoleTranscriptMessage.on_click``) -- except a
-        file-row button, whose own click already toggles that row's
-        expand/collapse and must not also flip transcript selection.
+        plain marker's ``ConsoleTranscriptMessage.on_click``) -- except any
+        button, whose own action must not also flip transcript selection.
 
         Args:
-            event: The click; its ``control`` distinguishes a file-row
-                button press from a click on the card chrome.
+            event: The click; its ``control`` distinguishes button presses
+                from clicks on the card chrome.
         """
-        if event.control is not None and event.control.has_class(
-            "console-turn-file-row"
-        ):
+        if isinstance(event.control, Button):
             return
         event.stop()
         if self._message_id is None:
@@ -327,10 +321,9 @@ class ConsoleTurnFileCard(Vertical):
         # Header keeps the marker's counts but drops its "review with v"
         # trailer -- the rows ARE the review affordance now; `v` still
         # works and stays documented in the F1 help. The header also gains
-        # two compact, non-destructive affordances (spec §5, AC#3/AC#4): a
-        # `Review` button (a mouse-clickable equivalent of `v`, scoped to
-        # this card's own run -- no message-id lookup needed, unlike the
-        # marker's action) and an expand/collapse-all toggle.
+        # compact expand-all, Undo All, and Review affordances. Review is a
+        # mouse-clickable equivalent of `v`, scoped to this card's own run;
+        # Undo All stays disabled until exact snapshot rows finish loading.
         head = self._marker_text.split(" — ")[0]
         with Horizontal(classes="console-turn-file-header-row"):
             yield Static(
@@ -349,6 +342,15 @@ class ConsoleTurnFileCard(Vertical):
             # default "-active" flash.
             toggle_btn.active_effect_duration = 0
             yield toggle_btn
+            undo_btn = Button(
+                "Undo All",
+                classes="console-turn-file-undo-all-btn",
+                compact=True,
+                disabled=True,
+                tooltip="Restore every file changed by this turn",
+            )
+            undo_btn.active_effect_duration = 0
+            yield undo_btn
             review_btn = Button(
                 "Review",
                 classes="console-turn-file-review-btn",
@@ -462,6 +464,9 @@ class ConsoleTurnFileCard(Vertical):
                 diff_body.display = False
                 await rows_box.mount(row)
                 await rows_box.mount(diff_body)
+            self._undo_available = True
+            self._undo_complete = self._all_entries_reverted()
+            self._sync_undo_button()
         except Exception:
             logger.opt(exception=True).warning(
                 "Turn file card row load failed; keeping marker-only header."
@@ -477,6 +482,11 @@ class ConsoleTurnFileCard(Vertical):
         if button.has_class("console-turn-file-toggle-all-btn"):
             event.stop()
             await self._toggle_all(button)
+            return
+        if button.has_class("console-turn-file-undo-all-btn"):
+            event.stop()
+            if await self.begin_undo_all():
+                self.post_message(self.UndoAllRequested(self._run_id, self))
             return
         if button.has_class("console-turn-file-note-btn"):
             event.stop()
@@ -535,6 +545,63 @@ class ConsoleTurnFileCard(Vertical):
         body.display = True
         row.label = self._row_label_text(entry, expanded=True)
         self._refresh_toggle_all_button()
+
+    async def begin_undo_all(self) -> bool:
+        """Enter the card's single-flight Undo All state.
+
+        Returns:
+            ``True`` when this call claimed the action, or ``False`` when
+            rows are not ready, undo already completed, or another press is
+            already in flight.
+        """
+        if not self._undo_available or self._undo_complete or self._undo_in_flight:
+            return False
+        self._undo_in_flight = True
+        self._sync_undo_button()
+        return True
+
+    def finish_undo_all(self, *, success: bool) -> None:
+        """Leave the busy state after cancellation, refusal, or completion."""
+        self._undo_in_flight = False
+        if success:
+            self._undo_complete = True
+        self._sync_undo_button()
+
+    def _sync_undo_button(self) -> None:
+        """Project card undo state onto the mounted header button."""
+        buttons = list(self.query(".console-turn-file-undo-all-btn"))
+        if not buttons:
+            return
+        button = buttons[0]
+        if self._undo_complete:
+            button.label = "Undone"
+            button.tooltip = "This turn's file changes were undone"
+            button.disabled = True
+        elif self._undo_in_flight:
+            button.label = "Undoing…"
+            button.tooltip = "Preparing a safe whole-turn undo"
+            button.disabled = True
+        else:
+            button.label = "Undo All"
+            button.tooltip = "Restore every file changed by this turn"
+            button.disabled = not self._undo_available
+
+    def _all_entries_reverted(self) -> bool:
+        """Whether every loaded entry is already recorded as reverted."""
+        if not self._entries:
+            return False
+        reverted_by_row: dict[int, set[str]] = {}
+        for idx, row in self._row_for_entry.items():
+            raw = row.get("reverted") or ""
+            try:
+                reverted = {str(path) for path in json.loads(raw)} if raw else set()
+            except (TypeError, ValueError):
+                reverted = set()
+            reverted_by_row[idx] = reverted
+        return all(
+            entry.path in reverted_by_row.get(idx, set())
+            for idx, entry in enumerate(self._entries)
+        )
 
     @staticmethod
     async def _read_hunks(
@@ -1106,11 +1173,6 @@ class ConsoleTurnFileCard(Vertical):
                 )
 
             note_id = await asyncio.to_thread(_write)
-            # TASK-18060 Task 5: posted unconditionally on a successful
-            # write, before the mounted-check below -- the note changed
-            # (and any rail cache needs invalidating) regardless of whether
-            # this card's own row still needs a UI update.
-            self.post_message(self.NotesChanged(self._run_id))
             if not note_input.is_mounted:
                 return
             notes_box = note_input.parent
@@ -1175,9 +1237,6 @@ class ConsoleTurnFileCard(Vertical):
                     severity="warning",
                 )
                 return
-            # TASK-18060 Task 5: posted only on an ACTUAL deletion (the
-            # early return above covers "already sent, nothing changed").
-            self.post_message(self.NotesChanged(self._run_id))
             for notes in self._notes_by_key.values():
                 notes[:] = [
                     note for note in notes if int(note.get("id", -1)) != int(note_id)
