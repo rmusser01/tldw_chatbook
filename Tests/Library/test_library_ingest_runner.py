@@ -1812,7 +1812,7 @@ async def test_ebook_batch_uses_one_process_then_documents_use_general_pool(
     pools: list[_FakeIngestParsePool] = []
     requested_processes: list[int | None] = []
 
-    class _GenerationHarness(_IngestRunnerHarness):
+    class GenerationHarness(_IngestRunnerHarness):
         def _create_ingest_parse_pool(
             self, processes: int | None = None
         ) -> _app_module._IngestParsePoolResources:
@@ -1825,7 +1825,7 @@ async def test_ebook_batch_uses_one_process_then_documents_use_general_pool(
                 queue.Queue(maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE),
             )
 
-    app = _GenerationHarness(db, worker_count=3, heavy_lane=1)
+    app = GenerationHarness(db, worker_count=3, heavy_lane=1)
 
     async with app.run_test() as pilot:
         paths = {}
@@ -1874,7 +1874,7 @@ async def test_ebook_waits_for_existing_general_pool_to_retire(
     pools: list[_FakeIngestParsePool] = []
     requested_processes: list[int | None] = []
 
-    class _GenerationHarness(_IngestRunnerHarness):
+    class GenerationHarness(_IngestRunnerHarness):
         def _create_ingest_parse_pool(
             self, *, processes: int | None = None
         ) -> _app_module._IngestParsePoolResources:
@@ -1887,7 +1887,7 @@ async def test_ebook_waits_for_existing_general_pool_to_retire(
                 queue.Queue(maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE),
             )
 
-    app = _GenerationHarness(db, worker_count=3)
+    app = GenerationHarness(db, worker_count=3)
 
     async with app.run_test() as pilot:
         document_path = tmp_path / "doc.txt"
@@ -1982,7 +1982,7 @@ async def test_broken_ebook_pool_gates_rebuild_until_teardown_completes(
     teardown_started = threading.Event()
     pools: list[_FakeIngestParsePool] = []
 
-    class _BlockingJoinPool(_FakeIngestParsePool):
+    class BlockingJoinPool(_FakeIngestParsePool):
         def join(self) -> None:
             teardown_started.set()
             assert teardown_release.wait(_FAKE_POOL_JOIN_TIMEOUT)
@@ -1990,7 +1990,7 @@ async def test_broken_ebook_pool_gates_rebuild_until_teardown_completes(
 
     def _pool_factory() -> _FakeIngestParsePool:
         pool = (
-            _BlockingJoinPool(auto_run=False)
+            BlockingJoinPool(auto_run=False)
             if not pools
             else _FakeIngestParsePool(auto_run=False)
         )
@@ -2053,13 +2053,13 @@ async def test_failed_ebook_pool_join_keeps_gate_and_fails_queued_work(
     """A replacement must not overlap workers that failed to join."""
     pools: list[_FakeIngestParsePool] = []
 
-    class _JoinFailurePool(_FakeIngestParsePool):
+    class JoinFailurePool(_FakeIngestParsePool):
         def join(self) -> None:
             raise RuntimeError("simulated join failure")
 
     def _pool_factory() -> _FakeIngestParsePool:
         pool = (
-            _JoinFailurePool(auto_run=False)
+            JoinFailurePool(auto_run=False)
             if not pools
             else _FakeIngestParsePool(auto_run=False)
         )
@@ -4267,6 +4267,83 @@ def test_detached_progress_queue_cleanup_logs_operation_and_resource() -> None:
         "Error cleaning up the Library ingest progress queue "
         "(operation=cancel_join_thread, queue_type=_FailingDetachedQueue).",
     ]
+
+
+def test_worker_shutdown_thread_start_failure_reports_retirement_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused teardown thread must take the fail-closed callback path."""
+    failure: list[BaseException] = []
+    completed: list[bool] = []
+
+    def refuse_start(_thread: threading.Thread) -> None:
+        raise RuntimeError("simulated teardown thread start failure")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse_start)
+
+    teardown = LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+        None,
+        None,
+        None,
+        _FakeIngestParsePool(auto_run=False),
+        None,
+        None,
+        on_complete=lambda: completed.append(True),
+        on_failure=failure.append,
+    )
+
+    assert teardown is None
+    assert completed == []
+    assert len(failure) == 1
+    assert "start failure" in str(failure[0])
+
+
+def test_worker_shutdown_timeout_reports_failure_without_late_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stuck pool join must fail closed once and never resume work later."""
+    join_started = threading.Event()
+    join_release = threading.Event()
+    join_finished = threading.Event()
+    failure: list[BaseException] = []
+    completed: list[bool] = []
+
+    class BlockingShutdownPool(_FakeIngestParsePool):
+        def join(self) -> None:
+            join_started.set()
+            join_release.wait()
+            join_finished.set()
+
+    monkeypatch.setattr(
+        _app_module,
+        "_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS",
+        0.01,
+        raising=False,
+    )
+    teardown = LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+        None,
+        None,
+        None,
+        BlockingShutdownPool(auto_run=False),
+        None,
+        None,
+        on_complete=lambda: completed.append(True),
+        on_failure=failure.append,
+    )
+
+    assert teardown is not None
+    try:
+        assert join_started.wait(1.0)
+        teardown.join(timeout=1.0)
+        assert not teardown.is_alive()
+        assert len(failure) == 1
+        assert isinstance(failure[0], TimeoutError)
+        assert completed == []
+    finally:
+        join_release.set()
+
+    assert join_finished.wait(1.0)
+    assert completed == []
 
 
 @pytest.mark.asyncio

@@ -375,3 +375,24 @@ def test_direct_epub_readers_apply_archive_guard_before_ebooklib(
     with pytest.raises(ValueError, match="EPUB archive exceeds safety limits"):
         reader(str(source))
     assert ebooklib_calls == []
+
+
+def test_direct_epub_reader_rejects_unsafe_path_before_ebooklib(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A traversal-shaped path must stop at the shared path validator."""
+    ebooklib_calls: list[str] = []
+    monkeypatch.setattr(
+        Book_Ingestion_Lib,
+        "epub",
+        SimpleNamespace(
+            read_epub=lambda file_path: ebooklib_calls.append(file_path)
+        ),
+    )
+    unsafe_path = tmp_path / ".." / ".." / "untrusted.epub"
+
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        Book_Ingestion_Lib._read_epub_checked(str(unsafe_path))
+
+    assert ebooklib_calls == []

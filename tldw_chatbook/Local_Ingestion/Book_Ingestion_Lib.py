@@ -104,6 +104,7 @@ EBOOK_PROCESSING_AVAILABLE = EBOOKLIB_AVAILABLE and DEFUSEDXML_AVAILABLE
 from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from loguru import logger  # noqa: E402
 from ..Utils.optional_deps import get_safe_import  # noqa: E402
+from ..Utils.path_validation import validate_path_simple  # noqa: E402
 #
 #######################################################################################################################
 # Function Definitions
@@ -184,10 +185,11 @@ def _manifest_declared_markup_members(
     return declared
 
 
-def _validate_epub_archive(file_path: str) -> None:
-    """Reject EPUB ZIP structures whose expanded shape can exhaust memory."""
+def _validate_epub_archive(file_path: Union[str, Path]) -> Path:
+    """Validate an EPUB path and reject ZIP shapes that can exhaust memory."""
+    validated_path = validate_path_simple(file_path, require_exists=True)
     try:
-        with zipfile.ZipFile(file_path) as archive:
+        with zipfile.ZipFile(validated_path) as archive:
             members = archive.infolist()
             if len(members) > _MAX_EPUB_ARCHIVE_MEMBERS:
                 raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
@@ -238,13 +240,14 @@ def _validate_epub_archive(file_path: str) -> None:
                 if markup_bytes > _MAX_EPUB_MARKUP_BYTES:
                     raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
     except (OSError, zipfile.BadZipFile):
-        return  # Preserve the existing ebooklib format/error handling.
+        pass  # Preserve the existing ebooklib format/error handling.
+    return validated_path
 
 
-def _read_epub_checked(file_path: str) -> "epub.EpubBook":
+def _read_epub_checked(file_path: Union[str, Path]) -> "epub.EpubBook":
     """Open an EPUB through the single archive-admission choke point."""
-    _validate_epub_archive(file_path)
-    return epub.read_epub(file_path)
+    validated_path = _validate_epub_archive(file_path)
+    return epub.read_epub(str(validated_path))
 
 
 def _is_epub_archive_limit_error(exc: BaseException) -> bool:
@@ -1080,7 +1083,7 @@ def process_epub(
     ebook_obj: Optional["epub.EpubBook"] = None
 
     try:
-        _validate_epub_archive(file_path)
+        file_path = str(_validate_epub_archive(file_path))
         logger.info(
             f"Processing EPUB file from {file_path} using extractor '{extraction_method}'"
         )

@@ -21308,7 +21308,7 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
                 LocalMediaReadingService(media_db), None
             )
 
-    def _create_ingest_parse_pool(self):
+    def _create_ingest_parse_pool(self, *, processes: int | None = None):
         return _IngestParsePoolResources(
             self._pool_factory(),
             queue.Queue(maxsize=64),

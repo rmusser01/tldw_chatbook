@@ -13,13 +13,14 @@ off the UI thread so its high-water resident memory is released. Ordinary jobs
 continue to use the configured parallel worker count in their own generations.
 This boundary is independent of the audio/video STT lane.
 
-Before any EPUB reaches `ebooklib`, Chatbook will inspect its ZIP central
+Before any EPUB reaches `ebooklib`, Chatbook will validate its filesystem path
+through the shared path-validation boundary and inspect its ZIP central
 directory with Python's standard `zipfile` module. After the central-directory
 bounds pass, it will bounded-read `META-INF/container.xml` and the referenced
 OPF package metadata so manifest-declared markup is counted even when a
 document uses a nonstandard filename extension. Every EPUB reader uses this
-same checked-open seam. The archive is rejected when any of these fixed safety
-limits is exceeded:
+same checked-open seam and its returned validated path. The archive is rejected
+when any of these fixed safety limits is exceeded:
 
 - 10,000 members;
 - 64 MiB for one expanded member;
@@ -86,9 +87,10 @@ because pool scheduling rotated sequential jobs among resident workers.
   creation; teardown remains off the UI thread.
 - Broken pool generations use the same teardown gate, so queued work resumes
   only after the old workers have joined and cannot overlap a replacement.
-- If termination or join fails, the gate remains asserted and queued local jobs
-  fail retryably with restart guidance; a replacement generation is not created
-  while old workers may still exist.
+- Termination/join receives a bounded off-thread wait. If it fails, times out,
+  or its coordinator thread cannot start, the gate remains asserted and queued
+  local jobs fail retryably with restart guidance; a late teardown completion
+  cannot create a replacement while old workers may still exist.
 - Very large image-heavy EPUBs may be refused even when structurally valid;
   the refusal is explicit and does not crash the application.
 - MOBI, AZW, AZW3, and FB2 share the one-at-a-time ebook lane but do not use

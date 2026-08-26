@@ -2221,6 +2221,7 @@ _INGEST_PARSE_POOL_RESTART_ERROR = (
     "Library import workers could not shut down cleanly; "
     "restart the app before retrying."
 )
+_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS = 10.0
 
 
 # (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
@@ -2424,10 +2425,10 @@ class LibraryIngestQueueMixin:
     Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
     from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + executor
     and pool references detached, synchronously -- callbacks short-circuit
-    before ever marshaling; (2) executor close followed by
-    ``pool.terminate()`` + ``pool.join()`` on one detached daemon thread,
-    never the event-loop thread (deadlock rationale in that method's
-    docstring); (3) the writer thread is swept afterward by ``on_unmount``'s
+    before ever marshaling; (2) executor close followed by a bounded wait for
+    ``pool.terminate()`` + ``pool.join()`` on detached daemon threads, never
+    the event-loop thread (deadlock rationale in that method's docstring); (3)
+    the writer thread is swept afterward by ``on_unmount``'s
     generic worker cancellation, its in-flight DB write completing as
     before. Steps 2 and 3 run concurrently -- safe because the stages share
     no resources (parse workers never touch ``media_db``; the writer never
@@ -5699,7 +5700,7 @@ class LibraryIngestQueueMixin:
         *,
         on_complete: Callable[[], None] | None = None,
         on_failure: Callable[[BaseException], None] | None = None,
-    ) -> threading.Thread:
+    ) -> threading.Thread | None:
         """Clean up one detached parse generation away from the UI thread."""
         return LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
             None,
@@ -5723,7 +5724,7 @@ class LibraryIngestQueueMixin:
         point on) and drops every worker reference (nothing can submit to
         them anymore). Source/coordinator/executor close, parse-pool
         terminate/join, queue cleanup, and bounded drain-thread join then run
-        sequentially on one detached daemon thread,
+        on detached daemon threads with a bounded pool-shutdown wait,
         NEVER on the caller's (loop) thread: verifier close may wait and
         CPython's ``Pool._terminate_pool`` does an unbounded
         ``result_handler.join()``, and if that result-handler thread is at
@@ -5801,12 +5802,14 @@ class LibraryIngestQueueMixin:
         *,
         on_complete: Callable[[], None] | None = None,
         on_failure: Callable[[BaseException], None] | None = None,
-    ) -> threading.Thread:
+    ) -> threading.Thread | None:
         """Close detached ingest workers without blocking the UI thread.
 
         Executor shutdown remains ahead of parse-pool teardown. The parse pool
-        is terminated and joined before its queue is closed/cancelled, then the
-        already-stopped daemon drain receives only a bounded join.
+        gets a bounded terminate/join window before its queue is
+        closed/cancelled, then the already-stopped daemon drain receives only a
+        bounded join. A timeout reports failure once and never calls the later
+        completion callback, so callers keep their no-overlap gate asserted.
         """
 
         def _shutdown_workers() -> None:
@@ -5829,12 +5832,38 @@ class LibraryIngestQueueMixin:
                         "Error closing the Library local STT executor."
                     )
             if pool is not None:
+                pool_shutdown_done = threading.Event()
+                pool_failures: list[BaseException] = []
+
+                def _terminate_and_join_pool() -> None:
+                    try:
+                        pool.terminate()
+                        pool.join()
+                    except Exception as exc:
+                        pool_failures.append(exc)
+                    finally:
+                        pool_shutdown_done.set()
+
                 try:
-                    pool.terminate()
-                    pool.join()
+                    pool_shutdown_thread = threading.Thread(
+                        target=_terminate_and_join_pool,
+                        name="library-ingest-parse-pool-shutdown",
+                        daemon=True,
+                    )
+                    pool_shutdown_thread.start()
                 except Exception as exc:
                     pool_failure = exc
-                    logger.opt(exception=True).error(
+                else:
+                    if not pool_shutdown_done.wait(
+                        timeout=_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS
+                    ):
+                        pool_failure = TimeoutError(
+                            "Library ingest parse pool shutdown timed out."
+                        )
+                    elif pool_failures:
+                        pool_failure = pool_failures[0]
+                if pool_failure is not None:
+                    logger.opt(exception=pool_failure).error(
                         "Error terminating the Library ingest parse pool."
                     )
             if progress_queue is not None:
@@ -5883,12 +5912,25 @@ class LibraryIngestQueueMixin:
                         "Error resuming Library ingest after pool retirement."
                     )
 
-        thread = threading.Thread(
-            target=_shutdown_workers,
-            name="library-ingest-workers-shutdown",
-            daemon=True,
-        )
-        thread.start()
+        try:
+            thread = threading.Thread(
+                target=_shutdown_workers,
+                name="library-ingest-workers-shutdown",
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Could not start the Library ingest worker shutdown thread."
+            )
+            if on_failure is not None:
+                try:
+                    on_failure(exc)
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error reporting Library ingest pool retirement failure."
+                    )
+            return None
         return thread
 
     # -- Remote poller (server-origin jobs) --------------------------------
@@ -15139,8 +15181,9 @@ class TldwCli(
         #   1. `_ingest_shutdown = True` + executor/pool references detached
         #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- their
         #      callbacks short-circuit before marshaling from this point on.
-        #   2. Executor close, then `pool.terminate()` + `pool.join()`, on one
-        #      detached daemon thread, NEVER this (loop) thread -- terminating
+        #   2. Executor close, then a bounded `pool.terminate()` +
+        #      `pool.join()` wait on detached daemon threads, NEVER this (loop)
+        #      thread -- terminating
         #      inline here could deadlock against a result-handler thread
         #      parked inside `call_from_thread` (see that method's docstring).
         #      `terminate()` kills every in-flight light parse worker process
