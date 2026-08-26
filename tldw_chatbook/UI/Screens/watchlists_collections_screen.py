@@ -709,6 +709,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_pending_query_key: tuple[Any, ...] | None = None
         self._pending_tree_scope: TreeScope | None = None
         self._items_retry_message: str | None = None
+        self._items_retry_inflight = False
         self._items_snapshot_generation = 0
         self._items_page_presentation_lock = asyncio.Lock()
         self._items_inflight_replacement: tuple[
@@ -2409,13 +2410,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 children.extend(
                     (
                         Static(
-                            self._items_retry_message,
+                            Text(self._items_retry_message),
                             id="watchlists-items-retry-state",
                         ),
                         Button(
                             "Retry",
                             id="watchlists-items-retry-button",
                             variant="primary",
+                            disabled=self._items_retry_inflight,
                         ),
                     )
                 )
@@ -2542,6 +2544,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Clear item-specific state before presenting Server Read recovery."""
         self._read_recovery_active = True
         self._items_retry_message = None
+        self._items_retry_inflight = False
         self._reset_items_paging_for_context(loading=False)
         self._items_status_filter = "all"
         self._items_search_query = ""
@@ -3697,6 +3700,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _invalidate_parked_reader(self, *, loading: bool) -> None:
         """Drop every Reader authority after an immediate management move."""
         self._items_retry_message = None
+        self._items_retry_inflight = False
         self._reset_items_paging_for_context(loading=loading)
         self._items_snapshot = None
         self._loaded_items = []
@@ -5241,14 +5245,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_items_retry(self, event: Button.Pressed) -> None:
         """Retry the committed Reader scope without exposing stale rows."""
         event.stop()
-        self._items_retry_message = None
+        if self._items_retry_message is None or self._items_retry_inflight:
+            return
+        self._items_retry_inflight = True
         self._items_page_loading = True
         self._request_surface_refresh(self._SURFACE_SECTION)
-        self.run_worker(
-            self._replace_items_snapshot(reason="return_to_read"),
-            exclusive=True,
-            group="wc_items",
-        )
+        retry = self._retry_items_snapshot()
+        try:
+            self.run_worker(retry, exclusive=True, group="wc_items")
+        except Exception:
+            retry.close()
+            self._items_retry_inflight = False
+            self._items_page_loading = False
+            self._request_surface_refresh(self._SURFACE_SECTION)
+
+    async def _retry_items_snapshot(self) -> None:
+        """Keep retry authority mounted until one publication succeeds."""
+        try:
+            await self._replace_items_snapshot(reason="return_to_read")
+        finally:
+            self._items_retry_inflight = False
+            if self._items_retry_message is not None:
+                self._request_surface_refresh(self._SURFACE_SECTION)
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:
