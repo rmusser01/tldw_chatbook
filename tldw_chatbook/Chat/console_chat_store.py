@@ -1782,6 +1782,22 @@ class ConsoleChatStore:
         second manual turn, and a queued follow-up is only *submitted* from
         ``_drain_waiting``, which runs after the previous turn reaches a
         terminal status -- by which point settlement has popped this owner.
+
+        Args:
+            session_id: Native Console session id. ``None`` -- and equally an
+                empty string or any non-``str`` -- means "no session to have
+                an owner", which ``dispatch_recovery_for_session`` answers
+                with ``None``, so the gate is open. Callers on a screen with
+                no active session therefore need no guard of their own.
+
+        Returns:
+            ``True`` only when that session has a recovery owner the user is
+            currently being shown a card for AND its kind is one of the five
+            unresolved source-local kinds above. ``False`` for no owner, for
+            a healthy in-flight owner (``recovery_needed=False``), and for
+            the three kinds outside that set (``REMOTE_ACCEPTED``,
+            ``REMOTE_DISPATCH_STARTED``, ``CONTINUATION``) -- i.e. the send
+            is admitted.
         """
 
         recovery = self.dispatch_recovery_for_presentation(session_id)
