@@ -217,6 +217,26 @@ async def test_list_reader_items_page_forwards_explicit_scope():
 
 
 @pytest.mark.asyncio
+async def test_list_reader_items_page_rejects_server_before_dispatch():
+    scope_service, local_service, server_service = make_scope_service()
+    policy = MagicMock()
+    scope_service.policy_enforcer = policy
+
+    with pytest.raises(
+        ValueError, match="Item listing is only supported for the local backend"
+    ):
+        await scope_service.list_reader_items_page(
+            runtime_backend=WatchlistBackend.SERVER
+        )
+
+    local_service.list_reader_items_page.assert_not_awaited()
+    server_service.list_reader_items_page.assert_not_awaited()
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.server"
+    )
+
+
+@pytest.mark.asyncio
 async def test_count_reader_item_arrivals_rejects_server_before_dispatch():
     scope_service, local_service, server_service = make_scope_service()
     policy = MagicMock()
