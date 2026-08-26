@@ -9044,14 +9044,15 @@ class ConsoleChatStore:
             content=content,
             assistant_generation_state="complete",
         )
-        committed_version = self._persist_generation_variant(message, new_generation)
-        self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
         previous_content = message.content
         previous_generation = self._generation_variant(message)
         on_active_path = self._message_is_on_active_path(message.id)
+        durably_committed, committed_version = self._persist_generation_variant(
+            message, new_generation
+        )
         self._apply_generation_variant(message, new_generation)
-        if committed_version is None:
+        if not durably_committed:
             try:
                 persisted = self._persist_existing_message(message)
             except Exception:
@@ -9060,10 +9061,12 @@ class ConsoleChatStore:
             if not persisted:
                 self._apply_generation_variant(message, previous_generation)
                 raise RuntimeError("Variant persistence did not commit.")
-        else:
+        if committed_version is not None:
             message.provider_continuation_message_version = committed_version
             message.provider_continuation_remote = False
-            self._enqueue_sync_v2_message_if_ready(message)
+        self._stream_chunks_by_message.pop(message.id, None)
+        self._stream_materialized_counts.pop(message.id, None)
+        message.status = "complete"
         if message.variants is None:
             message.variants = ConsoleVariantSet.from_generations(
                 turn_id=message.turn_id or message.id,
@@ -9136,18 +9139,26 @@ class ConsoleChatStore:
 
     def _persist_generation_variant(
         self, message: ConsoleChatMessage, variant: ConsoleVariant
-    ) -> int | None:
-        """Project a candidate without changing its live row owner."""
+    ) -> tuple[bool, int | None]:
+        """Persist a candidate without changing its live row owner."""
+        current = self._generation_variant(message)
+        self._validate_generation_variant(message, current)
         self._validate_generation_variant(message, variant)
         if self.persistence is None or message.persisted_message_id is None:
-            return None
+            return False, None
         writer = getattr(
             self.persistence, "replace_assistant_generation_projection", None
         )
         if not callable(writer):
-            if self._generation_has_durable_evidence(variant):
+            if self._generation_has_durable_evidence(
+                current
+            ) or self._generation_has_durable_evidence(variant):
                 raise RuntimeError("Generation projection persistence is unavailable.")
-            return None
+            candidate = replace(message)
+            self._apply_generation_variant(candidate, variant)
+            if not self._persist_existing_message(candidate):
+                raise RuntimeError("Generation projection persistence did not commit.")
+            return True, candidate.provider_continuation_message_version
         committed_version = writer(
             message_id=message.persisted_message_id,
             content=variant.content,
@@ -9161,7 +9172,12 @@ class ConsoleChatStore:
         )
         if type(committed_version) is not int or committed_version <= 0:
             raise RuntimeError("Selected generation persistence did not commit.")
-        return committed_version
+        candidate = replace(message)
+        self._apply_generation_variant(candidate, variant)
+        candidate.provider_continuation_message_version = committed_version
+        candidate.provider_continuation_remote = False
+        self._enqueue_sync_v2_message_if_ready(candidate)
+        return True, committed_version
 
     @staticmethod
     def _settle_thinking_envelope(
@@ -9397,36 +9413,45 @@ class ConsoleChatStore:
     ) -> ConsoleChatMessage:
         """Select one existing variant by index."""
         message = self._message_or_raise(message_id)
-        self._materialize_stream_buffer(message)
         if message.variants is None:
             raise ValueError("Message has no variants.")
         if selected_index < 0 or selected_index >= len(message.variants.variants):
             raise ValueError("selected_index must reference an existing variant")
         target = message.variants.variants[selected_index]
-        committed_version = self._persist_generation_variant(message, target)
-        self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
         previous_content = message.content
         previous_generation = self._generation_variant(message)
         previous_index = message.variants.selected_index
+        previous_status = message.status
         on_active_path = self._message_is_on_active_path(message.id)
+        durably_committed, committed_version = self._persist_generation_variant(
+            message, target
+        )
         message.variants.selected_index = selected_index
         self._apply_generation_variant(message, target)
-        if committed_version is None:
+        message.status = (
+            target.assistant_generation_state
+            if target.assistant_generation_state in {"complete", "stopped", "failed"}
+            else "complete"
+        )
+        if not durably_committed:
             try:
                 persisted = self._persist_existing_message(message)
             except Exception:
                 message.variants.selected_index = previous_index
                 self._apply_generation_variant(message, previous_generation)
+                message.status = previous_status
                 raise
             if not persisted:
                 message.variants.selected_index = previous_index
                 self._apply_generation_variant(message, previous_generation)
+                message.status = previous_status
                 raise RuntimeError("Variant selection persistence did not commit.")
-        else:
+        if committed_version is not None:
             message.provider_continuation_message_version = committed_version
             message.provider_continuation_remote = False
-            self._enqueue_sync_v2_message_if_ready(message)
+        self._stream_chunks_by_message.pop(message.id, None)
+        self._stream_materialized_counts.pop(message.id, None)
         self._bump_message_speech_revision(message.id)
         self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
@@ -10604,14 +10629,14 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages own generation projections.")
-        committed_version = self._persist_generation_variant(
+        durably_committed, committed_version = self._persist_generation_variant(
             message, self._generation_variant(message)
         )
-        if committed_version is None:
+        if not durably_committed:
             return False
-        message.provider_continuation_message_version = committed_version
+        if committed_version is not None:
+            message.provider_continuation_message_version = committed_version
         message.provider_continuation_remote = False
-        self._enqueue_sync_v2_message_if_ready(message)
         return True
 
     def _persist_existing_message(

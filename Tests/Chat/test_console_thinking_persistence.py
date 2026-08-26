@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -249,6 +250,171 @@ def test_failed_variant_projection_preserves_live_and_durable_selection(
     assert unchanged.thinking == _thinking("original reasoning")
     assert durable["content"] == "original answer"
     assert durable["thinking_blocks_json"] == original_thinking
+
+
+@pytest.mark.parametrize("failure_mode", ["incompatible", "writer"])
+def test_select_variant_failure_preserves_pending_stream_and_full_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+) -> None:
+    db, conversation_id, repository = _database(
+        tmp_path / f"pending-swipe-{failure_mode}.sqlite"
+    )
+    _insert(db, repository, _acceptance(conversation_id))
+    usage = ProviderUsage(uncached_input=2, output=3)
+    continuation = _continuation("original answer")
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
+        "usage_json = ?, provider_continuation_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (
+            dump_thinking_blocks_json(_thinking("original reasoning")),
+            usage.to_json(),
+            dump_provider_continuation_json(continuation),
+        ),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    target = ConsoleVariant(
+        content="alternative answer",
+        thinking=_thinking("alternative reasoning"),
+        assistant_generation_state="complete",
+    )
+    if failure_mode == "incompatible":
+        target = ConsoleVariant(
+            content="future answer",
+            opaque_thinking_json='{"version":99,"secret":"future"}',
+            thinking_actions_enabled=False,
+        )
+    live.variants = ConsoleVariantSet.from_generations(
+        turn_id="assistant-1",
+        generations=[store._generation_variant(live), target],
+        selected_index=0,
+    )
+    live.status = "streaming"
+    store.append_stream_chunk("assistant-1", " pending chunk")
+    before_generation = store._generation_variant(live)
+    before_buffer = tuple(store._stream_chunks_by_message["assistant-1"])
+    before_count = store._stream_materialized_counts.get("assistant-1")
+    before_row = dict(db.get_message_by_id("assistant-1"))
+
+    if failure_mode == "writer":
+
+        def fail_projection(**_kwargs: object) -> int:
+            raise RuntimeError("injected projection failure")
+
+        monkeypatch.setattr(
+            store.persistence,
+            "replace_assistant_generation_projection",
+            fail_projection,
+        )
+        expected_error = RuntimeError
+    else:
+        expected_error = ConsoleThinkingCompatibilityError
+
+    with pytest.raises(expected_error):
+        store.select_variant("assistant-1", 1)
+
+    unchanged = store._message_or_raise("assistant-1")
+    after_generation = store._generation_variant(unchanged)
+    assert replace(after_generation, id=before_generation.id) == before_generation
+    assert unchanged.status == "streaming"
+    assert unchanged.variants is not None
+    assert unchanged.variants.selected_index == 0
+    assert tuple(store._stream_chunks_by_message["assistant-1"]) == before_buffer
+    assert store._stream_materialized_counts.get("assistant-1") == before_count
+    assert dict(db.get_message_by_id("assistant-1")) == before_row
+
+
+def test_successful_variant_projection_discards_superseded_pending_stream(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "pending-swipe-ok.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (dump_thinking_blocks_json(_thinking("original reasoning")),),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    target = ConsoleVariant(
+        content="alternative answer",
+        thinking=_thinking("alternative reasoning"),
+        assistant_generation_state="complete",
+    )
+    live.variants = ConsoleVariantSet.from_generations(
+        turn_id="assistant-1",
+        generations=[store._generation_variant(live), target],
+        selected_index=0,
+    )
+    live.status = "streaming"
+    store.append_stream_chunk("assistant-1", " superseded chunk")
+
+    selected = store.select_variant("assistant-1", 1)
+    row = db.get_message_by_id("assistant-1")
+
+    assert selected.content == "alternative answer"
+    assert selected.thinking == _thinking("alternative reasoning")
+    assert selected.status == "complete"
+    assert selected.variants is not None
+    assert selected.variants.selected_index == 1
+    assert "assistant-1" not in store._stream_chunks_by_message
+    assert "assistant-1" not in store._stream_materialized_counts
+    assert row["content"] == "alternative answer"
+    assert row["thinking_blocks_json"] == dump_thinking_blocks_json(
+        _thinking("alternative reasoning")
+    )
+
+
+@pytest.mark.parametrize("action", ["add", "select"])
+def test_content_only_fallback_rejects_clearing_current_generation_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    db, conversation_id, repository = _database(
+        tmp_path / f"content-only-{action}.sqlite"
+    )
+    _insert(db, repository, _acceptance(conversation_id))
+    original_thinking = dump_thinking_blocks_json(_thinking("original reasoning"))
+    db.get_connection().execute(
+        "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (original_thinking,),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    target = ConsoleVariant(
+        content="manual alternative",
+        assistant_generation_state="complete",
+    )
+    if action == "select":
+        live.variants = ConsoleVariantSet.from_generations(
+            turn_id="assistant-1",
+            generations=[store._generation_variant(live), target],
+            selected_index=0,
+        )
+    before_generation = store._generation_variant(live)
+    before_row = dict(db.get_message_by_id("assistant-1"))
+    monkeypatch.setattr(
+        store.persistence,
+        "replace_assistant_generation_projection",
+        None,
+    )
+
+    with pytest.raises(RuntimeError, match="projection persistence is unavailable"):
+        if action == "add":
+            store.add_variant("assistant-1", "manual alternative")
+        else:
+            store.select_variant("assistant-1", 1)
+
+    unchanged = store._message_or_raise("assistant-1")
+    after_generation = store._generation_variant(unchanged)
+    assert replace(after_generation, id=before_generation.id) == before_generation
+    assert unchanged.variants is None or unchanged.variants.selected_index == 0
+    assert dict(db.get_message_by_id("assistant-1")) == before_row
 
 
 def test_add_variant_persists_one_evidence_free_complete_generation(
