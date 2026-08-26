@@ -4375,6 +4375,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         cancel one of them between its `remove()` and its `mount()`,
         leaving nothing mounted. See `_request_surface_refresh`.
         """
+        try:
+            summary = self.query_one("#wc-watchlists-summary", Static)
+        except NoMatches:
+            pass
+        else:
+            summary.update(self._staging_summary_line(self.scoped_source_rows()))
         self._request_surface_refresh(self._SURFACE_HEADER)
 
     #: The workbench surfaces this screen rebuilds in place, rather than by

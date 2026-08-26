@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.Subscriptions.watchlist_item_page import (
     WatchlistItemCursor,
     WatchlistItemPage,
@@ -27,6 +27,7 @@ from tldw_chatbook.UI.Watchlists_Modules.article_list import (
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     BreadcrumbScopeSelected,
+    InspectorPane,
 )
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
     ItemSelected,
@@ -731,7 +732,9 @@ def test_production_has_no_legacy_items_loader_or_offset_reader_calls():
 
 
 @pytest.mark.asyncio
-async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts():
+async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
+    monkeypatch,
+):
     controller = AsyncMock()
     controller.list_reader_items_page.return_value = _page(
         [4], high_water=4, snapshot_count=1
@@ -739,6 +742,12 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts():
 
     async with _open_screen(controller) as (screen, pilot):
         assert await screen._replace_items_snapshot(reason="initial") is True
+        screen._wc_loaded = True
+        screen._local_watchlist_count = 1
+        screen._refresh_centre_header_for_scope()
+        await _wait_until(
+            pilot, lambda: bool(screen.query("#wc-watchlists-summary"))
+        )
         prior_scope = screen.tree_scope
         prior_rows = screen._loaded_items
         open_item = prior_rows[0]
@@ -749,17 +758,21 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts():
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         pane.selected_item = open_item
         tree = screen.query_one("#wl-tree", WatchlistTree)
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         entered = asyncio.Event()
         release = asyncio.Event()
 
         async def replacement(**_kwargs):
             entered.set()
             await release.wait()
-            return _page([9], high_water=9, snapshot_count=1)
+            return _page(
+                [9], high_water=9, snapshot_count=23, has_more=True
+            )
 
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = replacement
         candidate = TreeScope(kind="watchlist", watchlist_id=7)
+        screen._tree_watchlists = [{"id": 7, "name": "Candidate scope"}]
         screen.post_message(TreeScopeChanged(candidate))
         await _wait_until(pilot, entered.is_set)
 
@@ -769,10 +782,44 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts():
         assert screen._selected_content_item is open_item
         assert content.item is open_item
 
+        committed_paint: dict[str, object] = {}
+        original_publish = screen._publish_items_rows
+
+        async def observe_atomic_paint(*args, **kwargs):
+            result = await original_publish(*args, **kwargs)
+            if kwargs.get("atomic_batch"):
+                committed_paint.update(
+                    heading=_static_text(
+                        screen.query_one("#wc-watchlists-summary")
+                    ),
+                    inspector_scope=inspector.scope,
+                    inspector_labels=list(inspector.breadcrumb_labels),
+                    tree_scope=tree.active_scope,
+                    rows=[row["item_id"] for row in pane.items],
+                    snapshot_count=screen._items_snapshot_count,
+                    page_number=pane.page_number,
+                    has_next=pane.has_next,
+                    page_loading=pane.page_loading,
+                    reader=content.item,
+                )
+            return result
+
+        monkeypatch.setattr(screen, "_publish_items_rows", observe_atomic_paint)
         release.set()
-        await _wait_until(pilot, lambda: screen.tree_scope == candidate)
+        await _wait_until(pilot, lambda: bool(committed_paint))
+        assert "Candidate scope" in str(committed_paint["heading"])
+        assert committed_paint["inspector_scope"] == candidate
+        assert committed_paint["inspector_labels"] == ["Candidate scope"]
+        assert committed_paint["tree_scope"] == candidate
+        assert committed_paint["rows"] == [9]
+        assert committed_paint["snapshot_count"] == 23
+        assert committed_paint["page_number"] == 1
+        assert committed_paint["has_next"] is True
+        assert committed_paint["page_loading"] is False
+        assert committed_paint["reader"] is None
         assert tree.active_scope == candidate
         assert [row["item_id"] for row in screen._loaded_items] == [9]
+        assert screen._items_snapshot_count == 23
         assert screen._selected_content_item is None
         assert content.item is None
         assert content.position == ""
@@ -783,13 +830,39 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts():
 async def test_pending_scope_failure_retains_committed_scope_and_names_both():
     controller = AsyncMock()
     controller.list_reader_items_page.return_value = _page(
-        [4], high_water=4, snapshot_count=1
+        [4], high_water=4, snapshot_count=17, has_more=True
     )
 
     async with _open_screen(controller) as (screen, pilot):
         assert await screen._replace_items_snapshot(reason="initial") is True
+        screen._wc_loaded = True
+        screen._local_watchlist_count = 1
+        screen._refresh_centre_header_for_scope()
+        await _wait_until(
+            pilot, lambda: bool(screen.query("#wc-watchlists-summary"))
+        )
+        prior_scope = screen.tree_scope
+        prior_selected_scope = screen.selected_scope
+        prior_snapshot = screen._items_snapshot
         prior_rows = screen._loaded_items
+        prior_count = screen._items_snapshot_count
         tree = screen.query_one("#wl-tree", WatchlistTree)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        open_item = prior_rows[0]
+        screen._selected_content_item = open_item
+        screen._selected_content_page_key = prior_snapshot.query.context_key
+        pane.selected_item = open_item
+        content.item = open_item
+        content.position = "1 of 17"
+        await pilot.pause()
+        prior_heading = _static_text(screen.query_one("#wc-watchlists-summary"))
+        prior_inspector_scope = inspector.scope
+        prior_inspector_labels = list(inspector.breadcrumb_labels)
+        prior_page_number = pane.page_number
+        prior_has_next = pane.has_next
+        prior_content_position = content.position
         screen._tree_watchlists = [{"id": 7, "name": "Candidate [A]"}]
         screen.app_instance.notify = Mock()
         controller.list_reader_items_page.reset_mock()
@@ -803,12 +876,28 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         )
         await _wait_until(pilot, lambda: not screen._items_page_loading)
 
-        assert screen.tree_scope == TreeScope(kind="all")
-        assert tree.active_scope == TreeScope(kind="all")
+        assert screen.tree_scope == prior_scope
+        assert screen.selected_scope == prior_selected_scope
+        assert tree.active_scope == prior_scope
+        assert _static_text(screen.query_one("#wc-watchlists-summary")) == prior_heading
+        assert inspector.scope == prior_inspector_scope
+        assert list(inspector.breadcrumb_labels) == prior_inspector_labels
+        assert screen._items_snapshot is prior_snapshot
         assert screen._loaded_items is prior_rows
-        message = str(screen.app_instance.notify.call_args.args[0])
-        assert "Couldn't open Candidate [A]" in message
-        assert "still showing All Sources" in message
+        assert pane.items is prior_rows
+        assert screen._items_snapshot_count == prior_count == 17
+        assert pane.page_number == prior_page_number == 1
+        assert pane.has_next == prior_has_next is True
+        assert pane.page_loading is False
+        assert screen._selected_content_item is open_item
+        assert pane.selected_item is open_item
+        assert content.item is open_item
+        assert content.position == prior_content_position
+        screen.app_instance.notify.assert_called_once_with(
+            "Couldn't open Candidate [A]; still showing All Sources.",
+            severity="error",
+            markup=False,
+        )
 
 
 @pytest.mark.asyncio
@@ -887,16 +976,23 @@ async def test_pending_scope_only_newest_request_can_publish():
     async with _open_screen(controller) as (screen, pilot):
         assert await screen._replace_items_snapshot(reason="initial") is True
         calls: list[int] = []
+        returned: list[int] = []
+        releases = {watchlist_id: asyncio.Event() for watchlist_id in (7, 8, 9)}
 
         async def replacement(**kwargs):
             watchlist_id = int(kwargs["watchlist_id"])
             calls.append(watchlist_id)
-            if watchlist_id != 9:
+            while not releases[watchlist_id].is_set():
                 try:
-                    await asyncio.Event().wait()
+                    await releases[watchlist_id].wait()
                 except asyncio.CancelledError:
-                    return _page([watchlist_id], high_water=watchlist_id)
-            return _page([watchlist_id], high_water=watchlist_id, snapshot_count=1)
+                    continue
+            returned.append(watchlist_id)
+            return _page(
+                [watchlist_id],
+                high_water=watchlist_id,
+                snapshot_count=watchlist_id,
+            )
 
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = replacement
@@ -908,7 +1004,23 @@ async def test_pending_scope_only_newest_request_can_publish():
             )
             await _wait_until(pilot, lambda: watchlist_id in calls)
 
+        assert screen._pending_tree_scope == TreeScope(
+            kind="watchlist", watchlist_id=9
+        )
+        releases[9].set()
         await _wait_until(pilot, lambda: screen.tree_scope.watchlist_id == 9)
-        await pilot.pause(0.1)
+        assert returned == [9]
+        assert screen._pending_tree_scope is None
         assert screen.tree_scope == TreeScope(kind="watchlist", watchlist_id=9)
         assert [row["item_id"] for row in screen._loaded_items] == [9]
+        assert screen._items_snapshot_count == 9
+
+        releases[8].set()
+        releases[7].set()
+        await _wait_until(pilot, lambda: set(returned) == {7, 8, 9})
+        await pilot.pause(0.1)
+
+        assert screen._pending_tree_scope is None
+        assert screen.tree_scope == TreeScope(kind="watchlist", watchlist_id=9)
+        assert [row["item_id"] for row in screen._loaded_items] == [9]
+        assert screen._items_snapshot_count == 9
