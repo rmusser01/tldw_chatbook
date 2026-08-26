@@ -3404,8 +3404,12 @@ class ConsoleWorkspaceController:
             row_key or conversation_id,
             conversation_id=conversation_id,
         )
+        prior_browser_workspace_id: str | None = None
         if browser_row is not None:
-            self._activate_console_workspace_for_browser_row(browser_row)
+            prior_browser_workspace_id = (
+                self._active_console_workspace_id_for_conversation_search()
+                or None
+            )
             row_conversation_id = str(browser_row.conversation_id or "").strip()
             session_id = self._session_id_for_browser_row_fn(browser_row)
         else:
@@ -3436,8 +3440,20 @@ class ConsoleWorkspaceController:
                     ),
                 )
             finally:
-                self._set_conversation_row_loading_fn(row_conversation_id, False)
+                try:
+                    self._set_conversation_row_loading_fn(
+                        row_conversation_id, False
+                    )
+                except BaseException:
+                    logger.opt(exception=True).warning(
+                        "Unable to clear Console conversation-row loading state"
+                    )
             if resumed:
+                if browser_row is not None:
+                    self._activate_console_workspace_for_browser_row(
+                        browser_row,
+                        previous_workspace_id=prior_browser_workspace_id,
+                    )
                 return True
             if resumed is None:
                 return None
@@ -3454,9 +3470,9 @@ class ConsoleWorkspaceController:
         try:
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
-                if browser_row is None:
-                    self._set_active_workspace_for_console_session(session_id)
                 controller.switch_session(session_id)
+                self._set_active_workspace_for_console_session(session_id)
+                self._sync_console_chat_core_state()
                 sync_result = self._sync_native_console_chat_ui_fn()
                 if inspect.isawaitable(sync_result):
                     await sync_result
@@ -3481,6 +3497,11 @@ class ConsoleWorkspaceController:
                 timeout=15,
             )
             return None
+        if browser_row is not None:
+            self._activate_console_workspace_for_browser_row(
+                browser_row,
+                previous_workspace_id=prior_browser_workspace_id,
+            )
         return True
 
     # -- Workspace RAG-scope picker ------------------------------------------
@@ -4015,9 +4036,9 @@ class ConsoleWorkspaceController:
             self._sync_console_chat_core_state()
             await self._sync_native_console_chat_ui()
             await self._refresh_console_conversation_browser_after_selection()
+            self._focus_console_composer_if_needed(force=True)
             if callable(self._wake_retry_poke_fn):
                 self._wake_retry_poke_fn()
-            self._focus_console_composer_if_needed(force=True)
         except asyncio.CancelledError:
             if session is not None:
                 store.rollback_restored_session(
@@ -4226,8 +4247,10 @@ class ConsoleWorkspaceController:
     def _activate_console_workspace_for_browser_row(
         self,
         row: ConsoleConversationBrowserRow,
+        *,
+        previous_workspace_id: str | None = None,
     ) -> None:
-        """Align active workspace context before opening a browser row."""
+        """Align workspace context and announce a committed browser-row open."""
         scope_type = str(row.scope_type or "").strip()
         if scope_type == "global":
             return
@@ -4241,11 +4264,17 @@ class ConsoleWorkspaceController:
             return
         try:
             active_workspace = registry_service.get_active_workspace()
-            if (
+            workspace_changed = (
                 active_workspace is None
                 or active_workspace.workspace_id != workspace_id
-            ):
+            )
+            if workspace_changed:
                 registry_service.set_active_workspace(workspace_id)
+            if (
+                previous_workspace_id != workspace_id
+                if previous_workspace_id is not None
+                else workspace_changed
+            ):
                 # TASK-713: opening a row from another workspace's group
                 # retargets the whole Console context; the Workspace status
                 # row is usually scrolled out of view at that moment, so the
