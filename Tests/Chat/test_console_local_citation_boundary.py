@@ -63,6 +63,8 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from Tests.console_provider_doubles import provider_resolution, with_destination
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 def _first(matches, *, what: str):
@@ -180,14 +182,48 @@ def _citation_builder(
 
 
 class _ReadyCitationPersistence:
-    canonical_citation_writes_ready = True
-    db = None
+    """Records the citation-write seam while REALLY persisting (TASK-22301).
+
+    This used to be a pure fake with ``db = None``. Two gates -- the durable-turn
+    gate (`56db75386`) and TASK-22030's DB-open gate -- refuse a non-ephemeral
+    MANUAL send without a real adapter, so every test here had to run on an
+    EPHEMERAL session. An ephemeral session deliberately does not persist, which
+    is why 29 call-count assertions asserted ``0 == 1``.
+
+    Worse, an earlier attempt to satisfy the "use real SQLite" rule by spying
+    over a real service was measurably INERT: instrumenting it recorded ZERO
+    ``create_message`` calls across all 95 tests, because ephemeral sessions
+    never reach that seam. The rule was satisfied cosmetically and nothing was
+    exercised.
+
+    So this now DELEGATES to a real `ChatPersistenceService` over in-memory
+    SQLite rather than imitating one. Delegation is not the
+    fake-validates-the-mistake trap the task warns about: nothing about
+    `commit_durable_turn`'s transaction, conversation creation or policy write is
+    hand-copied here -- the real implementation runs.
+
+    `create_calls` is retained because it is a genuine observation of the
+    `create_message` seam. It is no longer the PRIMARY evidence: the durable
+    path writes its user and assistant rows with raw SQL in
+    `insert_with_messages`, bypassing `create_message` entirely, so tests assert
+    on ROWS via `_message_rows` and treat call counts as secondary.
+    """
 
     def __init__(self) -> None:
         self.create_calls: list[dict[str, Any]] = []
+        self.db = CharactersRAGDB(":memory:", "citation-boundary")
+        self._service = ChatPersistenceService(self.db)
 
-    def create_conversation(self, **_kwargs: Any) -> str:
-        return "conversation-1"
+    @property
+    def canonical_citation_writes_ready(self) -> bool:
+        return self._service.canonical_citation_writes_ready
+
+    def __getattr__(self, name: str) -> Any:
+        # Anything not explicitly observed here is the real service's job.
+        return getattr(self._service, name)
+
+    def create_conversation(self, **kwargs: Any) -> str:
+        return self._service.create_conversation(**kwargs)
 
     def create_message(
         self,
@@ -215,10 +251,13 @@ class _ReadyCitationPersistence:
         if citation_write is not _MISSING:
             call["citation_write"] = citation_write
         self.create_calls.append(call)
-        return message_id or f"persisted-{len(self.create_calls)}"
+        passthrough = dict(call)
+        if citation_write is not _MISSING:
+            passthrough["citation_write"] = citation_write
+        return self._service.create_message(**passthrough)
 
-    def update_message_content(self, **_kwargs: Any) -> bool:
-        return True
+    def update_message_content(self, **kwargs: Any) -> bool:
+        return self._service.update_message_content(**kwargs)
 
 
 class _CancelRowFailingPersistence(_ReadyCitationPersistence):
@@ -449,17 +488,21 @@ class _ControlledCitationGateway(_ScriptedCitationGateway):
 def _persisted_store(
     persistence: _ReadyCitationPersistence | None = None,
 ) -> ConsoleChatStore:
+    # A store named "persisted" defaults to persistence (TASK-22301). It used to
+    # default to None, which was invisible while the session was ephemeral and
+    # becomes a refused send the moment it is durable.
+    if persistence is None:
+        persistence = _ReadyCitationPersistence()
     store = ConsoleChatStore(persistence=persistence)
-    # EPHEMERAL: these doubles record `create_message` calls, which is the
-    # citation-write seam under test. They predate `commit_durable_turn`, so a
-    # non-ephemeral MANUAL send is refused before any provider call -- and the
-    # tests then wait forever on an Event the refused turn never sets.
-    # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`, so
-    # an ephemeral session keeps the send on the `create_message` path these
-    # doubles actually observe.
+    # DURABLE (TASK-22301). These sessions used to be ephemeral because the
+    # doubles carried `db = None` and a non-ephemeral MANUAL send is refused by
+    # the durable-turn gate and TASK-22030's DB-open gate. But an ephemeral
+    # session deliberately does not persist, so the citation-write assertions
+    # observed nothing -- 29 of them asserted `0 == 1`. `_ReadyCitationPersistence`
+    # now delegates to a real service over in-memory SQLite, so both gates pass
+    # and the turn takes the durable path production takes.
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="llama_cpp"),
-        ephemeral=True,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
@@ -521,16 +564,14 @@ def _recording_citation_store(
     persistence: _ReadyCitationPersistence | None = None,
 ) -> _RecordingCitationStore:
     store = _RecordingCitationStore(persistence=persistence)
-    # EPHEMERAL, for the same reason as `_persisted_store`: these doubles record
-    # `create_message` calls, which is the citation-write seam under test, and
-    # they carry `db = None`. A non-ephemeral MANUAL send is therefore refused
-    # twice over -- once because the adapter cannot `commit_durable_turn`, and
-    # again by TASK-22030's DB-open gate -- before any provider call. Both gates
-    # are guarded by `not session.ephemeral`, which is production's own carve-out
-    # for a chat that is not being saved.
+    # DURABLE for the same reason as `_persisted_store` (TASK-22301): the
+    # persistence double now delegates to a real service, so the durable-turn
+    # and DB-open gates both pass and the send is not refused.
+    # Ephemeral IFF nothing can persist -- production's own carve-out, rather
+    # than a blanket opt-out that silently disabled every write assertion.
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="openai", model="repair-model"),
-        ephemeral=True,
+        ephemeral=persistence is None,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
