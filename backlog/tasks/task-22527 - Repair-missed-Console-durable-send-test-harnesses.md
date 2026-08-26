@@ -1,5 +1,5 @@
 ---
-id: TASK-22302
+id: TASK-22527
 title: Repair missed Console durable-send test harnesses
 status: Done
 assignee:
@@ -42,3 +42,10 @@ Reason: This is a test-harness correction that restores an established durable-s
 <!-- SECTION:NOTES:BEGIN -->
 Attached the standard `attach_chachanotes_db()` in-memory durable conversation store before mounting the two real-send harnesses that had been missed by TASK-21590. The tests now reach their configured gateways and queue registry instead of failing closed at persistence; production code and runtime behavior are unchanged. Ruff also normalized the touched test module. ADR required: no; ADR path: N/A; Reason: test-only restoration of an established persistence precondition. TDD evidence: both focused tests failed before the repair with the database-unavailable transcript path, then passed after the two fixture attachments. Verification: focused pair 2 passed; complete `test_console_send_disabled_state.py` module 9 passed; Ruff lint and format checks passed; `git diff --check` passed. The broader adjacent suite exposed a separate Anthropic provider-readiness harness failure in `test_console_cost_chip_screen.py`; that is being tracked independently rather than conflated with this task.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+- Former ID: `TASK-22302`.
+- Renumbered to `TASK-22527` on 2026-08-26 after rebasing onto `dev`, where the
+  older-arriving citation-provenance task already owned `TASK-22302`.
+- The dependent Console cost-chip harness task now references `TASK-22527`.
