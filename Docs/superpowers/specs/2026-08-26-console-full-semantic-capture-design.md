@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-26
 
-**Status:** Revised after owner-requested review; implementation not started
+**Status:** Owner-approved; implementation planning complete; implementation not started
 
 **Task:** [TASK-22507](../../../backlog/tasks/task-22507%20-%20Enable-scoped-Full-semantic-capture-in-Conversation-Inspector.md)
 

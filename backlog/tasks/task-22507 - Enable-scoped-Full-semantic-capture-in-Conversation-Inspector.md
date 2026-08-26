@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-26 14:34'
-updated_date: '2026-08-26 14:34'
+updated_date: '2026-08-26 15:33'
 labels:
   - console
   - privacy
@@ -40,14 +40,14 @@ Let users deliberately retain complete semantic provider exchanges for one eligi
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Write and independently review the approved Full semantic capture specification and ADR.
-2. During implementation planning, create atomic Backlog children for capture/persistence, runtime/provider threading, scoped purge, and shared Inspector/Trace/Settings UX; do not expose Full before its privacy dependencies exist.
-3. Add the smallest capture-policy model and persistence metadata needed for Safe/Full precedence, run admission freezing, and scoped purge.
-4. Thread frozen capture detail through the existing provider gateway and exchange-capture pipeline without a parallel trace subsystem.
-5. Add the shared policy flow, per-call provenance, distinct export profiles, scope-specific confirmations, and targeted migration/provider/purge/export/Textual tests.
-6. Update privacy and Console documentation, verify the focused gates, and record implementation notes.
+1. Treat Docs/superpowers/specs/2026-08-26-console-full-semantic-capture-design.md and ADR-089 as the approved contract.
+2. Execute TASK-22507.1: add Safe-first capture construction, bounds, provenance, schema migration, and local policy persistence without exposing Full in the UI.
+3. Execute TASK-22507.2 after TASK-22507.1: resolve and consume scoped policy at admission, freeze it on provider signals, and cover direct/retry/tool/fleet/Anthropic/llama.cpp paths.
+4. Execute TASK-22507.3 after TASK-22507.1 and TASK-22507.2: add conversation-wide Full-capture count/purge under quiescence with staged cache replacement and capture-revision fences.
+5. Execute TASK-22507.4 after TASK-22507.1, TASK-22507.2, and TASK-22507.3: expose the shared Inspector/live Trace/F9 flow, governed per-call export, responsive styling, documentation, and production-shaped verification.
+6. Follow Docs/superpowers/plans/2026-08-26-console-full-semantic-capture.md task-by-task, close each child only with its focused evidence, then run the final integration gate and close this parent.
 
 ADR required: yes
 ADR path: backlog/decisions/089-console-full-semantic-capture-policy.md
-Reason: This task changes persisted privacy metadata, project-instruction capture guarantees, provider/runtime capture boundaries, deletion semantics, and a cross-module UI/storage contract.
+Reason: ADR-089 governs the persisted privacy metadata, provider/runtime capture boundary, logical deletion semantics, and shared UI/storage contract.
 <!-- SECTION:PLAN:END -->

@@ -1,6 +1,6 @@
 # ADR-089: Scoped Full semantic capture policy
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-08-26
 
