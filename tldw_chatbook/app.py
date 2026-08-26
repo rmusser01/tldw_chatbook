@@ -419,7 +419,7 @@ from .Actor_Packs.activation import ActorPackActivationService
 from .Actor_Packs.controller import ActorPackExportController
 from .Actor_Packs.export import ActorPackExportService
 from .Actor_Packs.import_controller import ActorPackImportController
-from .Actor_Packs.importer import ActorPackImportService
+from .Actor_Packs.importer import ActorPackImportError, ActorPackImportService
 from .Actor_Packs.repository import ActorPackRepository
 # Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
 # its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
@@ -8176,6 +8176,15 @@ class TldwCli(
         self.actor_pack_activation_service = None
         self.actor_pack_import_controller = None
         if self.chachanotes_db is not None:
+            # task-22216: this construction is pure — the staging crash
+            # sweep no longer runs inside ActorPackImportService.__init__
+            # (a secure_private_directory walk + scandir on every boot,
+            # the task-21106 class). `ensure_actor_pack_staging_sweep`
+            # runs it once per app session from the deferred startup
+            # worker; the service itself gates `inspect_archive` on the
+            # same once-lock, so an import racing the worker still sweeps
+            # first. Guarded by
+            # Tests/App/test_boot_construct_fs_side_effects.py.
             actor_pack_profile_root = get_user_data_dir()
             self.actor_pack_import_service = ActorPackImportService(
                 self.actor_pack_repository,
@@ -8252,6 +8261,40 @@ class TldwCli(
                     "Actor Pack recovery retained quarantined intents: "
                     "actor_pack_recovery_blocked"
                 )
+
+    def ensure_actor_pack_staging_sweep(self) -> None:
+        """Run the Actor Pack staging crash-sweep once per session (task-22216).
+
+        Safe to call from any thread: the once-gate (and the lock that
+        serializes it against a first ``inspect_archive``) lives on the
+        import service. Called from the deferred startup worker; runs on a
+        thread because the sweep does real filesystem I/O.
+
+        A sweep failure is absorbed and logged rather than raised — the
+        pre-move behavior (the sweep ran inside ``TldwCli.__init__`` via
+        the service constructor, so a failure aborted app construction
+        outright) is deliberately softened to match the task-21106
+        recovery seam: the app stays up, the service's gate stays open,
+        and the next import attempt retries the sweep and surfaces the
+        same categorized error to the user.
+        """
+        service = getattr(self, "actor_pack_import_service", None)
+        if service is None:
+            return
+        try:
+            service.ensure_staging_swept()
+        except ActorPackImportError as exc:
+            # Category tokens only — the importer's errors are path-free by
+            # contract, and this sink is persistent (TASK-15103 rules).
+            self.loguru_logger.warning(
+                "Actor Pack staging sweep failed (will retry on first "
+                f"import use): {exc.category}"
+            )
+        except Exception as exc:
+            self.loguru_logger.warning(
+                "Actor Pack staging sweep failed (will retry on first "
+                f"import use): {type(exc).__name__}"
+            )
 
     def _wire_chat_conversation_services(self) -> None:
         trace_db = getattr(self, "chachanotes_db", None)
@@ -13465,6 +13508,20 @@ class TldwCli(
             self.ensure_actor_pack_recovery,
             name="deferred_actor_pack_recovery",
             group="actor_pack_recovery",
+            thread=True,
+            exclusive=True,
+            exit_on_error=False,
+        )
+        # task-22216: the Actor Pack staging crash-sweep moved here from
+        # ActorPackImportService.__init__ (reached from __init__ via
+        # _wire_character_persona_services) — synchronous filesystem I/O
+        # has no place on the construction path. The service's once-gate
+        # also fires at the entry of inspect_archive, so whichever comes
+        # first sweeps and the other is a cached no-op.
+        self.run_worker(
+            self.ensure_actor_pack_staging_sweep,
+            name="deferred_actor_pack_staging_sweep",
+            group="actor_pack_staging_sweep",
             thread=True,
             exclusive=True,
             exit_on_error=False,

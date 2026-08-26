@@ -8,6 +8,7 @@ import os
 import shutil
 import stat
 import struct
+import threading
 import unicodedata
 import zipfile
 from collections.abc import Callable, Mapping
@@ -213,7 +214,41 @@ class ActorPackImportService:
         self._local_service = local_service
         self._staging_root = _absolute_path(staging_root)
         self._profile_root = _absolute_path(profile_root)
-        self.sweep_staging()
+        # task-22216: construction is pure — it records paths only. The
+        # crash-recovery staging sweep used to run here, which put a
+        # per-component privacy walk + scandir on ``TldwCli.__init__``
+        # every boot (the task-21106 class). It now runs once per service
+        # instance via ``ensure_staging_swept``: kicked from the deferred
+        # startup worker, and gated at the entry of ``inspect_archive`` so
+        # an import that starts first still sweeps before staging anything.
+        self._sweep_lock = threading.Lock()
+        self._sweep_completed = False
+
+    def ensure_staging_swept(self) -> None:
+        """Run the crash-recovery staging sweep once per service instance.
+
+        Thread-safe once-gate over :meth:`sweep_staging`. Callers race two
+        ways and both are safe: the deferred startup worker and a first
+        ``inspect_archive`` serialize on the lock, so the sweep can never
+        observe (and remove) a candidate this session is mid-staging — the
+        sweep always completes before the first candidate is created. The
+        gate latches only on success: a failed attempt raises (the same
+        ``actor_pack_import_cleanup_denied`` the construct-time sweep
+        raised) and the next caller retries, so crash residue is still
+        cleaned within the session once the staging root is usable.
+
+        Raises:
+            ActorPackImportError: The sweep could not examine or clean the
+                staging root safely.
+        """
+
+        if self._sweep_completed:
+            return
+        with self._sweep_lock:
+            if self._sweep_completed:
+                return
+            self.sweep_staging()
+            self._sweep_completed = True
 
     def sweep_staging(self, *, max_candidates: int = 32) -> int:
         """Remove a bounded set of authenticated crash-left staging candidates."""
@@ -276,6 +311,11 @@ class ActorPackImportService:
 
         candidate: Path | None = None
         try:
+            # task-22216: the once-per-session crash sweep is gated here so
+            # an import that begins before the deferred startup worker has
+            # run still cleans (and secures) staging before creating its
+            # own candidate; after the first use this is a cached no-op.
+            self.ensure_staging_swept()
             _cancel(cancel_requested)
             source_path = _absolute_path(archive_path)
             source, source_identity, archive_sha256, archive_bytes = _pin_source(

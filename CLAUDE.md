@@ -232,6 +232,17 @@ Key sections:
    both in the same commit. `./scripts/preflight.sh` checks the first and
    prints the lines to paste (TASK-20971: that allowlist went stale, was
    repaired, and went stale again 14.5 hours later).
+   **Any `CREATE INDEX` also needs a query plan captured with `sqlite_stat1`
+   ABSENT.** No DB module here runs `ANALYZE`, so no user's database has
+   statistics and the planner ignores indexes that look perfect on paper:
+   TASK-21126's textbook covering index measured 118.8 ms without it and
+   120.2 ms with it, and had to be re-shaped to lead with a redundant
+   equality column before it was ever chosen (then 23.4 ms). Assert the
+   **plan**, not the index's existence — `sqlite_master` is green for a dead
+   index. `scripts/check_index_plan_pins.py` (in `preflight.sh` and the
+   required CI job) fails until the new index has a row in
+   `scripts/index_plan_pin_census.tsv`; `Tests/DB/test_media_db_schema_v9.py`
+   is the worked example, negative control included.
 2. **Optional deps** - Check with `optional_deps.py` before importing
 3. **Thread safety** - Use transaction() context manager
 4. **Tab constants** - Must match IDs in compose()

@@ -263,7 +263,6 @@ from tldw_chatbook.config import (
     coerce_int_setting,
     get_cli_setting,
 )
-from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchRequest,
@@ -303,6 +302,33 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+
+def get_internal_prompt(prompt_id: str) -> str:
+    """Resolve an internal prompt without putting ``Internal_Prompts`` on boot.
+
+    TASK-22213: this module is on the Chat first-paint import leg (via
+    ``UI/Screens/chat_screen.py``), and the former module-scope
+    ``from tldw_chatbook.Internal_Prompts import get_internal_prompt`` put
+    all 10 prompt-catalog modules in front of first paint -- the exact leg
+    TASK-21731's guard could not see. The import now happens on first use
+    (the ``/rewind`` summarize path), which is always long after mount.
+    Same name and signature as the real resolver, so call sites and any
+    module-namespace patches are unchanged. Guarded by
+    ``Tests/Packaging/test_rag_boot_import_closure.py``.
+
+    Args:
+        prompt_id: Prompt identifier (e.g., ``"console.rewind_summarize"``).
+
+    Returns:
+        Resolved prompt text with placeholders intact.
+
+    Raises:
+        KeyError: If ``prompt_id`` is not registered in the catalog.
+    """
+    from tldw_chatbook.Internal_Prompts import get_internal_prompt as _resolve
+
+    return _resolve(prompt_id)
 
 
 class _TodoWiring(TypedDict, total=False):
