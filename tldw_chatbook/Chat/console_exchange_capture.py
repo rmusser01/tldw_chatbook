@@ -47,6 +47,11 @@ CAPTURE_REQUEST_ALLOWLIST: frozenset[str] = frozenset({
 _STUB_MIN_CHARS = 4096
 _BASE64_RE = re.compile(r"^[A-Za-z0-9+/=\s]+$")
 _DATA_URI_RE = re.compile(r"^data:(?P<mime>[\w.+-]+/[\w.+-]+);base64,(?P<data>.+)$", re.DOTALL)
+_CREDENTIAL_KEYS = frozenset({
+    "api_key", "authorization", "password", "token", "secret",
+    "access_token", "client_secret",
+})
+_SEMANTIC_JSON_STRING_KEYS = frozenset({"arguments", "input", "result", "output"})
 
 EXCHANGE_BLOB_MAX_BYTES = 16 * 1024 * 1024
 CAPTURE_JSON_MAX_BYTES = 64 * 1024 * 1024
@@ -304,15 +309,30 @@ def _redact_project_instruction_rows(
 def _remove_nested_credentials(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
-            str(key): _remove_nested_credentials(nested)
+            str(key): _sanitize_semantic_json_string(nested)
+            if str(key).lower() in _SEMANTIC_JSON_STRING_KEYS and isinstance(nested, str)
+            else _remove_nested_credentials(nested)
             for key, nested in value.items()
-            if str(key).lower() not in {
-                "api_key", "authorization", "password", "token", "secret",
-            }
+            if str(key).lower() not in _CREDENTIAL_KEYS
         }
     if isinstance(value, (list, tuple)):
         return [_remove_nested_credentials(item) for item in value]
     return value
+
+
+def _sanitize_semantic_json_string(value: str) -> str:
+    """Sanitize structured provider tool payloads without changing plain text."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    if not isinstance(parsed, (Mapping, list)):
+        return value
+    return json.dumps(
+        stub_binary_strings(_remove_nested_credentials(parsed)),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def _retain_with_budget(
@@ -349,7 +369,7 @@ def build_request_capture(
             if key == "messages_payload":
                 value, redacted_paths = _redact_project_instruction_rows(value, capture_detail)
                 omitted.extend(redacted_paths)
-            if key == "api_base_url" and isinstance(value, str):
+            if key in {"api_endpoint", "api_base_url"} and isinstance(value, str):
                 try:
                     value = canonical_provider_endpoint_identity(value)
                 except ValueError:
@@ -375,7 +395,9 @@ def build_response_capture(
     active_budget = budget or CaptureBudget()
     inventory: list[str] = []
     response = {
-        "content": _retain_with_budget(content, active_budget, "content", inventory),
+        "content": _retain_with_budget(
+            stub_binary_strings(content), active_budget, "content", inventory
+        ),
         "tool_calls": _retain_with_budget(
             stub_binary_strings(_remove_nested_credentials(_jsonable(tool_calls))),
             active_budget,
