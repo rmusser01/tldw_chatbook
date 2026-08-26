@@ -3,6 +3,10 @@ from unittest.mock import Mock
 import pytest
 
 from tldw_chatbook.Subscriptions import WatchlistScopeService
+from tldw_chatbook.Subscriptions.watchlist_item_page import (
+    WatchlistItemCursor,
+    WatchlistItemPage,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
@@ -19,6 +23,14 @@ class FakeLocalWatchlists:
     async def list_items(self, **kwargs):
         self.calls.append(("list_items", kwargs))
         return []
+
+    async def list_reader_items_page(self, **kwargs):
+        self.calls.append(("list_reader_items_page", kwargs))
+        return self.reader_page
+
+    async def count_reader_item_arrivals(self, **kwargs):
+        self.calls.append(("count_reader_item_arrivals", kwargs))
+        return 4
 
     async def get_source(self, source_id):
         self.calls.append(("get_source", source_id))
@@ -229,6 +241,106 @@ async def test_scope_service_routes_local_and_server_actions_with_watchlists_act
     assert server.calls == [
         ("list_sources", {"limit": 100, "offset": 0, "q": "ai"}),
         ("get_source", "17"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_reader_items_page_with_items_list_policy():
+    cursor = WatchlistItemCursor("2026-08-25 12:00:00", 21)
+    page = WatchlistItemPage(
+        items=(),
+        has_more=False,
+        snapshot_max_item_id=42,
+        snapshot_count=0,
+        next_cursor=None,
+    )
+    policy = Mock()
+    local = FakeLocalWatchlists()
+    local.reader_page = page
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=policy,
+    )
+
+    result = await scope.list_reader_items_page(
+        runtime_backend="local",
+        source_id="7",
+        status=None,
+        limit=25,
+        run_id="8",
+        watchlist_id="9",
+        unassigned_only=True,
+        statuses=["new", "reviewed"],
+        is_flagged=True,
+        search="reader",
+        since="2026-08-25 00:00:00",
+        snapshot_max_item_id=42,
+        after=cursor,
+    )
+
+    assert result is page
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.local"
+    )
+    assert local.calls == [
+        (
+            "list_reader_items_page",
+            {
+                "source_id": "7",
+                "status": None,
+                "limit": 25,
+                "run_id": "8",
+                "watchlist_id": "9",
+                "unassigned_only": True,
+                "statuses": ["new", "reviewed"],
+                "is_flagged": True,
+                "search": "reader",
+                "since": "2026-08-25 00:00:00",
+                "snapshot_max_item_id": 42,
+                "after": cursor,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_reader_item_arrivals_with_items_list_policy():
+    policy = Mock()
+    local = FakeLocalWatchlists()
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=policy,
+    )
+
+    result = await scope.count_reader_item_arrivals(
+        runtime_backend="local",
+        snapshot_max_item_id=42,
+        source_id="7",
+        statuses=["new", "reviewed"],
+    )
+
+    assert result == 4
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.local"
+    )
+    assert local.calls == [
+        (
+            "count_reader_item_arrivals",
+            {
+                "snapshot_max_item_id": 42,
+                "source_id": "7",
+                "status": None,
+                "run_id": None,
+                "watchlist_id": None,
+                "unassigned_only": False,
+                "statuses": ["new", "reviewed"],
+                "is_flagged": None,
+                "search": None,
+                "since": None,
+            },
+        )
     ]
 
 
