@@ -32,6 +32,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+import tldw_chatbook.config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
@@ -1380,6 +1381,74 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     assert saved[-1]["web_server"]["font_size"] == 14
     assert saved[-1]["appearance"]["density"] == "normal"
     assert saved[-1]["appearance"]["console_transcript_style"] == "immersive_rp"
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    original = "[appearance]\nascii_glyphs = true\n"
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", False) is True
+    assert app.app_config.get("appearance", {}).get("ascii_glyphs") is True
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        toggle = screen.query_one("#settings-appearance-ascii-glyphs", Button)
+
+        assert str(toggle.label) == "Enabled"
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert config_path.read_text(encoding="utf-8") == original
+
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(toggle, animate=False)
+        await pilot.pause()
+        assert await pilot.click(toggle, offset=(toggle.region.width // 2, 0))
+        assert str(toggle.label) == "Disabled"
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", True) is False
+    assert (
+        config_module.load_settings(force_reload=True)["appearance"]["ascii_glyphs"]
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_defaults_ascii_glyphs_off_in_fresh_config(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    original = ""
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", True) is False
+    assert app.app_config["appearance"]["ascii_glyphs"] is False
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+
+        assert (
+            str(screen.query_one("#settings-appearance-ascii-glyphs", Button).label)
+            == "Disabled"
+        )
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 @pytest.mark.asyncio

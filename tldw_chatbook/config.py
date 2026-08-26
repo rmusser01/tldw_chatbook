@@ -1884,6 +1884,7 @@ def _load_settings_uncached(
         "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
+        "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "console": final_console_settings_cli,  # For Console behavior settings
