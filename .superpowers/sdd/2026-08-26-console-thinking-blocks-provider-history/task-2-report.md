@@ -18,8 +18,9 @@ fallback inspection path.
 
 | Execution target | Disposition | Actual-turn evidence | Round trip | `may_emit_thinking` |
 | --- | --- | --- | --- | --- |
-| `llama_cpp`, `local_llamacpp` | Displayable | Start-anchored `<think>`/`<thinking>` capture | v1 | Yes |
-| `vllm`, `local_vllm` | Displayable | Start-anchored `<think>`/`<thinking>` capture | v1 | Yes |
+| `llama_cpp`, `local_llamacpp` resolution explicitly marked displayable | Displayable | Start-anchored `<think>`/`<thinking>` capture | v1 | Yes |
+| `vllm`, `local_vllm` resolution explicitly marked displayable | Displayable | Start-anchored `<think>`/`<thinking>` capture | v1 | Yes |
+| The same local backends with a frozen ignored/non-thinking resolution | Ignored | Tags remain ordinary visible strings; no typed evidence | None | No |
 | Moonshot/Kimi | Proprietary | Provider-validated terminal `reasoning_content` for the current turn | v1 | Yes |
 | Z.ai/GLM | Proprietary | Provider-validated terminal `reasoning_content` for the current turn | v1 | Yes |
 | All other or generic reasoning fields | Ignored | Never parsed as thinking evidence | None | No |
@@ -112,3 +113,46 @@ environmental and do not affect provider behavior.
 ## Commit
 
 Planned commit message: `feat: emit explicit provider thinking evidence`
+
+## Review Fix Round 1/5
+
+Addressed both Important findings against `5bb018c7e3`.
+
+- Direct llama.cpp streaming, non-streaming, fallback, and auxiliary paths now
+  receive the frozen resolution's `thinking_stream_disposition`. The low-level
+  compatibility methods default to ignored; only an explicit displayable value
+  constructs the start-anchored splitter. An ignored/default manual resolution on
+  llama.cpp or vLLM preserves `<think>` tags as ordinary visible strings, emits no
+  typed evidence, and reports `may_emit_thinking=False`. Displayable resolutions
+  retain the reviewed splitter behavior. The backend/execution key alone no longer
+  controls output parsing, so thinking and non-thinking models may share one local
+  server.
+- Both event constructors now strictly reject high and low surrogate code points in
+  provider, model, protocol, and source-format identities. Rejected inputs are
+  cleared from constructor state before the content-free error is raised, do not
+  survive in provider-module traceback locals or exception chaining, and valid
+  astral identities remain accepted within the existing character bounds.
+
+Fix RED command:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/Chat/test_console_provider_gateway.py -k 'identity_rejects_surrogates or identity_accepts_valid_astral or ignored_disposition_preserves_tags or default_llamacpp_resolution_preserves_tags' -q --tb=short --show-capture=no
+```
+
+Fix RED result: 19 failed and 8 passed. All 16 surrogate cases were accepted,
+the low-level ignored-disposition API was missing, and both default-resolution
+llama.cpp modes incorrectly emitted typed evidence instead of preserving tags.
+The eight valid-astral controls passed.
+
+Fix GREEN slices: 31 identity/bounds cases passed; then 40 direct llama.cpp,
+vLLM, and event-contract cases passed.
+
+Final exact provider command remained the Task 2 matrix above. Fix GREEN result:
+597 passed with the one pre-existing Requests dependency warning in 34.72s.
+Splitter/capability regressions remained 692 passed and 51 deselected with the
+same warning in 25.45s.
+
+Fix static result: Ruff lint and `git diff --check` passed for the two changed
+files. Ruff format-check is already non-green on both files at the `5bb018c7e3`
+fix base and proposes unrelated whole-file rewrites; those baseline-only rewrites
+were deliberately excluded from this focused fix.

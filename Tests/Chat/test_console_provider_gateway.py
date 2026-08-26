@@ -127,6 +127,69 @@ def test_provider_thinking_delta_rejects_invalid_or_oversized_values(
         assert invalid_text not in str(error.value)
 
 
+@pytest.mark.parametrize(
+    "event_type",
+    [ProviderThinkingDelta, ProviderProprietaryThinkingEvidence],
+)
+@pytest.mark.parametrize("field_name", ["provider", "model", "protocol", "source_format"])
+@pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+def test_provider_thinking_event_identity_rejects_surrogates_without_retention(
+    event_type: type[ProviderThinkingDelta]
+    | type[ProviderProprietaryThinkingEvidence],
+    field_name: str,
+    surrogate: str,
+) -> None:
+    canary = f"IDENTITY-{surrogate}-CANARY"
+    values = {
+        "provider": "llama_cpp",
+        "model": "qwen",
+        "protocol": "chat_completions",
+        "source_format": "start_anchored_think",
+    }
+    values[field_name] = canary
+    if event_type is ProviderThinkingDelta:
+        values["text"] = "safe"
+
+    with pytest.raises(ValueError, match="Invalid provider thinking event") as error:
+        event_type(**values)
+
+    assert canary not in str(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    traceback = error.value.__traceback__
+    while traceback is not None:
+        frame = traceback.tb_frame
+        if frame.f_code.co_filename.endswith("console_provider_gateway.py"):
+            assert canary not in repr(frame.f_locals)
+        traceback = traceback.tb_next
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [ProviderThinkingDelta, ProviderProprietaryThinkingEvidence],
+)
+@pytest.mark.parametrize("field_name", ["provider", "model", "protocol", "source_format"])
+def test_provider_thinking_event_identity_accepts_valid_astral_text(
+    event_type: type[ProviderThinkingDelta]
+    | type[ProviderProprietaryThinkingEvidence],
+    field_name: str,
+) -> None:
+    astral_identity = "valid-\U0001f9e0"
+    values = {
+        "provider": "llama_cpp",
+        "model": "qwen",
+        "protocol": "chat_completions",
+        "source_format": "start_anchored_think",
+    }
+    values[field_name] = astral_identity
+    if event_type is ProviderThinkingDelta:
+        values["text"] = "safe"
+
+    event = event_type(**values)
+
+    assert getattr(event, field_name) == astral_identity
+
+
 def test_provider_resolution_defaults_to_ignored_thinking_capability() -> None:
     resolution = ConsoleProviderResolution(
         provider="unknown",
@@ -1983,6 +2046,70 @@ def make_gateway_with_completion(payload: dict) -> ConsoleProviderGateway:
 
 class TestDirectPathThinkingEvents:
     @pytest.mark.asyncio
+    async def test_direct_stream_ignored_disposition_preserves_tags_without_event(
+        self,
+    ) -> None:
+        wire_text = "<think>ordinary markup</think>Answer"
+        gateway = make_gateway_with_sse(
+            [
+                f'data: {{"choices":[{{"delta":{{"content":"{wire_text}"}}}}]}}',
+                "data: [DONE]",
+            ]
+        )
+
+        items = [
+            item
+            async for item in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="non-thinking-model",
+                messages=[{"role": "user", "content": "hi"}],
+                thinking_stream_disposition="ignored",
+            )
+        ]
+
+        assert items == [wire_text]
+        assert not any(isinstance(item, ProviderThinkingDelta) for item in items)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("streaming", [True, False])
+    async def test_default_llamacpp_resolution_preserves_tags_without_evidence(
+        self,
+        streaming: bool,
+    ) -> None:
+        wire_text = "<think>ordinary markup</think>Answer"
+        gateway = (
+            make_gateway_with_sse(
+                [
+                    f'data: {{"choices":[{{"delta":{{"content":"{wire_text}"}}}}]}}',
+                    "data: [DONE]",
+                ]
+            )
+            if streaming
+            else make_gateway_with_completion(
+                {"choices": [{"message": {"content": wire_text}}]}
+            )
+        )
+        resolution = ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:8080",
+            model="non-thinking-model",
+            ready=True,
+            execution_key="llama_cpp",
+            streaming=streaming,
+        )
+
+        assert resolution.may_emit_thinking is False
+        items = [
+            item
+            async for item in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}]
+            )
+        ]
+
+        assert items == [wire_text]
+        assert not any(isinstance(item, ProviderThinkingDelta) for item in items)
+
+    @pytest.mark.asyncio
     async def test_stream_emits_typed_start_anchored_thinking_with_frozen_identity(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -2002,6 +2129,7 @@ class TestDirectPathThinkingEvents:
                 messages=[{"role": "user", "content": "hi"}],
                 provider="local_llamacpp",
                 protocol="chat_completions",
+                thinking_stream_disposition="displayable",
             )
         ]
 
@@ -2058,6 +2186,7 @@ class TestDirectPathThinkingEvents:
             base_url="http://127.0.0.1:8080",
             model="qwen",
             messages=[{"role": "user", "content": "hi"}],
+            thinking_stream_disposition="displayable",
         )
 
         event = await anext(stream)
@@ -2265,6 +2394,39 @@ async def test_vllm_displayable_disposition_splits_start_anchored_thinking() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [True, False])
+async def test_vllm_ignored_disposition_preserves_start_anchored_tags(
+    streaming: bool,
+) -> None:
+    wire_text = "<think>ordinary markup</think>Answer"
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: iter(
+            [{"choices": [{"delta": {"content": wire_text}}]}]
+        ),
+        environ={},
+    )
+    resolution = ConsoleProviderResolution(
+        provider="vllm",
+        base_url="http://127.0.0.1:8000/v1",
+        model="non-thinking-model",
+        ready=True,
+        execution_key="vllm",
+        streaming=streaming,
+    )
+
+    assert resolution.may_emit_thinking is False
+    items = [
+        item
+        async for item in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert items == [wire_text]
+    assert not any(isinstance(item, ProviderThinkingDelta) for item in items)
+
+
+@pytest.mark.asyncio
 async def test_ignored_generic_reasoning_fields_and_tags_remain_visible_only() -> None:
     canary = "IGNORED-REASONING-CANARY"
     gateway = ConsoleProviderGateway(
@@ -2320,6 +2482,7 @@ class TestDirectPathThinkFiltering:
                 base_url="http://127.0.0.1:8080",
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
+                thinking_stream_disposition="displayable",
             )
         ]
         assert "".join(
@@ -2371,6 +2534,7 @@ class TestDirectPathThinkFiltering:
             base_url="http://127.0.0.1:8080",
             model="qwen",
             messages=[{"role": "user", "content": "hi"}],
+            thinking_stream_disposition="displayable",
         )
         assert text == "Done"
 
@@ -2403,6 +2567,7 @@ class TestDirectPathThinkFiltering:
                 base_url="http://127.0.0.1:8080",
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
+                thinking_stream_disposition="displayable",
             )
         ]
         assert "".join(

@@ -166,22 +166,30 @@ class ProviderThinkingCaptureError(RuntimeError):
     """A provider-local thinking capture failed without exposing its content."""
 
 
-def _validate_provider_thinking_identity(
-    provider: object,
-    model: object,
-    protocol: object,
-    source_format: object,
-) -> None:
-    for value in (provider, model, protocol, source_format):
-        if (
-            type(value) is not str
-            or not value.strip()
-            or len(value) > MAX_THINKING_PROVENANCE_CHARS
-        ):
-            raise ValueError("Invalid provider thinking event identity.")
+def _is_strict_utf8_text(value: str) -> bool:
+    """Return whether text contains no unencodable surrogate code points."""
+    return all(not 0xD800 <= ord(character) <= 0xDFFF for character in value)
 
 
-@dataclass(frozen=True, slots=True)
+def _is_valid_provider_thinking_identity(value: object) -> bool:
+    return (
+        type(value) is str
+        and bool(value.strip())
+        and len(value) <= MAX_THINKING_PROVENANCE_CHARS
+        and _is_strict_utf8_text(value)
+    )
+
+
+def _is_valid_provider_thinking_text(value: object) -> bool:
+    return (
+        type(value) is str
+        and bool(value)
+        and _is_strict_utf8_text(value)
+        and len(value.encode("utf-8")) <= MAX_THINKING_TEXT_BYTES
+    )
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class ProviderThinkingDelta:
     """One bounded displayable thinking fragment from an approved adapter."""
 
@@ -191,23 +199,39 @@ class ProviderThinkingDelta:
     protocol: str
     source_format: str
 
-    def __post_init__(self) -> None:
-        _validate_provider_thinking_identity(
-            self.provider, self.model, self.protocol, self.source_format
+    def __init__(
+        self,
+        text: str,
+        provider: str,
+        model: str,
+        protocol: str,
+        source_format: str,
+    ) -> None:
+        # Initialize only content-free state before validation so a rejected
+        # identity cannot survive through constructor traceback locals.
+        object.__setattr__(self, "text", "")
+        object.__setattr__(self, "provider", "")
+        object.__setattr__(self, "model", "")
+        object.__setattr__(self, "protocol", "")
+        object.__setattr__(self, "source_format", "")
+        valid = (
+            _is_valid_provider_thinking_text(text)
+            and _is_valid_provider_thinking_identity(provider)
+            and _is_valid_provider_thinking_identity(model)
+            and _is_valid_provider_thinking_identity(protocol)
+            and _is_valid_provider_thinking_identity(source_format)
         )
-        try:
-            text_bytes = len(self.text.encode("utf-8")) if type(self.text) is str else 0
-        except UnicodeEncodeError:
-            text_bytes = MAX_THINKING_TEXT_BYTES + 1
-        if (
-            type(self.text) is not str
-            or not self.text
-            or text_bytes > MAX_THINKING_TEXT_BYTES
-        ):
-            raise ValueError("Invalid provider thinking event text.")
+        if not valid:
+            del text, provider, model, protocol, source_format
+            raise ValueError("Invalid provider thinking event.")
+        object.__setattr__(self, "text", text)
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "model", model)
+        object.__setattr__(self, "protocol", protocol)
+        object.__setattr__(self, "source_format", source_format)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ProviderProprietaryThinkingEvidence:
     """Content-free proof that an approved adapter observed private reasoning."""
 
@@ -216,10 +240,30 @@ class ProviderProprietaryThinkingEvidence:
     protocol: str
     source_format: str
 
-    def __post_init__(self) -> None:
-        _validate_provider_thinking_identity(
-            self.provider, self.model, self.protocol, self.source_format
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        protocol: str,
+        source_format: str,
+    ) -> None:
+        object.__setattr__(self, "provider", "")
+        object.__setattr__(self, "model", "")
+        object.__setattr__(self, "protocol", "")
+        object.__setattr__(self, "source_format", "")
+        valid = (
+            _is_valid_provider_thinking_identity(provider)
+            and _is_valid_provider_thinking_identity(model)
+            and _is_valid_provider_thinking_identity(protocol)
+            and _is_valid_provider_thinking_identity(source_format)
         )
+        if not valid:
+            del provider, model, protocol, source_format
+            raise ValueError("Invalid provider thinking event.")
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "model", model)
+        object.__setattr__(self, "protocol", protocol)
+        object.__setattr__(self, "source_format", source_format)
 
 
 def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
@@ -2323,6 +2367,7 @@ class ConsoleProviderGateway:
         api_key: str | None = None,
         provider: str = "llama_cpp",
         protocol: str = "chat_completions",
+        thinking_stream_disposition: ReasoningDisposition = "ignored",
         on_fallback_retry_started: "Callable[[], None] | None" = None,
         on_fallback_retry: "Callable[[dict[str, Any], str, bool], None] | None" = None,
     ) -> AsyncIterator[ProviderStreamItem]:
@@ -2341,6 +2386,8 @@ class ConsoleProviderGateway:
                 ``chat_template_kwargs.reasoning_effort``.
             thinking_budget_tokens: Optional thinking token budget sent as
                 the top-level ``reasoning_budget_tokens`` field.
+            thinking_stream_disposition: Frozen adapter decision controlling
+                whether start-anchored thinking is split into typed events.
 
         Yields:
             Assistant-visible content chunks.
@@ -2361,7 +2408,11 @@ class ConsoleProviderGateway:
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
         )
-        think_splitter = StartAnchoredThinkSplitter()
+        think_splitter = (
+            StartAnchoredThinkSplitter()
+            if thinking_stream_disposition == "displayable"
+            else None
+        )
         emitted_content = False
         received_content = False
         stream_error: httpx.HTTPError | None = None
@@ -2377,7 +2428,11 @@ class ConsoleProviderGateway:
                     chunk = self._content_from_sse_line(line)
                     if chunk:
                         received_content = True
-                        split = think_splitter.feed(chunk)
+                        split = think_splitter.feed(chunk) if think_splitter else None
+                        if split is None:
+                            emitted_content = True
+                            yield chunk
+                            continue
                         if split.thinking:
                             yield _local_thinking_delta(
                                 split.thinking,
@@ -2393,7 +2448,7 @@ class ConsoleProviderGateway:
                 raise
             stream_error = exc
 
-        if stream_error is None:
+        if stream_error is None and think_splitter is not None:
             terminal = think_splitter.flush()
             if terminal.thinking:
                 yield _local_thinking_delta(
@@ -2436,6 +2491,7 @@ class ConsoleProviderGateway:
             api_key=api_key,
             provider=provider,
             protocol=protocol,
+            thinking_stream_disposition=thinking_stream_disposition,
             include_thinking_events=True,
         )
         fallback_items, fallback_capture_failed = _unpack_local_completion_result(
@@ -2505,6 +2561,7 @@ class ConsoleProviderGateway:
         api_key: str | None = None,
         provider: str = "llama_cpp",
         protocol: str = "chat_completions",
+        thinking_stream_disposition: ReasoningDisposition = "ignored",
         include_thinking_events: bool = False,
     ) -> str | _LocalCompletionResult:
         """Request a non-streaming OpenAI-compatible chat completion.
@@ -2527,6 +2584,8 @@ class ConsoleProviderGateway:
                 the top-level ``reasoning_budget_tokens`` field.
             strict_response: Raise when the provider response has no supported
                 assistant-content shape instead of treating it as empty.
+            thinking_stream_disposition: Frozen adapter decision controlling
+                whether start-anchored thinking is split into typed events.
 
         Returns:
             Assistant-visible completion text.
@@ -2573,11 +2632,15 @@ class ConsoleProviderGateway:
                 "Provider returned an unsupported auxiliary response.",
                 provider="llama_cpp",
             )
-        result = _split_local_completion_items(
-            content or "",
-            provider=provider,
-            model=model,
-            protocol=protocol,
+        result = (
+            _split_local_completion_items(
+                content or "",
+                provider=provider,
+                model=model,
+                protocol=protocol,
+            )
+            if thinking_stream_disposition == "displayable"
+            else _LocalCompletionResult(items=(content,) if content else ())
         )
         if include_thinking_events:
             return result
@@ -2653,6 +2716,9 @@ class ConsoleProviderGateway:
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         strict_response=True,
                         api_key=resolution.api_key,
+                        thinking_stream_disposition=(
+                            resolution.thinking_stream_disposition
+                        ),
                     )
                 else:
                     kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
@@ -2971,6 +3037,9 @@ class ConsoleProviderGateway:
                             api_key=resolution.api_key,
                             provider=resolution.execution_key or resolution.provider,
                             protocol=_thinking_protocol(resolution),
+                            thinking_stream_disposition=(
+                                resolution.thinking_stream_disposition
+                            ),
                             include_thinking_events=True,
                         )
                     except Exception:
@@ -3066,6 +3135,9 @@ class ConsoleProviderGateway:
                         api_key=resolution.api_key,
                         provider=resolution.execution_key or resolution.provider,
                         protocol=_thinking_protocol(resolution),
+                        thinking_stream_disposition=(
+                            resolution.thinking_stream_disposition
+                        ),
                         on_fallback_retry_started=(
                             signals.mark_model_retry
                             if isinstance(signals, ConsoleProviderStreamSignals)
